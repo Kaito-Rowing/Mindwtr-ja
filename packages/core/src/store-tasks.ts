@@ -85,6 +85,7 @@ type TaskActions = Pick<
     | 'addTask'
     | 'addTasks'
     | 'commitPreparedCapture'
+    | 'commitPreparedCaptureLines'
     | 'commitPreparedTaskEdit'
     | 'commitPreparedTaskDraftV2'
     | 'commitPreparedArchivedTaskRestore'
@@ -1289,6 +1290,56 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 settings,
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt),
             };
+        });
+        return result;
+    },
+
+    commitPreparedCaptureLines: async ({ tasks: preparedTasks, projects: preparedProjects, deviceIdToInitialize }) => {
+        let result = actionFail('Prepared lines conflict with current data');
+        set((state) => {
+            const currentTasks = new Map(state._allTasks.map((task) => [task.id, task]));
+            const currentProjects = new Map(state._allProjects.map((project) => [project.id, project]));
+            const operationProjects = new Set(preparedProjects.map((project) => project.id));
+            const missingTasks: Task[] = [], missingProjects: Project[] = [];
+            // Inspect every occupied ID before publishing any missing row.
+            for (const task of preparedTasks) {
+                const existing = currentTasks.get(task.id);
+                if (existing) {
+                    if (existing.deletedAt || existing.purgedAt
+                        || JSON.stringify(taskToSqliteRow(existing)) !== JSON.stringify(taskToSqliteRow(task))
+                        || task.projectId && operationProjects.has(task.projectId) && !currentProjects.has(task.projectId)) return state;
+                } else { missingTasks.push(task); }
+            }
+            for (const project of preparedProjects) {
+                const existing = currentProjects.get(project.id);
+                if (existing) {
+                    if (existing.deletedAt || existing.purgedAt
+                        || JSON.stringify(projectToSqliteRow(existing)) !== JSON.stringify(projectToSqliteRow(project))) return state;
+                } else { missingProjects.push(project); }
+            }
+            // Exact landed rows are receipts before current creation/container policy.
+            if (!missingTasks.length && !missingProjects.length) {
+                result = actionOk({ ids: preparedTasks.map((task) => task.id) });
+                return state;
+            }
+            const projects = [...state._allProjects];
+            for (const project of missingProjects) {
+                if (findSelectableProjectByTitleAndArea(projects, project.title, project.areaId)
+                    || project.areaId && !state._allAreas.some((area) => area.id === project.areaId && !area.deletedAt)) return state;
+                projects.push(project);
+            }
+            for (const task of missingTasks) {
+                if (task.projectId && !projects.some((project) => project.id === task.projectId && isSelectableProjectForTaskAssignment(project))) return state;
+                const container = resolveTaskContainerAssignment({ projectId: task.projectId, sectionId: task.sectionId,
+                    areaId: task.areaId, allProjects: projects, allSections: state._allSections, allAreas: state._allAreas });
+                if (!container.ok || container.projectId !== task.projectId || container.sectionId !== task.sectionId || container.areaId !== task.areaId) return state;
+            }
+            const tasks = [...state._allTasks, ...missingTasks];
+            const settings = !state.settings.deviceId && deviceIdToInitialize
+                ? { ...state.settings, deviceId: deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { tasks, projects, ...(settings !== state.settings ? { settings } : {}) });
+            result = actionOk({ ids: preparedTasks.map((task) => task.id) });
+            return { _allTasks: tasks, _allProjects: projects, settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
         });
         return result;
     },

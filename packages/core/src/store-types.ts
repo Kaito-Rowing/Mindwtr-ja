@@ -646,6 +646,12 @@ export interface TaskStore {
         deviceIdToInitialize: string | null;
         deviceIdBefore?: string | null;
     }, options?: Extract<PreparedChecklistWriteOptions, { authority: PreparedAreaAuthority }>) => Promise<StoreActionResult>;
+    /** Internal all-row publication; the prepared-lines contract validates its journal first. */
+    commitPreparedCaptureLines: (input: {
+        tasks: Task[];
+        projects: Project[];
+        deviceIdToInitialize: string | null;
+    }) => Promise<StoreActionResult>;
     /** Internal prepared edit; native validates the journal before this atomic guarded overlay. */
     commitPreparedTaskEdit: (input: PreparedTaskEdit) => Promise<PreparedTaskEditResult>;
     /** Native one-task raw overlay; the calling contract validates its effect and guards. */
