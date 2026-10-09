@@ -576,6 +576,8 @@ export type PersistenceFailure = {
  * IMPORTANT: `tasks` and `projects` contain only VISIBLE (non-deleted) items for UI.
  * The store internally tracks ALL items (including soft-deleted) for persistence.
  */
+export type PreparedTrashItemsRestore = import('./native-host-contract-trash-bulk-restore').NativePreparedTrashItemsRestore;
+
 export interface TaskStore {
     tasks: Task[];
     projects: Project[];
@@ -663,6 +665,9 @@ export interface TaskStore {
     /** One guarded raw batch overlay; the contract validates complete scope and RN effect first. */
     commitPreparedArchivedTasksRestore: (input: Pick<import('./native-host-contract-archive-bulk-restore').NativePreparedArchivedTasksRestore,
         'request' | 'effect' | 'deviceIdBefore' | 'deviceIdToInitialize'>,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Complete raw BEFORE and one task-first Trash effect; never infer a receipt from AFTER. */
+    commitPreparedTrashItemsRestore: (input: PreparedTrashItemsRestore,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Reference-only atomic batch, including all shared recurrence-created rows. */
     commitPreparedReferenceTasksMove: (input: import('./native-host-contract-reference-bulk-status').NativeReferenceTasksMovePrepared,

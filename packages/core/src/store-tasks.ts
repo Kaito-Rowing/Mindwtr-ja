@@ -57,6 +57,7 @@ import { resolveProcessInboxPlan } from './process-inbox-plan';
 import { boardOrderForDuplicate, countFocusedTasksBeforeBoundary, isTaskFutureFocusCandidate,
     type FocusDateLookup } from './task-utils';
 import { sameTaskSqliteRow, sameSectionDeleteJson } from './store-projects/section-actions';
+import { trashItemsRestoreScope, trashItemsRestoreEffect } from './native-host-contract-trash-bulk-restore';
 import { sameSectionSqliteRow } from './store-projects/section-actions';
 import { sameProjectSqliteRow } from './store-projects/project-actions';
 import { normalizeTaskForLoad } from './task-status';
@@ -90,6 +91,7 @@ type TaskActions = Pick<
     | 'commitPreparedTaskDraftV2'
     | 'commitPreparedArchivedTaskRestore'
     | 'commitPreparedArchivedTasksRestore'
+    | 'commitPreparedTrashItemsRestore'
     | 'commitPreparedReferenceTasksMove'
     | 'commitPreparedReferenceTasksAddTag'
     | 'commitPreparedReferenceTasksRemoveTag'
@@ -1848,6 +1850,55 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: sections,
                 _allAreas: durable.areas, _allPeople: durable.people ?? [], settings,
                 lastDataChangeAt: getNextDataChangeAt(memory.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedTrashItemsRestore: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Trash Restore conflicts with saved data' };
+        set((memory) => {
+            const before = authority.state;
+            if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                || memory._allAreas !== before._allAreas || memory._allSections !== before._allSections
+                || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
+            const durable = authority.snapshot;
+            if ((durable.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)) return memory;
+            const scope = trashItemsRestoreScope(input.request, durable);
+            if (!sameSectionDeleteJson(scope, input.scope)
+                || !sameSectionDeleteJson(trashItemsRestoreEffect({ ...input, scope }), input.effect)) return memory;
+            const bindRows = <T extends { id: string }>(rows: T[], pairs: { before: T; after: T }[],
+                sameRow: (left: T, right: T) => boolean): Map<string, T> | null => {
+                const current = new Map(rows.map((row) => [row.id, row])), after = new Map<string, T>();
+                for (const pair of pairs) {
+                    const saved = current.get(pair.before.id);
+                    if (!saved || pair.after.id !== pair.before.id || after.has(pair.before.id)
+                        || !sameRow(saved, pair.before) || !sameSectionDeleteJson(saved, pair.before)) return null;
+                    after.set(pair.before.id, pair.after);
+                }
+                return after;
+            };
+            const taskAfter = bindRows(durable.tasks, input.effect.tasks, sameTaskSqliteRow);
+            const projectAfter = bindRows(durable.projects, input.effect.projects, sameProjectSqliteRow);
+            const sectionAfter = bindRows(durable.sections, input.effect.sections, sameSectionSqliteRow);
+            if (!taskAfter || !projectAfter || !sectionAfter) return memory;
+            // Only original BEFORE plus this UUID's durable receipt may settle this batch.
+            const tasks = durable.tasks.map((row) => taskAfter.get(row.id) ?? row);
+            const projects = durable.projects.map((row) => projectAfter.get(row.id) ?? row);
+            const sections = durable.sections.map((row) => sectionAfter.get(row.id) ?? row);
+            const settings = input.deviceIdToInitialize ? { ...durable.settings, deviceId: input.deviceIdToInitialize } : durable.settings;
+            const freshTasks = tasks.map((row) => normalizeTaskForLoad(row)), freshProjects = projects.map(normalizeProjectLifecycleFields);
+            clearDerivedCache();
+            persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks, _allProjects: durable.projects,
+                _allSections: durable.sections, _allAreas: durable.areas, _allPeople: durable.people ?? [], settings: durable.settings },
+            { ...durable, tasks, projects, sections, settings });
+            const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+            authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
+                generation: getSaveGeneration(), failure: memory.persistenceFailure };
+            result = { success: true, ids: [...input.request.taskIds], outcome: 'applied' };
+            return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: sections,
+                _allAreas: durable.areas, _allPeople: durable.people ?? [], settings, lastDataChangeAt };
         });
         return result;
     },

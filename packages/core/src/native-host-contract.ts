@@ -286,6 +286,7 @@ import { createProjectFileAddWriteMethods } from './native-host-contract-project
 import { createProjectAvailabilityMethods } from './native-host-contract-project-availability';
 import { createProjectStatusMethods } from './native-host-contract-project-status';
 import { createTrashProjectRestoreMethods } from './native-host-contract-trash-project-restore';
+import { createTrashItemsRestoreMethods } from './native-host-contract-trash-bulk-restore';
 import { createProjectDeleteMethods } from './native-host-contract-project-delete';
 import { createProjectDuplicateMethods } from './native-host-contract-project-duplicate';
 import { createProjectLifecycleMethods } from './native-host-contract-project-lifecycle';
@@ -1857,6 +1858,7 @@ export function createNativeHostContract(options: {
         ...createProjectStatusMethods({ readiness, save,
             revision: projectMutationRevision }),
         ...createTrashProjectRestoreMethods({ readiness, save }),
+        ...createTrashItemsRestoreMethods({ readiness, save }),
         ...createProjectDeleteMethods({ readiness, save, t: () => translate }),
         ...createProjectDuplicateMethods({ readiness, save, t: () => translate }),
         ...createProjectLifecycleMethods({ readiness, save }),
@@ -4262,6 +4264,17 @@ function createListViewMethods(deps: ListViewDeps) {
     };
     const projectTitles = () => new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
 
+    // The same full filtered membership supplies paging, pruning and readonly Select all.
+    const buildTrash = (revision: string) => cached('trash', revision, () => {
+        const { state, areaById, projectById, selection } = areaScope();
+        const tasks = selectTrashedTasks(state._allTasks, selection, projectById, areaById);
+        const projects = selectTrashedProjects(state._allProjects, selection, areaById);
+        return { tasks, projects, areaById, items: buildTrashTimeline(tasks, projects),
+            scope: resolveTrashClearScope(tasks, projects, state._allTasks, state._allProjects),
+            taskIds: new Set(tasks.map((task) => task.id)), projectIds: new Set(projects.map((project) => project.id)),
+            projectById: new Map(projects.map((project) => [project.id, project])), titles: projectTitles() };
+    });
+
     /** Run the screen's store write (one call, or several together): SAVE_FAILED only when it landed. */
     const write = runStoreWrite;
     const liveTask = (id: unknown): Task | undefined => {
@@ -4830,24 +4843,11 @@ function createListViewMethods(deps: ListViewDeps) {
             const revision = deps.revision(now);
             if (input.revision !== undefined && input.revision !== revision) return fail('STALE_REVISION', 'Trash changed; restart paging from offset zero');
             const t = deps.t();
-            const view = cached('trash', JSON.stringify([revision, input.selected]), () => {
-                const { state, areaById, projectById, selection } = areaScope();
-                const tasks = selectTrashedTasks(state._allTasks, selection, projectById, areaById);
-                const projects = selectTrashedProjects(state._allProjects, selection, areaById);
-                const taskIds = new Set(tasks.map((task) => task.id));
-                const projectIds = new Set(projects.map((project) => project.id));
-                return {
-                    tasks, projects, areaById,
-                    items: buildTrashTimeline(tasks, projects),
-                    scope: resolveTrashClearScope(tasks, projects, state._allTasks, state._allProjects),
-                    selected: {
-                        taskIds: (input.selected?.taskIds ?? []).filter((id) => taskIds.has(id)),
-                        projectIds: (input.selected?.projectIds ?? []).filter((id) => projectIds.has(id)),
-                    },
-                    projectById: new Map(projects.map((project) => [project.id, project])),
-                    titles: projectTitles(),
-                };
-            });
+            const scope = buildTrash(revision);
+            const view = { ...scope, selected: {
+                taskIds: (input.selected?.taskIds ?? []).filter((id) => scope.taskIds.has(id)),
+                projectIds: (input.selected?.projectIds ?? []).filter((id) => scope.projectIds.has(id)),
+            } };
             const formatDate = deps.formatDate();
             const labels = getTrashRowLabels(t);
             const deletedLabel = (deletedAt: string | undefined) => `${labels.deleted}: ${formatTrashDeletedDate(deletedAt, formatDate, labels.notSet)}`;
@@ -4903,6 +4903,26 @@ function createListViewMethods(deps: ListViewDeps) {
                     }, t),
                 },
             } };
+        },
+
+        /** All filtered IDs/revisions, independent of the loaded page or optional replay-token mode. */
+        getTrashSelection(input: { revision: string }): NativeHostResult<{
+            taskIds: string[]; projectIds: string[]; taskRevisions: NativeRevisions; projectRevisions: NativeRevisions;
+        }> {
+            const ready = deps.readiness(); if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || Object.keys(input).length !== 1 || typeof input.revision !== 'string'
+                || !input.revision || !isNativeJsonWithinBytes(input)) return fail('INVALID_INPUT', 'The displayed Trash revision is required');
+            const revision = deps.revision(new Date());
+            if (input.revision !== revision) return fail('STALE_REVISION', 'Trash changed; refresh before selecting all');
+            const view = buildTrash(revision), taskIds = [...view.taskIds], projectIds = [...view.projectIds];
+            if (taskIds.length + projectIds.length > 10_000 || !isIdList(taskIds, true) || !isIdList(projectIds, true)
+                || taskIds.some((id) => id.length > 500) || projectIds.some((id) => id.length > 200))
+                return fail('INVALID_INPUT', 'Too many Trash items to select together; narrow the Area filter');
+            const result = { taskIds, projectIds, taskRevisions: taskRevisionsOf(taskIds),
+                projectRevisions: Object.fromEntries(view.projects.map((project) => [project.id, revisionOf(project)])) };
+            if ([...Object.values(result.taskRevisions), ...Object.values(result.projectRevisions)].some((value) => !value || value.length > 200)
+                || !isNativeJsonWithinBytes(result)) return fail('INVALID_INPUT', 'Trash selection is too large; narrow the Area filter');
+            return { ok: true, value: result };
         },
 
         /**
