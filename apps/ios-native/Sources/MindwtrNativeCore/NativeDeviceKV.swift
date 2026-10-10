@@ -255,6 +255,31 @@ final class NativeDeviceKV {
         try mutate(changes, skipUnchanged: true)
     }
 
+    private static let appleRemindersImportName = "mindwtr-apple-reminders-import-v1"
+    func readAppleRemindersImportState() throws -> String? {
+        let value = try get(Self.appleRemindersImportName)
+        guard (value?.utf8.count ?? 0) <= Self.valueLimit else { throw Self.failure }
+        return value
+    }
+    var hasPendingAppleRemindersImportMutation: Bool {
+        pending.map { $0.changes.map(\.key) == [Self.appleRemindersImportName] } ?? false
+    }
+    /// Fixed raw cell only; importer policy and saved-task proof belong to its owner.
+    func compareAndSetAppleRemindersImportState(expected: String?, next: String) throws {
+        guard (expected?.utf8.count ?? 0) <= Self.valueLimit,
+              next.utf8.count <= Self.valueLimit else { throw Self.invalid }
+        try requireUsable()
+        let name = Self.appleRemindersImportName
+        let changes = [Change(key: name, bytes: Data(name.utf8), value: next)]
+        let before: Snapshot
+        if let pending {
+            guard pending.changes == changes else { throw Self.failure }
+            before = pending.before
+        } else { before = try checkedRead() }
+        guard before.values[Data(name.utf8)].map({ Data($0.utf8) }) == expected.map({ Data($0.utf8) }) else { throw Self.failure }
+        try mutate(changes, skipUnchanged: true)
+    }
+
     private static let calendarPushNames = [
         "mindwtr:calendar-push-sync:enabled", "mindwtr:calendar-push-sync:calendar-id",
         "mindwtr:calendar-push-sync:target-calendar-id", "mindwtr:calendar-push-sync:color",

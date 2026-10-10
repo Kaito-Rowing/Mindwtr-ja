@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createNativeRequestReceipts, loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts } from './native-request-receipts';
+import { createNativeRequestReceipts, loadNativeRequestReceipts, NativeReceiptSqliteAdapter, pruneNativeRequestReceipts, resetNativeRequestReceipts } from './native-request-receipts';
 import { decodeNativePomodoroSession, nativePomodoroReceiptPayload, prepareNativePomodoroTransition } from './native-pomodoro-session';
 import { openScratchSqlite } from './screen-parity.replay';
 import { SqliteAdapter, type SqliteClient } from './sqlite-adapter';
@@ -77,6 +77,31 @@ afterEach(() => {
 });
 
 describe('legacy Pomodoro adoption through the unchanged atomic SQLite owner', () => {
+    it.each(['scoped', 'all'] as const)('retains one establishment proof through %s expiry and refuses re-adoption after a lost session', async (scope) => {
+        const marker = vi.spyOn(logger, 'logInfo');
+        const env = await openLegacy();
+        await env.adapter.savePomodoroTransitionWithReceipt(env.plan);
+        const session = await env.adapter.readPomodoroSession();
+        const row = (await env.sql.client.all<Record<string, string | number | null>>("SELECT * FROM tasks WHERE id='task'"))[0];
+        const next = prepareNativePomodoroTransition({ request: { action: 'reset', requestId: ID, observedAtMs: now + 1,
+            localDayKey: '2026-10-10', autoStart: { autoStartFocus: false, autoStartBreaks: false } }, session,
+            target: { id: 'task', row: TASK_SQLITE_COLUMNS.map((name) => row[name]) }, deviceId: 'device' })!;
+        await env.adapter.savePomodoroTransitionWithReceipt(next);
+        await env.sql.client.run('UPDATE native_request_receipts SET saved_at=?', ['2026-01-01T00:00:00.000Z']);
+        await env.sql.client.run('UPDATE native_request_receipts SET saved_at=? WHERE request_id=?', ['2026-01-02T00:00:00.000Z', ID]);
+        await loadNativeRequestReceipts(env.sql.client, scope === 'scoped' ? { durableCommands: ['pomodoroTransition'] } : undefined);
+        expect(await pruneNativeRequestReceipts(env.sql.client, new Date(AT))).toBe(1);
+        expect(await env.sql.client.all('SELECT request_id FROM native_request_receipts')).toEqual([{ request_id: ID }]);
+        await env.sql.client.run('DELETE FROM native_pomodoro_session');
+        const before = await env.state();
+        await expect(env.adapter.readPomodoroSession()).rejects.toThrow('Pomodoro session could not be read');
+        const fresh = prepareNativePomodoroTransition({ request: { ...env.plan.request, requestId: '33333333-3333-4333-8333-333333333333' },
+            session: { raw: null, state: null }, target: { id: 'task', row: TASK_SQLITE_COLUMNS.map((name) => row[name]) }, deviceId: 'device' })!;
+        await expect(env.adapter.savePomodoroTransitionWithReceipt(fresh)).rejects.toThrow();
+        expect(await env.state()).toEqual(before);
+        expect(marker).toHaveBeenCalledWith('Native Pomodoro refused missing established session', { scope: 'storage', force: true,
+            context: { releaseCheck: 'v1.3.5/ios-pomodoro-absence', outcome: 'refused' } });
+    });
     it('atomically installs the native session, old-duration task credit and exact raw-source receipt', async () => {
         const env = await openLegacy(); const before = await env.state();
         expect(await env.adapter.savePomodoroTransitionWithReceipt(env.plan)).toEqual({ result: env.plan.result,
@@ -154,6 +179,19 @@ describe('legacy Pomodoro adoption through the unchanged atomic SQLite owner', (
 });
 
 describe('native Pomodoro atomic storage over real SQLite', () => {
+    it('retains raw task cells through canonical reload and a later ordinary save', async () => {
+        const env = await open();
+        await env.sql.client.run("UPDATE tasks SET contexts=' [ ] ',tags=NULL WHERE id='task'");
+        const row = (await env.sql.client.all<Record<string, string | number | null>>("SELECT * FROM tasks WHERE id='task'"))[0];
+        const plan = prepareNativePomodoroTransition({ request: env.plan.request,
+            session: { raw: env.plan.sessionBefore!, state: decodeNativePomodoroSession(env.plan.sessionBefore!) },
+            target: { id: 'task', row: TASK_SQLITE_COLUMNS.map((name) => row[name]) }, deviceId: 'device' })!;
+        expect((await env.adapter.savePomodoroTransitionWithReceipt(plan)).projectionReloaded).toBe(true);
+        await useTaskStore.getState().addTask('Later ordinary task');
+        await flushPendingSave();
+        const after = (await env.sql.client.all<Record<string, unknown>>("SELECT contexts,tags,timeSpentMinutes FROM tasks WHERE id='task'"))[0];
+        expect(after).toEqual({ contexts: ' [ ] ', tags: null, timeSpentMinutes: 29 });
+    });
     it('commits four task cells, local session and exact receipt, adopts canonical projection and keeps JSON local-state-free', async () => {
         const env = await open();
         await env.sql.client.run('UPDATE tasks SET recurrence=?,attachments=? WHERE id=?', [' {"opaque":true} ', ' [ ] ', 'task']);

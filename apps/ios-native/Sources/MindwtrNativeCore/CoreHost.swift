@@ -134,6 +134,16 @@ public final class CoreHost: @unchecked Sendable {
         try await perform { try $0.start(retainingReminderResponseIDs: retainingReminderResponseIDs) }
     }
 
+    public func readPomodoroSession() async throws -> String {
+        try await perform { try $0.pomodoroFacade("pomodoroSessionReadHost") }
+    }
+    public func writePomodoroTransition(requestJSON: String) async throws -> String {
+        try await perform { try $0.pomodoroFacade("pomodoroTransitionWrite", requestJSON: requestJSON) }
+    }
+    public func probePomodoroTransitionOutcome(requestJSON: String) async throws -> String {
+        try await perform { try $0.pomodoroFacade("pomodoroTransitionRetryOutcome", requestJSON: requestJSON) }
+    }
+
     public func searchSnapshot() async throws -> NativeSearchSnapshot {
         try NativeSearchSnapshot(json: await call("iosSearchSnapshot"))
     }
@@ -381,6 +391,7 @@ public final class CoreHost: @unchecked Sendable {
     }
 
     public func call(_ method: String, argumentsJSON: String = "[]") async throws -> String {
+        guard !Engine.pomodoroFacadeMethods.contains(method) else { throw CoreHostRejection(message: "INVALID_INPUT: Pomodoro requires its explicit facade") }
         guard method != "iosPruneReceipts" else {
             throw CoreHostRejection(message: "INVALID_INPUT: Receipt retention requires startup ownership")
         }
@@ -1790,6 +1801,9 @@ private final class Engine: @unchecked Sendable {
     private var confirmedArchivedTasksRestoreEnvelope: String?
     private var confirmedTrashItemsRestoreEnvelope: String?
     private var confirmedTrashItemsPurgeEnvelope: String?
+    private var confirmedPomodoroPlanJSON: String?
+    private var lastPomodoroProjectionReloaded = false
+    private var startupPomodoroResult: String?
     private var confirmedReferenceTasksMoveEnvelope: String?
     private var confirmedReferenceTasksAddTagEnvelope: String?
     private var confirmedReferenceTasksRemoveTagEnvelope: String?
@@ -1896,6 +1910,7 @@ private final class Engine: @unchecked Sendable {
     #endif
 
     private static let methods: [String: Int] = [
+        "pomodoroSessionReadHost": 0, "pomodoroTransitionWrite": 1, "pomodoroTransitionRetryOutcome": 1,
         "logLine": 2,
         "dataSetting": 1,
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
@@ -1907,7 +1922,7 @@ private final class Engine: @unchecked Sendable {
         "projectSectionDeleteOptions": 1, "projectSectionDelete": 1, "projectSectionDeleteRetryOutcome": 1,
         "projectSectionOrderOptions": 1, "projectSectionOrder": 1, "projectSectionOrderRetryOutcome": 1,
         "appLockOptions": 1, "appLock": 1, "appLockRetryOutcome": 1,
-        "gtdWorkflowOptions": 1, "gtdArchiveOptions": 1, "gtdReviewOptions": 1, "gtdInboxOptions": 1, "gtdCaptureAreaOptions": 1, "gtdCaptureParseOptions": 1, "gtdTaskEditorOpenOptions": 1, "gtdTaskEditorPresetOptions": 1, "gtdTaskEditorFieldOptions": 1, "gtdWorkflowDraft": 1, "gtdWorkflow": 1, "gtdWorkflowRetryOutcome": 1,
+        "gtdWorkflowOptions": 1, "gtdPomodoroOptions": 1, "gtdArchiveOptions": 1, "gtdReviewOptions": 1, "gtdInboxOptions": 1, "gtdCaptureAreaOptions": 1, "gtdCaptureParseOptions": 1, "gtdTaskEditorOpenOptions": 1, "gtdTaskEditorPresetOptions": 1, "gtdTaskEditorFieldOptions": 1, "gtdWorkflowDraft": 1, "gtdWorkflow": 1, "gtdWorkflowRetryOutcome": 1,
         "iosEntityOpen": 1, "iosSearchSnapshot": 0, "iosSearchObservation": 0, "iosSearchOpen": 1, "iosNotificationOpen": 1, "notificationSetting": 1, "reminderCompletionCommit": 1, "reminderSnoozeCommit": 4,
         "generalPreferenceOptions": 1, "generalPreference": 1, "generalPreferenceRetryOutcome": 1, "deviceCalendarSetting": 1, "calendarSubscriptionSetting": 1, "calendarSubscriptionAdd": 1,
         "manageTaxonomyOptions": 1, "manageTaxonomy": 1, "manageTaxonomyRetryOutcome": 1,
@@ -1976,7 +1991,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "referenceTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "captureLinesSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["pomodoroTransitionWrite", "calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "referenceTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "captureLinesSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -2075,6 +2090,18 @@ private final class Engine: @unchecked Sendable {
                   try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)) else {
                 throw HostFailure("INVALID_INPUT: Malformed prepared Device Calendar setting journal")
             }
+        }
+        if saved.method == Self.pomodoroMethod {
+            guard journalData.count <= Self.pomodoroJournalLimit,
+                  try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)),
+                  Set(raw.keys) == Set(["version", "method", "argumentsJSON"])
+                    || Set(raw.keys) == Set(["version", "method", "argumentsJSON", "terminal"]) else { throw Self.pomodoroFailure }
+            if let terminal = raw["terminal"] {
+                guard let encoded = terminal as? [String: Any], encoded.count == 1,
+                      let name = encoded.keys.first, ["success", "rejected"].contains(name),
+                      let payload = encoded[name] as? [String: Any], Set(payload.keys) == Set(["_0"]), payload["_0"] is String else { throw Self.pomodoroFailure }
+            }
+            _ = try pomodoroJournalArguments(saved)
         }
         if saved.method == "captureLinesCommit" {
             guard journalData.count <= Self.captureLinesJournalLimit,
@@ -2301,12 +2328,13 @@ private final class Engine: @unchecked Sendable {
             let cleanupRecovery = pending?.method == Self.cleanupMethod
             let recoveringCaptureLines = pending?.method == "captureLinesCommit"
             let recoveringTrashItemsPurge = pending?.method == "trashItemsPurgeCommit"
+            let recoveringPomodoro = pending?.method == Self.pomodoroMethod
             if cleanupRecovery {
                 var original = stat()
                 guard lstat(databaseURL.path, &original) == 0, original.st_mode & S_IFMT == S_IFREG else { throw Self.cleanupFailure }
             }
             // Optional cache cleanup cannot block startup or change an owed command.
-            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge { try? backupExportFile.discardInterruptedExports() }
+            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge && !recoveringPomodoro { try? backupExportFile.discardInterruptedExports() }
             // An uncertain journal never authorizes garbage collection. Validate
             // every owned backup byte before boot can activate domain work.
             if let command = pending, command.method == "backupDocumentCommit" {
@@ -2319,9 +2347,9 @@ private final class Engine: @unchecked Sendable {
             }
             // Lines plans require the shared pure validator as well as file hashes.
             // Delay their GC until that validator exists, still before SQLite boot.
-            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge { try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? [])) }
+            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge && !recoveringPomodoro { try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? [])) }
             // Accepted operations own their frozen plan, never the picker copy.
-            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge { try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id })) }
+            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge && !recoveringPomodoro { try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id })) }
             guard let runtime = JSContext() else { throw HostFailure("Cannot create JavaScriptCore runtime") }
             context = runtime
             installBridge(runtime)
@@ -2333,6 +2361,13 @@ private final class Engine: @unchecked Sendable {
             if let command = pending, command.method == "captureLinesCommit" {
                 _ = try captureLinesArguments(command)
                 if case .success(let value) = command.terminal { try validateCaptureLinesSuccess(command, value: value) }
+                try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? []))
+                try? backupExportFile.discardInterruptedExports()
+                try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id }))
+            }
+            if let command = pending, command.method == Self.pomodoroMethod {
+                _ = try invoke("pomodoroTransitionValidate", arguments: pomodoroJournalArguments(command))
+                if case .success(let value) = command.terminal { try validatePomodoroResult(command, value: value) }
                 try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? []))
                 try? backupExportFile.discardInterruptedExports()
                 try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id }))
@@ -2749,6 +2784,11 @@ private final class Engine: @unchecked Sendable {
                 }
             }
         }
+        let recoveringPomodoroCommand = pending?.method == Self.pomodoroMethod ? pending : nil
+        let owedPomodoroRequestID = try recoveringPomodoroCommand.flatMap { command -> String? in
+            guard let json = try pomodoroJournalArguments(command).first as? String else { throw Self.pomodoroFailure }
+            return (try Self.pomodoroObject(json, maximum: 2_000_000)["request"] as? [String: Any])?["requestId"] as? String
+        }
         let recoveringBackupDocument = pending?.method == "backupDocumentCommit"
         if pending == nil, let backupUnreturnedReply { startupBackupDocumentResult = backupUnreturnedReply }
         let recoveringBoard = pending?.method == "boardCommit"
@@ -2843,6 +2883,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringSomedaySectionMove = pending?.method == "somedaySectionMoveCommit"
         let recoveringSomedaySectionUndo = pending?.method == "somedaySectionMoveUndoCommit"
         let terminal = try resolvePending()
+        if recoveringPomodoroCommand != nil, let terminal, case .success(let value) = terminal { startupPomodoroResult = value }
         if let method = recoveringAttachmentSaveMethod, let terminal, case .success(let result) = terminal {
             // Both existing owners return only their validated domain result,
             // after durable recovery/cleanup; never expose a settlement journal.
@@ -2958,7 +2999,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringSomedaySectionMove, let terminal, case .success(let value) = terminal { startupSomedaySectionMoveResult = value }
         if recoveringSomedaySectionUndo, let terminal, case .success(let value) = terminal { startupSomedaySectionUndoResult = value }
         try resumeActivationIfNeeded()
-        _ = try invoke("iosPruneReceipts", arguments: [retentionJSON])
+        _ = try invoke("iosPruneReceipts", arguments: [retentionJSON, owedPomodoroRequestID.map { $0 as Any } ?? NSNull()])
         let value = try invoke("window", arguments: [0, 50, ""])
         let recoveredAreas = startupAreaCreateResult ?? startupAreaColorResult ?? startupAreaRenameResult
             ?? startupAreaOrderResult ?? startupAreaDeleteResult
@@ -2995,7 +3036,7 @@ private final class Engine: @unchecked Sendable {
         let recoveredTaskActions = recoveredDeleteRestore ?? startupTaskPromoteResult ?? startupBoardResult
             ?? startupCalendarResult ?? startupMindSweepResult
         guard let recovered = startupAttachmentSaveResult?.resultJSON ?? recoveredTaskActions
-            ?? recoveredProjects ?? recoveredFocus ?? recoveredLists else { return value }
+            ?? recoveredProjects ?? recoveredFocus ?? recoveredLists ?? startupPomodoroResult else { return value }
         guard var window = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any] else {
             throw HostFailure("Malformed startup window")
         }
@@ -3126,6 +3167,7 @@ private final class Engine: @unchecked Sendable {
             if let requestId = saved.requestId { recovery["requestId"] = requestId }
             window["recovery"] = recovery
         }
+        if let value = startupPomodoroResult { window["recovery"] = ["method": Self.pomodoroMethod, "result": try Self.pomodoroResult(value)] }
         let encoded = String(decoding: try JSONSerialization.data(withJSONObject: window, options: [.sortedKeys]), as: UTF8.self)
         if startupAttachmentSaveResult != nil {
             NSLog("Native iOS attachment recovery returned releaseCheck=v1.3.5/ios-attachment-recovery outcome=saved")
@@ -3136,6 +3178,7 @@ private final class Engine: @unchecked Sendable {
         startupArchivedTasksRestoreResult = nil
         startupTrashItemsRestoreResult = nil
         startupTrashItemsPurgeResult = nil
+        startupPomodoroResult = nil
         startupReferenceTasksMoveResult = nil
         startupReferenceTasksAddTagResult = nil
         startupReferenceTasksRemoveTagResult = nil
@@ -9029,8 +9072,9 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func call(_ method: String, argumentsJSON: String, editorAttempt: EditorDraftAttempt?,
-        reminderCompletionOwned: Bool = false) throws -> String {
+        reminderCompletionOwned: Bool = false, pomodoroOwned: Bool = false) throws -> String {
         dispatchPrecondition(condition: .onQueue(queue))
+        guard !Self.pomodoroFacadeMethods.contains(method) || pomodoroOwned else { throw CoreHostRejection(message: "INVALID_INPUT: Pomodoro requires its explicit facade") }
         guard calendarPushTurn == nil, !Self.calendarPushMethods.contains(method) else {
             throw CoreHostRejection(message: "NOT_READY: Calendar push requires its current explicit owner")
         }
@@ -9082,9 +9126,23 @@ private final class Engine: @unchecked Sendable {
         try requireProjectDownloadTurn()
             return value
         }
-        guard started, !closed, !recoveryActivationPending else { throw HostFailure("Core host is not ready; retry startup") }
+        guard started, !closed, !recoveryActivationPending || pomodoroOwned && pending?.method == Self.pomodoroMethod else { throw HostFailure("Core host is not ready; retry startup") }
+        if method == "pomodoroTransitionWrite", pending == nil, try editorDrafts.read() != nil {
+            throw CoreHostRejection(message: "NOT_READY: Pomodoro cannot replace a saved editor draft")
+        }
+        // Fresh source capture must precede the ordinary mutation turn: the
+        // unchanged generic KV admission correctly refuses a retained owner.
+        // A retry keeps its already frozen plan and never recaptures source.
+        let freshPomodoroRequest: [String: Any]?
+        if pomodoroOwned, method == "pomodoroTransitionWrite", pending == nil {
+            do {
+                guard let values = try NativeJSON.jsonObject(with: Data(argumentsJSON.utf8)) as? [String],
+                      values.count == 1 else { throw Self.pomodoroFailure }
+                freshPomodoroRequest = try capturePomodoroRequest(Self.pomodoroRequest(values[0]))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else { freshPomodoroRequest = nil }
         let mutation = Self.mutations.contains(method)
-        let ownsRetainedTurn = mutation ? try beginRetainedOrdinaryTurn(attempt: editorAttempt) : false
+        let ownsRetainedTurn = mutation ? try beginRetainedOrdinaryTurn(command: pomodoroOwned ? pending : nil, attempt: editorAttempt) : false
         if mutation { ordinaryMutationDepth += 1 }
         defer {
             if mutation { ordinaryMutationDepth -= 1 }
@@ -9177,8 +9235,30 @@ private final class Engine: @unchecked Sendable {
             // Mind Sweep has no journal or write before argument validation.
             // Its UI may release an oversized draft only on a definite refusal.
             // With an older command still owed, keep every error uncertain.
-            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "notificationSetting", "deviceCalendarSetting", "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "savedSearchOptions", "focusSavedFilterWrite", "savedSearchWrite", "focusSavedFilterRetryOutcome", "savedSearchRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectFileRemoveWrite", "projectAttachmentWriteRetryOutcome", "projectFileRemoveWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
+            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "notificationSetting", "deviceCalendarSetting", "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdPomodoroOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "savedSearchOptions", "focusSavedFilterWrite", "savedSearchWrite", "focusSavedFilterRetryOutcome", "savedSearchRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectFileRemoveWrite", "projectAttachmentWriteRetryOutcome", "projectFileRemoveWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
             throw error
+        }
+        if pomodoroOwned {
+            if method == "pomodoroTransitionRetryOutcome", let raw = args.first as? String { return try pomodoroOutcome(requestJSON: raw) }
+            if method == "pomodoroSessionReadHost", pending == nil || pending?.method == Self.pomodoroMethod { return try invoke("pomodoroSessionRead", arguments: []) }
+            if method == "pomodoroTransitionWrite", let command = pending {
+                guard command.method == Self.pomodoroMethod, let raw = args.first as? String,
+                      let planJSON = try pomodoroJournalArguments(command).first as? String,
+                      try Self.pomodoroIntentMatches(raw, planJSON: planJSON) else { throw Self.pomodoroFailure }
+                if case .rejected(let message) = command.terminal { return try finish(command, with: .rejected(message)).value() }
+                try allowRetainedOrdinaryPreparation()
+                try persist(command)
+                let terminal = try executePomodoro(command, replayOnly: command.terminal != nil, allowUnsettled: true)
+                if pending == nil {
+                    let restoringActivation = recoveryActivationPending
+                    try resumeActivationIfNeeded()
+                    if restoringActivation {
+                        _ = try? invoke("logLine", arguments: ["Native Pomodoro recovery restored ordinary actions",
+                            #"{"releaseCheck":"v1.3.5/ios-pomodoro-recovery","outcome":"confirmed"}"#])
+                    }
+                }
+                return try publicValue(terminal, method: Self.pomodoroMethod)
+            }
         }
         guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
         guard Self.mutations.contains(method) else {
@@ -9584,16 +9664,68 @@ private final class Engine: @unchecked Sendable {
                           return true
                       }) else { throw HostFailure("Malformed Capture parsing options") }
             }
+            if method == "gtdPomodoroOptions" {
+                guard value.utf8.count <= 65_536,
+                      let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(options.keys) == Set(["pomodoro", "expected"]),
+                      let model = options["pomodoro"] as? [String: Any],
+                      Set(model.keys) == Set(["title", "description", "enable", "minutes", "controls", "autoStartNotice"]),
+                      ["title", "description", "autoStartNotice"].allSatisfy({ model[$0] is String }),
+                      let minutes = model["minutes"] as? [String: Any], Set(minutes.keys) == Set(["focus", "break"]),
+                      minutes.values.allSatisfy({ value in
+                          guard let text = value as? String, let number = Int(text) else { return false }
+                          return (1...180).contains(number) && String(number) == text
+                      }),
+                      let expected = options["expected"] as? [String: Any], Set(expected.keys) == Set(Self.gtdPomodoroFields),
+                      expected.allSatisfy({ $0.value is NSNull || Self.validGtdPomodoroExpected($0.value, type: $0.key) }) else {
+                    throw HostFailure("Malformed Pomodoro settings options")
+                }
+                for field in Self.gtdPomodoroFields where field != "pomodoro" {
+                    if let witness = expected[field] as? [String: Any] {
+                        guard let gate = witness["gate"] as? [String: Any],
+                              (gate["enabled"] as? [String: Any])?["value"] as? Bool == true else {
+                            throw HostFailure("Malformed Pomodoro settings gate")
+                        }
+                    }
+                }
+                if let enable = model["enable"] as? [String: Any] {
+                    guard Set(enable.keys) == Set(["label", "edit"]), enable["label"] is String,
+                          let edit = enable["edit"] as? [String: Any], Self.validGtdWorkflowEdit(edit),
+                          edit["type"] as? String == "pomodoro", edit["value"] as? Bool == true,
+                          model["controls"] is NSNull else { throw HostFailure("Malformed Pomodoro enable action") }
+                } else {
+                    guard model["enable"] is NSNull, let controls = model["controls"] as? [String: Any],
+                          Set(controls.keys) == Set(["customPreset", "linkTask", "autoStartBreaks", "autoStartFocus", "completionAlert", "alarmNotice"]),
+                          let preset = controls["customPreset"] as? [String: Any],
+                          Set(preset.keys) == Set(["label", "description", "focusLabel", "breakLabel"]),
+                          preset.values.allSatisfy({ $0 is String }) else { throw HostFailure("Malformed Pomodoro controls") }
+                    for (field, type) in [("linkTask", "pomodoroLinkTask"), ("autoStartBreaks", "pomodoroAutoStartBreaks"),
+                                          ("autoStartFocus", "pomodoroAutoStartFocus"), ("completionAlert", "pomodoroCompletionAlert")] {
+                        guard let row = controls[field] as? [String: Any],
+                              Set(row.keys) == Set(["label", "description", "value", "edit"]), row["label"] is String,
+                              row["description"] is String || row["description"] is NSNull,
+                              Self.isBoolean(row["value"]), let edit = row["edit"] as? [String: Any], Self.validGtdWorkflowEdit(edit),
+                              edit["type"] as? String == type, Self.equalJSON(edit["value"], !(row["value"] as? Bool ?? false)) else {
+                            throw HostFailure("Malformed Pomodoro control")
+                        }
+                    }
+                    if let notice = controls["alarmNotice"] as? [String: Any] {
+                        guard Set(notice.keys) == Set(["label", "description", "actionLabel"]), notice.values.allSatisfy({ $0 is String }) else {
+                            throw HostFailure("Malformed Pomodoro alert notice")
+                        }
+                    } else if !(controls["alarmNotice"] is NSNull) { throw HostFailure("Malformed Pomodoro alert notice") }
+                }
+            }
             if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions"].contains(method) {
                 let reviewing = method == "gtdReviewOptions", inboxing = method == "gtdInboxOptions"
                 let contentKey = inboxing ? "inbox" : reviewing ? "review" : "hub"
-                let fields = inboxing ? ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"] : reviewing ? ["dailyReviewFocusStep", "weeklyReviewContextStep"] : ["defaultScheduleTime", "focusTaskLimit", "focusIncludeStartDates", "defaultProjectFlowMode"]
+                let fields = inboxing ? ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"] : reviewing ? ["dailyReviewFocusStep", "weeklyReviewContextStep"] : ["defaultScheduleTime", "focusTaskLimit", "focusIncludeStartDates", "defaultProjectFlowMode", "pomodoro"]
                 guard value.utf8.count <= 65_536,
                       let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
                       Set(options.keys) == Set([contentKey, "expected"]),
                       let content = options[contentKey] as? [String: Any], content["title"] is String,
                       let expected = options["expected"] as? [String: Any], Set(expected.keys) == Set(fields),
-                      expected.allSatisfy({ Self.validGtdWorkflowExpected($0.value, type: $0.key) }) else {
+                      expected.allSatisfy({ ($0.key == "pomodoro" && $0.value is NSNull) || Self.validGtdWorkflowExpected($0.value, type: $0.key) }) else {
                     throw HostFailure("Malformed GTD settings options")
                 }
                 if !reviewing && !inboxing {
@@ -9610,10 +9742,13 @@ private final class Engine: @unchecked Sendable {
                 }
             }
             if method == "gtdWorkflowDraft" {
+                let submitted = try NativeJSON.jsonObject(with: Data((args.first as? String ?? "").utf8)) as? [String: Any]
+                let durations = submitted?["type"] as? String == "pomodoroDurations"
                 guard value.utf8.count <= 1_024,
                       let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
                       Set(result.keys) == Set(["valid", "value"]), Self.isBoolean(result["valid"]),
-                      result["valid"] as? Bool == true ? (result["value"] as? String).map({ $0.utf16.count <= 50 }) == true : result["value"] is NSNull else {
+                      durations ? (result["valid"] as? Bool == true && Self.validGtdPomodoroDurations(result["value"], canonical: true))
+                        : (result["valid"] as? Bool == true ? (result["value"] as? String).map({ $0.utf16.count <= 50 }) == true : result["value"] is NSNull) else {
                     throw HostFailure("Malformed GTD workflow draft")
                 }
             }
@@ -9825,7 +9960,23 @@ private final class Engine: @unchecked Sendable {
             preparedSomedaySectionTaskEnvelope = nil
         }
         let command: PendingCommand
-        if ["somedaySectionMoveWrite", "somedaySectionMoveUndo"].contains(method) {
+        if method == "pomodoroTransitionWrite" {
+            try allowRetainedOrdinaryPreparation()
+            do {
+                guard let request = freshPomodoroRequest else { throw Self.pomodoroFailure }
+                let preparedRequestJSON = try Self.ownedJSON(request)
+                let response = try Self.pomodoroObject(invoke("pomodoroTransitionPrepare", arguments: [preparedRequestJSON]), maximum: Self.pomodoroJournalLimit)
+                if response["kind"] as? String == "noop" {
+                    guard Set(response.keys) == Set(["kind"]) else { throw Self.pomodoroFailure }
+                    return "{\"kind\":\"noop\"}"
+                }
+                guard Set(response.keys) == Set(["kind", "planJSON"]), response["kind"] as? String == "prepared",
+                      let planJSON = response["planJSON"] as? String,
+                      Self.equalJSON(try Self.pomodoroObject(planJSON, maximum: 2_000_000)["request"], request) else { throw Self.pomodoroFailure }
+                command = PendingCommand(version: 2, method: Self.pomodoroMethod, argumentsJSON: try Self.ownedJSON([planJSON]))
+                _ = try invoke("pomodoroTransitionValidate", arguments: pomodoroJournalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if ["somedaySectionMoveWrite", "somedaySectionMoveUndo"].contains(method) {
             try allowRetainedOrdinaryPreparation()
             do {
                 switch try prepareSomedaySectionMove(method: method, arguments: args) {
@@ -11549,6 +11700,9 @@ private final class Engine: @unchecked Sendable {
         }
         pending = command
         try persist(command)
+        if command.method == Self.pomodoroMethod {
+            return try publicValue(executePomodoro(command, replayOnly: false, allowUnsettled: true, firstAttempt: true), method: Self.pomodoroMethod)
+        }
         let terminal: TerminalResult
         do {
             let replay: [Any]
@@ -11633,6 +11787,9 @@ private final class Engine: @unchecked Sendable {
 
     private func publicValue(_ terminal: TerminalResult, method: String?) throws -> String {
         let value = try terminal.value()
+        if method == Self.pomodoroMethod {
+            return try Self.ownedJSON(["kind": "confirmed", "result": Self.pomodoroResult(value), "projectionReloaded": lastPomodoroProjectionReloaded])
+        }
         guard method == "inboxPreparedCommit" else { return value }
         let result = try NativeJSON.jsonObject(with: Data(value.utf8))
         return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "saved", "result": result], options: [.sortedKeys]), as: UTF8.self)
@@ -11709,6 +11866,13 @@ private final class Engine: @unchecked Sendable {
                    recoveryActivationPending { /* Activation still owns this turn. */ }
                 else { retainedOrdinaryTurn = nil }
             }
+        }
+        if command.method == Self.pomodoroMethod {
+            _ = try invoke("pomodoroTransitionValidate", arguments: pomodoroJournalArguments(command))
+            if case .rejected(let message) = command.terminal { return try finish(command, with: .rejected(message)) }
+            try allowRetainedOrdinaryPreparation()
+            try persist(command)
+            return try executePomodoro(command, replayOnly: command.terminal != nil, allowUnsettled: false)
         }
         if command.method == "reminderSnoozeCommit" {
             let args = try reminderSnoozeJournalArguments(command)
@@ -11868,6 +12032,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func finish(_ command: PendingCommand, with terminal: TerminalResult) throws -> TerminalResult {
+        if command.method == Self.pomodoroMethod, case .success(let value) = terminal { try validatePomodoroResult(command, value: value) }
         if command.method == Self.ownedSaveMethod { return try finishOwnedSave(command, with: terminal) }
         if command.method == "captureLinesCommit", case .success(let value) = terminal {
             // A proven capture result authorizes only pure validation and cleanup.
@@ -12273,6 +12438,7 @@ private final class Engine: @unchecked Sendable {
         // Once persisted, restart can clean up without entering core again.
         pending = finished
         try persist(finished)
+        if command.method == Self.pomodoroMethod, case .success = terminal, !lastPomodoroProjectionReloaded { return terminal }
         if let turn = retainedOrdinaryTurn, case .success = terminal {
             try requireRetainedOrdinaryTurn(requirePreparation: true)
             switch turn.mode {
@@ -12633,6 +12799,7 @@ private final class Engine: @unchecked Sendable {
         }
         if command.method == "gtdWorkflowCommit", case .success(let value) = terminal {
             let result = (try? NativeJSON.jsonObject(with: Data(value.utf8))) as? [String: Any]
+            let pomodoro = Self.gtdPomodoroFields.contains(result?["type"] as? String ?? "")
             let reset = result?["type"] as? String == "taskEditorReset"
             let fieldOrder = result?["type"] as? String == "taskEditorOrder"
             let fieldSection = result?["type"] as? String == "taskEditorFieldSection"
@@ -12646,9 +12813,13 @@ private final class Engine: @unchecked Sendable {
             let editing = result?["type"] as? String == "taskEditorSectionOpen"
             let preset = result?["type"] as? String == "taskEditorPreset"
 #if DEBUG
-            faults?.commandDiagnostic?(reset ? "gtdTaskEditorResetApplied" : fieldOrder ? "gtdTaskEditorFieldOrderApplied" : fieldSection ? "gtdTaskEditorFieldSectionApplied" : fields ? "gtdTaskEditorFieldApplied" : archiving ? "gtdAutoArchiveApplied" : startDates ? "gtdFocusStartDatesApplied" : preset ? "gtdTaskEditorPresetApplied" : editing ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : reviewing ? "gtdReviewApplied" : "gtdWorkflowApplied")
+            faults?.commandDiagnostic?(pomodoro ? "gtdPomodoroApplied" : reset ? "gtdTaskEditorResetApplied" : fieldOrder ? "gtdTaskEditorFieldOrderApplied" : fieldSection ? "gtdTaskEditorFieldSectionApplied" : fields ? "gtdTaskEditorFieldApplied" : archiving ? "gtdAutoArchiveApplied" : startDates ? "gtdFocusStartDatesApplied" : preset ? "gtdTaskEditorPresetApplied" : editing ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : reviewing ? "gtdReviewApplied" : "gtdWorkflowApplied")
 #endif
-            if reset { NSLog("Native iOS Task Editor reset saved releaseCheck=v1.3.4/ios-gtd-editor-reset outcome=confirmed") }
+            if pomodoro {
+                _ = try? invoke("logLine", arguments: ["Native iOS Pomodoro settings saved",
+                    #"{"releaseCheck":"v1.3.5/ios-pomodoro-settings","outcome":"confirmed"}"#])
+            }
+            else if reset { NSLog("Native iOS Task Editor reset saved releaseCheck=v1.3.4/ios-gtd-editor-reset outcome=confirmed") }
             else if fieldOrder { NSLog("Native iOS Task Editor field order saved releaseCheck=v1.3.4/ios-gtd-editor-field-order outcome=confirmed") }
             else if fieldSection { NSLog("Native iOS Task Editor field section saved releaseCheck=v1.3.4/ios-gtd-editor-field-sections outcome=confirmed") }
             else if fields { NSLog("Native iOS Task Editor field visibility saved releaseCheck=v1.3.4/ios-gtd-editor-fields outcome=confirmed") }
@@ -12946,6 +13117,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
+        if method == Self.pomodoroMethod { return message.utf8.count <= 4096 && ["INVALID_INPUT:", "NOT_READY:", "STALE_REVISION:"].contains(where: { message.hasPrefix($0) }) }
         if method == Self.ownedSaveMethod || method == Self.mixedSaveMethod {
             return message.utf8.count <= Self.ownedSaveRejectionBytes
                 && ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:", "STALE_REVISION:"].contains(where: { message.hasPrefix($0) })
@@ -13210,6 +13382,41 @@ private final class Engine: @unchecked Sendable {
         return validTaskEditorOrderValue(edit["value"])
     }
 
+    private static let gtdPomodoroFields = ["pomodoro", "pomodoroLinkTask", "pomodoroAutoStartBreaks", "pomodoroAutoStartFocus", "pomodoroCompletionAlert", "pomodoroDurations"]
+
+    private static func validGtdPomodoroDurations(_ value: Any?, canonical: Bool) -> Bool {
+        guard let pair = value as? [String: Any],
+              Set(pair.keys).isSubset(of: Set(["focusMinutes", "breakMinutes"])),
+              !canonical || pair.count == 2 else { return false }
+        return pair.values.allSatisfy { value in
+            guard !isBoolean(value), let number = value as? NSNumber, number.doubleValue.isFinite else { return false }
+            return !canonical || (number.doubleValue.rounded() == number.doubleValue && (1...180).contains(number.doubleValue))
+        }
+    }
+
+    private static func validGtdPomodoroExpected(_ value: Any?, type: String) -> Bool {
+        guard let expected = value as? [String: Any],
+              Set(expected.keys) == Set(type == "pomodoro"
+                ? ["parentPresent", "present", "value", "stampPresent", "stamp"]
+                : ["parentPresent", "present", "value", "gate", "stampPresent", "stamp"]),
+              isBoolean(expected["parentPresent"]), isBoolean(expected["present"]), isBoolean(expected["stampPresent"]),
+              expected["parentPresent"] as? Bool == true || expected["present"] as? Bool == false,
+              expected["stampPresent"] as? Bool == true
+                ? (expected["stamp"] as? String).map({ $0.utf16.count <= 40 }) == true : expected["stamp"] is NSNull else { return false }
+        if expected["present"] as? Bool == true {
+            guard type == "pomodoroDurations" ? validGtdPomodoroDurations(expected["value"], canonical: false)
+                : isBoolean(expected["value"]) else { return false }
+        } else if !(expected["value"] is NSNull) { return false }
+        if type != "pomodoro" {
+            guard let gate = expected["gate"] as? [String: Any], Set(gate.keys) == Set(["featuresPresent", "enabled"]),
+                  isBoolean(gate["featuresPresent"]), let enabled = gate["enabled"] as? [String: Any],
+                  Set(enabled.keys) == Set(["present", "value"]), isBoolean(enabled["present"]),
+                  gate["featuresPresent"] as? Bool == true || enabled["present"] as? Bool == false,
+                  enabled["present"] as? Bool == true ? isBoolean(enabled["value"]) : enabled["value"] is NSNull else { return false }
+        }
+        return true
+    }
+
     private static func validGtdWorkflowEdit(_ value: Any?) -> Bool {
         guard let edit = value as? [String: Any], let type = edit["type"] as? String else { return false }
         let fieldEdit = ["taskEditorFieldVisible", "taskEditorFieldSection", "taskEditorOrder"].contains(type)
@@ -13228,6 +13435,8 @@ private final class Engine: @unchecked Sendable {
             $0.doubleValue.isFinite && $0.doubleValue.rounded() == $0.doubleValue && abs($0.doubleValue) <= 1_000_000
         } == true
         case "focusIncludeStartDates": return isBoolean(edit["value"])
+        case "pomodoro", "pomodoroLinkTask", "pomodoroAutoStartBreaks", "pomodoroAutoStartFocus", "pomodoroCompletionAlert": return isBoolean(edit["value"])
+        case "pomodoroDurations": return validGtdPomodoroDurations(edit["value"], canonical: true)
         case "autoArchiveDays": return [0, 1, 3, 7, 14, 30, 60].contains { isInteger(edit["value"], equalTo: $0) }
         case "defaultProjectFlowMode": return ["parallel", "sequential"].contains(edit["value"] as? String ?? "")
         case "dailyReviewFocusStep", "weeklyReviewContextStep", "inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule", "quickAddAutoClean", "naturalLanguageDates": return isBoolean(edit["value"])
@@ -13236,6 +13445,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private static func validGtdWorkflowExpected(_ value: Any?, type: String) -> Bool {
+        if gtdPomodoroFields.contains(type) { return validGtdPomodoroExpected(value, type: type) }
         if type == "taskEditorPreset" || type == "taskEditorReset" || type == "taskEditorFieldVisible" || type == "taskEditorFieldSection" || type == "taskEditorOrder" {
             let layout = ["order", "hidden", "sections", "sectionOpen"]
             let flags = ["priorities", "timeEstimates"]
@@ -14918,6 +15128,294 @@ private final class Engine: @unchecked Sendable {
         return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "confirmed", "result": result], options: [.sortedKeys]), as: UTF8.self)
     }
 
+    private static let pomodoroMethod = "pomodoroTransitionCommit"
+    static let pomodoroFacadeMethods: Set<String> = ["pomodoroSessionReadHost", "pomodoroTransitionWrite", "pomodoroTransitionRetryOutcome"]
+    private static let pomodoroFailure = HostFailure("Pomodoro transition requires its exact retained request")
+    private static let pomodoroJournalLimit = 12_000_000
+
+    private static func pomodoroObject(_ json: String, maximum: Int) throws -> [String: Any] {
+        guard json.utf8.count <= maximum, try NativeJSON.hasUniqueObjectKeys(json) else { throw pomodoroFailure }
+        let value = try NativeJSON.jsonObject(with: Data(json.utf8))
+        guard referenceTasksMoveJSONIsLossless(value), let object = value as? [String: Any] else { throw pomodoroFailure }
+        return object
+    }
+    private static func pomodoroCount(_ value: Any?) -> Bool {
+        isInteger(value) && (value as? NSNumber).map { (0...9_007_199_254_740_991).contains($0.doubleValue) } == true
+    }
+    private static func pomodoroRequest(_ json: String) throws -> [String: Any] {
+        let request = try pomodoroObject(json, maximum: 8192)
+        guard let id = request["requestId"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+              isInteger(request["observedAtMs"]),
+              (request["observedAtMs"] as? NSNumber).map({ abs($0.doubleValue) <= 8_640_000_000_000_000 }) == true,
+              let day = request["localDayKey"] as? String,
+              day.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil else { throw pomodoroFailure }
+        if request["action"] as? String == "initialize" {
+            guard Set(request.keys) == Set(["action", "requestId", "observedAtMs", "localDayKey", "durations"]),
+                  let durations = request["durations"] as? [String: Any], Set(durations.keys) == Set(["focusMinutes", "breakMinutes"]),
+                  [durations["focusMinutes"], durations["breakMinutes"]].allSatisfy({
+                    Self.isInteger($0) && ($0 as? NSNumber).map { (1...180).contains($0.doubleValue) } == true
+                  }) else { throw pomodoroFailure }
+        } else {
+            guard let action = request["action"] as? String,
+                  let options = request["autoStart"] as? [String: Any], Set(options.keys) == Set(["autoStartFocus", "autoStartBreaks"]),
+                  isBoolean(options["autoStartFocus"]), isBoolean(options["autoStartBreaks"]) else { throw pomodoroFailure }
+            let common: Set<String> = ["action", "requestId", "observedAtMs", "localDayKey", "autoStart"]
+            switch action {
+            case "adoptLegacy":
+                guard Set(request.keys) == common else { throw pomodoroFailure }
+                // Refuse a malformed observation day before any legacy read.
+                // Shared535 remains the full preparation/plan authority.
+                let parts = day.split(separator: "-").compactMap { Int($0) }
+                guard day.utf8.count == 10, day.utf8.allSatisfy({ $0 == 45 || (48...57).contains($0) }),
+                      parts.count == 3, (1...12).contains(parts[1]) else { throw pomodoroFailure }
+                let leap = parts[0] % 4 == 0 && (parts[0] % 100 != 0 || parts[0] % 400 == 0)
+                let days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+                guard (1...days[parts[1] - 1]).contains(parts[2]) else { throw pomodoroFailure }
+            case "reconcile", "toggle", "reset", "switchPhase":
+                guard Set(request.keys) == common else { throw pomodoroFailure }
+            case "setDurations":
+                guard Set(request.keys) == common.union(["durations"]),
+                      let durations = request["durations"] as? [String: Any], Set(durations.keys) == Set(["focusMinutes", "breakMinutes"]),
+                      [durations["focusMinutes"], durations["breakMinutes"]].allSatisfy({
+                        Self.isInteger($0) && ($0 as? NSNumber).map { (1...180).contains($0.doubleValue) } == true
+                      }) else { throw pomodoroFailure }
+            case "selectTask":
+                guard Set(request.keys) == common.union(["taskId"]),
+                      request["taskId"] is NSNull || (request["taskId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true else { throw pomodoroFailure }
+            default: throw pomodoroFailure
+            }
+        }
+        return request
+    }
+    private static let pomodoroLegacyNames = ["@mindwtr_pomodoro_state", "@mindwtr_pomodoro_collapsed"]
+    /// Only a plan owned by Engine may contain the two exact source strings.
+    /// Validating this grammar grants no source-read or writer-stop authority.
+    private static func pomodoroPlanRequest(_ json: String) throws -> [String: Any] {
+        let request = try pomodoroObject(json, maximum: 2_000_000)
+        guard request["action"] as? String == "adoptLegacy" else { return try pomodoroRequest(json) }
+        guard Set(request.keys) == Set(["action", "requestId", "observedAtMs", "localDayKey", "autoStart", "legacy"]),
+              let legacy = request["legacy"] as? [String: Any],
+              Set(legacy.keys) == Set(["version", "namespace", "sessionRaw", "collapsedRaw"]),
+              isInteger(legacy["version"], equalTo: 1),
+              let namespace = legacy["namespace"] as? String, NativeReminderRequest.validNamespace(namespace),
+              [legacy["sessionRaw"], legacy["collapsedRaw"]].allSatisfy({
+                $0 is NSNull || ($0 as? String).map { $0.utf8.count <= 1_000_000 } == true
+              }) else { throw pomodoroFailure }
+        var intent = request; intent.removeValue(forKey: "legacy")
+        _ = try pomodoroRequest(ownedJSON(intent))
+        return request
+    }
+    private static func pomodoroIntentMatches(_ json: String, planJSON: String) throws -> Bool {
+        let intent = try pomodoroRequest(json)
+        let plan = try pomodoroObject(planJSON, maximum: 2_000_000)
+        guard let raw = plan["request"] as? [String: Any] else { throw pomodoroFailure }
+        var request = try pomodoroPlanRequest(ownedJSON(raw))
+        if request["action"] as? String == "adoptLegacy" { request.removeValue(forKey: "legacy") }
+        return equalJSON(intent, request)
+    }
+    private func capturePomodoroRequest(_ intent: [String: Any]) throws -> [String: Any] {
+        guard intent["action"] as? String == "adoptLegacy" else { return intent }
+        let storage = try requireDeviceStorageAdmission()
+        guard let namespace = deviceStorageLocation?.bundleIdentifier, NativeReminderRequest.validNamespace(namespace) else {
+            throw Self.pomodoroFailure
+        }
+        // This historically named field already binds every startup SQLite
+        // connection. Reuse it; a newly replaced path cannot grant authority.
+        guard let library = calendarPushDatabaseBinding, context != nil, database != nil,
+              try Self.bindingIdentity(databaseURL) == library else { throw Self.pomodoroFailure }
+        let values = try readPomodoroLegacy(storage)
+        guard values.count == 2, deviceStorage === storage, !closed, lockFD >= 0,
+              try Self.bindingIdentity(databaseURL) == library else { throw Self.pomodoroFailure }
+        var request = intent
+        request["legacy"] = ["version": 1, "namespace": namespace,
+                             "sessionRaw": values[0].map { $0 as Any } ?? NSNull(),
+                             "collapsedRaw": values[1].map { $0 as Any } ?? NSNull()]
+        return try Self.pomodoroPlanRequest(Self.ownedJSON(request))
+    }
+    private func readPomodoroLegacy(_ storage: NativeDeviceKV) throws -> [String?] {
+        #if DEBUG
+        faults?.commandDiagnostic?("pomodoroLegacyRead")
+        #endif
+        return try storage.multiGet(Self.pomodoroLegacyNames).map(\.1)
+    }
+    private func recheckPomodoroLegacy(_ command: PendingCommand, request: [String: Any]) throws {
+        dispatchPrecondition(condition: .onQueue(queue))
+        try denyCleanupOwner(); try requireEncryptionUnlockTurn()
+        try requireRetainedOrdinaryTurn(requirePreparation: true)
+        guard started, !closed, lockFD >= 0, let runtime = context, let storage = deviceStorage,
+              deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil,
+              taskDownloadTurn == nil, projectAvailabilityTurn == nil, projectFileAddTurn == nil, projectDownloadTurn == nil,
+              let current = pending, try ownedEncoded(current) == ownedEncoded(command),
+              let legacy = request["legacy"] as? [String: Any], let namespace = legacy["namespace"] as? String,
+              let admittedNamespace = deviceStorageLocation?.bundleIdentifier,
+              Self.ownedEqual(namespace, admittedNamespace), let database = database,
+              let library = calendarPushDatabaseBinding, try Self.bindingIdentity(databaseURL) == library,
+              let journal = try retainedOrdinaryJournalBinding(),
+              let saved = try loadPendingJournal(checkingEditorSnapshot: false),
+              try ownedEncoded(saved) == ownedEncoded(command) else { throw Self.pomodoroFailure }
+        let values = try readPomodoroLegacy(storage)
+        guard values.count == 2,
+              zip(values, [legacy["sessionRaw"], legacy["collapsedRaw"]]).allSatisfy({ pair in
+                let (actual, expected) = pair
+                if let actual, let expected = expected as? String { return Self.ownedEqual(actual, expected) }
+                return actual == nil && expected is NSNull
+              }), context === runtime, self.database === database, deviceStorage === storage, !closed, lockFD >= 0,
+              try Self.bindingIdentity(databaseURL) == library,
+              try retainedOrdinaryJournalBinding() == journal else { throw Self.pomodoroFailure }
+        try requireRetainedOrdinaryTurn(requirePreparation: true)
+    }
+    private static func pomodoroResult(_ json: String) throws -> [String: Any] {
+        let result = try pomodoroObject(json, maximum: 8192)
+        guard Set(result.keys) == Set(["sessionID", "generation", "completedFocusSessions", "creditedMinutes", "creditDisposition"]),
+              let id = result["sessionID"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+              [result["generation"], result["completedFocusSessions"], result["creditedMinutes"]].allSatisfy(pomodoroCount),
+              ["credited", "unlinked", "unavailable", "capped", "none"].contains(result["creditDisposition"] as? String ?? "") else { throw pomodoroFailure }
+        return result
+    }
+    private func pomodoroJournalArguments(_ command: PendingCommand) throws -> [Any] {
+        guard command.version == 2, command.method == Self.pomodoroMethod, command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= Self.pomodoroJournalLimit,
+              try NativeJSON.hasUniqueObjectKeys(command.argumentsJSON),
+              let arguments = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], arguments.count == 1 else { throw Self.pomodoroFailure }
+        let plan = try Self.pomodoroObject(arguments[0], maximum: 2_000_000)
+        guard Set(plan.keys) == Set(["version", "request", "sessionBefore", "sessionAfter", "target", "taskPatch", "deviceId", "result"]),
+              Self.isInteger(plan["version"], equalTo: 1), let request = plan["request"] as? [String: Any],
+              let after = plan["sessionAfter"] as? String,
+              plan["sessionBefore"] is NSNull || plan["sessionBefore"] is String,
+              plan["deviceId"] is NSNull || (plan["deviceId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true,
+              let result = plan["result"] as? [String: Any] else { throw Self.pomodoroFailure }
+        _ = try Self.pomodoroPlanRequest(Self.ownedJSON(request))
+        _ = try Self.pomodoroObject(after, maximum: 1_000_000)
+        if let before = plan["sessionBefore"] as? String { _ = try Self.pomodoroObject(before, maximum: 1_000_000) }
+        if !(plan["target"] is NSNull) {
+            guard let target = plan["target"] as? [String: Any], Set(target.keys) == Set(["id", "row"]),
+                  let id = target["id"] as? String, !id.isEmpty, id.utf16.count <= 500,
+                  target["row"] is NSNull || (target["row"] as? [Any]).map({ row in
+                    row.count <= 128 && row.first as? String == id && row.allSatisfy { cell in
+                        if cell is NSNull || cell is String { return true }
+                        return (cell as? NSNumber).map { CFGetTypeID($0) != CFBooleanGetTypeID() && $0.doubleValue.isFinite } == true
+                    }
+                  }) == true else { throw Self.pomodoroFailure }
+        }
+        if !(plan["taskPatch"] is NSNull) {
+            guard let patch = plan["taskPatch"] as? [String: Any], Set(patch.keys) == Set(["timeSpentMinutes", "rev", "revBy", "updatedAt"]),
+                  Self.pomodoroCount(patch["timeSpentMinutes"]), Self.pomodoroCount(patch["rev"]),
+                  let device = patch["revBy"] as? String, !device.isEmpty, device.utf16.count <= 200,
+                  let updated = patch["updatedAt"] as? String, updated.utf8.count <= 32 else { throw Self.pomodoroFailure }
+        }
+        let resultJSON = try Self.ownedJSON(result)
+        _ = try Self.pomodoroResult(resultJSON)
+        // Reserve every later encoded phase before publishing an intent. The
+        // rejection's escaped control bytes are the worst valid bounded payload.
+        let prefix = "NOT_READY:"
+        var success = command; success.terminal = .success(resultJSON)
+        var rejected = command; rejected.terminal = .rejected(prefix + String(repeating: "\0", count: 4096 - prefix.utf8.count))
+        for candidate in [command, success, rejected] {
+            guard try JSONEncoder().encode(candidate).count <= Self.pomodoroJournalLimit else { throw Self.pomodoroFailure }
+        }
+        if let terminal = command.terminal {
+            switch terminal {
+            case .success(let value):
+                guard Self.equalJSON(try Self.pomodoroResult(value), result) else { throw Self.pomodoroFailure }
+            case .rejected(let value):
+                guard value.utf8.count <= 4096, isDefiniteRejection(value, method: command.method) else { throw Self.pomodoroFailure }
+            }
+        }
+        return arguments
+    }
+    private func validatePomodoroResult(_ command: PendingCommand, value: String) throws {
+        let expected = try invoke("pomodoroTransitionValidate", arguments: pomodoroJournalArguments(command))
+        guard Self.equalJSON(try Self.pomodoroResult(value), try Self.pomodoroResult(expected)) else { throw Self.pomodoroFailure }
+    }
+    func pomodoroFacade(_ method: String, requestJSON: String? = nil) throws -> String {
+        try call(method, argumentsJSON: Self.ownedJSON(requestJSON.map { [$0] } ?? []), editorAttempt: nil, pomodoroOwned: true)
+    }
+    private func pomodoroOutcome(requestJSON: String) throws -> String {
+        _ = try Self.pomodoroRequest(requestJSON)
+        let planJSON: String?
+        if let command = pending, command.method == Self.pomodoroMethod { planJSON = try pomodoroJournalArguments(command).first as? String }
+        else { planJSON = confirmedPomodoroPlanJSON }
+        guard let planJSON else { return "{\"kind\":\"unproven\"}" }
+        guard try Self.pomodoroIntentMatches(requestJSON, planJSON: planJSON) else { return "{\"kind\":\"unproven\"}" }
+        let command = PendingCommand(version: 2, method: Self.pomodoroMethod, argumentsJSON: try Self.ownedJSON([planJSON]))
+        _ = try invoke("pomodoroTransitionValidate", arguments: pomodoroJournalArguments(command))
+        let outcome = try invoke("pomodoroTransitionOutcome", arguments: [planJSON])
+        guard outcome != "null" else { return "{\"kind\":\"unproven\"}" }
+        try validatePomodoroResult(command, value: outcome)
+        return try Self.ownedJSON(["kind": "confirmed", "result": Self.pomodoroResult(outcome)])
+    }
+    private func executePomodoro(_ command: PendingCommand, replayOnly: Bool, allowUnsettled: Bool, firstAttempt: Bool = false) throws -> TerminalResult {
+        lastPomodoroProjectionReloaded = false
+        let arguments = try pomodoroJournalArguments(command)
+        guard let planJSON = arguments.first as? String,
+              let request = try Self.pomodoroObject(planJSON, maximum: 2_000_000)["request"] as? [String: Any] else { throw Self.pomodoroFailure }
+        if request["action"] as? String == "adoptLegacy" {
+            guard let library = calendarPushDatabaseBinding, try Self.bindingIdentity(databaseURL) == library else { throw Self.pomodoroFailure }
+        }
+        var receiptOnly = replayOnly
+        if !receiptOnly && request["action"] as? String == "adoptLegacy" {
+            let outcome = try invoke("pomodoroTransitionOutcome", arguments: arguments)
+            if outcome != "null" {
+                try validatePomodoroResult(command, value: outcome)
+                receiptOnly = true
+            } else {
+                // A successful absence probe alone permits source recheck;
+                // arbitrary SQL errors or formerly proven missing receipts retain.
+                try recheckPomodoroLegacy(command, request: request)
+            }
+        }
+        if receiptOnly {
+            let outcome = try invoke("pomodoroTransitionOutcome", arguments: arguments)
+            guard outcome != "null" else { throw Self.pomodoroFailure }
+            try validatePomodoroResult(command, value: outcome)
+            if case .success(let value) = command.terminal {
+                guard Self.equalJSON(try Self.pomodoroResult(outcome), try Self.pomodoroResult(value)) else { throw Self.pomodoroFailure }
+            }
+        }
+        let raw: String
+        do { raw = try invoke(Self.pomodoroMethod, arguments: arguments + [receiptOnly]) }
+        catch let failure as HostFailure where firstAttempt && isDefiniteRejection(failure.message, method: Self.pomodoroMethod) {
+            return try finish(command, with: .rejected(failure.message))
+        }
+        let response = try Self.pomodoroObject(raw, maximum: 16_384)
+        guard Set(response.keys) == Set(["result", "replayed", "projectionReloaded"]),
+              Self.isBoolean(response["replayed"]), Self.isBoolean(response["projectionReloaded"]),
+              !receiptOnly || response["replayed"] as? Bool == true,
+              let result = response["result"] as? [String: Any] else { throw Self.pomodoroFailure }
+        let value = try Self.ownedJSON(result)
+        try validatePomodoroResult(command, value: value)
+        let proof = try invoke("pomodoroTransitionOutcome", arguments: arguments)
+        guard proof != "null", Self.equalJSON(try Self.pomodoroResult(proof), result) else { throw Self.pomodoroFailure }
+        // Only an exact SQL receipt proves a control ran, including replay.
+        // The literal allowlist excludes caller content and older action markers.
+        if let planJSON = arguments.first as? String,
+           let request = (try? Self.pomodoroObject(planJSON, maximum: 2_000_000))?["request"] as? [String: Any],
+           let action = request["action"] as? String,
+           ["toggle", "reset", "switchPhase", "setDurations", "selectTask"].contains(action),
+           let context = try? Self.ownedJSON(["releaseCheck": "v1.3.5/ios-pomodoro-actions", "outcome": "confirmed", "action": action]) {
+            _ = try? invoke("logLine", arguments: ["Native Pomodoro control transition confirmed", context])
+            #if DEBUG
+            faults?.commandDiagnostic?("pomodoroActionConfirmed:" + action)
+            #endif
+        }
+        let editorAbsent = try editorDrafts.read() == nil
+        lastPomodoroProjectionReloaded = response["projectionReloaded"] as? Bool == true && editorAbsent
+        if !lastPomodoroProjectionReloaded { recoveryActivationPending = true }
+        if request["action"] as? String == "adoptLegacy",
+           let context = try? Self.ownedJSON(["releaseCheck": "v1.3.5/ios-pomodoro-adoption", "outcome": "confirmed"]) {
+            let message = lastPomodoroProjectionReloaded ? "Native Pomodoro legacy adoption confirmed"
+                : "Native Pomodoro legacy adoption SQL confirmed; projection pending"
+            _ = try? invoke("logLine", arguments: [message, context])
+            #if DEBUG
+            faults?.commandDiagnostic?("pomodoroAdoptionConfirmed:" + (lastPomodoroProjectionReloaded ? "ready" : "pending"))
+            #endif
+        }
+        confirmedPomodoroPlanJSON = arguments.first as? String
+        let terminal = try finish(command, with: .success(value))
+        if !lastPomodoroProjectionReloaded && !allowUnsettled { throw Self.pomodoroFailure }
+        return terminal
+    }
+
     private static func archivedRestorePrefix(_ method: String) -> String? {
         switch method {
         case "archivedTaskRestoreWrite", "archivedTaskRestoreRetryOutcome", "archivedTaskRestoreCommit": return "archivedTaskRestore"
@@ -15972,6 +16470,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func journalArguments(_ command: PendingCommand, checkingEditorSnapshot: Bool = true, retainedOrdinary: Bool = false) throws -> [Any] {
+        if command.method == Self.pomodoroMethod { return try pomodoroJournalArguments(command) }
         if command.method == "reminderSnoozeCommit" {
             guard !retainedOrdinary else { throw Self.retainedOrdinaryFailure }
             return try reminderSnoozeJournalArguments(command)
@@ -17302,6 +17801,11 @@ private final class Engine: @unchecked Sendable {
         #endif
         case "Native iOS launch selection admitted":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-launch-selection", "outcome": "confirmed"])
+        case "Native iOS bulk operation acknowledged":
+            valid = Set(context.keys) == Set(["releaseCheck", "operation", "outcome"])
+                && context["releaseCheck"] as? String == "v1.3.5/ios-bulk-ui"
+                && ["capture", "restore", "purge"].contains(context["operation"] as? String ?? "")
+                && context["outcome"] as? String == "confirmed"
         case "Native iOS retained editor draft protected from late close":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-editor-retained-close", "outcome": "ignored"])
         case "Native iOS reminder lifecycle reconciled":
@@ -17439,7 +17943,7 @@ private final class Engine: @unchecked Sendable {
         if method == "taskEditorResumeCheck" && json.utf8.count > 2_000_000 {
             throw HostFailure("INVALID_INPUT: Editor resume check is too large")
         }
-        if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "appLockOptions", "appLock", "appLockRetryOutcome", "generalPreferenceOptions", "generalPreference", "generalPreferenceRetryOutcome"].contains(method), json.utf8.count > 49_152 {
+        if ["gtdWorkflowOptions", "gtdPomodoroOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "appLockOptions", "appLock", "appLockRetryOutcome", "generalPreferenceOptions", "generalPreference", "generalPreferenceRetryOutcome"].contains(method), json.utf8.count > 49_152 {
             throw HostFailure("INVALID_INPUT: General preference transport is too large")
         }
         if method == "gtdArchiveOptions", json.utf8.count > 49_152 {
@@ -17917,7 +18421,7 @@ private final class Engine: @unchecked Sendable {
         }
         if ["inboxView", "captureView", "captureEdit", "captureSubmit", "setAreaFilter", "taskView", "taskOpenTab", "taskViewReferenceTarget", "editDraft", "destinationPicker", "search", "mindSweepGuide", "mindSweepAdd",
             "calendarComposerOpen", "calendarComposerEdit", "calendarComposerSave", "calendarEventTaskCreate", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome",
-            "notificationSetting", "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectFileRemoveWrite", "projectAttachmentWriteRetryOutcome", "projectFileRemoveWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
+            "notificationSetting", "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdPomodoroOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectFileRemoveWrite", "projectAttachmentWriteRetryOutcome", "projectFileRemoveWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
             guard let json = args.first as? String,
                   (try NativeJSON.jsonObject(with: Data(json.utf8))) is [String: Any] else {
                 throw HostFailure("Core input must be a JSON object")
@@ -18535,8 +19039,9 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Task open tab requires a bounded mode and explicit opening context")
             }
         }
-        if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome"].contains(method) {
+        if ["gtdWorkflowOptions", "gtdPomodoroOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 8_192,
+                  try NativeJSON.hasUniqueObjectKeys(encoded),
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else {
                 throw HostFailure("INVALID_INPUT: GTD workflow requires a bounded object")
             }
@@ -18552,11 +19057,21 @@ private final class Engine: @unchecked Sendable {
                     && (input["rawMode"] is NSNull || (input["rawMode"] as? String).map({ $0.utf16.count <= 200 }) == true)) else {
                     throw HostFailure("INVALID_INPUT: Task Editor options require an optional bounded local mode")
                 }
-            } else if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorFieldOptions"].contains(method) {
+            } else if ["gtdWorkflowOptions", "gtdPomodoroOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorFieldOptions"].contains(method) {
                 guard input.isEmpty else { throw HostFailure("INVALID_INPUT: GTD workflow options take an empty object") }
             } else if method == "gtdWorkflowDraft" {
-                guard Set(input.keys) == Set(["value"]), (input["value"] as? String).map({ $0.utf16.count <= 50 }) == true else {
-                    throw HostFailure("INVALID_INPUT: GTD schedule draft needs bounded text")
+                if input["type"] as? String == "pomodoroDurations" {
+                    guard Set(input.keys) == Set(["type", "focusMinutes", "breakMinutes", "expected"]),
+                          ["focusMinutes", "breakMinutes"].allSatisfy({ (input[$0] as? String).map { $0.utf8.count <= 512 } == true }),
+                          Self.validGtdPomodoroExpected(input["expected"], type: "pomodoroDurations"),
+                          let expected = input["expected"] as? [String: Any], let gate = expected["gate"] as? [String: Any],
+                          (gate["enabled"] as? [String: Any])?["value"] as? Bool == true else {
+                        throw HostFailure("INVALID_INPUT: Pomodoro draft requires bounded text and an enabled witness")
+                    }
+                } else {
+                    guard Set(input.keys) == Set(["value"]), (input["value"] as? String).map({ $0.utf16.count <= 50 }) == true else {
+                        throw HostFailure("INVALID_INPUT: GTD schedule draft needs bounded text")
+                    }
                 }
             } else {
                 guard Set(input.keys) == Set(["requestId", "edit", "expected"]),
@@ -20386,7 +20901,7 @@ private final class Engine: @unchecked Sendable {
         }
         var fired = false
         faults.journalRemove = { [unowned self] in
-            guard !fired, let command = self.pending, ["captureCommit", "captureLinesCommit", "trashItemsRestoreCommit", "trashItemsPurgeCommit"].contains(command.method),
+            guard !fired, let command = self.pending, ["captureCommit", "captureLinesCommit", "trashItemsRestoreCommit", "trashItemsPurgeCommit", "gtdWorkflowCommit"].contains(command.method),
                   let terminal = command.terminal, case .success = terminal else { return }
             fired = true
             throw HostFailure("Isolated capture terminal cleanup interrupted")
@@ -21655,6 +22170,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func persist(_ command: PendingCommand, mixedGuard: (() throws -> Void)? = nil) throws {
+        if command.method == Self.pomodoroMethod { _ = try pomodoroJournalArguments(command) }
         if let operation = CalendarSubscriptionOperation(commitMethod: command.method) {
             _ = try journalArguments(command)
             guard let turn = try requireCalendarSubscriptionSettingTurn(), turn.operation == operation else { throw Self.deviceStorageUnavailable }
@@ -22744,6 +23260,17 @@ private final class Engine: @unchecked Sendable {
             // console output can contain task content and must not leave the host.
             guard let at = line.firstIndex(of: "{"),
                   let payload = try? NativeJSON.jsonObject(with: Data(line[at...].utf8)) as? [String: Any] else { return }
+            if payload["scope"] as? String == "storage" {
+                guard String(line[..<at]).trimmingCharacters(in: .whitespaces) == "info: Native Pomodoro transition confirmed",
+                      let encoded = payload["context"] as? String, let context = try? Self.pomodoroObject(encoded, maximum: 512),
+                      Set(context.keys) == Set(["releaseCheck", "outcome"]), context["releaseCheck"] as? String == "v1.3.5/ios-pomodoro-credit",
+                      context["outcome"] as? String == "confirmed" else { return }
+                #if DEBUG
+                self?.faults?.commandDiagnostic?("pomodoroCreditConfirmed")
+                #endif
+                NSLog("Native Pomodoro transition confirmed releaseCheck=v1.3.5/ios-pomodoro-credit outcome=confirmed")
+                return
+            }
             if payload["scope"] as? String == "native-host",
                let encoded = payload["context"] as? String,
                let context = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] {

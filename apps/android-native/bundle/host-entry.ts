@@ -130,6 +130,14 @@ import { createNativeLocalAttachmentsForHost, nativeFileChannels, prepareNativeT
     prepareNativeTaskAttachmentAvailability, prepareNativeProjectFileAvailability, nativeProjectFileAvailabilityInitialURL,
     createNativeReadOnlySelfHostedAttachments, assertNativeSelfHostedAttachmentEncryptionAdmission } from './host-attachments';
 import { PROJECT_SQLITE_COLUMNS } from '../../../packages/core/src/project-sync-schema';
+import { TASK_SQLITE_COLUMNS, taskToSqliteRow } from '../../../packages/core/src/task-sync-schema';
+import { normalizeTaskForLoad } from '../../../packages/core/src/task-status';
+import { hasRawReadRow, rawReadRow } from '../../../packages/core/src/sqlite-raw-snapshot';
+import { taskEditValuesEqual } from '../../../packages/core/src/json-value-equality';
+import { stripSensitiveSettings } from '../../../packages/core/src/store-helpers';
+import { prepareNativePomodoroTransition, validatePreparedNativePomodoroTransition,
+    MAX_NATIVE_POMODORO_PLAN_BYTES, type NativePomodoroRequest } from '../../../packages/core/src/native-pomodoro-session';
+import { NativePomodoroTransitionRefusal } from '../../../packages/core/src/native-request-receipts';
 import { createPreparedProjectAvailabilityMethods, createProjectAvailabilityMethods } from '../../../packages/core/src/native-host-contract-project-availability';
 import { SYNC_ENCRYPTION_STATE_KEY } from '../../../packages/core/src/sync-storage-keys';
 import { createNativeReminders } from './host-reminders';
@@ -1195,7 +1203,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -1230,6 +1238,21 @@ const backupAdapter = (newWork = false) => {
 const backupJson = (json: string): unknown => {
     try { return JSON.parse(json) as unknown; }
     catch { throw new Error('INVALID_INPUT: Invalid backup document input'); }
+};
+
+// One private preparation belongs to native's first journal publication. Cold
+// retries instead use the immutable plan and the adapter's exact relevant CAS.
+let pomodoroWarmAdmission: { planJSON: string; assertCurrent: () => void } | null = null;
+const pomodoroJSON = (json: string, maximum = MAX_NATIVE_POMODORO_PLAN_BYTES): unknown => {
+    if (typeof json !== 'string' || json.length > maximum || new TextEncoder().encode(json).byteLength > maximum)
+        throw new Error('INVALID_INPUT: Invalid Pomodoro transport');
+    try { return JSON.parse(json) as unknown; } catch { throw new Error('INVALID_INPUT: Invalid Pomodoro transport'); }
+};
+const pomodoroAdapter = () => {
+    if (globalThis.__mindwtrHostPlatform !== 'ios' || !bootAdapter || getStorageAdapter() !== bootAdapter
+        || !bootAdapter.concurrentWritesGuarded || isSandboxMode() || isWorkspaceTransitionActive())
+        throw new Error('NOT_READY: Pomodoro requires current validated personal storage');
+    return bootAdapter;
 };
 const backupTranslate = (key: string, values?: Record<string, number | string>): string => {
     const template = unwrap(contract.getStrings({ keys: [key] })).strings[key];
@@ -2326,6 +2349,9 @@ globalThis.MindwtrHost = {
     },
     gtdWorkflowOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.getGtdWorkflowOptions(JSON.parse(json))); });
+    },
+    gtdPomodoroOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.getGtdPomodoroOptions(JSON.parse(json))); });
     },
     gtdArchiveOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.getGtdArchiveOptions(JSON.parse(json))); });
@@ -3989,6 +4015,92 @@ globalThis.MindwtrHost = {
             return result;
         });
     },
+    pomodoroSessionRead(): string {
+        return submit(async () => pomodoroAdapter().readPomodoroSession());
+    },
+    pomodoroTransitionPrepare(requestJSON: string): string {
+        return submit(async () => {
+            pomodoroWarmAdmission = null;
+            const adapter = pomodoroAdapter();
+            const stale = () => new Error('STALE_REVISION: Pomodoro preparation is no longer current');
+            const ready = () => {
+                if (pomodoroAdapter() !== adapter) throw stale();
+                requireSaved(); unwrap(contract.getDataSettings());
+                const status = getPersistenceStatus();
+                if (status.failed || status.queued || status.inFlight || status.immediate || status.retrying
+                    || useTaskStore.getState().editLockCount > 0 || useTaskStore.getState().isLoading) throw stale();
+                return status;
+            };
+            const status = ready(), state = useTaskStore.getState();
+            const references = [state._allTasks, state._allProjects, state._allSections, state._allAreas, state._allPeople, state.settings];
+            const frozen = JSON.parse(JSON.stringify(references)) as unknown;
+            const assertCurrent = () => {
+                if (ready().generation !== status.generation) throw stale();
+                const current = useTaskStore.getState();
+                const values = [current._allTasks, current._allProjects, current._allSections, current._allAreas, current._allPeople, current.settings];
+                if (current.lastDataChangeAt !== state.lastDataChangeAt || !values.every((value, index) => value === references[index])
+                    || !taskEditValuesEqual(values, frozen)) throw stale();
+            };
+            assertCurrent();
+            if (!await adapter.readRowBaseline()) throw stale();
+            assertCurrent();
+            const data = await adapter.getData({ rawTasks: true });
+            assertCurrent();
+            const canonical = [data.tasks, data.projects, data.sections ?? [], data.areas ?? [], data.people ?? [], stripSensitiveSettings(data.settings)];
+            // Normal startup projects legacy task fields; private recovery loads retain their raw shape.
+            if (!taskEditValuesEqual(references, canonical)
+                && !taskEditValuesEqual(references, [data.tasks.map((task) => normalizeTaskForLoad(task)), ...canonical.slice(1)])) throw stale();
+            const session = await adapter.readPomodoroSession();
+            assertCurrent();
+            // Native Engine alone augments an adoption intent with its checked
+            // fixed-cell read. The shared preparer validates that complete raw
+            // source; this parse only chooses the exact BEFORE task to read.
+            const parsed = pomodoroJSON(requestJSON) as NativePomodoroRequest;
+            const request = parsed.action === 'adoptLegacy' ? parsed : pomodoroJSON(requestJSON, 8192) as NativePomodoroRequest;
+            const legacy = request.action === 'adoptLegacy' && typeof request.legacy?.sessionRaw === 'string'
+                ? JSON.parse(request.legacy.sessionRaw) as { selectedTaskId?: unknown } | null : null;
+            const selected = request.action === 'adoptLegacy'
+                ? typeof legacy?.selectedTaskId === 'string' ? legacy.selectedTaskId : undefined
+                : session.state?.session.selectedTaskId;
+            const matches = selected ? data.tasks.filter((task) => task.id === selected) : [];
+            if (matches.length > 1 || (matches.length === 1 && !hasRawReadRow(matches[0]))) throw stale();
+            const row = matches.length === 1 ? [...rawReadRow(matches[0], taskToSqliteRow(matches[0])).row] as (string | number | null)[] : null;
+            if (row && row.length !== TASK_SQLITE_COLUMNS.length) throw stale();
+            const plan = prepareNativePomodoroTransition({ request, session, target: selected ? { id: selected, row } : null,
+                deviceId: request.action === 'initialize' ? null : typeof data.settings.deviceId === 'string' ? data.settings.deviceId : null });
+            assertCurrent();
+            if (!plan) return { kind: 'noop' };
+            const planJSON = JSON.stringify(validatePreparedNativePomodoroTransition(plan));
+            pomodoroWarmAdmission = { planJSON, assertCurrent };
+            return { kind: 'prepared', planJSON };
+        });
+    },
+    pomodoroTransitionValidate(planJSON: string): string {
+        return submit(async () => validatePreparedNativePomodoroTransition(pomodoroJSON(planJSON)).result);
+    },
+    pomodoroTransitionCommit(planJSON: string, replayOnly: boolean): string {
+        return submit(async () => {
+            // Only the native owner can supply this flag; malformed transport is
+            // never a request to fall through from replay into a fresh apply.
+            if (typeof replayOnly !== 'boolean') throw new Error('INVALID_INPUT: Invalid Pomodoro replay authority');
+            const plan = validatePreparedNativePomodoroTransition(pomodoroJSON(planJSON));
+            if (!replayOnly && pomodoroWarmAdmission?.planJSON === planJSON) {
+                pomodoroWarmAdmission.assertCurrent();
+                pomodoroWarmAdmission = null;
+            }
+            const adapter = pomodoroAdapter();
+            try { return await adapter.savePomodoroTransitionWithReceipt(plan, { replayOnly }); }
+            catch (error) {
+                if (error instanceof NativePomodoroTransitionRefusal)
+                    throw new Error(error.code === 'staleBaseline' ? 'STALE_REVISION: Pomodoro baseline changed before mutation'
+                        : 'NOT_READY: Pomodoro storage refused before mutation');
+                throw new Error('Pomodoro transition could not be proven');
+            }
+        });
+    },
+    pomodoroTransitionOutcome(planJSON: string): string {
+        return submit(async () => pomodoroAdapter().readPomodoroTransitionOutcome(validatePreparedNativePomodoroTransition(pomodoroJSON(planJSON))));
+    },
     /** Mind Sweep guide and its literal one-task Inbox add. The iOS host journals preparation before commit. */
     mindSweepGuide(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getMindSweepGuide(JSON.parse(json))); });
@@ -4314,19 +4426,20 @@ globalThis.MindwtrHost = {
         return submit(async () => ({ pruned: await pruneNativeRequestReceipts(sqlite) }));
     },
     /** Private iOS startup: unfinished response ownership outranks receipt expiry. */
-    iosPruneReceipts(rawRetentionJSON: string): string {
+    iosPruneReceipts(rawRetentionJSON: string, owedRequestId: string | null = null): string {
         return submit(async () => {
             const invalid = () => new Error('INVALID_INPUT: Invalid reminder receipt retention');
             if (globalThis.__mindwtrHostPlatform !== 'ios' || typeof rawRetentionJSON !== 'string'
                 || rawRetentionJSON.length > 8192 || new TextEncoder().encode(rawRetentionJSON).byteLength > 8192) throw invalid();
             let retained: unknown;
             try { retained = JSON.parse(rawRetentionJSON); } catch { throw invalid(); }
+            if (owedRequestId !== null && (typeof owedRequestId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(owedRequestId))) throw invalid();
             if (retained !== null && (!Array.isArray(retained) || retained.length > 128
                 || retained.some((id) => typeof id !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id))
                 || new Set(retained).size !== retained.length)) throw invalid();
             const pruned = await pruneNativeRequestReceipts(sqlite, new Date(), retained === null
-                ? { retainedCommands: ['reminderComplete', 'reminderSnooze'] }
-                : { retainedRequestIds: retained as string[] });
+                ? { retainedCommands: ['reminderComplete', 'reminderSnooze'], retainedRequestIds: owedRequestId ? [owedRequestId] : [] }
+                : { retainedRequestIds: [...new Set([...(retained as string[]), ...(owedRequestId ? [owedRequestId] : [])])] });
             try { await diagnosticsLog.append({ ts: new Date().toISOString(), level: 'info', scope: 'native-ios',
                 message: 'Native iOS reminder receipt retention applied',
                 context: { releaseCheck: 'v1.3.5/ios-reminder-receipt-retention', outcome: retained === null ? 'conservative' : 'snapshot' },

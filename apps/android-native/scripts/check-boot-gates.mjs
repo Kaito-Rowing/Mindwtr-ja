@@ -580,7 +580,7 @@ assert.match(hostEntry, /createNativeSync\(nativeSyncBindings\)/);
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -3614,7 +3614,9 @@ export { prepareNativeAttachmentDraftDiscardCandidates, prepareNativeAttachmentD
 export { prepareNativeAttachmentCleanupWitness, isNativeAttachmentCleanupWitnessEligible } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-attachment-cleanup.ts'))};
 import { createOwnedEditorFileEditTaskDraftSaveMethods as createRealMixedSaveMethods } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-host-contract-owned-file-edit-save.ts'))};
 import { createNativeHostContract as createRealCompleteContract } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-host-contract.ts'))};
-import { NativeReceiptSqliteAdapter as RealCompleteAdapter } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-request-receipts.ts'))};
+import { NativePomodoroTransitionRefusal as PomodoroRefusal520, NativeReceiptSqliteAdapter as RealCompleteAdapter } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-request-receipts.ts'))};
+import { TASK_SQLITE_COLUMNS as pomodoroColumns520, taskToSqliteRow as pomodoroRow520 } from ${JSON.stringify(resolve(app, '../../packages/core/src/task-sync-schema.ts'))};
+import { rememberRawReadRow as rememberPomodoroRow520 } from ${JSON.stringify(resolve(app, '../../packages/core/src/sqlite-raw-snapshot.ts'))};
 import { setStorageAdapter as setRealCompleteAdapter, useTaskStore as realCompleteStore,
     getPersistenceStatus as realCompletePersistence } from ${JSON.stringify(resolve(app, '../../packages/core/src/store.ts'))};
 const realCompleteContract = createRealCompleteContract();
@@ -3692,10 +3694,19 @@ export class SqliteAdapter {
     return globalThis.rowBaseline || { ids: Object.fromEntries(['tasks', 'projects', 'sections', 'areas', 'people'].map((table) =>
       [table, data[table].map((row) => row.id)])), settings: data.settings };
   }
-  async getData() {
+  async getData(options) {
     globalThis.events.push('load');
     globalThis.lastLoaded = globalThis.fakeDataSequence.shift() || globalThis.fakeData;
     if (globalThis.linesReadHold) await globalThis.linesReadHold;
+    if (options?.rawTasks && globalThis.pomodoroRawCells) {
+      for (const task of globalThis.lastLoaded.tasks) {
+        const projection = pomodoroRow520(task);
+        const row = Object.fromEntries(pomodoroColumns520.map((name, index) => [name, projection[index]]));
+        Object.assign(row, globalThis.pomodoroRawCells);
+        rememberPomodoroRow520(task, row, pomodoroColumns520, projection);
+        globalThis.pomodoroExpectedRaw = pomodoroColumns520.map((name) => row[name]);
+      }
+    }
     return globalThis.lastLoaded;
   }
   async saveData(data) {
@@ -3714,11 +3725,26 @@ export function assertNativeLegacyBackupSafe() { globalThis.events.push('legacyC
 // Core compares every persisted field; the fake compares the whole snapshot.
 export function legacyImportMismatch(merged, saved) { return JSON.stringify(merged) === JSON.stringify(saved) ? null : 'tasks'; }
 export function splitSqlStatements(sql) { return [sql]; }
-export class NativeReceiptSqliteAdapter extends SqliteAdapter {}
+export class NativeReceiptSqliteAdapter extends SqliteAdapter {
+  async readPomodoroSession() {
+    globalThis.events.push('pomodoro-read');
+    if (globalThis.pomodoroReadError) throw new Error('Pomodoro session could not be read');
+    return globalThis.pomodoroSession ? JSON.parse(JSON.stringify(globalThis.pomodoroSession)) : { raw: null, state: null };
+  }
+  async savePomodoroTransitionWithReceipt(plan, options) {
+    globalThis.pomodoroInputs.push(JSON.stringify([plan, options]));
+    if (globalThis.pomodoroRefusal) throw new PomodoroRefusal520(globalThis.pomodoroRefusal, 'pre-domain');
+    if (globalThis.pomodoroCommitError) throw new Error(globalThis.pomodoroCommitError);
+    globalThis.pomodoroOutcome = plan.result;
+    globalThis.pomodoroSession = { raw: plan.sessionAfter, state: JSON.parse(plan.sessionAfter) };
+    return { result: plan.result, replayed: options.replayOnly, projectionReloaded: globalThis.pomodoroProjection !== false };
+  }
+  async readPomodoroTransitionOutcome() { return globalThis.pomodoroOutcome || null; }
+}
 export async function loadNativeRequestReceipts(_client, options) { globalThis.receiptsLoadedAt = globalThis.events.length;
   globalThis.receiptScope = options?.durableCommands ?? null; return 0; }
 export function setNativeReplayTokens(mode) { globalThis.replayTokens = mode; }
-export async function pruneNativeRequestReceipts() { return 3; }
+export async function pruneNativeRequestReceipts(client, at, options) { globalThis.pruneInputs.push(options ?? null); return 3; }
 export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
 export function getStorageAdapter() { return globalThis.adapter; }
 export async function flushPendingSave() { globalThis.events.push('flush'); await globalThis.flushHold;
@@ -3754,6 +3780,10 @@ export function createNativeHostContract(bindings = {}) {
       globalThis.activationCount++;
       globalThis.saveCount++;
       return { ok: true, value: null };
+    },
+    getGtdPomodoroOptions(input) {
+      globalThis.menuInputs.push(JSON.stringify(['gtdPomodoroOptions', input]));
+      return globalThis.gtdPomodoroResult;
     },
     getInboxWindow() {
       globalThis.queryCount++;
@@ -4122,6 +4152,7 @@ const built = await build({
 const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined, configure = () => {}, source = built.outputFiles[0].text) => {
     const state = {
         fakeData: { tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} },
+        pomodoroInputs: [], pomodoroSession: null, pomodoroOutcome: null, pruneInputs: [],
         fakeDataSequence, activationCount: 0, saveCount: 0, queryCount: 0,
         __mindwtrHostPlatform: hostPlatform,
         events: [], planInputs: [], plan: null, sqliteHasData: true, saveError: null, afterSave: null, lastLoaded: null, commitResult: null,
@@ -4280,6 +4311,245 @@ const poll = async (state, id) => {
     const before = state.menuInputs.length;
     assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgePrepare(JSON.stringify({ text: 'x'.repeat(2_000_001) })))).ok, false);
     assert.equal(state.menuInputs.length, before, 'existing completion transport length refusal never reaches core');
+}
+// Task548: private settings facade keeps the existing saved-state gate and core errors.
+// The stand-in proves transport only; the native tests exercise the actual contract.
+{
+    const state = makeState(0, [], 'ios');
+    state.gtdPomodoroResult = { ok: false, error: { code: 'NOT_READY', message: 'core is not ready' } };
+    assert.match((await poll(state, state.MindwtrHost.gtdPomodoroOptions('{}'))).error, /^NOT_READY:/);
+    state.menuInputs.length = 0;
+    assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+    state.gtdPomodoroResult = { ok: true, value: { pomodoro: { title: 'Pomodoro' }, expected: {} } };
+    assert.deepEqual((await poll(state, state.MindwtrHost.gtdPomodoroOptions('{}'))).value, state.gtdPomodoroResult.value);
+    assert.deepEqual(state.menuInputs.map(JSON.parse), [['gtdPomodoroOptions', {}]]);
+    state.persistenceFailure = { kind: 'save_failed' };
+    assert.equal((await poll(state, state.MindwtrHost.gtdPomodoroOptions('{}'))).ok, false);
+    assert.equal(state.menuInputs.length, 1);
+    state.persistenceFailure = null;
+    state.gtdPomodoroResult = { ok: false, error: { code: 'STORAGE_ERROR', message: 'settings read failed' } };
+    assert.match((await poll(state, state.MindwtrHost.gtdPomodoroOptions('{}'))).error, /STORAGE_ERROR: settings read failed/);
+    const count = state.menuInputs.length;
+    assert.equal((await poll(state, state.MindwtrHost.gtdPomodoroOptions('{'))).ok, false);
+    assert.equal(state.menuInputs.length, count);
+}
+// Task520: actual shared pure preparation/validation with the production five
+// private facades. This storage stand-in proves routing/admission only; the
+// receipt suite and pending native tests own real SQLite journal/fault proof.
+{
+    const request = JSON.stringify({ action: 'initialize', requestId: '11111111-1111-4111-8111-111111111111',
+        observedAtMs: 1791590400000, localDayKey: '2026-10-10', durations: { focusMinutes: 25, breakMinutes: 5 } });
+    const ready520 = async (platform = 'ios', taskCount = 0) => {
+        const state = makeState(taskCount, [], platform);
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        state.settings = state.fakeData.settings;
+        return state;
+    };
+    const state = await ready520();
+    assert.deepEqual((await poll(state, state.MindwtrHost.pomodoroSessionRead())).value, { raw: null, state: null });
+    const prepared = await poll(state, state.MindwtrHost.pomodoroTransitionPrepare(request));
+    assert.equal(prepared.ok, true); assert.equal(prepared.value.kind, 'prepared');
+    const planJSON = prepared.value.planJSON, plan = JSON.parse(planJSON);
+    assert.deepEqual(plan.request, JSON.parse(request)); assert.equal(plan.sessionBefore, null);
+    assert.equal(JSON.parse(plan.sessionAfter).session.timerState.isRunning, false);
+    const cold = makeState(0, [], 'ios');
+    assert.equal((await poll(cold, cold.MindwtrHost.pomodoroTransitionValidate(planJSON))).ok, true);
+    assert.equal(cold.events.length, 0, 'pure validation does not activate/read/write');
+    assert.equal((await poll(cold, cold.MindwtrHost.pomodoroSessionRead())).ok, false);
+    assert.equal((await poll(cold, cold.MindwtrHost.pomodoroTransitionPrepare(request))).ok, false);
+    assert.equal((await poll(state, state.MindwtrHost.pomodoroTransitionCommit(planJSON, false))).value.projectionReloaded, true);
+    assert.deepEqual(JSON.parse(state.pomodoroInputs[0]), [plan, { replayOnly: false }]);
+    assert.deepEqual((await poll(state, state.MindwtrHost.pomodoroTransitionOutcome(planJSON))).value, plan.result);
+    assert.equal((await poll(state, state.MindwtrHost.pomodoroTransitionCommit(planJSON, true))).value.replayed, true);
+    const reconcile = JSON.stringify({ action: 'reconcile', requestId: '22222222-2222-4222-8222-222222222222',
+        observedAtMs: 1791590400000, localDayKey: '2026-10-10', autoStart: { autoStartFocus: false, autoStartBreaks: false } });
+    const before = state.pomodoroInputs.length;
+    assert.deepEqual((await poll(state, state.MindwtrHost.pomodoroTransitionPrepare(reconcile))).value, { kind: 'noop' });
+    assert.equal(state.pomodoroInputs.length, before, 'countdown/paused observation commits nothing');
+    state.pomodoroReadError = true;
+    assert.equal((await poll(state, state.MindwtrHost.pomodoroTransitionPrepare(reconcile))).ok, false, 'read failure never means native absence');
+    const android = await ready520('android');
+    assert.equal((await poll(android, android.MindwtrHost.pomodoroSessionRead())).ok, false);
+    const raw = await ready520('ios', 'auto');
+    const task = { id: 'task', title: 'Private', status: 'next', contexts: [], tags: [],
+        createdAt: '2026-10-10T00:00:00.000Z', updatedAt: '2026-10-10T00:00:00.000Z', rev: 1,
+        revBy: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', timeSpentMinutes: 4 };
+    raw.fakeData = { ...raw.fakeData, tasks: [task], settings: { deviceId: task.revBy } };
+    raw.lastLoaded = raw.fakeData; raw.settings = raw.fakeData.settings;
+    const running = JSON.parse(plan.sessionAfter);
+    running.session.selectedTaskId = task.id; running.session.timerState.isRunning = true;
+    running.session.phaseEndsAt = '2026-10-10T00:00:00.000Z';
+    raw.pomodoroSession = { raw: JSON.stringify(running), state: running };
+    raw.pomodoroRawCells = { contexts: ' [ ] ', tags: null, timeSpentMinutes: 4, isFocusedToday: 0 };
+    const rawPrepared = await poll(raw, raw.MindwtrHost.pomodoroTransitionPrepare(reconcile));
+    assert.equal(rawPrepared.ok, true, JSON.stringify(rawPrepared));
+    const rawPlan = JSON.parse(rawPrepared.value.planJSON);
+    assert.deepEqual(rawPlan.target.row, [...raw.pomodoroExpectedRaw], 'literal SQL JSON/null/numeric cells reach the actual helper');
+    assert.equal((await poll(raw, raw.MindwtrHost.pomodoroTransitionCommit(rawPrepared.value.planJSON, false))).ok, true);
+    assert.deepEqual(JSON.parse(raw.pomodoroInputs[0])[0].target.row, rawPlan.target.row, 'Commit preserves literal BEFORE cells');
+    const owed = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const retained = Array.from({ length: 128 }, (_, index) => index.toString(16).padStart(8, '0') + '-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    assert.equal((await poll(raw, raw.MindwtrHost.iosPruneReceipts(JSON.stringify(retained), owed))).ok, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(raw.pruneInputs.at(-1))), { retainedRequestIds: [...retained, owed] });
+    assert.equal((await poll(raw, raw.MindwtrHost.iosPruneReceipts('null', owed))).ok, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(raw.pruneInputs.at(-1))), {
+        retainedCommands: ['reminderComplete', 'reminderSnooze'], retainedRequestIds: [owed] });
+    const pruneCount = raw.pruneInputs.length;
+    assert.equal((await poll(raw, raw.MindwtrHost.iosPruneReceipts('null', 'NOT-UUID'))).ok, false);
+    assert.equal(raw.pruneInputs.length, pruneCount, 'invalid owner never reaches pruning');
+    for (const mutation of ['generation', 'tasks', 'settings', 'edit', 'adapter', 'queued']) {
+        const stale = await ready520(), preparation = await poll(stale, stale.MindwtrHost.pomodoroTransitionPrepare(request));
+        assert.equal(preparation.ok, true);
+        if (mutation === 'generation') stale.persistenceStatus = { generation: 1 };
+        else if (mutation === 'tasks') stale.lastLoaded = { ...stale.lastLoaded, tasks: [] };
+        else if (mutation === 'settings') stale.settings = {};
+        else if (mutation === 'edit') stale.storeEditLocks = 1;
+        else if (mutation === 'adapter') stale.adapter = {};
+        else stale.persistenceStatus = { generation: 0, queued: true };
+        assert.equal((await poll(stale, stale.MindwtrHost.pomodoroTransitionCommit(preparation.value.planJSON, false))).ok, false, mutation);
+        assert.equal(stale.pomodoroInputs.length, 0, 'stale first preparation never enters storage');
+    }
+    for (const code of ['staleBaseline', 'notReady']) {
+        const refused = await ready520(); refused.pomodoroRefusal = code;
+        const prep = await poll(refused, refused.MindwtrHost.pomodoroTransitionPrepare(request));
+        assert.match((await poll(refused, refused.MindwtrHost.pomodoroTransitionCommit(prep.value.planJSON, false))).error,
+            code === 'staleBaseline' ? /^STALE_REVISION:/ : /^NOT_READY:/);
+    }
+    const uncertain = await ready520(); uncertain.pomodoroCommitError = 'NOT_READY: provider text';
+    const prep = await poll(uncertain, uncertain.MindwtrHost.pomodoroTransitionPrepare(request));
+    assert.equal((await poll(uncertain, uncertain.MindwtrHost.pomodoroTransitionCommit(prep.value.planJSON, false))).error,
+        'Pomodoro transition could not be proven', 'arbitrary provider text is never a refusal witness');
+
+    // Task529: controls use the same five private routes and actual shared524
+    // algebra. The adapter above is a routing stand-in, never atomic SQL proof.
+    const controls = ['toggle', 'reset', 'switchPhase', 'setDurations', 'selectTask'];
+    const at = 1791590400000;
+    const options = { autoStartFocus: false, autoStartBreaks: false };
+    const control = (action, fields = {}) => ({ action, requestId: '33333333-3333-4333-8333-333333333333',
+        observedAtMs: at, localDayKey: '2026-10-10', autoStart: options, ...fields });
+    for (const action of controls) {
+        const active = await ready520();
+        await poll(active, active.MindwtrHost.pomodoroTransitionCommit(planJSON, false));
+        const fields = action === 'setDurations' ? { durations: { focusMinutes: 50, breakMinutes: 10 } }
+            : action === 'selectTask' ? { taskId: null } : {};
+        const preparedControl = await poll(active, active.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(control(action, fields))));
+        assert.equal(preparedControl.ok, true, action); assert.equal(preparedControl.value.kind, 'prepared');
+        const nextPlan = JSON.parse(preparedControl.value.planJSON), nextState = JSON.parse(nextPlan.sessionAfter);
+        assert.deepEqual(nextPlan.request, control(action, fields));
+        assert.equal(nextState.generation, JSON.parse(plan.sessionAfter).generation + 1, action);
+        assert.equal(nextState.session.updatedAtMs, at + 1, 'same-time explicit intent has a monotonic stamp');
+        assert.equal(Object.hasOwn(nextState.session, 'lastEvent'), false);
+        const validator = makeState(0, [], 'ios');
+        assert.equal((await poll(validator, validator.MindwtrHost.pomodoroTransitionValidate(preparedControl.value.planJSON))).ok, true);
+        assert.equal(validator.events.length, 0, 'control pure validation precedes any activation');
+        const forged = { ...nextPlan, result: { ...nextPlan.result, generation: nextPlan.result.generation + 1 } };
+        assert.equal((await poll(validator, validator.MindwtrHost.pomodoroTransitionValidate(JSON.stringify(forged)))).ok, false);
+        assert.equal(validator.events.length, 0, 'forged result cannot open storage');
+        active.pomodoroProjection = false;
+        const saved = await poll(active, active.MindwtrHost.pomodoroTransitionCommit(preparedControl.value.planJSON, false));
+        assert.equal(saved.value.projectionReloaded, false);
+        assert.deepEqual(JSON.parse(active.pomodoroInputs.at(-1)), [nextPlan, { replayOnly: false }]);
+        assert.deepEqual((await poll(active, active.MindwtrHost.pomodoroTransitionOutcome(preparedControl.value.planJSON))).value, nextPlan.result);
+        assert.equal((await poll(active, active.MindwtrHost.pomodoroTransitionCommit(preparedControl.value.planJSON, true))).value.replayed, true);
+        assert.deepEqual(JSON.parse(active.pomodoroInputs.at(-1)), [nextPlan, { replayOnly: true }]);
+        const count = active.pomodoroInputs.length;
+        assert.equal((await poll(active, active.MindwtrHost.pomodoroTransitionCommit(preparedControl.value.planJSON, 'true'))).ok, false);
+        assert.equal(active.pomodoroInputs.length, count, 'closed replay flag never reaches storage');
+    }
+    for (const autoStartFocus of [false, true]) for (const autoStartBreaks of [false, true]) {
+        const selected = await ready520('ios', 'auto');
+        const other = { ...task, id: 'other', timeSpentMinutes: 7 };
+        selected.fakeData = { ...selected.fakeData, tasks: [task, other], settings: { deviceId: task.revBy } };
+        selected.lastLoaded = selected.fakeData; selected.settings = selected.fakeData.settings;
+        selected.pomodoroRawCells = { contexts: ' [ ] ', tags: null, timeSpentMinutes: 4, isFocusedToday: 0 };
+        for (const taskId of ['other', null]) {
+            selected.pomodoroSession = { raw: JSON.stringify(running), state: running };
+            const input = control('selectTask', { taskId, autoStart: { autoStartFocus, autoStartBreaks } });
+            const answer = await poll(selected, selected.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(input)));
+            assert.equal(answer.ok, true, JSON.stringify(input));
+            const frozen = JSON.parse(answer.value.planJSON), after = JSON.parse(frozen.sessionAfter);
+            assert.equal(frozen.target.id, 'task', 'selection always credits the raw BEFORE selection');
+            assert.equal(frozen.target.row[0], 'task'); assert.equal(frozen.result.creditedMinutes, 25);
+            assert.equal(after.session.selectedTaskId ?? null, taskId);
+            assert.equal(after.session.timerState.phase, 'break');
+            assert.equal(after.session.timerState.isRunning, autoStartBreaks);
+            assert.equal(after.session.phaseEndsAt ?? null, autoStartBreaks ? '2026-10-10T00:05:00.000Z' : null);
+        }
+        selected.pomodoroSession = { raw: JSON.stringify(running), state: running };
+        const preset = await poll(selected, selected.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(control('setDurations', {
+            durations: { focusMinutes: 50, breakMinutes: 10 }, autoStart: { autoStartFocus, autoStartBreaks } }))));
+        assert.equal(preset.ok, true); const preparedPreset = JSON.parse(preset.value.planJSON);
+        assert.equal(preparedPreset.result.creditedMinutes, 25, 'preset credits the old duration');
+        assert.deepEqual(JSON.parse(preparedPreset.sessionAfter).session.durations, { focusMinutes: 50, breakMinutes: 10 });
+    }
+    const invalid = await ready520(); await poll(invalid, invalid.MindwtrHost.pomodoroTransitionCommit(planJSON, false));
+    const count = invalid.pomodoroInputs.length;
+    const requests = [control('unknown'), control('reset', { extra: true }), control('toggle', { autoStart: { autoStartFocus: 1, autoStartBreaks: false } }),
+        control('setDurations', { durations: { focusMinutes: true, breakMinutes: 5 } }), control('setDurations', { durations: { focusMinutes: 181, breakMinutes: 5 } }),
+        control('selectTask'), control('selectTask', { taskId: '' }), control('selectTask', { taskId: '__proto__' }),
+        control('selectTask', { taskId: ' task' }), control('selectTask', { taskId: '😀'.repeat(251) }),
+        control('selectTask', { taskId: null, localDayKey: '2026-02-31' })];
+    for (const value of requests) assert.equal((await poll(invalid, invalid.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(value)))).ok, false, JSON.stringify(value));
+    // Duplicate textual keys are refused by the Swift private transport before
+    // this JS facade; NativePomodoroActionsHostTests covers that native boundary.
+    assert.equal(invalid.pomodoroInputs.length, count, 'invalid controls never reach the storage stand-in');
+    const maximum = await poll(invalid, invalid.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(control('selectTask', { taskId: '😀'.repeat(250) }))));
+    assert.equal(maximum.ok, true, '500 UTF-16 units remain byte-exact');
+    assert.equal(JSON.parse(maximum.value.planJSON).request.taskId, '😀'.repeat(250));
+
+    // Task541: only native Engine supplies this augmentation. These actual
+    // shared535 helpers prove routing/pure validation, not KV source authority
+    // or atomic storage (owned by the authored real JSC/SQLite native cases).
+    const adoption = (sessionRaw = null, collapsedRaw = null) => control('adoptLegacy', {
+        legacy: { version: 1, namespace: 'NativeUITests.fixture', sessionRaw, collapsedRaw },
+    });
+    const absent = await ready520();
+    const absence = await poll(absent, absent.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(adoption())));
+    assert.equal(absence.ok, true);
+    const absentPlan = JSON.parse(absence.value.planJSON);
+    assert.equal(absentPlan.sessionBefore, null); assert.equal(absentPlan.result.creditedMinutes, 0);
+    assert.equal(JSON.parse(absentPlan.sessionAfter).session.updatedAtMs, 0);
+    const pureLegacy = makeState(0, [], 'ios');
+    assert.equal((await poll(pureLegacy, pureLegacy.MindwtrHost.pomodoroTransitionValidate(absence.value.planJSON))).ok, true);
+    assert.equal(pureLegacy.events.length, 0, 'adoption validator does not read KV, boot or open SQL');
+    const forgedLegacy = { ...absentPlan, request: { ...absentPlan.request, legacy: { ...absentPlan.request.legacy, version: 2 } } };
+    assert.equal((await poll(pureLegacy, pureLegacy.MindwtrHost.pomodoroTransitionValidate(JSON.stringify(forgedLegacy)))).ok, false);
+    assert.equal(pureLegacy.events.length, 0);
+    assert.equal((await poll(absent, absent.MindwtrHost.pomodoroTransitionCommit(absence.value.planJSON, false))).ok, true);
+    assert.equal((await poll(absent, absent.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(adoption())))).ok, false,
+        'existing native session cannot fall back to legacy');
+    assert.equal((await poll(absent, absent.MindwtrHost.pomodoroTransitionCommit(absence.value.planJSON, true))).value.replayed, true);
+    assert.deepEqual(JSON.parse(absent.pomodoroInputs.at(-1)), [absentPlan, { replayOnly: true }]);
+    assert.equal((await poll(android, android.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(adoption())))).ok, false);
+    for (const autoStartFocus of [false, true]) for (const autoStartBreaks of [false, true]) {
+        const active = await ready520('ios', 'auto');
+        active.fakeData = { ...active.fakeData, tasks: [task], settings: { deviceId: task.revBy } };
+        active.lastLoaded = active.fakeData; active.settings = active.fakeData.settings;
+        active.pomodoroRawCells = { contexts: ' [ ] ', tags: null, timeSpentMinutes: 4, isFocusedToday: 0 };
+        const legacy = { durations: { focusMinutes: 50, breakMinutes: 10 }, selectedTaskId: 'task',
+            timerState: { phase: 'focus', remainingSeconds: 1, isRunning: true, completedFocusSessions: 3 },
+            sessionHistory: { totalCompletedFocusSessions: 3, completedFocusSessionsByTaskId: { task: 3 } },
+            phaseEndsAt: '2026-10-10T00:00:00.000Z', updatedAtMs: at - 1000 };
+        const rawSource = ' '.repeat(9000) + JSON.stringify(legacy);
+        const input = { ...adoption(rawSource, 'true'), autoStart: { autoStartFocus, autoStartBreaks } };
+        const response = await poll(active, active.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(input)));
+        assert.equal(response.ok, true, JSON.stringify(response));
+        const frozen = JSON.parse(response.value.planJSON), after = JSON.parse(frozen.sessionAfter);
+        assert.deepEqual(frozen.request, input, 'source beyond ordinary intent bound is retained exactly');
+        assert.deepEqual(frozen.target.row, [...active.pomodoroExpectedRaw], 'legacy selection uses literal raw BEFORE cells');
+        assert.equal(frozen.result.creditedMinutes, 50); assert.equal(after.session.updatedAtMs, at - 1000);
+        assert.equal(after.session.timerState.phase, 'break'); assert.equal(after.session.timerState.isRunning, autoStartBreaks);
+        assert.equal((await poll(active, active.MindwtrHost.pomodoroTransitionCommit(response.value.planJSON, false))).ok, true);
+    }
+    for (const raw of ['', 'null', '{"unknown":1}', '{"updatedAtMs":1,"updatedAtMs":2}',
+        '{"timerState":{"isRunning":"true"}}']) {
+        const active = await ready520();
+        assert.equal((await poll(active, active.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(adoption(raw))))).ok, false);
+        assert.equal(active.pomodoroInputs.length, 0, 'malformed present source never reaches commit');
+    }
+    const oversizedLegacy = await ready520();
+    assert.equal((await poll(oversizedLegacy, oversizedLegacy.MindwtrHost.pomodoroTransitionPrepare(
+        JSON.stringify(adoption(null, '\\'.repeat(1_000_000)))))).ok, false, 'encoded private request budget remains bounded');
 }
 // Task499: production private facades, saved-generation/row identity and stale
 // accepted-baseline ordering. The core stand-in is deliberate: native JSC tests
@@ -7017,7 +7287,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);
