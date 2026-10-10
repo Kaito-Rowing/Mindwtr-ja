@@ -9,12 +9,16 @@ import { taskEditValuesEqual } from './json-value-equality';
 export const MAX_NATIVE_POMODORO_SESSION_BYTES = 1_000_000;
 export const MAX_NATIVE_POMODORO_PLAN_BYTES = 2_000_000;
 export const MAX_NATIVE_POMODORO_RESULT_BYTES = 8192;
+const MAX_LEGACY_REQUEST_BYTES = 2_000_000;
 type NativeSession = StoredPomodoroSession & { durations: PomodoroDurations; timerState: PomodoroState;
     sessionHistory: PomodoroSessionHistory; updatedAtMs: number };
 export type NativePomodoroSession = { version: 1; sessionID: string; generation: number; session: NativeSession };
 export type NativePomodoroSessionRead = { raw: null; state: null } | { raw: string; state: NativePomodoroSession };
 export type NativePomodoroRequest =
     | { action: 'initialize'; requestId: string; observedAtMs: number; localDayKey: string; durations: PomodoroDurations }
+    | { action: 'adoptLegacy'; requestId: string; observedAtMs: number; localDayKey: string;
+        autoStart: { autoStartFocus: boolean; autoStartBreaks: boolean };
+        legacy: { version: 1; namespace: string; sessionRaw: string | null; collapsedRaw: string | null } }
     | { action: 'reconcile'; requestId: string; observedAtMs: number; localDayKey: string;
         autoStart: { autoStartFocus: boolean; autoStartBreaks: boolean } }
     | { action: 'setDurations'; requestId: string; observedAtMs: number; localDayKey: string;
@@ -87,6 +91,45 @@ const parseSession = (raw: string): unknown => {
     return parsed;
 };
 
+/** Historical fields may be missing, but malformed present values are not defaults. */
+const legacySessionOf = (raw: string | null): StoredPomodoroSession => {
+    if (raw === null) return {};
+    const value = parseSession(raw);
+    if (!exact(value, [], ['durations', 'timerState', 'sessionHistory', 'selectedTaskId', 'phaseEndsAt', 'updatedAtMs'])) invalid();
+    const present = (name: string, object = value) => Object.prototype.hasOwnProperty.call(object, name);
+    if ((present('selectedTaskId') && !identity(value.selectedTaskId, 500))
+        || (present('phaseEndsAt') && !date(value.phaseEndsAt)) || (present('updatedAtMs') && !time(value.updatedAtMs))) invalid();
+    if (present('durations') && (!exact(value.durations, [], ['focusMinutes', 'breakMinutes'])
+        || !Object.values(value.durations).every((n) => count(n) && n >= 1 && n <= 180))) invalid();
+    if (present('timerState')) {
+        const timer = value.timerState;
+        if (!exact(timer, [], ['phase', 'remainingSeconds', 'isRunning', 'completedFocusSessions'])
+            || (present('phase', timer) && timer.phase !== 'focus' && timer.phase !== 'break')
+            || (present('remainingSeconds', timer) && (typeof timer.remainingSeconds !== 'number'
+                || !Number.isFinite(timer.remainingSeconds) || timer.remainingSeconds < 0 || timer.remainingSeconds > 180 * 60))
+            || (present('isRunning', timer) && typeof timer.isRunning !== 'boolean')
+            || (present('completedFocusSessions', timer) && !count(timer.completedFocusSessions))) invalid();
+    }
+    if (present('sessionHistory')) {
+        const history = value.sessionHistory;
+        if (!exact(history, [], ['totalCompletedFocusSessions', 'completedFocusSessionsByTaskId', 'todayDayKey', 'completedTodayFocusSessions'])
+            || (present('totalCompletedFocusSessions', history) && !count(history.totalCompletedFocusSessions))
+            || (present('completedTodayFocusSessions', history) && !count(history.completedTodayFocusSessions))
+            || (present('todayDayKey', history) && !day(history.todayDayKey))) invalid();
+        if (present('completedFocusSessionsByTaskId', history)) {
+            if (!record(history.completedFocusSessionsByTaskId)) invalid();
+            const entries = Object.entries(history.completedFocusSessionsByTaskId);
+            if (entries.length > 10_000) invalid();
+            let sum = 0;
+            for (const [id, n] of entries) {
+                if (!identity(id, 500) || !count(n)) invalid();
+                sum += n; if (!count(sum)) invalid();
+            }
+        }
+    }
+    return value as StoredPomodoroSession;
+};
+
 export function decodeNativePomodoroSession(raw: string): NativePomodoroSession {
     const value = parseSession(raw);
     if (!exact(value, ['version', 'sessionID', 'generation', 'session']) || value.version !== 1
@@ -124,6 +167,21 @@ const requestOf = (value: unknown): NativePomodoroRequest => {
     }
     if (!exact(value.autoStart, ['autoStartFocus', 'autoStartBreaks'])
         || typeof value.autoStart.autoStartFocus !== 'boolean' || typeof value.autoStart.autoStartBreaks !== 'boolean') invalid();
+    if (value.action === 'adoptLegacy') {
+        const legacy = value.legacy;
+        if (!exact(value, ['action', 'requestId', 'observedAtMs', 'localDayKey', 'autoStart', 'legacy'])
+            || !exact(legacy, ['version', 'namespace', 'sessionRaw', 'collapsedRaw']) || legacy.version !== 1
+            || typeof legacy.namespace !== 'string' || !/^[A-Za-z0-9._-]{1,255}$/u.test(legacy.namespace)
+            || ![legacy.sessionRaw, legacy.collapsedRaw].every((raw) => raw === null
+                || (typeof raw === 'string' && bounded(raw, MAX_NATIVE_POMODORO_SESSION_BYTES)))) invalid();
+        const request: NativePomodoroRequest = { action: 'adoptLegacy', requestId: value.requestId,
+            observedAtMs: value.observedAtMs, localDayKey: value.localDayKey,
+            autoStart: { autoStartFocus: value.autoStart.autoStartFocus, autoStartBreaks: value.autoStart.autoStartBreaks },
+            legacy: { version: 1, namespace: legacy.namespace, sessionRaw: legacy.sessionRaw as string | null,
+                collapsedRaw: legacy.collapsedRaw as string | null } };
+        if (!bounded(JSON.stringify(request), MAX_LEGACY_REQUEST_BYTES)) invalid();
+        return request;
+    }
     if (value.action === 'setDurations') {
         if (!exact(value, ['action', 'requestId', 'observedAtMs', 'localDayKey', 'autoStart', 'durations']) || !durations(value.durations)) invalid();
         return { action: 'setDurations', requestId: value.requestId, observedAtMs: value.observedAtMs, localDayKey: value.localDayKey,
@@ -159,11 +217,27 @@ export function prepareNativePomodoroTransition(input: { request: NativePomodoro
     let taskPatch: NativePomodoroTaskPatch | null = null; let delta = 0; let creditedMinutes = 0;
     let creditDisposition: NativePomodoroResult['creditDisposition'] = 'none';
     let deviceId: string | null = null;
+    let creditFocusMinutes = 0;
     if (request.action === 'initialize') {
         if (input.session.raw !== null || input.session.state !== null || input.target !== null || input.deviceId !== null) invalid();
         after = { version: 1, sessionID: request.requestId, generation: 0, session: { durations: request.durations,
             timerState: createPomodoroState(request.durations), sessionHistory: { totalCompletedFocusSessions: 0,
                 completedFocusSessionsByTaskId: {}, todayDayKey: request.localDayKey, completedTodayFocusSessions: 0 }, updatedAtMs: request.observedAtMs } };
+    } else if (request.action === 'adoptLegacy') {
+        if (input.session.raw !== null || input.session.state !== null) invalid();
+        const legacy = legacySessionOf(request.legacy.sessionRaw);
+        target = targetOf(input.target, legacy.selectedTaskId);
+        if (input.deviceId !== null && !identity(input.deviceId, 200)) invalid();
+        // Pausing only the copy makes normalization historical, not new task credit.
+        const saved = resolvePomodoroSession({ ...legacy, timerState: { ...legacy.timerState, isRunning: false } },
+            request.observedAtMs, request.autoStart, request.localDayKey);
+        const resolved = resolvePomodoroSession(legacy, request.observedAtMs, request.autoStart, request.localDayKey);
+        delta = resolved.sessionHistory.totalCompletedFocusSessions - saved.sessionHistory.totalCompletedFocusSessions;
+        if (!count(delta)) invalid();
+        creditFocusMinutes = saved.durations.focusMinutes;
+        after = { version: 1, sessionID: request.requestId, generation: 0,
+            session: { ...serializePomodoroSession(resolved), durations: resolved.durations, timerState: resolved.timerState,
+                sessionHistory: resolved.sessionHistory, updatedAtMs: Math.max(0, legacy.updatedAtMs ?? 0) } };
     } else {
         if (typeof input.session.raw !== 'string') invalid();
         const before = decodeNativePomodoroSession(input.session.raw);
@@ -174,6 +248,7 @@ export function prepareNativePomodoroTransition(input: { request: NativePomodoro
         const current = resolvePomodoroSession(before.session, request.observedAtMs, request.autoStart, request.localDayKey);
         delta = current.sessionHistory.totalCompletedFocusSessions - before.session.sessionHistory.totalCompletedFocusSessions;
         if (!count(delta)) invalid();
+        creditFocusMinutes = before.session.durations.focusMinutes;
         let resolved = current;
         if (request.action === 'setDurations') resolved = { ...current, durations: request.durations,
             timerState: resetPomodoroState(current.timerState, request.durations), phaseEndsAt: undefined, lastEvent: null };
@@ -205,25 +280,25 @@ export function prepareNativePomodoroTransition(input: { request: NativePomodoro
         after = { version: 1, sessionID: before.sessionID, generation: before.generation + 1,
             session: { ...serializePomodoroSession(resolved), durations: resolved.durations, timerState: resolved.timerState,
                 sessionHistory: resolved.sessionHistory, updatedAtMs } };
-        if (delta > 0) {
-            if (!target) creditDisposition = 'unlinked';
-            else if (!target.row || cell(target.row, 'deletedAt') || cell(target.row, 'status') === 'archived') creditDisposition = 'unavailable';
+    }
+    if (delta > 0) {
+        if (!target) creditDisposition = 'unlinked';
+        else if (!target.row || cell(target.row, 'deletedAt') || cell(target.row, 'status') === 'archived') creditDisposition = 'unavailable';
+        else {
+            const rawMinutes = cell(target.row, 'timeSpentMinutes'); const rawRev = cell(target.row, 'rev');
+            if ((rawMinutes !== null && typeof rawMinutes !== 'number') || (rawRev !== null && !count(rawRev))) invalid();
+            const increment = delta * creditFocusMinutes;
+            if (!count(increment)) invalid();
+            const oldMinutes = normalizeTimeSpentMinutes(rawMinutes) ?? 0;
+            const minutes = addTimeSpentMinutes(rawMinutes, increment) ?? 0;
+            creditedMinutes = minutes - oldMinutes;
+            if (creditedMinutes === 0) creditDisposition = 'capped';
             else {
-                const rawMinutes = cell(target.row, 'timeSpentMinutes'); const rawRev = cell(target.row, 'rev');
-                if ((rawMinutes !== null && typeof rawMinutes !== 'number') || (rawRev !== null && !count(rawRev))) invalid();
-                const increment = delta * before.session.durations.focusMinutes;
-                if (!count(increment)) invalid();
-                const oldMinutes = normalizeTimeSpentMinutes(rawMinutes) ?? 0;
-                const minutes = addTimeSpentMinutes(rawMinutes, increment) ?? 0;
-                creditedMinutes = minutes - oldMinutes;
-                if (creditedMinutes === 0) creditDisposition = 'capped';
-                else {
-                    if (!identity(input.deviceId, 200)) invalid();
-                    deviceId = input.deviceId;
-                    taskPatch = { timeSpentMinutes: minutes, rev: nextRevision(rawRev, { warn: false }), revBy: deviceId,
-                        updatedAt: new Date(request.observedAtMs).toISOString() };
-                    creditDisposition = 'credited';
-                }
+                if (!identity(input.deviceId, 200)) invalid();
+                deviceId = input.deviceId;
+                taskPatch = { timeSpentMinutes: minutes, rev: nextRevision(rawRev, { warn: false }), revBy: deviceId,
+                    updatedAt: new Date(request.observedAtMs).toISOString() };
+                creditDisposition = 'credited';
             }
         }
     }
