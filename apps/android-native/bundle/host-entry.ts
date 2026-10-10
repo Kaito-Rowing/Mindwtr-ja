@@ -4067,6 +4067,44 @@ globalThis.MindwtrHost = {
             return {};
         });
     },
+    appleReminderSettingsOptions(registryRaw: string | null): string {
+        return submit(async () => {
+            const { importedReminderIds: _ids, ...settings } = appleReminderRegistry(registryRaw);
+            return { settings, expectedRaw: registryRaw };
+        });
+    },
+    appleReminderSettingPrepare(editJSON: string, registryRaw: string | null): string {
+        return submit(async () => {
+            const edit = appleReminderJSON(editJSON) as Record<string, unknown>;
+            if (!edit || typeof edit !== 'object' || Array.isArray(edit))
+                throw new Error('INVALID_INPUT: Invalid Reminders preference');
+            const registry = appleReminderRegistry(registryRaw);
+            if (edit.type === 'selectedList') {
+                if (Object.keys(edit).sort().join(',') !== 'id,sourceId,title,type'
+                    || typeof edit.title !== 'string'
+                    || ![edit.id, edit.sourceId].every((value) => typeof value === 'string' && value.trim().length > 0))
+                    throw new Error('INVALID_INPUT: Invalid Reminders list');
+                registry.selectedListId = edit.id as string;
+                registry.selectedListTitle = edit.title as string;
+            } else {
+                if (!['autoImportOnOpen', 'deleteImportedReminders'].includes(edit.type as string)
+                    || Object.keys(edit).sort().join(',') !== 'type,value' || typeof edit.value !== 'boolean')
+                    throw new Error('INVALID_INPUT: Invalid Reminders preference');
+                if (edit.type === 'deleteImportedReminders' && edit.value)
+                    throw new Error('NOT_READY: Reminders source deletion is not available');
+                registry[edit.type as 'autoImportOnOpen' | 'deleteImportedReminders'] = edit.value;
+            }
+            return { nextRaw: JSON.stringify(normalizeAppleRemindersImportSettings(registry)) };
+        });
+    },
+    appleReminderSettingAcknowledged(): string {
+        return submit(async () => {
+            logInfo('Native Reminders preference saved', { scope: 'native-ios', force: true,
+                context: { releaseCheck: 'v1.3.5/ios-reminders-setting', outcome: 'confirmed' } });
+            await diagnosticsLog.serialize(async () => undefined);
+            return {};
+        });
+    },
     appleReminderImportOptions(registryRaw: string | null): string {
         return submit(async () => appleReminderRegistry(registryRaw));
     },

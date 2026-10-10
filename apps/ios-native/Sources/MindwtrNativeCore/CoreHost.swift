@@ -134,6 +134,20 @@ public final class CoreHost: @unchecked Sendable {
         try await perform { try $0.start(retainingReminderResponseIDs: retainingReminderResponseIDs) }
     }
 
+    func readAppleRemindersSettings() async throws -> String {
+        try await perform { try $0.readAppleRemindersSettings() }
+    }
+
+    func setAppleRemindersSetting(editJSON: String, expectedRaw: String?) async throws -> String {
+        let id = UUID(), cancellation = NativeAttachmentCancellation()
+        localAttachmentRequests.register(cancellation, id: id)
+        defer { localAttachmentRequests.remove(id) }
+        if Task.isCancelled { cancellation.cancel() }
+        return try await withTaskCancellationHandler(operation: {
+            try await perform { try $0.setAppleRemindersSetting(editJSON: editJSON, expectedRaw: expectedRaw, cancellation: cancellation) }
+        }, onCancel: { cancellation.cancel() })
+    }
+
     func importAppleReminders(automatic: Bool = false) async throws -> String {
         let id = UUID(), cancellation = NativeAttachmentCancellation()
         localAttachmentRequests.register(cancellation, id: id)
@@ -15258,6 +15272,58 @@ private final class Engine: @unchecked Sendable {
                 startDate: row["startDate"] as? String, dueDate: row["dueDate"] as? String))
         }
         return try NativeAppleRemindersValidation.read(result, list: list).sources
+    }
+
+    func readAppleRemindersSettings() throws -> String {
+        let storage = try requireDeviceStorageAdmission()
+        let raw = try storage.readAppleRemindersImportState()
+        _ = try Self.appleReminderRegistryRaw(raw.map { $0 as Any } ?? NSNull())
+        return try invoke("appleReminderSettingsOptions", arguments: [raw.map { $0 as Any } ?? NSNull()])
+    }
+
+    func setAppleRemindersSetting(editJSON: String, expectedRaw: String?, cancellation: NativeAttachmentCancellation) throws -> String {
+        let storage = try requireDeviceStorageAdmission()
+        guard notificationSettingTurn == nil, calendarAccessTurn == nil, try editorDrafts.read() == nil,
+              let runtime = context, let connection = database, let library = calendarPushDatabaseBinding else { throw Self.appleReminderFailure }
+        let binding = try appleReminderStorageBinding(), generation = attachmentGeneration
+        func current() throws {
+            try cancellation.check()
+            guard !localRequests.isClosing, started, !closed, context === runtime, database === connection,
+                  deviceStorage === storage, attachmentGeneration == generation,
+                  try Self.bindingIdentity(databaseURL) == library, Self.equalJSON(try appleReminderStorageBinding(), binding) else { throw Self.appleReminderFailure }
+        }
+        try current()
+        let edit = try Self.appleReminderObject(editJSON, limit: NativeAppleRemindersJobs.maximumRequestBytes)
+        _ = try Self.appleReminderRegistryRaw(expectedRaw.map { $0 as Any } ?? NSNull())
+        let prepared = try Self.appleReminderObject(invoke("appleReminderSettingPrepare", arguments: [editJSON, expectedRaw.map { $0 as Any } ?? NSNull()]), limit: 8 * 1024 * 1024)
+        guard Set(prepared.keys) == Set(["nextRaw"]), let next = prepared["nextRaw"] as? String else { throw Self.appleReminderFailure }
+        _ = try Self.appleReminderRegistryRaw(next)
+        try current()
+        if !storage.hasPendingAppleRemindersImportMutation {
+            guard Self.taskDownloadOptionalEqual(try storage.readAppleRemindersImportState(), expectedRaw) else {
+                throw HostFailure("STALE_REVISION: Reminders preferences changed")
+            }
+            if edit["type"] as? String == "selectedList" {
+                guard let id = edit["id"] as? String, let sourceID = edit["sourceId"] as? String,
+                      let title = edit["title"] as? String else { throw Self.appleReminderFailure }
+                try NativeAppleRemindersValidation.identity(.init(id: id, sourceID: sourceID))
+                let value = try appleRemindersRead(["op": "lists"], cancellation: cancellation)
+                try current()
+                guard let lists = value as? [[String: Any]], lists.filter({ Self.ownedEqual($0["id"] as? String ?? "", id) }).count == 1,
+                      lists.contains(where: { Self.ownedEqual($0["id"] as? String ?? "", id)
+                          && Self.ownedEqual($0["sourceId"] as? String ?? "", sourceID)
+                          && Self.ownedEqual($0["title"] as? String ?? "", title) }) else {
+                    throw HostFailure("STALE_REVISION: Reminders list changed")
+                }
+            }
+        }
+        try current()
+        // The fixed-cell store retains an uncertain CAS; only its exact pair can retry it.
+        try storage.compareAndSetAppleRemindersImportState(expected: expectedRaw, next: next)
+        try current()
+        guard Self.taskDownloadOptionalEqual(try storage.readAppleRemindersImportState(), next) else { throw Self.appleReminderFailure }
+        _ = try? invoke("appleReminderSettingAcknowledged", arguments: [])
+        return try invoke("appleReminderSettingsOptions", arguments: [next])
     }
 
     func importAppleReminders(automatic: Bool, cancellation: NativeAttachmentCancellation) throws -> String {
