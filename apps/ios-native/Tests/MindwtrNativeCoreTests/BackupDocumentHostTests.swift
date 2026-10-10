@@ -212,9 +212,10 @@ final class BackupDocumentHostTests: XCTestCase {
         await core.close()
         let effect = try seedCalendarEffect(saved: true)
         let beforeTasks = try json(rows("SELECT * FROM tasks ORDER BY id"))
-        let beforeJournal = try Data(contentsOf: journal)
+        let beforeJournal = try json(object(String(contentsOf: journal, encoding: .utf8)))
         let replayFaults = HostIOFaults()
-        var receiptReads = 0, mutations = 0
+        var receiptReads = 0, mutations = 0, journalWrites = 0
+        replayFaults.journalWrite = { journalWrites += 1 }
         replayFaults.beforeSQL = { sql in
             if sql == "SELECT request_id, method, reply, saved_at FROM native_request_receipts WHERE request_id = ?" {
                 receiptReads += 1
@@ -229,7 +230,9 @@ final class BackupDocumentHostTests: XCTestCase {
         XCTAssertEqual(receiptReads, 2)
         XCTAssertEqual(mutations, 0)
         XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), beforeTasks)
-        XCTAssertEqual(try Data(contentsOf: journal), beforeJournal)
+        XCTAssertEqual(journalWrites, 1)
+        // Replay re-encodes the envelope; retain every field and the exact argumentsJSON string.
+        XCTAssertEqual(try json(object(String(contentsOf: journal, encoding: .utf8))), beforeJournal)
         await reopened.close()
         XCTAssertEqual(try calendarEffect(), effect)
     }
