@@ -59,8 +59,8 @@ export function PomodoroPanel({
     }
     if (!selectedTaskId) return;
     if (liveTasks.some((task) => task.id === selectedTaskId)) return;
-    mobilePomodoroController.setSelectedTaskId(undefined);
-  }, [linkTaskEnabled, liveTasks, selectedTaskId]);
+    mobilePomodoroController.setSelectedTaskId(undefined, autoStartOptions);
+  }, [linkTaskEnabled, liveTasks, selectedTaskId, autoStartOptions]);
 
   const selectedTask = useMemo(
     () => (linkTaskEnabled && selectedTaskId ? liveTasks.find((task) => task.id === selectedTaskId) : undefined),
@@ -329,7 +329,7 @@ export function PomodoroPanel({
                 accessibilityRole="button"
                 accessibilityState={{ selected: !selectedTaskId }}
                 onPress={() => {
-                  mobilePomodoroController.setSelectedTaskId(undefined);
+                  mobilePomodoroController.setSelectedTaskId(undefined, autoStartOptions);
                   setIsTaskPickerOpen(false);
                 }}
                 style={[
@@ -353,7 +353,7 @@ export function PomodoroPanel({
                       accessibilityRole="button"
                       accessibilityState={{ selected }}
                       onPress={() => {
-                        mobilePomodoroController.setSelectedTaskId(task.id);
+                        mobilePomodoroController.setSelectedTaskId(task.id, autoStartOptions);
                         setIsTaskPickerOpen(false);
                       }}
                       style={[

@@ -13,7 +13,7 @@ import {
 } from '@mindwtr/core';
 import { useSyncExternalStore } from 'react';
 
-import { logWarn } from './app-log';
+import { logInfo, logWarn } from './app-log';
 import {
   POMODORO_SESSION_STORAGE_KEY,
   pausePomodoroSession,
@@ -129,14 +129,14 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
 
   const replaceSession = (
     next: ResolvedPomodoroSession,
-    config: { persist?: boolean; updatedAtMs?: number; previousHistory?: PomodoroSessionHistory } = {},
+    config: { persist?: boolean; updatedAtMs?: number; previousHistory?: PomodoroSessionHistory; creditFocusMinutes?: number } = {},
   ): boolean => {
     const previousHistory = config.previousHistory ?? state.sessionHistory;
     const changed = !sessionEquals(state, next)
       || (config.updatedAtMs !== undefined && config.updatedAtMs !== state.updatedAtMs)
       || state.isHydrating;
     if (!changed) return false;
-    creditCompletedSessions(previousHistory, next.sessionHistory, next.durations.focusMinutes);
+    creditCompletedSessions(previousHistory, next.sessionHistory, config.creditFocusMinutes ?? next.durations.focusMinutes);
     state = {
       ...next,
       isHydrating: false,
@@ -191,9 +191,17 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
     autoStartOptions: PomodoroAutoStartOptions = {},
     nowMs = now(),
   ): boolean => {
+    const completedBeforeAction = state.sessionHistory.totalCompletedFocusSessions;
     const current = resolvePomodoroSession(state, nowMs, autoStartOptions);
     const updatedAtMs = Math.max(nowMs, state.updatedAtMs + 1);
-    return replaceSession(mutation(current, nowMs), { updatedAtMs });
+    const changed = replaceSession(mutation(current, nowMs), { updatedAtMs, creditFocusMinutes: current.durations.focusMinutes });
+    if (changed && current.sessionHistory.totalCompletedFocusSessions > completedBeforeAction) {
+      void logInfo('Pomodoro elapsed focus boundary resolved before action', {
+        scope: 'pomodoro',
+        extra: { releaseCheck: 'v1.3.5/pomodoro-rn-boundary', outcome: 'elapsed-focus-resolved' },
+      }).catch(() => undefined);
+    }
+    return changed;
   };
 
   const setDurations = (durations: PomodoroDurations, autoStartOptions: PomodoroAutoStartOptions = {}) => mutate((current) => ({
@@ -230,10 +238,10 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
     lastEvent: null,
   }), autoStartOptions);
 
-  const setSelectedTaskId = (selectedTaskId: string | undefined) => mutate((current) => ({
+  const setSelectedTaskId = (selectedTaskId: string | undefined, autoStartOptions: PomodoroAutoStartOptions = {}) => mutate((current) => ({
     ...current,
     selectedTaskId,
-  }));
+  }), autoStartOptions);
 
   const clearLastEvent = () => mutate((current) => ({ ...current, lastEvent: null }));
 
