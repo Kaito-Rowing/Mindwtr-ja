@@ -722,6 +722,9 @@ public final class CoreHost: @unchecked Sendable {
     func configureAttachmentDraftHost(_ hooks: AttachmentDraftHostHooks) async {
         _ = try? await perform { $0.attachmentDraftHooks = hooks }
     }
+    func configureCaptureLinesFilesForTesting(_ configure: @escaping (NativeBackupOperationFiles) -> Void) async throws {
+        try await perform { $0.configureCaptureLinesFilesForTesting(configure) }
+    }
     #endif
 
     #if DEBUG
@@ -1892,7 +1895,7 @@ private final class Engine: @unchecked Sendable {
         "logLine": 2,
         "dataSetting": 1,
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
-        "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1,
+        "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1, "captureLinesSubmit": 1,
         "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "taskShare": 1, "taskOpenTab": 1, "taskViewReferenceTarget": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentOpen": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
         "projects": 0, "projectDetail": 4, "projectNotes": 4, "projectAttachmentList": 1, "projectAttachmentOpen": 1, "projectCreateOptions": 0, "projectCreate": 1, "projectCreateRetryOutcome": 1,
         "projectSectionOptions": 1, "projectSectionCreate": 1, "projectSectionCreateRetryOutcome": 1,
@@ -1968,7 +1971,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "referenceTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "referenceTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "captureLinesSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -2066,6 +2069,33 @@ private final class Engine: @unchecked Sendable {
             guard journalData.count <= Self.deviceCalendarSettingJournalLimit,
                   try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)) else {
                 throw HostFailure("INVALID_INPUT: Malformed prepared Device Calendar setting journal")
+            }
+        }
+        if saved.method == "captureLinesCommit" {
+            guard journalData.count <= Self.captureLinesJournalLimit,
+                  try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)),
+                  Set(raw.keys) == Set(["version", "method", "argumentsJSON"])
+                    || Set(raw.keys) == Set(["version", "method", "argumentsJSON", "terminal"]) else {
+                throw HostFailure("INVALID_INPUT: Malformed capture lines journal")
+            }
+            let operation = try captureLinesOperation(saved)
+            if let terminal = raw["terminal"] {
+                guard let encoded = terminal as? [String: Any], encoded.count == 1,
+                      let name = encoded.keys.first, ["success", "rejected"].contains(name),
+                      let payload = encoded[name] as? [String: Any], Set(payload.keys) == Set(["_0"]),
+                      let value = payload["_0"] as? String else {
+                    throw HostFailure("INVALID_INPUT: Malformed capture lines terminal")
+                }
+                if name == "success" {
+                    guard value.utf8.count <= 64 * 1024, try NativeJSON.hasUniqueObjectKeys(value),
+                          Self.equalJSON(try NativeJSON.jsonObject(with: Data(value.utf8)), operation.result) else {
+                        throw HostFailure("INVALID_INPUT: Capture lines terminal differs from its frozen result")
+                    }
+                } else {
+                    guard value.utf8.count <= 4096, isDefiniteRejection(value, method: saved.method) else {
+                        throw HostFailure("INVALID_INPUT: Malformed capture lines refusal")
+                    }
+                }
             }
         }
         if saved.method == Self.ownedDiscardMethod {
@@ -2212,23 +2242,28 @@ private final class Engine: @unchecked Sendable {
             if pending == nil { pending = try loadPendingJournal() }
             // Cleanup recovery is decided before unrelated cache or legacy work.
             let cleanupRecovery = pending?.method == Self.cleanupMethod
+            let recoveringCaptureLines = pending?.method == "captureLinesCommit"
             if cleanupRecovery {
                 var original = stat()
                 guard lstat(databaseURL.path, &original) == 0, original.st_mode & S_IFMT == S_IFREG else { throw Self.cleanupFailure }
             }
             // Optional cache cleanup cannot block startup or change an owed command.
-            if !cleanupRecovery { try? backupExportFile.discardInterruptedExports() }
+            if !cleanupRecovery && !recoveringCaptureLines { try? backupExportFile.discardInterruptedExports() }
             // An uncertain journal never authorizes garbage collection. Validate
             // every owned backup byte before boot can activate domain work.
             if let command = pending, command.method == "backupDocumentCommit" {
                 _ = try backupDocumentArguments(command)
             }
             let retainedBackup = try pending.flatMap { command -> String? in
-                command.method == "backupDocumentCommit" ? try backupOperationReference(command).id : nil
+                if command.method == "backupDocumentCommit" { return try backupOperationReference(command).id }
+                if command.method == "captureLinesCommit" { return try captureLinesOperation(command).reference.id }
+                return nil
             }
-            if !cleanupRecovery { try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? [])) }
+            // Lines plans require the shared pure validator as well as file hashes.
+            // Delay their GC until that validator exists, still before SQLite boot.
+            if !cleanupRecovery && !recoveringCaptureLines { try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? [])) }
             // Accepted operations own their frozen plan, never the picker copy.
-            if !cleanupRecovery { try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id })) }
+            if !cleanupRecovery && !recoveringCaptureLines { try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id })) }
             guard let runtime = JSContext() else { throw HostFailure("Cannot create JavaScriptCore runtime") }
             context = runtime
             installBridge(runtime)
@@ -2236,6 +2271,13 @@ private final class Engine: @unchecked Sendable {
             try checkException()
             guard let host = runtime.objectForKeyedSubscript("MindwtrHost"), !host.isUndefined, !host.isNull else {
                 throw HostFailure("Core bundle has no host contract")
+            }
+            if let command = pending, command.method == "captureLinesCommit" {
+                _ = try captureLinesArguments(command)
+                if case .success(let value) = command.terminal { try validateCaptureLinesSuccess(command, value: value) }
+                try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? []))
+                try? backupExportFile.discardInterruptedExports()
+                try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id }))
             }
             if let command = pending, command.method == Self.ownedSaveMethod {
                 if case .success(let value) = command.terminal { _ = try validateOwnedSaveAcknowledgement(command, value: value) }
@@ -8672,6 +8714,150 @@ private final class Engine: @unchecked Sendable {
         return try backupOperationFiles.prepare(id: id, planJSON: plan, newSnapshot: nil, existingSnapshot: existingSnapshot)
     }
 
+    private static let captureLinesPlanLimit = 8 * 1024 * 1024
+    private static let captureLinesJournalLimit = 128 * 1024
+
+    #if DEBUG
+    func configureCaptureLinesFilesForTesting(_ configure: (NativeBackupOperationFiles) -> Void) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        configure(backupOperationFiles)
+    }
+    #endif
+
+    private func captureLinesDataVersion() throws -> Int64 {
+        let raw = try requireDatabase().execute("PRAGMA data_version")
+        guard let rows = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [[String: Any]], rows.count == 1,
+              Self.isInteger(rows[0]["data_version"]), let value = rows[0]["data_version"] as? NSNumber else {
+            throw HostFailure("STALE_REVISION: Capture lines saved base is unavailable")
+        }
+        return value.int64Value
+    }
+
+    private func captureLinesReference(_ command: PendingCommand) throws -> NativeBackupOperationReference {
+        guard command.version == 2, command.method == "captureLinesCommit", command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= 2048, try NativeJSON.hasUniqueObjectKeys(command.argumentsJSON),
+              let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+              try NativeJSON.hasUniqueObjectKeys(args[0]),
+              let raw = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+              Set(raw.keys) == Set(["id", "sha256", "byteCount"]),
+              let id = raw["id"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+              let sha = raw["sha256"] as? String, sha.utf8.count == 64,
+              sha.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              Self.isInteger(raw["byteCount"]), let count = raw["byteCount"] as? Int,
+              (1...NativeBackupOperationFiles.maximumManifestBytes).contains(count) else {
+            throw HostFailure("INVALID_INPUT: Malformed capture lines operation reference")
+        }
+        return try JSONDecoder().decode(NativeBackupOperationReference.self, from: Data(args[0].utf8))
+    }
+
+    private func captureLinesOperation(_ command: PendingCommand) throws -> (reference: NativeBackupOperationReference, planJSON: String, result: Any) {
+        let reference = try captureLinesReference(command), operation = try backupOperationFiles.read(reference)
+        guard operation.planJSON.utf8.count <= Self.captureLinesPlanLimit,
+              try NativeJSON.hasUniqueObjectKeys(operation.planJSON),
+              let plan = try NativeJSON.jsonObject(with: Data(operation.planJSON.utf8)) as? [String: Any],
+              Set(plan.keys) == Set(["request", "prepared"]), let request = plan["request"] as? [String: Any],
+              Set(request.keys) == Set(["text", "options", "captureIds"]), request["text"] is String,
+              request["options"] is [String: Any], let ids = request["captureIds"] as? [String],
+              (2...1000).contains(ids.count), Set(ids).count == ids.count, ids.first == reference.id,
+              ids.allSatisfy({ UUID(uuidString: $0)?.uuidString.lowercased() == $0 }),
+              let prepared = plan["prepared"] as? [String: Any],
+              Set(prepared.keys) == Set(["version", "request", "tasks", "projects", "deviceIdToInitialize", "result"]),
+              Self.isInteger(prepared["version"], equalTo: 1), Self.equalJSON(prepared["request"], request),
+              let tasks = prepared["tasks"] as? [[String: Any]], tasks.count == ids.count,
+              tasks.compactMap({ $0["id"] as? String }) == ids, prepared["projects"] is [[String: Any]],
+              let result = prepared["result"] as? [String: Any], Set(result.keys) == Set(["kind", "taskIds"]),
+              result["kind"] as? String == "saved", result["taskIds"] as? [String] == ids else {
+            throw HostFailure("INVALID_INPUT: Malformed owned capture lines plan")
+        }
+        return (reference, operation.planJSON, result)
+    }
+
+    private func captureLinesArguments(_ command: PendingCommand) throws -> [Any] {
+        let operation = try captureLinesOperation(command)
+        let validated = try invoke("captureLinesValidate", arguments: [operation.planJSON])
+        guard Self.equalJSON(try NativeJSON.jsonObject(with: Data(validated.utf8)), operation.result) else {
+            throw HostFailure("INVALID_INPUT: Capture lines frozen result is invalid")
+        }
+        return [operation.planJSON]
+    }
+
+    private func validateCaptureLinesSuccess(_ command: PendingCommand, value: String) throws {
+        _ = try captureLinesArguments(command)
+        let operation = try captureLinesOperation(command)
+        guard value.utf8.count <= 64 * 1024, try NativeJSON.hasUniqueObjectKeys(value),
+              Self.equalJSON(try NativeJSON.jsonObject(with: Data(value.utf8)), operation.result) else {
+            throw HostFailure("INVALID_INPUT: Capture lines acknowledgment does not match its frozen result")
+        }
+    }
+
+    private func submitCaptureLines(_ args: [Any]) throws -> String {
+        try allowRetainedOrdinaryPreparation()
+        guard let runtime = context, let requestJSON = args.first as? String, started, !closed, lockFD >= 0 else {
+            throw CoreHostRejection(message: "NOT_READY: Capture lines owner is unavailable")
+        }
+        let originalDatabase = try requireDatabase(), generation = attachmentGeneration
+        var identity = stat()
+        guard lstat(databaseURL.path, &identity) == 0, identity.st_mode & S_IFMT == S_IFREG else {
+            throw CoreHostRejection(message: "STALE_REVISION: Capture lines library is unavailable")
+        }
+        let epoch: Int64
+        do { epoch = try captureLinesDataVersion() }
+        catch { throw CoreHostRejection(message: error.localizedDescription) }
+        func current() throws {
+            var now = stat()
+            guard started, !closed, lockFD >= 0, context === runtime, attachmentGeneration == generation,
+                  try requireDatabase() === originalDatabase, lstat(databaseURL.path, &now) == 0,
+                  now.st_mode & S_IFMT == S_IFREG, now.st_dev == identity.st_dev, now.st_ino == identity.st_ino,
+                  try captureLinesDataVersion() == epoch else {
+                throw HostFailure("STALE_REVISION: Capture lines saved base changed before admission")
+            }
+            try requireRetainedOrdinaryTurn(requirePreparation: true)
+        }
+        let reference: NativeBackupOperationReference, command: PendingCommand, replay: [Any]
+        do {
+            let raw = try invoke("captureLinesPrepare", arguments: [requestJSON])
+            try current()
+            guard let response = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+                  let kind = response["kind"] as? String else { throw HostFailure("INVALID_INPUT: Malformed lines preparation") }
+            if kind == "refused" { return raw }
+            guard Set(response.keys) == Set(["kind", "planJSON", "recoveryJSON"]), kind == "prepared",
+                  let planJSON = response["planJSON"] as? String, planJSON.utf8.count <= Self.captureLinesPlanLimit,
+                  let recoveryJSON = response["recoveryJSON"] as? String,
+                  recoveryJSON.utf8.count <= NativeBackupOperationFiles.maximumSnapshotBytes,
+                  let plan = try NativeJSON.jsonObject(with: Data(planJSON.utf8)) as? [String: Any],
+                  let request = plan["request"] as? [String: Any], Self.equalJSON(request, try NativeJSON.jsonObject(with: Data(requestJSON.utf8))),
+                  let ids = request["captureIds"] as? [String], let id = ids.first else {
+                throw HostFailure("INVALID_INPUT: Malformed lines preparation")
+            }
+            let name = try backupOperationFiles.nextSnapshotName(at: Date())
+            reference = try backupOperationFiles.prepare(id: id, planJSON: planJSON,
+                newSnapshot: (name: name, content: recoveryJSON), existingSnapshot: nil)
+        } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        // No journal or invocation exists yet: only this preparation may be rejected.
+        do {
+            command = PendingCommand(version: 2, method: "captureLinesCommit", argumentsJSON: try backupJSON([backupEncoded(reference)]))
+            replay = try captureLinesArguments(command)
+            try current()
+            guard try invoke("captureLinesAdmission", arguments: replay) == "true" else { throw HostFailure("STALE_REVISION: Capture lines preparation retired") }
+            try current()
+            if let turn = retainedOrdinaryTurn { _ = try ordinaryJournalArguments(command); turn.command = command }
+        } catch {
+            try? backupOperationFiles.discard(reference, provenRejected: true)
+            throw CoreHostRejection(message: error.localizedDescription)
+        }
+        pending = command
+        try persist(command)
+        let terminal: TerminalResult
+        do {
+            try current()
+            terminal = .success(try invoke(command.method, arguments: replay + [true]))
+        } catch let failure as HostFailure {
+            guard isDefiniteRejection(failure.message, method: command.method) else { throw failure }
+            terminal = .rejected(failure.message)
+        }
+        return try publicValue(finish(command, with: terminal), method: command.method)
+    }
+
     private func commitBackupOperation(_ reference: NativeBackupOperationReference) throws -> String {
         let command = PendingCommand(version: 2, method: "backupDocumentCommit",
                                      argumentsJSON: try backupJSON([backupEncoded(reference)]))
@@ -8897,6 +9083,7 @@ private final class Engine: @unchecked Sendable {
             }
         }
         catch {
+            if method == "captureLinesSubmit", pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
             if (Self.historyTaskWritePrefix(method) != nil || ["referenceTasksRemoveTagWrite", "referenceTasksRemoveTagRetryOutcome", "referenceTasksAddTagWrite", "referenceTasksAddTagRetryOutcome", "referenceTasksMoveWrite", "referenceTasksMoveRetryOutcome", "referenceTasksMoveNotice"].contains(method)), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
@@ -11220,6 +11407,8 @@ private final class Engine: @unchecked Sendable {
                                          editorDraft: editorAttempt)
                 _ = try journalArguments(command)
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "captureLinesSubmit" {
+            return try submitCaptureLines(args)
         } else if method == "captureSubmit" {
             try allowRetainedOrdinaryPreparation()
             do {
@@ -11293,6 +11482,7 @@ private final class Engine: @unchecked Sendable {
         do {
             let replay: [Any]
             if command.method == "backupDocumentCommit" { replay = try backupDocumentArguments(command) }
+            else if command.method == "captureLinesCommit" { replay = try captureLinesArguments(command) }
             else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
             else { replay = try journalArguments(command) }
             if CalendarSubscriptionOperation(commitMethod: command.method) != nil { terminal = .success(try invokeCalendarSubscriptionSettingCommit(command)) }
@@ -11590,6 +11780,7 @@ private final class Engine: @unchecked Sendable {
         do {
             let replay: [Any]
             if command.method == "backupDocumentCommit" { replay = try backupDocumentArguments(command) }
+            else if command.method == "captureLinesCommit" { replay = try captureLinesArguments(command) }
             else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
             else { replay = try journalArguments(command) }
             value = try command.method == "backupDocumentCommit"
@@ -11607,6 +11798,11 @@ private final class Engine: @unchecked Sendable {
 
     private func finish(_ command: PendingCommand, with terminal: TerminalResult) throws -> TerminalResult {
         if command.method == Self.ownedSaveMethod { return try finishOwnedSave(command, with: terminal) }
+        if command.method == "captureLinesCommit", case .success(let value) = terminal {
+            // A proven capture result authorizes only pure validation and cleanup.
+            // Never reapply domain writes when a terminal journal already exists.
+            try validateCaptureLinesSuccess(command, value: value)
+        }
         if command.method == "backupDocumentCommit", case .success(let value) = terminal {
             // A terminal journal is not permission to apply a missing receipt.
             // This probe is SQL read-only, including after a cold restart.
@@ -12028,6 +12224,9 @@ private final class Engine: @unchecked Sendable {
         if command.method == "backupDocumentCommit", case .success = terminal {
             try backupOperationFiles.complete(backupOperationReference(command))
         }
+        if command.method == "captureLinesCommit", case .success = terminal {
+            try backupOperationFiles.complete(captureLinesReference(command))
+        }
         if let attempt = command.editorDraft, case .success = terminal {
             #if DEBUG
             try faults?.editorDraftRemove?()
@@ -12037,6 +12236,11 @@ private final class Engine: @unchecked Sendable {
             try refreshOrdinaryEditor(snapshot: nil, attempt: nil)
         }
         try clearPending()
+        if command.method == "captureLinesCommit" {
+            let rejected: Bool
+            if case .rejected = terminal { rejected = true } else { rejected = false }
+            try? backupOperationFiles.discard(captureLinesReference(command), provenRejected: rejected)
+        }
         if command.method == "backupDocumentCommit" {
             if case .success(let value) = terminal { backupUnreturnedReply = value }
             let rejected: Bool
@@ -12675,7 +12879,7 @@ private final class Engine: @unchecked Sendable {
             || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "calendarEventTaskCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "notificationSettingCommit", "deviceCalendarSettingCommit", "calendarSubscriptionSettingCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectFileRemoveWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
-            || (["somedaySectionOrderWrite", "backupDocumentCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["somedaySectionOrderWrite", "backupDocumentCommit", "captureLinesCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
     }
 
     private func validateBoardAcknowledgment(_ command: PendingCommand, value: String) throws {
@@ -15579,6 +15783,10 @@ private final class Engine: @unchecked Sendable {
         }
         if command.method == Self.mixedSaveMethod { guard !retainedOrdinary else { throw Self.retainedOrdinaryFailure }; return [try mixedSaveJournal(command).envelopeJSON] }
         if command.method == Self.ownedSaveMethod { guard !retainedOrdinary else { throw Self.retainedOrdinaryFailure }; return [try ownedSaveJournal(command).envelopeJSON] }
+        if command.method == "captureLinesCommit" {
+            _ = try captureLinesOperation(command)
+            return [try backupEncoded(captureLinesReference(command))]
+        }
         if command.method == "backupDocumentCommit" {
             guard !retainedOrdinary else { throw Self.retainedOrdinaryFailure }
             _ = try backupOperationReference(command)
@@ -16850,6 +17058,17 @@ private final class Engine: @unchecked Sendable {
                 }
             } else if !(argument is String) { throw HostFailure("Core arguments must be strings") }
         }
+        if method == "captureLinesSubmit" {
+            guard try NativeJSON.hasUniqueObjectKeys(json), let encoded = args.first as? String,
+                  encoded.utf8.count <= Self.captureLinesPlanLimit, try NativeJSON.hasUniqueObjectKeys(encoded),
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["text", "options", "captureIds"]), input["text"] is String,
+                  input["options"] is [String: Any], let ids = input["captureIds"] as? [String],
+                  (2...1000).contains(ids.count), Set(ids).count == ids.count,
+                  ids.allSatisfy({ UUID(uuidString: $0)?.uuidString.lowercased() == $0 }) else {
+                throw HostFailure("INVALID_INPUT: Capture lines requires a closed bounded request and distinct lowercase UUIDs")
+            }
+        }
         if method == "logLine" { try validateClientDiagnosticArguments(args) }
         if method == "dataSetting" { try validateDataSettingArguments(args, json) }
         if method == "reminderCompletionCommit", let raw = args.first as? String { _ = try reminderCompletionRequest(raw) }
@@ -16978,6 +17197,9 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func validateArgumentTransportSize(_ method: String, _ json: String) throws {
+        if method == "captureLinesSubmit", json.utf8.count > 6 * Self.captureLinesPlanLimit + 4 {
+            throw HostFailure("INVALID_INPUT: Capture lines transport is too large")
+        }
         if method == "logLine", json.utf8.count > 2_048 {
             throw HostFailure("INVALID_INPUT: Client diagnostic request is too large")
         }
@@ -19949,7 +20171,7 @@ private final class Engine: @unchecked Sendable {
         }
         var fired = false
         faults.journalRemove = { [unowned self] in
-            guard !fired, let command = self.pending, command.method == "captureCommit",
+            guard !fired, let command = self.pending, ["captureCommit", "captureLinesCommit"].contains(command.method),
                   let terminal = command.terminal, case .success = terminal else { return }
             fired = true
             throw HostFailure("Isolated capture terminal cleanup interrupted")

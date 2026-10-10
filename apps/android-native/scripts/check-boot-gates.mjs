@@ -1106,7 +1106,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert(methods.length > 40 && methods.some((m) => m.name === 'menuCommand'), 'host-entry\'s methods parsed');
     // The iOS host's prepared commits and its Calendar preference, Focus grouping, Someday section task and task attachment
     // link/remove writes: its own journal holds them, and Kotlin never calls them.
-    const iosPreparedCommits = ['captureCommit', 'draftCommit'];
+    const iosPreparedCommits = ['captureCommit', 'captureLinesCommit', 'draftCommit'];
     // The iOS host's task attachment link/remove methods (taskAttachmentLinks, taskAttachmentRemove) are its own; Kotlin sends
     // the same core writes through MENU_COMMANDS and the journal (pass A2).
     const iosOnlyWrites = ['commitPreparedNotificationSetting', 'commitReminderCompletion', 'retryReminderCompletion', 'commitReminderSnooze', 'retryReminderSnooze', 'setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment', 'setCalendarSetting'];
@@ -3586,6 +3586,8 @@ export { buildCalendarSubscriptionSettingsModel } from ${JSON.stringify(resolve(
 export { REMINDER_STORE_RESCHEDULE_DELAY_MS, shouldRescheduleReminderAlarms } from ${JSON.stringify(resolve(app, '../../packages/core/src/mobile-reminder-alarms.ts'))};
 export { nameNotifyListener } from ${JSON.stringify(resolve(app, '../../packages/core/src/store-notify-profiler.ts'))};
 export { buildShortcutsSnapshot } from ${JSON.stringify(resolve(app, '../../packages/core/src/widget-payload.ts'))};
+export { serializeBackupData } from ${JSON.stringify(resolve(app, '../../packages/core/src/backup-transfer.ts'))};
+export { validateMergedSyncData } from ${JSON.stringify(resolve(app, '../../packages/core/src/sync-normalization.ts'))};
 export { getNextFutureStartRevealAt } from ${JSON.stringify(resolve(app, '../../packages/core/src/task-utils.ts'))};
 export { resolveEntityOpenTarget } from ${JSON.stringify(resolve(app, '../../packages/core/src/entry-points.ts'))};
 export { compareAppVersions, fetchAppStoreInfo, UPDATE_BADGE_AVAILABLE_KEY, UPDATE_BADGE_LAST_CHECK_KEY, UPDATE_BADGE_LATEST_KEY, shouldCheckForAppUpdate } from ${JSON.stringify(resolve(app, '../../packages/core/src/app-store-update.ts'))};
@@ -3679,6 +3681,7 @@ export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName, t) {
 export function setLogger(logger) { globalThis.coreLogger = logger; setRealLogger(logger); }
 export function consoleLogger() {}
 export class SqliteAdapter {
+  get concurrentWritesGuarded() { return globalThis.linesUnguarded !== true; }
   async ensureSchema() { globalThis.events.push('schema'); }
   // core's row-version read after activation: the ids and the mapped settings a full read would give (rowBaseline overrides;
   // rowBaselineNull is another connection's commit since the last full read).
@@ -3692,6 +3695,7 @@ export class SqliteAdapter {
   async getData() {
     globalThis.events.push('load');
     globalThis.lastLoaded = globalThis.fakeDataSequence.shift() || globalThis.fakeData;
+    if (globalThis.linesReadHold) await globalThis.linesReadHold;
     return globalThis.lastLoaded;
   }
   async saveData(data) {
@@ -3928,6 +3932,18 @@ export function createNativeHostContract(bindings = {}) {
       return globalThis.projectDetailResult;
     },
     async submitQuickCapture(input) { globalThis.createCount++; globalThis.captureInputs.push(JSON.stringify(['submit', input])); return { ok: true, value: { kind: 'saved', taskId: 'id', next: 'close', reset: null } }; },
+    prepareQuickCaptureLines(request) {
+      globalThis.captureInputs.push(JSON.stringify(['linesPrepare', request]));
+      if (globalThis.linesRefused) return { ok: true, value: { kind: 'refused', notice: { message: 'Invalid date' } } };
+      return { ok: true, value: { kind: 'prepared', prepared: { version: 1, request,
+        tasks: [], projects: [], deviceIdToInitialize: null, result: { kind: 'saved', taskIds: request.captureIds } } } };
+    },
+    validatePreparedQuickCaptureLines(input) { return { ok: true, value: input.prepared.result }; },
+    async commitPreparedQuickCaptureLines(input) {
+      globalThis.captureInputs.push(JSON.stringify(['linesCommit', input]));
+      if (globalThis.linesCommitFailure) return { ok: false, error: { code: 'SAVE_FAILED', message: 'Injected lines save' } };
+      return { ok: true, value: input.prepared.result };
+    },
     openQuickCapture() { globalThis.captureInputs.push('open'); return { ok: true, value: { version: 1, options: {} } }; },
     getQuickCaptureView(input) { globalThis.captureInputs.push(JSON.stringify(['view', input])); return { ok: true, value: { version: 1, options: input.options } }; },
     editQuickCapture(input) { globalThis.captureInputs.push(JSON.stringify(['edit', input])); return { ok: true, value: { view: { options: input.options }, notice: null } }; },
@@ -4006,7 +4022,8 @@ export const useTaskStore = { getState: () => {
   settings: globalThis.settings,
   _allTasks: globalThis.lastLoaded ? globalThis.lastLoaded.tasks : globalThis.emptyOwnerTasks,
   _tasksById: globalThis.ownerTaskMap,
-  _allProjects: globalThis.ownerProjects, _allSections: [], _allAreas: [], _allPeople: [],
+  _allProjects: globalThis.ownerProjects, _allSections: globalThis.ownerSections ??= [],
+  _allAreas: globalThis.ownerAreas ??= [], _allPeople: globalThis.ownerPeople ??= [],
   persistenceFailure: globalThis.persistenceFailure, isLoading: globalThis.storeLoading, editLockCount: globalThis.storeEditLocks,
 }; } };
 export function logInfo(message, meta) {
@@ -4153,6 +4170,67 @@ const poll = async (state, id) => {
     await new Promise((resolveTick) => setImmediate(resolveTick));
     return JSON.parse(state.MindwtrHost.poll(id));
 };
+// Task499: production private facades, saved-generation/row identity and stale
+// accepted-baseline ordering. The core stand-in is deliberate: native JSC tests
+// own actual prepared-row/SQLite/file/replay semantics.
+{
+    const input = JSON.stringify({ text: 'One\nTwo', options: {}, captureIds: [
+        '164f0a4c-6fb4-4385-b1db-3c55a651f161', 'f8ca0ea6-c084-48fb-8dcc-7bdcc1196d42'] });
+    const ready499 = async () => {
+        const state = makeState(0, [], 'ios');
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        state.settings = state.fakeData.settings; state.events.length = 0;
+        return state;
+    };
+    const prepare499 = async (state) => poll(state, state.MindwtrHost.captureLinesPrepare(input));
+    const local = await ready499(), prepared = await prepare499(local);
+    assert.equal(prepared.ok, true); assert.equal(prepared.value.kind, 'prepared');
+    assert.deepEqual(Array.from(local.events), ['flush', 'baseline', 'load']);
+    assert.deepEqual(JSON.parse(prepared.value.recoveryJSON).tasks, []);
+    assert.equal((await poll(local, local.MindwtrHost.captureLinesAdmission(prepared.value.planJSON))).ok, true);
+    assert.equal((await poll(local, local.MindwtrHost.captureLinesCommit(prepared.value.planJSON, true))).ok, true);
+    assert.equal(local.events.filter((event) => event === 'load').length, 1, 'first commit never resets the accepted adapter epoch with another full read');
+    assert.equal((await poll(local, local.MindwtrHost.captureLinesAdmission(prepared.value.planJSON))).ok, false, 'successful commit consumes warm admission');
+    const stale = await ready499(); stale.rowBaselineNull = true;
+    assert.match((await prepare499(stale)).error, /STALE_REVISION/);
+    assert.deepEqual(Array.from(stale.events), ['flush', 'baseline'], 'stale accepted epoch is refused before getData can adopt it');
+    for (const mutation of ['generation', 'tasks', 'projects', 'sections', 'areas', 'people', 'settings', 'adapter', 'unguarded', 'sandbox', 'transition', 'failed', 'inFlight', 'immediate', 'retrying', 'queued']) {
+        const state = await ready499(), plan = await prepare499(state); assert.equal(plan.ok, true);
+        if (mutation === 'generation') state.persistenceStatus = { generation: 1 };
+        else if (mutation === 'tasks') state.lastLoaded = { ...state.lastLoaded, tasks: [] };
+        else if (mutation === 'projects') state.ownerProjects = [];
+        else if (mutation === 'sections') state.ownerSections = [];
+        else if (mutation === 'areas') state.ownerAreas = [];
+        else if (mutation === 'people') state.ownerPeople = [];
+        else if (mutation === 'settings') state.settings = {};
+        else if (mutation === 'adapter') state.adapter = {};
+        else if (mutation === 'unguarded') state.linesUnguarded = true;
+        else if (mutation === 'sandbox') state.sandbox = true;
+        else if (mutation === 'transition') state.workspaceTransition = true;
+        else state.persistenceStatus = { generation: 0, [mutation]: 1 };
+        assert.match((await poll(state, state.MindwtrHost.captureLinesAdmission(plan.value.planJSON))).error, /STALE_REVISION|NOT_READY/, mutation);
+        assert.match((await poll(state, state.MindwtrHost.captureLinesCommit(plan.value.planJSON, true))).error, /STALE_REVISION|NOT_READY/, mutation);
+        assert.equal(state.captureInputs.filter((entry) => JSON.parse(entry)[0] === 'linesCommit').length, 0);
+    }
+    const held = await ready499(); let release;
+    held.linesReadHold = new Promise((resolveHold) => { release = resolveHold; });
+    const ticket = held.MindwtrHost.captureLinesPrepare(input); await new Promise((tick) => setImmediate(tick));
+    held.ownerPeople = []; release();
+    assert.match((await poll(held, ticket)).error, /STALE_REVISION/);
+    const owed = await ready499(), owedPlan = await prepare499(owed);
+    const cold = makeState(0, [], 'ios');
+    assert.equal((await poll(cold, cold.MindwtrHost.captureLinesValidate(owedPlan.value.planJSON))).ok, true, 'pure cold validation requires no activation or live defaults');
+    assert.equal(cold.captureInputs.filter((entry) => JSON.parse(entry)[0] === 'linesCommit').length, 0);
+    owed.linesCommitFailure = true;
+    assert.match((await poll(owed, owed.MindwtrHost.captureLinesCommit(owedPlan.value.planJSON, true))).error, /SAVE_FAILED/);
+    owed.linesCommitFailure = false; owed.persistenceStatus = { generation: 4 }; owed.ownerPeople = [];
+    assert.equal((await poll(owed, owed.MindwtrHost.captureLinesCommit(owedPlan.value.planJSON))).ok, true, 'already-journaled replay does not reapply warm base proof');
+    const refused = await ready499(); refused.linesRefused = true;
+    const rejection = await prepare499(refused);
+    assert.equal(rejection.value.kind, 'refused'); assert.equal('planJSON' in rejection.value, false);
+    assert.equal(refused.captureInputs.filter((entry) => JSON.parse(entry)[0] === 'linesCommit').length, 0);
+    console.log('Task499: private saved-base admission, await identity, stale epoch ordering and owed replay facades (Node VM; no native proof)');
+}
 // Task362: real pure route/projection and the production private-entry Off/admission path.
 // Native363 separately proves actual HTTP/receipt/intent/recovery with the real core bundle.
 {

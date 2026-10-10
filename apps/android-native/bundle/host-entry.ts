@@ -37,6 +37,9 @@ import {
     inspectNativeBackupDocument,
     prepareNativeBackupDocument,
     readNativeBackupDocumentOutcome,
+    serializeBackupData,
+    validateMergedSyncData,
+    type AppData,
     validateNativeAttachmentDraftBegin,
     validateNativeAttachmentDraftLineage,
     prepareNativeAttachmentDraftAdd,
@@ -1232,6 +1235,23 @@ const backupTranslate = (key: string, values?: Record<string, number | string>):
     const template = unwrap(contract.getStrings({ keys: [key] })).strings[key];
     if (typeof template !== 'string') throw new Error('INVALID_INPUT: Backup translation is unavailable');
     return values ? formatI18nTemplate(template, values) : template;
+};
+
+// Only native's unjournaled first admission uses this live proof. Owed warm or
+// cold replay instead applies the shared frozen all-row conflict checks.
+let captureLinesWarmAdmission: { planJSON: string; assertCurrent: () => void } | null = null;
+const captureLinesJson = (json: string): unknown => {
+    if (typeof json !== 'string' || json.length > 8 * 1024 * 1024
+        || new TextEncoder().encode(json).byteLength > 8 * 1024 * 1024) throw new Error('INVALID_INPUT: Prepared lines are too large');
+    let plan: unknown;
+    try { plan = JSON.parse(json); } catch { throw new Error('INVALID_INPUT: Prepared lines are malformed'); }
+    return plan;
+};
+const requireCaptureLinesAdmission = (planJSON: string) => {
+    if (!captureLinesWarmAdmission || captureLinesWarmAdmission.planJSON !== planJSON) {
+        throw new Error('STALE_REVISION: Capture lines preparation is no longer current');
+    }
+    captureLinesWarmAdmission.assertCurrent();
 };
 
 // Only the native owner supplies these frozen checkpoints and preparations,
@@ -3877,6 +3897,73 @@ globalThis.MindwtrHost = {
     /** The exact prepared journal; retries never reparse text or current defaults. */
     captureCommit(json: string): string {
         return submit(async () => taskResult('quickCapture', await contract.commitPreparedQuickCapture(JSON.parse(json))));
+    },
+    /** Native freezes the same saved base and preparation before accepting its compact file journal. */
+    captureLinesPrepare(json: string): string {
+        return submit(async () => {
+            captureLinesWarmAdmission = null;
+            const adapter = bootAdapter;
+            const stale = () => new Error('STALE_REVISION: Capture lines preparation is no longer current');
+            const ready = () => {
+                if (globalThis.__mindwtrHostPlatform !== 'ios' || !adapter || bootAdapter !== adapter
+                    || getStorageAdapter() !== adapter || !adapter.concurrentWritesGuarded
+                    || isSandboxMode() || isWorkspaceTransitionActive()) throw stale();
+                requireSaved(); unwrap(contract.getDataSettings());
+                return getPersistenceStatus();
+            };
+            ready();
+            await flushPendingSave();
+            const status = ready(), state = useTaskStore.getState();
+            const assertSettled = () => {
+                const currentStatus = ready();
+                if (currentStatus.failed || currentStatus.queued || currentStatus.inFlight || currentStatus.immediate
+                    || currentStatus.retrying || currentStatus.generation !== status.generation) throw stale();
+            };
+            const assertCurrent = () => {
+                assertSettled();
+                const current = useTaskStore.getState();
+                if (current._allTasks !== state._allTasks || current._allProjects !== state._allProjects
+                    || current._allSections !== state._allSections || current._allAreas !== state._allAreas
+                    || current._allPeople !== state._allPeople || current.settings !== state.settings) throw stale();
+            };
+            assertCurrent();
+            // A full getData first would accept an external epoch while the store
+            // still holds its old rows. Prove the previously accepted epoch first.
+            if (!await adapter!.readRowBaseline()) throw stale();
+            assertCurrent();
+            const data = await adapter!.getData();
+            assertCurrent();
+            if (!data || !['tasks', 'projects', 'sections', 'areas', 'people'].every((name) => Array.isArray(data[name as keyof AppData]))
+                || !data.settings || typeof data.settings !== 'object' || Array.isArray(data.settings)
+                || validateMergedSyncData(data).length !== 0) throw new Error('INVALID_INPUT: Saved capture recovery data is incomplete');
+            const planned = unwrap(contract.prepareQuickCaptureLines(captureLinesJson(json) as Parameters<typeof contract.prepareQuickCaptureLines>[0]));
+            assertCurrent();
+            if (planned.kind === 'refused') return planned;
+            const planJSON = JSON.stringify({ request: planned.prepared.request, prepared: planned.prepared });
+            unwrap(contract.validatePreparedQuickCaptureLines(captureLinesJson(planJSON)));
+            const recoveryJSON = serializeBackupData(data);
+            if (new TextEncoder().encode(recoveryJSON).byteLength > 128 * 1024 * 1024) throw new Error('INVALID_INPUT: Recovery snapshot exceeds 128 MiB');
+            assertCurrent();
+            captureLinesWarmAdmission = { planJSON, assertCurrent };
+            return { kind: 'prepared', planJSON, recoveryJSON };
+        });
+    },
+    /** Pure original-options/frozen-row authority; valid before store activation on cold boot. */
+    captureLinesValidate(planJSON: string): string {
+        return submit(async () => unwrap(contract.validatePreparedQuickCaptureLines(captureLinesJson(planJSON))));
+    },
+    captureLinesAdmission(planJSON: string): string {
+        return submit(async () => { requireCaptureLinesAdmission(planJSON); return true; });
+    },
+    /** The second argument is private native first-execution authority, never a public generic call. */
+    captureLinesCommit(planJSON: string, firstAdmission = false): string {
+        return submit(async () => {
+            const plan = captureLinesJson(planJSON) as Parameters<typeof contract.commitPreparedQuickCaptureLines>[0];
+            if (firstAdmission) requireCaptureLinesAdmission(planJSON);
+            const result = unwrap(await contract.commitPreparedQuickCaptureLines(plan));
+            if (captureLinesWarmAdmission?.planJSON === planJSON) captureLinesWarmAdmission = null;
+            return result;
+        });
     },
     /** Mind Sweep guide and its literal one-task Inbox add. The iOS host journals preparation before commit. */
     mindSweepGuide(json: string): string {
