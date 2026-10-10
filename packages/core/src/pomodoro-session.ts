@@ -63,12 +63,14 @@ export const resolvePomodoroSession = (
   session?: StoredPomodoroSession | null,
   nowMs: number = Date.now(),
   autoStartOptions: PomodoroAutoStartOptions = {},
+  historyDayKey?: string,
 ): ResolvedPomodoroSession => {
   const durations = sanitizePomodoroDurations(session?.durations);
   const sanitizedTimerState = sanitizePomodoroState(session?.timerState, durations);
   const sessionHistory = sanitizePomodoroSessionHistory(
     session?.sessionHistory,
-    sanitizedTimerState.completedFocusSessions
+    sanitizedTimerState.completedFocusSessions,
+    historyDayKey
   );
   const timerState: PomodoroState = {
     ...sanitizedTimerState,
@@ -140,7 +142,7 @@ export const resolvePomodoroSession = (
   }, durations, elapsedSinceEndSeconds + 1, autoStartOptions);
   const completedSessionDelta = finished.state.completedFocusSessions - timerState.completedFocusSessions;
   const nextSessionHistory = completedSessionDelta > 0
-    ? recordPomodoroFocusSessions(sessionHistory, selectedTaskId, completedSessionDelta)
+    ? recordPomodoroFocusSessions(sessionHistory, selectedTaskId, completedSessionDelta, historyDayKey)
     : sessionHistory;
   const nextTimerState = {
     ...finished.state,
@@ -166,8 +168,9 @@ export const startPomodoroSession = (
   session: ResolvedPomodoroSession,
   nowMs: number = Date.now(),
   autoStartOptions: PomodoroAutoStartOptions = {},
+  historyDayKey?: string,
 ): ResolvedPomodoroSession => {
-  const resolved = resolvePomodoroSession(session, nowMs, autoStartOptions);
+  const resolved = resolvePomodoroSession(session, nowMs, autoStartOptions, historyDayKey);
   const remainingSeconds = Math.max(1, resolved.timerState.remainingSeconds);
   return {
     ...resolved,
@@ -185,8 +188,9 @@ export const pausePomodoroSession = (
   session: ResolvedPomodoroSession,
   nowMs: number = Date.now(),
   autoStartOptions: PomodoroAutoStartOptions = {},
+  historyDayKey?: string,
 ): ResolvedPomodoroSession => {
-  const resolved = resolvePomodoroSession(session, nowMs, autoStartOptions);
+  const resolved = resolvePomodoroSession(session, nowMs, autoStartOptions, historyDayKey);
   return {
     ...resolved,
     timerState: {

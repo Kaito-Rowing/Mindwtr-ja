@@ -555,10 +555,10 @@ export const createSettingsActions = ({
                             setProducerMs = Date.now() - producerStartedAt;
                             return options?.silent || !state.isLoading ? state : { isLoading: false };
                         }
-                        // Normalization can change a view-only field without a new
-                        // revision. Reusing by revision across recovery boundaries
-                        // would keep either the normalized receipt or the raw UI row.
-                        const reuseEntities = recoveryLoad === lastLoadWasRecovery;
+                        // Recovery must refresh raw task/project content even when a capped
+                        // revision and timestamp match. Ordinary loads may reuse identities;
+                        // crossing a recovery boundary must also drop normalized view rows.
+                        const reuseEntities = !recoveryLoad && recoveryLoad === lastLoadWasRecovery;
                         let previousTasksById: TaskStore['_tasksById'] = reuseEntities ? state._tasksById : new Map();
                         if (reuseEntities && !recoveryLoad) {
                             for (const task of allTasks) {

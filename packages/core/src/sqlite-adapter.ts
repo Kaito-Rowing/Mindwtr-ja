@@ -454,6 +454,13 @@ export class SqliteAdapter {
     /** Read-only capability for prepared native writes that require a BEGIN epoch fence. */
     get concurrentWritesGuarded(): boolean { return this.rejectConcurrentWrites; }
 
+    /** A domain transaction changed rows outside the ordinary save/cache pipeline. */
+    protected invalidateWriteBaselineAfterDirectSQL(): void {
+        this.lastSavedFingerprints = null;
+        this.lastKnownRowVersions = null;
+        this.lastObservedExternalChangeEpoch = undefined;
+    }
+
     private async loadAllRows(table: 'tasks' | 'projects' | 'sections' | 'areas' | 'people'): Promise<Record<string, unknown>[]> {
         const rows: Record<string, unknown>[] = [];
         try {

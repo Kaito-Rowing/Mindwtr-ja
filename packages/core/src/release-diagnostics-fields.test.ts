@@ -170,6 +170,10 @@ const RELEASE_CHECK_FIELD_NAMES = [
 ];
 
 describe('release diagnostics field names', () => {
+    it('preserves the content-free native Pomodoro SQL confirmation', () => {
+        const receipt = { releaseCheck: 'v1.3.5/ios-pomodoro-credit', outcome: 'confirmed' };
+        expect(sanitizeLogContext(receipt)).toEqual(receipt);
+    });
     it('preserves the fixed iOS legacy secret retirement receipt', () => {
         const receipt = { releaseCheck: 'v1.3.5/ios-legacy-secret-retirement', operation: 'legacy-secret-retirement', outcome: 'delivered' };
         expect(sanitizeLogContext(receipt)).toEqual(receipt);
