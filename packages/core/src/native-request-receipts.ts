@@ -713,9 +713,25 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
     }
 
     /** Current durable proof for a prerequisite receipt; never updates the session cache. */
-    async readDurableReceipt(requestId: string, payload: string): Promise<NativeHostResult<unknown | null>> {
+    async readDurableReceipt(requestId: string, payload: string, options?: { committedOnly: true }): Promise<NativeHostResult<unknown | null>> {
         if (this.pomodoroBusy) return { ok: false, error: { code: 'SAVE_FAILED', message: 'Pomodoro storage is busy' } };
-        return this.readCurrentReceipt(requestId, fingerprintOf(payload));
+        if (!options?.committedOnly) return this.readCurrentReceipt(requestId, fingerprintOf(payload));
+        const unavailable = (): NativeHostResult<never> => ({ ok: false,
+            error: { code: 'SAVE_FAILED', message: 'The committed receipt could not be proven' } });
+        if (this.documentBusy || this.ordinaryWrites > 0 || this.baselineReads > 0) return unavailable();
+        this.documentBusy = true;
+        let opened = false;
+        try {
+            // A SELECT inside a failed writer's open transaction is not durable proof.
+            await this.receiptClient.run('BEGIN DEFERRED'); opened = true;
+            const result = await this.readCurrentReceipt(requestId, fingerprintOf(payload));
+            await this.receiptClient.run('ROLLBACK'); opened = false;
+            return result;
+        } catch { return unavailable(); }
+        finally {
+            if (opened) { try { await this.receiptClient.run('ROLLBACK'); } catch { /* Host recovery must reopen the connection. */ } }
+            this.documentBusy = false;
+        }
     }
 
     private async readCurrentReceipt(requestId: string, fingerprint: string): Promise<NativeHostResult<unknown | null>> {
