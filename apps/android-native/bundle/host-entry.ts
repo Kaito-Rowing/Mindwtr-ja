@@ -1195,7 +1195,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -3721,6 +3721,30 @@ globalThis.MindwtrHost = {
     referenceTasksRemoveTagOutcome(json: string): string {
         return submit(async () => unwrap(await contract.referenceTasksRemoveTagOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.referenceTasksRemoveTagOutcome>[0])));
     },
+    trashItemsRestorePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareTrashItemsRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareTrashItemsRestore>[0])); });
+    },
+    trashItemsRestoreValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTrashItemsRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedTrashItemsRestore>[0])));
+    },
+    trashItemsRestoreCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedTrashItemsRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedTrashItemsRestore>[0])));
+    },
+    trashItemsRestoreOutcome(json: string): string {
+        return submit(async () => unwrap(contract.trashItemsRestoreOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.trashItemsRestoreOutcome>[0])));
+    },
+    trashItemsPurgePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareTrashItemsPurge(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareTrashItemsPurge>[0])); });
+    },
+    trashItemsPurgeValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTrashItemsPurge(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedTrashItemsPurge>[0])));
+    },
+    trashItemsPurgeCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedTrashItemsPurge(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedTrashItemsPurge>[0])));
+    },
+    trashItemsPurgeOutcome(json: string): string {
+        return submit(async () => unwrap(contract.trashItemsPurgeOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.trashItemsPurgeOutcome>[0])));
+    },
     archivedTasksRestorePrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchivedTasksRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareArchivedTasksRestore>[0])); });
     },
@@ -4158,6 +4182,9 @@ globalThis.MindwtrHost = {
         return submit(() => diagnosticsLog.clearChecked());
     },
     /** `name` is one of MENU_READS; `json` is that method's input. A read waits for an owed save, as every read does. */
+    trashSelection(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.getTrashSelection(completionJson(json, 2_000_000) as Parameters<typeof contract.getTrashSelection>[0])); });
+    },
     archiveTaskSelection(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getArchiveTaskSelection(completionJson(json, 2_000_000) as Parameters<typeof contract.getArchiveTaskSelection>[0])); });
     },

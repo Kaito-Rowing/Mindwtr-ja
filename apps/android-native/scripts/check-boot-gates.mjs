@@ -580,7 +580,7 @@ assert.match(hostEntry, /createNativeSync\(nativeSyncBindings\)/);
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -3923,6 +3923,42 @@ export function createNativeHostContract(bindings = {}) {
       globalThis.menuInputs.push(JSON.stringify(['referenceRemoveTagOutcome', input]));
       return { ok: true, value: input.prepared.result };
     },
+    getTrashSelection(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashSelection', input]));
+      return globalThis.trashSelectionResult;
+    },
+    async prepareTrashItemsRestore(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashRestorePrepare', input]));
+      return globalThis.trashRestorePreparation;
+    },
+    validatePreparedTrashItemsRestore(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashRestoreValidate', input]));
+      return globalThis.trashRestoreValidation;
+    },
+    async commitPreparedTrashItemsRestore(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashRestoreCommit', input]));
+      return globalThis.trashRestoreResult;
+    },
+    trashItemsRestoreOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashRestoreOutcome', input]));
+      return globalThis.trashRestoreOutcome;
+    },
+    async prepareTrashItemsPurge(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashPurgePrepare', input]));
+      return globalThis.trashPurgePreparation;
+    },
+    validatePreparedTrashItemsPurge(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashPurgeValidate', input]));
+      return globalThis.trashPurgeValidation;
+    },
+    async commitPreparedTrashItemsPurge(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashPurgeCommit', input]));
+      return globalThis.trashPurgeResult;
+    },
+    trashItemsPurgeOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashPurgeOutcome', input]));
+      return globalThis.trashPurgeOutcome;
+    },
     getProjects() {
       globalThis.projectInputs.push('projects');
       return { ok: true, value: { version: 1, revision: 'p', active: [], deferred: [], archived: [] } };
@@ -4170,6 +4206,81 @@ const poll = async (state, id) => {
     await new Promise((resolveTick) => setImmediate(resolveTick));
     return JSON.parse(state.MindwtrHost.poll(id));
 };
+// Task502: the production facades forward the original request/envelope and
+// shared full selection once. This VM uses a core stand-in; actual JSC/SQLite
+// native journal/replay proof belongs to NativeTrashBulkRestoreHostTests.
+{
+    const state = makeState(0, [], 'ios');
+    const request = { requestId: '0bfaf47b-9fa9-4c53-af66-3c9a8a582278', taskIds: ['t'],
+        taskRevisions: { t: 'rt' }, projectIds: ['p'], projectRevisions: { p: 'rp' } };
+    const envelope = { request, prepared: { version: 1, request, result: { count: 2 } } };
+    state.trashSelectionResult = { ok: true, value: { taskIds: ['t'], taskRevisions: { t: 'rt' }, projectIds: ['p'], projectRevisions: { p: 'rp' } } };
+    state.trashRestorePreparation = { ok: true, value: { kind: 'prepared', prepared: envelope.prepared } };
+    state.trashRestoreValidation = { ok: true, value: { count: 2 } };
+    state.trashRestoreResult = { ok: true, value: { count: 2 } };
+    state.trashRestoreOutcome = { ok: true, value: null };
+    state.persistenceFailure = { kind: 'save_failed' };
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestorePrepare(JSON.stringify(request)))).ok, false);
+    assert.equal(state.menuInputs.length, 0, 'preparation waits for the existing exact saved-state gate');
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestoreValidate(JSON.stringify(envelope)))).ok, true, 'cold pure validation is available before activation');
+    state.menuInputs.length = 0; state.persistenceFailure = null;
+    assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+    assert.deepEqual((await poll(state, state.MindwtrHost.trashSelection('{"revision":"r"}'))).value, state.trashSelectionResult.value);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestorePrepare(JSON.stringify(request)))).value.kind, 'prepared');
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestoreValidate(JSON.stringify(envelope)))).value.count, 2);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestoreCommit(JSON.stringify(envelope)))).value.count, 2);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestoreOutcome(JSON.stringify(envelope)))).value, null);
+    assert.deepEqual(state.menuInputs.map(JSON.parse), [['trashSelection', { revision: 'r' }],
+        ['trashRestorePrepare', request], ['trashRestoreValidate', envelope], ['trashRestoreCommit', envelope], ['trashRestoreOutcome', envelope]]);
+    state.trashRestoreOutcome = { ok: true, value: { count: 2 } };
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestoreOutcome(JSON.stringify(envelope)))).value.count, 2);
+    state.trashRestoreResult = { ok: false, error: { code: 'SAVE_FAILED', message: 'owned raw save' } };
+    assert.match((await poll(state, state.MindwtrHost.trashItemsRestoreCommit(JSON.stringify(envelope)))).error, /SAVE_FAILED/);
+    state.trashSelectionResult = { ok: false, error: { code: 'STALE_REVISION', message: 'refresh Trash' } };
+    assert.match((await poll(state, state.MindwtrHost.trashSelection('{"revision":"old"}'))).error, /STALE_REVISION/);
+    const before = state.menuInputs.length;
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestorePrepare(JSON.stringify({ text: 'x'.repeat(2_000_001) })))).ok, false);
+    assert.equal(state.menuInputs.length, before, 'existing completion transport length refusal never reaches core');
+}
+// Task507: the production facades forward the original request/envelope and
+// shared full selection once. This VM uses a core stand-in; actual JSC/SQLite
+// native journal/replay proof belongs to NativeTrashPurgeHostTests.
+{
+    const state = makeState(0, [], 'ios');
+    const request = { requestId: '0bfaf47b-9fa9-4c53-af66-3c9a8a582278', taskIds: ['t'],
+        taskRevisions: { t: 'rt' }, projectIds: ['p'], projectRevisions: { p: 'rp' } };
+    const envelope = { request, prepared: { version: 1, request, result: { count: 2 } } };
+    state.trashSelectionResult = { ok: true, value: { taskIds: ['t'], taskRevisions: { t: 'rt' }, projectIds: ['p'], projectRevisions: { p: 'rp' } } };
+    state.trashPurgePreparation = { ok: true, value: { kind: 'prepared', prepared: envelope.prepared } };
+    state.trashPurgeValidation = { ok: true, value: { count: 2 } };
+    state.trashPurgeResult = { ok: true, value: { count: 2 } };
+    state.trashPurgeOutcome = { ok: true, value: null };
+    state.persistenceFailure = { kind: 'save_failed' };
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgePrepare(JSON.stringify(request)))).ok, false);
+    assert.equal(state.menuInputs.length, 0, 'preparation waits for the existing exact saved-state gate');
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgeValidate(JSON.stringify(envelope)))).ok, true, 'cold pure validation is available before activation');
+    state.trashPurgeValidation = { ok: false, error: { code: 'INVALID_INPUT', message: 'closed purge plan' } };
+    assert.match((await poll(state, state.MindwtrHost.trashItemsPurgeValidate(JSON.stringify(envelope)))).error, /INVALID_INPUT/);
+    state.trashPurgeValidation = { ok: true, value: { count: 2 } };
+    state.menuInputs.length = 0; state.persistenceFailure = null;
+    assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+    assert.deepEqual((await poll(state, state.MindwtrHost.trashSelection('{"revision":"r"}'))).value, state.trashSelectionResult.value);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgePrepare(JSON.stringify(request)))).value.kind, 'prepared');
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgeValidate(JSON.stringify(envelope)))).value.count, 2);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgeCommit(JSON.stringify(envelope)))).value.count, 2);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgeOutcome(JSON.stringify(envelope)))).value, null);
+    assert.deepEqual(state.menuInputs.map(JSON.parse), [['trashSelection', { revision: 'r' }],
+        ['trashPurgePrepare', request], ['trashPurgeValidate', envelope], ['trashPurgeCommit', envelope], ['trashPurgeOutcome', envelope]]);
+    state.trashPurgeOutcome = { ok: true, value: { count: 2 } };
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgeOutcome(JSON.stringify(envelope)))).value.count, 2);
+    state.trashPurgeResult = { ok: false, error: { code: 'SAVE_FAILED', message: 'owned raw save' } };
+    assert.match((await poll(state, state.MindwtrHost.trashItemsPurgeCommit(JSON.stringify(envelope)))).error, /SAVE_FAILED/);
+    state.trashSelectionResult = { ok: false, error: { code: 'STALE_REVISION', message: 'refresh Trash' } };
+    assert.match((await poll(state, state.MindwtrHost.trashSelection('{"revision":"old"}'))).error, /STALE_REVISION/);
+    const before = state.menuInputs.length;
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgePrepare(JSON.stringify({ text: 'x'.repeat(2_000_001) })))).ok, false);
+    assert.equal(state.menuInputs.length, before, 'existing completion transport length refusal never reaches core');
+}
 // Task499: production private facades, saved-generation/row identity and stale
 // accepted-baseline ordering. The core stand-in is deliberate: native JSC tests
 // own actual prepared-row/SQLite/file/replay semantics.
@@ -6906,7 +7017,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);
