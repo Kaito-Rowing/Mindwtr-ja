@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildNativePomodoroPanel } from './native-pomodoro-panel';
+import { buildNativePomodoroPanel, readNativePomodoroPresentation } from './native-pomodoro-panel';
 import { getPomodoroTaskChoices } from './pomodoro';
 import { decodeNativePomodoroSession, prepareNativePomodoroTransition } from './native-pomodoro-session';
 import type { AppSettings, Task } from './types';
@@ -24,6 +24,20 @@ function ready(value: ReturnType<typeof panel>) {
 }
 
 describe('native Pomodoro presentation using RN timer helpers', () => {
+    it('accepts only closed bounded presentation state, never caller-supplied timer or task data', () => {
+        const lastEvent = { sessionID: id, generation: 4, value: 'focus-finished' };
+        expect(readNativePomodoroPresentation({ collapsed: false, lastEvent: null })).toEqual({ collapsed: false, lastEvent: null });
+        expect(readNativePomodoroPresentation({ collapsed: true, lastEvent })).toEqual({ collapsed: true, lastEvent });
+        for (const input of [Object.assign(Object.create({ collapsed: true }), { lastEvent: null, extra: true }), null, [], {}, { collapsed: 1, lastEvent: null }, { collapsed: false },
+            { collapsed: false, lastEvent: null, raw: '{}' },
+            ...[{ ...lastEvent, generation: -1 }, { ...lastEvent, generation: 1.5 },
+                { ...lastEvent, generation: Number.MAX_SAFE_INTEGER + 1 }, { ...lastEvent, value: 'unknown' },
+                { ...lastEvent, sessionID: 'other' }, { ...lastEvent, extra: true }]
+                .map((lastEvent) => ({ collapsed: false, lastEvent }))]) {
+            expect(() => readNativePomodoroPresentation(input)).toThrow('Invalid Pomodoro presentation');
+        }
+    });
+
     it('distinguishes hidden, absent and malformed storage without inventing a timer', () => {
         expect(panel(null, { settings: {} })).toMatchObject({ kind: 'uninitialized', visible: false });
         expect(panel(null)).toMatchObject({ kind: 'uninitialized', visible: true });

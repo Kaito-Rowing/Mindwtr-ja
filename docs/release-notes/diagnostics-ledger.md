@@ -30,6 +30,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.5 (add before tagging, trim in the release after)
 
+- `ios-pomodoro-panel` — `apps/android-native/bundle/host-entry.ts`: `Native Pomodoro panel state read` with `releaseCheck=v1.3.5/ios-pomodoro-panel` and `outcome=ready|uninitialized` proves a bounded saved-session projection completed against canonical task/settings data. It does not prove UI display, initialization, timer completion, credit or alarms. Malformed, pending-save and unready reads emit no marker. No session/task identifiers, content or timer values are logged.
+
 - `ios-pomodoro-picker` — `apps/android-native/bundle/host-entry.ts`: saved Diagnostics must show `Native Pomodoro task choices loaded`, `releaseCheck=v1.3.5/ios-pomodoro-picker`, and `outcome=confirmed` after an accepted first page under the current Focus revision. Later pages and rejected requests emit no marker. This proves the native read path, not task selection, timer activation or UI display. No task content, identifiers, filters or counts are logged.
 
 - `ios-reminders-source-removal` — `apps/android-native/bundle/host-entry.ts`: saved Diagnostics must show `Native Reminders source removal finished`, `releaseCheck=v1.3.5/ios-reminders-source-removal`, and `outcome=confirmed|unconfirmed` after an opt-in removal attempt following durable task/registry publication. Confirmed means the SDK returned success; unconfirmed can include an accepted deletion with a lost acknowledgment and must not be read as proof the source still exists. No automatic retry on duplicates or cold recovery. No reminder content or identifiers are logged.

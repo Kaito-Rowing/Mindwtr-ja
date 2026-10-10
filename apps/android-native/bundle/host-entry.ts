@@ -1,5 +1,7 @@
 import {
     DEFAULT_GLOBAL_SEARCH_FILTERS,
+    buildNativePomodoroPanel,
+    readNativePomodoroPresentation,
     NativeReceiptSqliteAdapter,
     PENDING_CAPTURES_DIRECTORY,
     PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY,
@@ -4245,6 +4247,33 @@ globalThis.MindwtrHost = {
     },
     appleReminderItemOutcome(planJSON: string): string {
         return submit(async () => { appleReminderAdapter(); return unwrap(await appleReminderItemOwner.outcome(appleReminderJSON(planJSON))); });
+    },
+    pomodoroPanelRead(json: string): string {
+        return submit(async () => {
+            const presentation = readNativePomodoroPresentation(pomodoroJSON(json, 8192));
+            const adapter = pomodoroAdapter();
+            const ready = () => {
+                requireSaved(); unwrap(contract.getDataSettings());
+                const status = getPersistenceStatus();
+                if (status.failed || status.queued || status.inFlight || status.immediate || status.retrying)
+                    throw new Error('NOT_READY: Pomodoro presentation waits for saved data');
+            };
+            ready();
+            const before = useTaskStore.getState();
+            const session = await adapter.readPomodoroSession();
+            ready();
+            const current = useTaskStore.getState();
+            if (pomodoroAdapter() !== adapter || current.tasks !== before.tasks || current.settings !== before.settings)
+                throw new Error('STALE_REVISION: Pomodoro presentation changed; read again');
+            const t = (key: string) => unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key;
+            const panel = buildNativePomodoroPanel({ ...presentation, raw: session.raw, settings: current.settings,
+                liveTasks: current.tasks, nowMs: Date.now(), t });
+            if (new TextEncoder().encode(JSON.stringify(panel)).byteLength > 1_000_000)
+                throw new Error('INVALID_INPUT: Pomodoro presentation exceeds the bounded native read');
+            logInfo('Native Pomodoro panel state read', { scope: 'native-ios', force: true,
+                context: { releaseCheck: 'v1.3.5/ios-pomodoro-panel', outcome: panel.kind } });
+            return panel;
+        });
     },
     pomodoroSessionRead(): string {
         return submit(async () => pomodoroAdapter().readPomodoroSession());

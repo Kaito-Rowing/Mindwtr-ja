@@ -189,6 +189,9 @@ public final class CoreHost: @unchecked Sendable {
         try await perform { try $0.importAppleReminderItem(source: source, list: list) }
     }
 
+    public func readPomodoroPanel(presentationJSON: String) async throws -> String {
+        try await perform { try $0.pomodoroFacade("pomodoroPanelReadHost", requestJSON: presentationJSON) }
+    }
     public func readPomodoroSession() async throws -> String {
         try await perform { try $0.pomodoroFacade("pomodoroSessionReadHost") }
     }
@@ -1975,7 +1978,7 @@ private final class Engine: @unchecked Sendable {
     #endif
 
     private static let methods: [String: Int] = [
-        "pomodoroSessionReadHost": 0, "pomodoroTransitionWrite": 1, "pomodoroTransitionRetryOutcome": 1, "pomodoroTasks": 1,
+        "pomodoroPanelReadHost": 1, "pomodoroSessionReadHost": 0, "pomodoroTransitionWrite": 1, "pomodoroTransitionRetryOutcome": 1, "pomodoroTasks": 1,
         "logLine": 2,
         "dataSetting": 1,
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
@@ -9349,6 +9352,7 @@ private final class Engine: @unchecked Sendable {
             }
         }
         guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
+        if pomodoroOwned, method == "pomodoroPanelReadHost" { return try invoke("pomodoroPanelRead", arguments: args) }
         guard Self.mutations.contains(method) else {
             if method == "iosSearchObservation" {
                 let observation = try searchObservation()
@@ -15794,7 +15798,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private static let pomodoroMethod = "pomodoroTransitionCommit"
-    static let pomodoroFacadeMethods: Set<String> = ["pomodoroSessionReadHost", "pomodoroTransitionWrite", "pomodoroTransitionRetryOutcome"]
+    static let pomodoroFacadeMethods: Set<String> = ["pomodoroPanelReadHost", "pomodoroSessionReadHost", "pomodoroTransitionWrite", "pomodoroTransitionRetryOutcome"]
     private static let pomodoroFailure = HostFailure("Pomodoro transition requires its exact retained request")
     private static let pomodoroJournalLimit = 12_000_000
 
@@ -18435,6 +18439,17 @@ private final class Engine: @unchecked Sendable {
                   (2...1000).contains(ids.count), Set(ids).count == ids.count,
                   ids.allSatisfy({ UUID(uuidString: $0)?.uuidString.lowercased() == $0 }) else {
                 throw HostFailure("INVALID_INPUT: Capture lines requires a closed bounded request and distinct lowercase UUIDs")
+            }
+        }
+        if method == "pomodoroPanelReadHost" {
+            guard let encoded = args.first as? String else { throw Self.pomodoroFailure }
+            let input = try Self.pomodoroObject(encoded, maximum: 8192)
+            guard Set(input.keys) == Set(["collapsed", "lastEvent"]), Self.isBoolean(input["collapsed"]) else { throw Self.pomodoroFailure }
+            if !(input["lastEvent"] is NSNull) {
+                guard let event = input["lastEvent"] as? [String: Any], Set(event.keys) == Set(["sessionID", "generation", "value"]),
+                      let id = event["sessionID"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+                      Self.pomodoroCount(event["generation"]), let value = event["value"] as? String,
+                      ["focus-finished", "break-finished"].contains(value) else { throw Self.pomodoroFailure }
             }
         }
         if method == "logLine" { try validateClientDiagnosticArguments(args) }

@@ -66,6 +66,74 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         do { try await work(); XCTFail("Expected refusal", file: file, line: line) } catch { }
     }
 
+    func testPanelReadsOverdueSavedSessionWithoutSpeculativeCreditAndKeepsHiddenRuntime() async throws {
+        try await seed(); let core = host(); _ = try await core.start()
+        let before = try json(rows("SELECT * FROM native_pomodoro_session"))
+        let tasks = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let input = try json(["collapsed": false, "lastEvent": NSNull()])
+        let panel = try object(await core.readPomodoroPanel(presentationJSON: input))
+        XCTAssertEqual(panel["kind"] as? String, "ready")
+        XCTAssertEqual(panel["visible"] as? Bool, true)
+        XCTAssertEqual(panel["needsReconcile"] as? Bool, true)
+        XCTAssertEqual(panel["clock"] as? String, "00:00")
+        XCTAssertEqual(panel["phase"] as? String, "focus")
+        XCTAssertEqual(panel["completedToday"] as? Int, 0)
+        XCTAssertEqual((panel["selectedTask"] as? [String: Any])?["id"] as? String, "task548")
+        XCTAssertTrue(panel["event"] is NSNull)
+        XCTAssertEqual(try json(rows("SELECT * FROM native_pomodoro_session")), before)
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), tasks)
+        await core.close()
+        try rows("UPDATE settings SET data=json_set(data, '$.features.pomodoro', json('false')) WHERE id=1")
+        let replay = host(); _ = try await replay.start()
+        let hidden = try object(await replay.readPomodoroPanel(presentationJSON: input))
+        XCTAssertEqual(hidden["visible"] as? Bool, false)
+        XCTAssertEqual(hidden["isRunning"] as? Bool, true)
+        XCTAssertEqual(hidden["completionAlert"] as? Bool, true)
+        XCTAssertEqual(try json(rows("SELECT * FROM native_pomodoro_session")), before)
+    }
+
+    func testPanelRefusesRetainedPomodoroWriteWithoutChangingItsRecoveryJournal() async throws {
+        try await seed(); let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        faults.journalRemove = { throw HostFailure("Task582 retained terminal") }
+        let request = try json(["action": "reconcile", "requestId": UUID().uuidString.lowercased(),
+            "observedAtMs": 1_791_633_600_000 as Int64, "localDayKey": "2026-10-10",
+            "autoStart": ["autoStartFocus": false, "autoStartBreaks": false]])
+        await failure { _ = try await core.writePomodoroTransition(requestJSON: request) }
+        let retained = try Data(contentsOf: journal)
+        await failure { _ = try await core.readPomodoroPanel(presentationJSON: self.json(["collapsed": false, "lastEvent": NSNull()])) }
+        XCTAssertEqual(try Data(contentsOf: journal), retained)
+        faults.journalRemove = nil
+        _ = try await core.writePomodoroTransition(requestJSON: request)
+        let panel = try object(await core.readPomodoroPanel(presentationJSON: json(["collapsed": false, "lastEvent": NSNull()])))
+        XCTAssertEqual(panel["kind"] as? String, "ready")
+        XCTAssertEqual(panel["needsReconcile"] as? Bool, false)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testPanelAbsenceMalformedStorageAndClosedPrivateBoundaryNeverInitialize() async throws {
+        let core = host(); _ = try await core.start()
+        let input = try json(["collapsed": true, "lastEvent": NSNull()])
+        let missing = try object(await core.readPomodoroPanel(presentationJSON: input))
+        XCTAssertEqual(missing["kind"] as? String, "uninitialized")
+        XCTAssertEqual(missing["collapsed"] as? Bool, true)
+        XCTAssertTrue(try rows("SELECT * FROM native_pomodoro_session").isEmpty)
+        for raw in ["{}", "[]", "{\"collapsed\":0,\"lastEvent\":null}",
+            "{\"collapsed\":false,\"collapsed\":true,\"lastEvent\":null}",
+            "{\"collapsed\":false,\"lastEvent\":null,\"raw\":\"{}\"}"] {
+            await failure { _ = try await core.readPomodoroPanel(presentationJSON: raw) }
+        }
+        for method in ["pomodoroPanelReadHost", "pomodoroPanelRead"] {
+            await failure { _ = try await core.call(method, argumentsJSON: self.json([input])) }
+        }
+        await core.close()
+        try await seed()
+        try rows("UPDATE native_pomodoro_session SET state_json='{}'")
+        let corrupt = host(); _ = try await corrupt.start()
+        await failure { _ = try await corrupt.readPomodoroPanel(presentationJSON: input) }
+        XCTAssertEqual(try rows("SELECT state_json FROM native_pomodoro_session").first?["state_json"] as? String, "{}")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
     func testPomodoroPickerPagesBeyondFocusWindowWithoutChangingTimerOrTasks() async throws {
         try await seed()
         for id in ["picker581-a", "picker581-b"] {
@@ -244,7 +312,7 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
     #if DEBUG && os(iOS) && targetEnvironment(simulator)
-    func testIsolatedPomodoroPickerSavedDiagnostics() async throws {
+    func testIsolatedPomodoroPickerAndPanelSavedDiagnostics() async throws {
         let identifier = UUID().uuidString.lowercased()
         let directory = root.appendingPathComponent("NativeUITests/" + identifier)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -256,9 +324,17 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         _ = try await call(core, "pomodoroTasks", ["offset": 0, "limit": 1, "revision": revision])
         _ = try await call(core, "pomodoroTasks", ["offset": 1, "limit": 1, "revision": revision])
         await failure { _ = try await self.call(core, "pomodoroTasks", ["offset": 0, "limit": 1, "revision": "stale"]) }
+        _ = try await core.readPomodoroPanel(presentationJSON: json(["collapsed": false, "lastEvent": NSNull()]))
+        await failure { _ = try await core.readPomodoroPanel(presentationJSON: "{}") }
         let shared = try object(await core.diagnosticsFileAction("logShare"))
         let url = try await core.validatedDiagnosticsShareURL(XCTUnwrap(shared["path"] as? String))
-        let markers = try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
+        let savedLog = try String(contentsOf: url, encoding: .utf8)
+        let panelMarkers = savedLog.split(separator: "\n").filter { $0.contains("v1.3.5/ios-pomodoro-panel") }
+        XCTAssertEqual(panelMarkers.count, 1)
+        let panelMarker = try object(String(XCTUnwrap(panelMarkers.first)))
+        XCTAssertEqual(panelMarker["message"] as? String, "Native Pomodoro panel state read")
+        XCTAssertEqual(panelMarker["context"] as? [String: String], ["releaseCheck": "v1.3.5/ios-pomodoro-panel", "outcome": "uninitialized"])
+        let markers = savedLog.split(separator: "\n")
             .filter { $0.contains("v1.3.5/ios-pomodoro-picker") }
         XCTAssertEqual(markers.count, 1)
         let marker = try object(String(XCTUnwrap(markers.first)))

@@ -3639,6 +3639,7 @@ async function completeFixtureContract() {
   await realCompleteActivation; return realCompleteContract;
 }
 export { taskRevisionOf } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-request-receipts.ts'))};
+export { buildNativePomodoroPanel, readNativePomodoroPresentation } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-pomodoro-panel.ts'))};
 // File-only changed/noop fixtures have no ordinary patch fields. Refuse any
 // field edit rather than manufacturing a second editor field policy here.
 const realMixedSaveMethods = createRealMixedSaveMethods({ readiness: () => ({ ok: true, value: null }),

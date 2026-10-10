@@ -8,6 +8,23 @@ import type { AppSettings, Task } from './types';
 
 export type NativePomodoroFeedback = { sessionID: string; generation: number; value: PomodoroEvent };
 
+export function readNativePomodoroPresentation(value: unknown): { collapsed: boolean; lastEvent: NativePomodoroFeedback | null } {
+    const invalid = () => { throw new Error('Invalid Pomodoro presentation'); };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid();
+    const input = value as Record<string, unknown>;
+    if (Object.keys(input).length !== 2 || Object.keys(input).some((name) => !['collapsed', 'lastEvent'].includes(name))
+        || typeof input.collapsed !== 'boolean') return invalid();
+    if (input.lastEvent === null) return { collapsed: input.collapsed, lastEvent: null };
+    if (!input.lastEvent || typeof input.lastEvent !== 'object' || Array.isArray(input.lastEvent)) return invalid();
+    const event = input.lastEvent as Record<string, unknown>;
+    if (Object.keys(event).length !== 3 || Object.keys(event).some((name) => !['sessionID', 'generation', 'value'].includes(name))
+        || typeof event.sessionID !== 'string'
+        || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(event.sessionID)
+        || typeof event.generation !== 'number' || !Number.isSafeInteger(event.generation) || event.generation < 0
+        || (event.value !== 'focus-finished' && event.value !== 'break-finished')) return invalid();
+    return { collapsed: input.collapsed, lastEvent: { sessionID: event.sessionID, generation: event.generation, value: event.value } };
+}
+
 export function buildNativePomodoroPanel(input: {
     raw: string | null;
     settings: AppSettings;
