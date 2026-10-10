@@ -287,6 +287,7 @@ import { createProjectAvailabilityMethods } from './native-host-contract-project
 import { createProjectStatusMethods } from './native-host-contract-project-status';
 import { createTrashProjectRestoreMethods } from './native-host-contract-trash-project-restore';
 import { createTrashItemsRestoreMethods } from './native-host-contract-trash-bulk-restore';
+import { createTrashItemsPurgeMethods } from './native-host-contract-trash-purge';
 import { createProjectDeleteMethods } from './native-host-contract-project-delete';
 import { createProjectDuplicateMethods } from './native-host-contract-project-duplicate';
 import { createProjectLifecycleMethods } from './native-host-contract-project-lifecycle';
@@ -1859,6 +1860,7 @@ export function createNativeHostContract(options: {
             revision: projectMutationRevision }),
         ...createTrashProjectRestoreMethods({ readiness, save }),
         ...createTrashItemsRestoreMethods({ readiness, save }),
+        ...createTrashItemsPurgeMethods({ readiness, save }),
         ...createProjectDeleteMethods({ readiness, save, t: () => translate }),
         ...createProjectDuplicateMethods({ readiness, save, t: () => translate }),
         ...createProjectLifecycleMethods({ readiness, save }),

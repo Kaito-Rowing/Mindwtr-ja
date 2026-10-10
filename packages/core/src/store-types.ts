@@ -577,6 +577,7 @@ export type PersistenceFailure = {
  * The store internally tracks ALL items (including soft-deleted) for persistence.
  */
 export type PreparedTrashItemsRestore = import('./native-host-contract-trash-bulk-restore').NativePreparedTrashItemsRestore;
+export type PreparedTrashItemsPurge = import('./native-host-contract-trash-purge').NativePreparedTrashItemsPurge;
 
 export interface TaskStore {
     tasks: Task[];
@@ -668,6 +669,9 @@ export interface TaskStore {
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Complete raw BEFORE and one task-first Trash effect; never infer a receipt from AFTER. */
     commitPreparedTrashItemsRestore: (input: PreparedTrashItemsRestore,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Complete raw rows and relevant attachment cleanup authority in one saved purge. */
+    commitPreparedTrashItemsPurge: (input: PreparedTrashItemsPurge,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Reference-only atomic batch, including all shared recurrence-created rows. */
     commitPreparedReferenceTasksMove: (input: import('./native-host-contract-reference-bulk-status').NativeReferenceTasksMovePrepared,
