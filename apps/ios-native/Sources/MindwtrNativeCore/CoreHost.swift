@@ -134,6 +134,10 @@ public final class CoreHost: @unchecked Sendable {
         try await perform { try $0.start(retainingReminderResponseIDs: retainingReminderResponseIDs) }
     }
 
+    func importAppleReminderItem(source: NativeAppleReminderSourceDTO, list: NativeAppleReminderListIdentity) async throws -> String {
+        try await perform { try $0.importAppleReminderItem(source: source, list: list) }
+    }
+
     public func readPomodoroSession() async throws -> String {
         try await perform { try $0.pomodoroFacade("pomodoroSessionReadHost") }
     }
@@ -2091,6 +2095,18 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Malformed prepared Device Calendar setting journal")
             }
         }
+        if saved.method == Self.appleReminderMethod {
+            guard journalData.count <= Self.appleReminderLimit,
+                  try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)),
+                  Set(raw.keys) == Set(["version", "method", "argumentsJSON"])
+                    || Set(raw.keys) == Set(["version", "method", "argumentsJSON", "terminal"]) else { throw Self.appleReminderFailure }
+            if let terminal = raw["terminal"] {
+                guard let encoded = terminal as? [String: Any], Set(encoded.keys) == Set(["success"]),
+                      let payload = encoded["success"] as? [String: Any], Set(payload.keys) == Set(["_0"]),
+                      payload["_0"] is String else { throw Self.appleReminderFailure }
+            }
+            _ = try appleReminderItem(saved)
+        }
         if saved.method == Self.pomodoroMethod {
             guard journalData.count <= Self.pomodoroJournalLimit,
                   try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)),
@@ -2329,12 +2345,13 @@ private final class Engine: @unchecked Sendable {
             let recoveringCaptureLines = pending?.method == "captureLinesCommit"
             let recoveringTrashItemsPurge = pending?.method == "trashItemsPurgeCommit"
             let recoveringPomodoro = pending?.method == Self.pomodoroMethod
+            let recoveringAppleReminder = pending?.method == Self.appleReminderMethod
             if cleanupRecovery {
                 var original = stat()
                 guard lstat(databaseURL.path, &original) == 0, original.st_mode & S_IFMT == S_IFREG else { throw Self.cleanupFailure }
             }
             // Optional cache cleanup cannot block startup or change an owed command.
-            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge && !recoveringPomodoro { try? backupExportFile.discardInterruptedExports() }
+            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge && !recoveringPomodoro && !recoveringAppleReminder { try? backupExportFile.discardInterruptedExports() }
             // An uncertain journal never authorizes garbage collection. Validate
             // every owned backup byte before boot can activate domain work.
             if let command = pending, command.method == "backupDocumentCommit" {
@@ -2343,13 +2360,14 @@ private final class Engine: @unchecked Sendable {
             let retainedBackup = try pending.flatMap { command -> String? in
                 if command.method == "backupDocumentCommit" { return try backupOperationReference(command).id }
                 if command.method == "captureLinesCommit" { return try captureLinesOperation(command).reference.id }
+                if command.method == Self.appleReminderMethod { return try appleReminderItem(command).reference.id }
                 return nil
             }
             // Lines plans require the shared pure validator as well as file hashes.
             // Delay their GC until that validator exists, still before SQLite boot.
-            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge && !recoveringPomodoro { try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? [])) }
+            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge && !recoveringPomodoro && !recoveringAppleReminder { try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? [])) }
             // Accepted operations own their frozen plan, never the picker copy.
-            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge && !recoveringPomodoro { try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id })) }
+            if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge && !recoveringPomodoro && !recoveringAppleReminder { try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id })) }
             guard let runtime = JSContext() else { throw HostFailure("Cannot create JavaScriptCore runtime") }
             context = runtime
             installBridge(runtime)
@@ -2361,6 +2379,12 @@ private final class Engine: @unchecked Sendable {
             if let command = pending, command.method == "captureLinesCommit" {
                 _ = try captureLinesArguments(command)
                 if case .success(let value) = command.terminal { try validateCaptureLinesSuccess(command, value: value) }
+                try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? []))
+                try? backupExportFile.discardInterruptedExports()
+                try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id }))
+            }
+            if let command = pending, command.method == Self.appleReminderMethod {
+                _ = try validateAppleReminderItem(command)
                 try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? []))
                 try? backupExportFile.discardInterruptedExports()
                 try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id }))
@@ -2784,6 +2808,9 @@ private final class Engine: @unchecked Sendable {
                 }
             }
         }
+        let owedAppleReminderRequestID = try pending.flatMap { command -> String? in
+            command.method == Self.appleReminderMethod ? try appleReminderItem(command).reference.id : nil
+        }
         let recoveringPomodoroCommand = pending?.method == Self.pomodoroMethod ? pending : nil
         let owedPomodoroRequestID = try recoveringPomodoroCommand.flatMap { command -> String? in
             guard let json = try pomodoroJournalArguments(command).first as? String else { throw Self.pomodoroFailure }
@@ -2999,7 +3026,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringSomedaySectionMove, let terminal, case .success(let value) = terminal { startupSomedaySectionMoveResult = value }
         if recoveringSomedaySectionUndo, let terminal, case .success(let value) = terminal { startupSomedaySectionUndoResult = value }
         try resumeActivationIfNeeded()
-        _ = try invoke("iosPruneReceipts", arguments: [retentionJSON, owedPomodoroRequestID.map { $0 as Any } ?? NSNull()])
+        _ = try invoke("iosPruneReceipts", arguments: [retentionJSON, (owedAppleReminderRequestID ?? owedPomodoroRequestID).map { $0 as Any } ?? NSNull()])
         let value = try invoke("window", arguments: [0, 50, ""])
         let recoveredAreas = startupAreaCreateResult ?? startupAreaColorResult ?? startupAreaRenameResult
             ?? startupAreaOrderResult ?? startupAreaDeleteResult
@@ -11810,6 +11837,11 @@ private final class Engine: @unchecked Sendable {
         try denyCleanupOwner()
         guard started, !closed else { throw HostFailure("Core host is not ready; retry startup") }
         guard let command = pending else { return nil }
+        if command.method == Self.appleReminderMethod {
+            try bindAppleReminderJournal(command)
+            if !appleReminderRemovalPending { try persist(command) }
+            return try executeAppleReminderItem(command)
+        }
         if command.method == Self.projectDownloadMethod { throw CoreHostProjectFileAvailabilityRecovery() }
         if command.method == Self.projectFileAddMethod { throw CoreHostProjectFileAddRecovery() }
         if command.method == Self.mixedSaveMethod { return try executeMixedSave(command, cancellation: NativeAttachmentCancellation()) }
@@ -15128,6 +15160,330 @@ private final class Engine: @unchecked Sendable {
         return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "confirmed", "result": result], options: [.sortedKeys]), as: UTF8.self)
     }
 
+    private var appleReminderJournalOwned = false
+    private var appleReminderJournalNeedsSync = false
+    private var appleReminderRemovalPending = false
+    private var appleReminderJournalBinding: MixedSaveFileBinding?
+    private var completedAppleReminderSnapshot: NativeBackupSnapshotReference?
+    private static let appleReminderMethod = "appleReminderImportItemCommit"
+    private static let appleReminderLimit = 16 * 1024 * 1024
+    private static let appleReminderFailure = HostFailure("NOT_READY: Reminders import requires its retained item")
+
+    private struct AppleReminderItem {
+        let reference: NativeBackupOperationReference
+        let frame: [String: Any]
+        let planJSON: String
+        let result: [String: Any]
+        var registry: [String: Any]? { frame["registry"] as? [String: Any] }
+    }
+
+    private static func appleReminderObject(_ json: String, limit: Int) throws -> [String: Any] {
+        guard json.utf8.count <= limit, try NativeJSON.hasUniqueObjectKeys(json),
+              let value = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              referenceTasksMoveJSONIsLossless(value) else { throw appleReminderFailure }
+        return value
+    }
+
+    private static func appleReminderRegistryRaw(_ raw: Any?) throws -> String? {
+        if raw is NSNull { return nil }
+        guard let raw = raw as? String else { throw appleReminderFailure }
+        _ = try appleReminderObject(raw, limit: 1024 * 1024)
+        return raw
+    }
+
+    private func appleReminderStorageBinding() throws -> [String: Any] {
+        guard let location = deviceStorageLocation, NativeReminderRequest.validNamespace(location.bundleIdentifier) else {
+            throw Self.appleReminderFailure
+        }
+        var identity = stat()
+        let path = try NativeAttachmentFiles.filePath(location.containerURL.absoluteString)
+        let fd = Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+        guard fd >= 0 else { throw Self.appleReminderFailure }
+        defer { Darwin.close(fd) }
+        guard fstat(fd, &identity) == 0, identity.st_mode & S_IFMT == S_IFDIR else { throw Self.appleReminderFailure }
+        return ["namespace": location.bundleIdentifier, "device": String(identity.st_dev), "inode": String(identity.st_ino)]
+    }
+
+    private func appleReminderItem(_ command: PendingCommand) throws -> AppleReminderItem {
+        guard command.version == 2, command.method == Self.appleReminderMethod, command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= Self.appleReminderLimit,
+              try NativeJSON.hasUniqueObjectKeys(command.argumentsJSON),
+              let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1 else {
+            throw Self.appleReminderFailure
+        }
+        let frame = try Self.appleReminderObject(args[0], limit: Self.appleReminderLimit)
+        guard Set(frame.keys) == Set(["version", "operation", "storage", "registry"]), Self.isInteger(frame["version"], equalTo: 1),
+              let reference = frame["operation"] as? [String: Any], Set(reference.keys) == Set(["id", "sha256", "byteCount"]),
+              let id = reference["id"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+              let sha = reference["sha256"] as? String, sha.utf8.count == 64,
+              sha.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              Self.isInteger(reference["byteCount"]), let count = reference["byteCount"] as? Int,
+              (1...8 * 1024 * 1024).contains(count),
+              let storage = frame["storage"] as? [String: Any], Set(storage.keys) == Set(["namespace", "device", "inode"]),
+              Self.equalJSON(storage, try appleReminderStorageBinding()) else { throw Self.appleReminderFailure }
+        if !(frame["registry"] is NSNull) {
+            guard let registry = frame["registry"] as? [String: Any],
+                  Set(registry.keys) == Set(["phase", "expectedRaw", "nextRaw"]),
+                  ["ready", "publishing", "published"].contains(registry["phase"] as? String ?? ""),
+                  registry["nextRaw"] is String else { throw Self.appleReminderFailure }
+            _ = try Self.appleReminderRegistryRaw(registry["expectedRaw"])
+            _ = try Self.appleReminderRegistryRaw(registry["nextRaw"])
+        }
+        let ref = try JSONDecoder().decode(NativeBackupOperationReference.self, from: Data(Self.ownedJSON(reference).utf8))
+        let operation = try backupOperationFiles.read(ref)
+        let plan = try Self.appleReminderObject(operation.planJSON, limit: 8 * 1024 * 1024)
+        guard Set(plan.keys) == Set(["request", "prepared"]), let request = plan["request"] as? [String: Any],
+              Self.ownedEqual(request["requestId"] as? String ?? "", id),
+              let prepared = plan["prepared"] as? [String: Any], let result = prepared["result"] as? [String: Any],
+              Set(result.keys) == Set(["taskId", "importKey", "mode"]),
+              let taskID = result["taskId"] as? String, UUID(uuidString: taskID)?.uuidString.lowercased() == taskID,
+              result["importKey"] is String, ["new", "existing"].contains(result["mode"] as? String ?? "") else {
+            throw Self.appleReminderFailure
+        }
+        if let terminal = command.terminal {
+            guard case .success(let raw) = terminal else { throw Self.appleReminderFailure }
+            let value = try Self.appleReminderObject(raw, limit: 8 * 1024 * 1024)
+            guard Set(value.keys) == Set(["kind", "result"]), Self.equalJSON(value["result"], result),
+                  value["kind"] as? String == "published" && (frame["registry"] as? [String: Any])?["phase"] as? String == "published"
+                    || value["kind"] as? String == "keptSource" && ((frame["registry"] is NSNull)
+                        || (frame["registry"] as? [String: Any])?["phase"] as? String == "ready") else { throw Self.appleReminderFailure }
+        }
+        for phase in ["ready", "publishing", "published"] {
+            var futureFrame = frame
+            if var registry = frame["registry"] as? [String: Any] {
+                registry["phase"] = phase; futureFrame["registry"] = registry
+            }
+            for kind in ["published", "keptSource"] {
+                var reserved = PendingCommand(version: 2, method: Self.appleReminderMethod,
+                    argumentsJSON: try Self.ownedJSON([Self.ownedJSON(futureFrame)]))
+                reserved.terminal = .success(try Self.ownedJSON(["kind": kind, "result": result]))
+                guard try JSONEncoder().encode(reserved).count <= Self.appleReminderLimit else { throw Self.appleReminderFailure }
+            }
+        }
+        guard try JSONEncoder().encode(command).count <= Self.appleReminderLimit else { throw Self.appleReminderFailure }
+        return AppleReminderItem(reference: ref, frame: frame, planJSON: operation.planJSON, result: result)
+    }
+
+    private func validateAppleReminderItem(_ command: PendingCommand) throws -> AppleReminderItem {
+        let item = try appleReminderItem(command)
+        let result = try invoke("appleReminderItemValidate", arguments: [item.planJSON])
+        guard Self.equalJSON(try Self.appleReminderObject(result, limit: 8 * 1024 * 1024), item.result) else {
+            throw Self.appleReminderFailure
+        }
+        if let registry = item.registry {
+            let planned = try invoke("appleReminderRegistryPlan", arguments: [item.planJSON, registry["expectedRaw"]!])
+            guard let next = try Self.appleReminderObject(planned, limit: 8 * 1024 * 1024)["nextRaw"] as? String,
+                  Self.ownedEqual(next, registry["nextRaw"] as? String ?? "") else { throw Self.appleReminderFailure }
+        }
+        return item
+    }
+
+    private func requireAppleReminderJournal() throws {
+        guard appleReminderJournalOwned,
+              try mixedSaveFileBinding(journalURL, maximumBytes: Self.appleReminderLimit) == appleReminderJournalBinding else {
+            throw Self.appleReminderFailure
+        }
+    }
+
+    private func bindAppleReminderJournal(_ command: PendingCommand) throws {
+        if appleReminderJournalOwned { try requireAppleReminderJournal(); return }
+        guard let bound = try mixedSaveFileBinding(journalURL, maximumBytes: Self.appleReminderLimit),
+              let saved = try loadPendingJournal(checkingEditorSnapshot: false),
+              try ownedEncoded(saved) == ownedEncoded(command),
+              try mixedSaveFileBinding(journalURL, maximumBytes: Self.appleReminderLimit) == bound else { throw Self.appleReminderFailure }
+        appleReminderJournalBinding = bound; appleReminderJournalOwned = true
+    }
+
+    private func persistAppleReminderJournal(_ command: PendingCommand) throws {
+        _ = try appleReminderItem(command)
+        try bindAppleReminderJournal(command)
+        let bytes = try ownedEncoded(command)
+        if !appleReminderJournalNeedsSync, let prior = appleReminderJournalBinding,
+           let saved = try? JSONDecoder().decode(PendingCommand.self, from: prior.bytes),
+           try ownedEncoded(saved) == bytes { return }
+        #if DEBUG
+        try faults?.journalWrite?()
+        #endif
+        try requireAppleReminderJournal()
+        appleReminderJournalNeedsSync = true
+        do { try DurableFile.write(bytes, to: journalURL, privateDraft: true) }
+        catch {
+            if let actual = try? mixedSaveFileBinding(journalURL, maximumBytes: Self.appleReminderLimit), actual.bytes == bytes {
+                appleReminderJournalBinding = actual
+            }
+            throw error
+        }
+        guard let actual = try mixedSaveFileBinding(journalURL, maximumBytes: Self.appleReminderLimit), actual.bytes == bytes else {
+            throw Self.appleReminderFailure
+        }
+        appleReminderJournalBinding = actual; appleReminderJournalNeedsSync = false
+    }
+
+    private func appleReminderCommand(_ item: AppleReminderItem, registry: [String: Any]) throws -> PendingCommand {
+        var frame = item.frame; frame["registry"] = registry
+        let command = PendingCommand(version: 2, method: Self.appleReminderMethod, argumentsJSON: try Self.ownedJSON([Self.ownedJSON(frame)]))
+        _ = try validateAppleReminderItem(command)
+        return command
+    }
+
+    func importAppleReminderItem(source: NativeAppleReminderSourceDTO, list: NativeAppleReminderListIdentity) throws -> String {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let storage = try requireDeviceStorageAdmission()
+        guard notificationSettingTurn == nil, calendarAccessTurn == nil, try editorDrafts.read() == nil,
+              let runtime = context, let library = calendarPushDatabaseBinding,
+              try Self.bindingIdentity(databaseURL) == library else { throw Self.appleReminderFailure }
+        let connection = try requireDatabase(), generation = attachmentGeneration
+        let binding = try appleReminderStorageBinding(), epoch = try captureLinesDataVersion()
+        func current() throws {
+            guard started, !closed, lockFD >= 0, context === runtime, deviceStorage === storage,
+                  database === connection, attachmentGeneration == generation,
+                  try Self.bindingIdentity(databaseURL) == library, try captureLinesDataVersion() == epoch,
+                  Self.equalJSON(try appleReminderStorageBinding(), binding) else { throw Self.appleReminderFailure }
+        }
+        let raw = try storage.readAppleRemindersImportState()
+        _ = try Self.appleReminderRegistryRaw(raw.map { $0 as Any } ?? NSNull())
+        let sourceJSON = try Self.ownedJSON(["version": 1, "requestId": UUID().uuidString.lowercased(),
+            "list": ["id": list.id, "sourceId": list.sourceID], "reminder": source.value])
+        let response = try Self.appleReminderObject(invoke("appleReminderItemPrepare", arguments: [sourceJSON, raw.map { $0 as Any } ?? NSNull()]), limit: 150 * 1024 * 1024)
+        try current()
+        if response["kind"] as? String == "noop", Set(response.keys) == Set(["kind"]) { return #"{"kind":"noop"}"# }
+        guard Set(response.keys) == Set(["kind", "planJSON", "recoveryJSON"]), response["kind"] as? String == "prepared",
+              let planJSON = response["planJSON"] as? String, let snapshot = response["recoveryJSON"] as? String,
+              snapshot.utf8.count <= NativeBackupOperationFiles.maximumSnapshotBytes,
+              let request = try Self.appleReminderObject(planJSON, limit: 8 * 1024 * 1024)["request"] as? [String: Any],
+              let id = request["requestId"] as? String else { throw Self.appleReminderFailure }
+        let reference = try backupOperationFiles.prepare(id: id, planJSON: planJSON,
+            newSnapshot: completedAppleReminderSnapshot == nil ? (name: backupOperationFiles.nextSnapshotName(at: Date()), content: snapshot) : nil,
+            existingSnapshot: completedAppleReminderSnapshot)
+        let command: PendingCommand
+        do {
+            let frame: [String: Any] = ["version": 1, "operation": try NativeJSON.jsonObject(with: Data(backupEncoded(reference).utf8)),
+                "storage": binding, "registry": NSNull()]
+            let initial = PendingCommand(version: 2, method: Self.appleReminderMethod, argumentsJSON: try Self.ownedJSON([Self.ownedJSON(frame)]))
+            let item = try validateAppleReminderItem(initial)
+            let planned = try Self.appleReminderObject(invoke("appleReminderRegistryPlan", arguments: [planJSON, raw.map { $0 as Any } ?? NSNull()]), limit: 8 * 1024 * 1024)
+            guard let next = planned["nextRaw"] as? String else { throw Self.appleReminderFailure }
+            command = try appleReminderCommand(item, registry: ["phase": "ready", "expectedRaw": raw.map { $0 as Any } ?? NSNull(), "nextRaw": next])
+            try current()
+            guard try invoke("appleReminderItemAdmission", arguments: [planJSON]) == "true" else { throw Self.appleReminderFailure }
+            try current()
+            guard try mixedSaveFileBinding(journalURL, maximumBytes: Self.appleReminderLimit) == nil else { throw Self.appleReminderFailure }
+        } catch {
+            try? backupOperationFiles.discard(reference, provenRejected: true)
+            throw error
+        }
+        appleReminderJournalOwned = true; appleReminderJournalBinding = nil
+        appleReminderJournalNeedsSync = false; appleReminderRemovalPending = false
+        pending = command
+        try persist(command)
+        try current()
+        let terminal = try executeAppleReminderItem(command, firstAdmission: true)
+        try resumeActivationIfNeeded()
+        return try terminal.value()
+    }
+
+    private func executeAppleReminderItem(_ original: PendingCommand, firstAdmission: Bool = false) throws -> TerminalResult {
+        try denyCleanupOwner(); try requireEncryptionUnlockTurn(); try requireNoAttachmentDraft()
+        guard started, !closed, lockFD >= 0, retainedOrdinaryTurn == nil,
+              notificationSettingTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil,
+              taskDownloadTurn == nil, projectAvailabilityTurn == nil, projectFileAddTurn == nil, projectDownloadTurn == nil,
+              let runtime = context, let storage = deviceStorage, let connection = database,
+              let library = calendarPushDatabaseBinding, try Self.bindingIdentity(databaseURL) == library else { throw Self.appleReminderFailure }
+        var command = original
+        var item = try validateAppleReminderItem(command)
+        func current() throws {
+            guard started, !closed, lockFD >= 0, context === runtime, deviceStorage === storage, database === connection,
+                  try Self.bindingIdentity(databaseURL) == library, Self.equalJSON(try appleReminderStorageBinding(), item.frame["storage"]),
+                  let saved = pending, try ownedEncoded(saved) == ownedEncoded(command) else { throw Self.appleReminderFailure }
+            try requireAppleReminderJournal()
+            if let disk = try loadPendingJournal(checkingEditorSnapshot: false) {
+                guard try ownedEncoded(disk) == ownedEncoded(command) else { throw Self.appleReminderFailure }
+            } else {
+                guard appleReminderRemovalPending, command.terminal != nil else { throw Self.appleReminderFailure }
+            }
+        }
+        func save(_ updated: PendingCommand) throws {
+            try current()
+            pending = updated; command = updated
+            try persist(updated)
+            item = try validateAppleReminderItem(updated)
+            try current()
+        }
+        // The receipt is authoritative even when source metadata or task defaults changed.
+        try current()
+        var proof = try invoke("appleReminderItemOutcome", arguments: [item.planJSON])
+        try current()
+        if proof == "null" {
+            guard command.terminal == nil, item.registry?["phase"] as? String == "ready" else { throw Self.appleReminderFailure }
+            _ = try invoke("appleReminderItemCommit", arguments: [item.planJSON, firstAdmission])
+            try current()
+            proof = try invoke("appleReminderItemOutcome", arguments: [item.planJSON])
+            try current()
+        } else {
+            _ = try invoke("appleReminderItemCommit", arguments: [item.planJSON, false])
+            try current()
+        }
+        guard proof != "null", Self.equalJSON(try Self.appleReminderObject(proof, limit: 8 * 1024 * 1024), item.result) else {
+            throw Self.appleReminderFailure
+        }
+        if command.terminal == nil {
+            var phase = item.registry?["phase"] as? String
+            if phase == nil || phase == "ready" {
+                let sql = "SELECT id,deletedAt,purgedAt FROM tasks WHERE id=?"
+                let rows = try NativeJSON.jsonObject(with: Data(connection.execute(sql,
+                    parametersJSON: Self.ownedJSON([item.result["taskId"]!]), readOnly: true).utf8)) as? [[String: Any]]
+                try current()
+                guard let rows, rows.count <= 1 else { throw Self.appleReminderFailure }
+                let live: Bool
+                if let row = rows.first {
+                    guard Set(row.keys) == Set(["id", "deletedAt", "purgedAt"]), Self.equalJSON(row["id"], item.result["taskId"]),
+                          [row["deletedAt"], row["purgedAt"]].allSatisfy({ $0 is NSNull || $0 is String }) else { throw Self.appleReminderFailure }
+                    live = [row["deletedAt"], row["purgedAt"]].allSatisfy { $0 is NSNull || ($0 as? String) == "" }
+                } else { live = false }
+                if !live {
+                    var terminal = command
+                    terminal.terminal = .success(try Self.ownedJSON(["kind": "keptSource", "result": item.result]))
+                    try save(terminal)
+                } else {
+                    let raw = try storage.readAppleRemindersImportState()
+                    _ = try Self.appleReminderRegistryRaw(raw.map { $0 as Any } ?? NSNull())
+                    let planned = try Self.appleReminderObject(invoke("appleReminderRegistryPlan", arguments: [item.planJSON, raw.map { $0 as Any } ?? NSNull()]), limit: 8 * 1024 * 1024)
+                    try current()
+                    guard let next = planned["nextRaw"] as? String else { throw Self.appleReminderFailure }
+                    try save(appleReminderCommand(item, registry: ["phase": "ready", "expectedRaw": raw.map { $0 as Any } ?? NSNull(), "nextRaw": next]))
+                    var registry = item.registry!; registry["phase"] = "publishing"
+                    try save(appleReminderCommand(item, registry: registry)); phase = "publishing"
+                }
+            }
+            if phase == "publishing", let registry = item.registry, let next = registry["nextRaw"] as? String {
+                let expected = try Self.appleReminderRegistryRaw(registry["expectedRaw"])
+                let needsCAS: Bool
+                if storage.hasPendingAppleRemindersImportMutation { needsCAS = true }
+                else { needsCAS = try storage.readAppleRemindersImportState().map { Self.ownedEqual($0, next) } != true }
+                if needsCAS { try storage.compareAndSetAppleRemindersImportState(expected: expected, next: next) }
+                try current()
+                guard let actual = try storage.readAppleRemindersImportState(), Self.ownedEqual(actual, next) else { throw Self.appleReminderFailure }
+                var published = registry; published["phase"] = "published"
+                try save(appleReminderCommand(item, registry: published)); phase = "published"
+            }
+            if phase == "published" {
+                var terminal = command
+                terminal.terminal = .success(try Self.ownedJSON(["kind": "published", "result": item.result]))
+                try save(terminal)
+            }
+        }
+        guard let terminal = command.terminal else { throw Self.appleReminderFailure }
+        try current()
+        try backupOperationFiles.complete(item.reference)
+        completedAppleReminderSnapshot = try backupOperationFiles.read(item.reference).snapshot
+        try current()
+        recoveryActivationPending = true
+        try clearPending()
+        try? backupOperationFiles.discard(item.reference, provenRejected: false)
+        if item.registry?["phase"] as? String == "published" { _ = try? invoke("appleReminderItemAcknowledged", arguments: []) }
+        return terminal
+    }
+
     private static let pomodoroMethod = "pomodoroTransitionCommit"
     static let pomodoroFacadeMethods: Set<String> = ["pomodoroSessionReadHost", "pomodoroTransitionWrite", "pomodoroTransitionRetryOutcome"]
     private static let pomodoroFailure = HostFailure("Pomodoro transition requires its exact retained request")
@@ -16470,6 +16826,11 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func journalArguments(_ command: PendingCommand, checkingEditorSnapshot: Bool = true, retainedOrdinary: Bool = false) throws -> [Any] {
+        if command.method == Self.appleReminderMethod {
+            guard !retainedOrdinary else { throw Self.appleReminderFailure }
+            _ = try appleReminderItem(command)
+            return try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as! [String]
+        }
         if command.method == Self.pomodoroMethod { return try pomodoroJournalArguments(command) }
         if command.method == "reminderSnoozeCommit" {
             guard !retainedOrdinary else { throw Self.retainedOrdinaryFailure }
@@ -22170,6 +22531,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func persist(_ command: PendingCommand, mixedGuard: (() throws -> Void)? = nil) throws {
+        if command.method == Self.appleReminderMethod { try persistAppleReminderJournal(command); return }
         if command.method == Self.pomodoroMethod { _ = try pomodoroJournalArguments(command) }
         if let operation = CalendarSubscriptionOperation(commitMethod: command.method) {
             _ = try journalArguments(command)
@@ -22273,6 +22635,22 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func clearPending() throws {
+        if pending?.method == Self.appleReminderMethod {
+            try requireAppleReminderJournal()
+            #if DEBUG
+            try faults?.journalRemove?()
+            #endif
+            try requireAppleReminderJournal()
+            appleReminderRemovalPending = true
+            do { try DurableFile.remove(journalURL) }
+            catch {
+                if try mixedSaveFileBinding(journalURL, maximumBytes: Self.appleReminderLimit) == nil { appleReminderJournalBinding = nil }
+                throw error
+            }
+            appleReminderJournalBinding = nil; appleReminderJournalOwned = false
+            appleReminderJournalNeedsSync = false; appleReminderRemovalPending = false; pending = nil
+            return
+        }
         try requireCalendarSubscriptionSettingTurn()
         try requireRetainedOrdinaryTurn()
         #if DEBUG
@@ -23608,6 +23986,8 @@ private final class Engine: @unchecked Sendable {
         calendarPushTurn = nil; retainedCalendarPushTurn = nil
         calendarPushReady.removeAll(); calendarPushObserver = nil
         calendarPushDatabaseBinding = nil
+        appleReminderJournalOwned = false; appleReminderJournalNeedsSync = false; appleReminderRemovalPending = false
+        appleReminderJournalBinding = nil; completedAppleReminderSnapshot = nil
         if let capture = calendarFileCaptureTurn { abortCalendarFileCapture(capture.id) }
         removeReminderObserver(nil)
         searchObserver = nil

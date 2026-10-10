@@ -30,6 +30,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.5 (add before tagging, trim in the release after)
 
+- `ios-reminders-item` — `apps/android-native/bundle/host-entry.ts` (`appleReminderItemAcknowledged`, called by the native journal owner): saved Diagnostics must show `Native Reminders item and import registry confirmed`, `releaseCheck=v1.3.5/ios-reminders-item`, and `outcome=confirmed` after the exact task receipt and retained registry publication settle. This internal import path keeps the source reminder; it does not prove source deletion or provider access.
+
 - **`v1.3.5/ios-pomodoro-absence`** — `packages/core/src/native-request-receipts.ts`. Forced `Native Pomodoro refused missing established session` with `outcome=refused` proves the native singleton was absent while SQL still held an established-transition receipt, so fresh initialization/adoption was refused. One newest receipt survives ordinary expiry to preserve this distinction. No task content, identifiers or raw source data are logged. The refusal survives logging failure.
 
 - **`v1.3.5/ios-pomodoro-recovery`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. With Diagnostics logging enabled, `Native Pomodoro recovery restored ordinary actions` with `outcome=confirmed` proves an exact retained Pomodoro retry finished its canonical projection and host reactivation after a failed refresh. It is emitted after journal cleanup and successful activation; no task contents or identifiers are logged. Logging is best effort.

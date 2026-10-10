@@ -580,7 +580,7 @@ assert.match(hostEntry, /createNativeSync\(nativeSyncBindings\)/);
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -4333,6 +4333,50 @@ const poll = async (state, id) => {
     assert.equal((await poll(state, state.MindwtrHost.gtdPomodoroOptions('{'))).ok, false);
     assert.equal(state.menuInputs.length, count);
 }
+// Task575: production Reminders bridge preparation uses the shared literal factory.
+// This adapter stand-in proves routing/guards, not SQLite or native journal settlement.
+{
+    const source = { version: 1, requestId: '11111111-1111-4111-8111-111111111111',
+        list: { id: 'selected-list', sourceId: 'selected-source' },
+        reminder: { id: '22222222-2222-4222-8222-222222222222', title: 'Literal @home /due:today', notes: 'Keep notes', completed: false } };
+    const registry = JSON.stringify({ selectedListId: source.list.id, selectedListTitle: 'Selected',
+        importedReminderIds: ['older'], deleteImportedReminders: false, autoImportOnOpen: true });
+    const ready575 = async () => {
+        const state = makeState(0, [], 'ios');
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        state.fakeData.settings.deviceId = '33333333-3333-4333-8333-333333333333';
+        state.settings = state.fakeData.settings;
+        return state;
+    };
+    const state = await ready575();
+    const prepared = await poll(state, state.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), registry));
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    const plan = JSON.parse(prepared.value.planJSON);
+    assert.equal(plan.prepared.task.title, source.reminder.title);
+    assert.equal(plan.prepared.task.status, 'inbox'); assert.equal(plan.prepared.task.dueDate, undefined);
+    assert.deepEqual(plan.prepared.task.contexts, []);
+    assert.equal(plan.request.generatedTaskId, null);
+    assert.equal(plan.prepared.target.row, null);
+    const cold = makeState(0, [], 'ios');
+    assert.deepEqual((await poll(cold, cold.MindwtrHost.appleReminderItemValidate(prepared.value.planJSON))).value, plan.prepared.result);
+    assert.equal(cold.events.length, 0, 'preboot validation has no SQL/KV/provider access');
+    const rebased = await poll(cold, cold.MindwtrHost.appleReminderRegistryPlan(prepared.value.planJSON, registry));
+    assert.deepEqual(JSON.parse(rebased.value.nextRaw), { ...JSON.parse(registry), importedReminderIds: ['older', source.reminder.id] });
+    assert.equal(cold.events.length, 0);
+    const before = state.events.length;
+    for (const raw of ['{', '[]', JSON.stringify({ importedReminderIds: [1] }), JSON.stringify({ deleteImportedReminders: 'true' })])
+        assert.equal((await poll(state, state.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), raw))).ok, false);
+    assert.equal((await poll(state, state.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), JSON.stringify({ ...JSON.parse(registry), deleteImportedReminders: true })))).ok, false);
+    assert.deepEqual((await poll(state, state.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), JSON.stringify({ ...JSON.parse(registry), importedReminderIds: [source.reminder.id] })))).value, { kind: 'noop' });
+    assert.equal(state.events.length, before, 'malformed, unsupported and duplicate sources perform no saved-data reads');
+    const fresh = await ready575();
+    const claim = await poll(fresh, fresh.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), registry));
+    assert.equal(claim.ok, true);
+    assert.equal((await poll(fresh, fresh.MindwtrHost.appleReminderItemAdmission(claim.value.planJSON))).value, true);
+    fresh.persistenceStatus = { generation: 1 };
+    assert.equal((await poll(fresh, fresh.MindwtrHost.appleReminderItemAdmission(claim.value.planJSON))).ok, false);
+    assert.equal((await poll(fresh, fresh.MindwtrHost.appleReminderItemCommit(claim.value.planJSON, true))).ok, false);
+}
 // Task520: actual shared pure preparation/validation with the production five
 // private facades. This storage stand-in proves routing/admission only; the
 // receipt suite and pending native tests own real SQLite journal/fault proof.
@@ -7287,7 +7331,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);

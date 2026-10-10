@@ -134,7 +134,12 @@ import { TASK_SQLITE_COLUMNS, taskToSqliteRow } from '../../../packages/core/src
 import { normalizeTaskForLoad } from '../../../packages/core/src/task-status';
 import { hasRawReadRow, rawReadRow } from '../../../packages/core/src/sqlite-raw-snapshot';
 import { taskEditValuesEqual } from '../../../packages/core/src/json-value-equality';
-import { stripSensitiveSettings } from '../../../packages/core/src/store-helpers';
+import { ensureDeviceId, stripSensitiveSettings } from '../../../packages/core/src/store-helpers';
+import { resolveDefaultNewTaskAreaId } from '../../../packages/core/src/area-utils';
+import { classifyAppleReminderForImport, normalizeAppleRemindersImportSettings } from '../../../packages/core/src/apple-reminders-import-model';
+import { prepareNativeAppleReminderImportItem, validatePreparedNativeAppleReminderImportItem,
+    type NativeAppleReminderImportRequest } from '../../../packages/core/src/native-apple-reminders-import-item';
+import { createNativeAppleReminderImportOwner } from '../../../packages/core/src/native-apple-reminders-import-owner';
 import { prepareNativePomodoroTransition, validatePreparedNativePomodoroTransition,
     MAX_NATIVE_POMODORO_PLAN_BYTES, type NativePomodoroRequest } from '../../../packages/core/src/native-pomodoro-session';
 import { NativePomodoroTransitionRefusal } from '../../../packages/core/src/native-request-receipts';
@@ -1203,7 +1208,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -1254,6 +1259,42 @@ const pomodoroAdapter = () => {
         throw new Error('NOT_READY: Pomodoro requires current validated personal storage');
     return bootAdapter;
 };
+let appleReminderWarmAdmission: { planJSON: string; assertCurrent: () => void } | null = null;
+const appleReminderAdapter = () => {
+    if (globalThis.__mindwtrHostPlatform !== 'ios' || !bootAdapter || getStorageAdapter() !== bootAdapter
+        || !bootAdapter.concurrentWritesGuarded || isSandboxMode() || isWorkspaceTransitionActive())
+        throw new Error('NOT_READY: Reminders import requires current personal storage');
+    return bootAdapter;
+};
+const appleReminderJSON = (json: string): unknown => {
+    if (typeof json !== 'string' || json.length > 8 * 1024 * 1024 || new TextEncoder().encode(json).byteLength > 8 * 1024 * 1024)
+        throw new Error('INVALID_INPUT: Reminders import item exceeds its transport limit');
+    try { return JSON.parse(json) as unknown; } catch { throw new Error('INVALID_INPUT: Invalid Reminders import item'); }
+};
+const appleReminderRegistry = (raw: string | null) => {
+    if (raw !== null && (typeof raw !== 'string' || new TextEncoder().encode(raw).byteLength > 1024 * 1024))
+        throw new Error('INVALID_INPUT: Reminders registry exceeds its limit');
+    let value: unknown;
+    try { value = raw === null ? {} : JSON.parse(raw); } catch { throw new Error('INVALID_INPUT: Reminders registry is malformed'); }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('INVALID_INPUT: Reminders registry is malformed');
+    const fields = value as Record<string, unknown>;
+    if (['selectedListId', 'selectedListTitle'].some((name) => name in fields && typeof fields[name] !== 'string')
+        || ['deleteImportedReminders', 'autoImportOnOpen'].some((name) => name in fields && typeof fields[name] !== 'boolean')
+        || 'importedReminderIds' in fields && (!Array.isArray(fields.importedReminderIds)
+            || fields.importedReminderIds.some((id) => typeof id !== 'string')))
+        throw new Error('INVALID_INPUT: Reminders registry is malformed');
+    return normalizeAppleRemindersImportSettings(value);
+};
+const appleReminderItemOwner = createNativeAppleReminderImportOwner({
+    readiness: () => {
+        try { appleReminderAdapter(); requireSaved(); unwrap(contract.getDataSettings()); return { ok: true, value: null }; }
+        catch { return { ok: false, error: { code: 'NOT_READY', message: 'Reminders import is not ready' } }; }
+    },
+    save: async () => {
+        try { await flushPendingSave(); requireSaved(); return { ok: true, value: null }; }
+        catch { return { ok: false, error: { code: 'SAVE_FAILED', message: 'Reminders import save needs recovery' } }; }
+    },
+});
 const backupTranslate = (key: string, values?: Record<string, number | string>): string => {
     const template = unwrap(contract.getStrings({ keys: [key] })).strings[key];
     if (typeof template !== 'string') throw new Error('INVALID_INPUT: Backup translation is unavailable');
@@ -4014,6 +4055,114 @@ globalThis.MindwtrHost = {
             if (captureLinesWarmAdmission?.planJSON === planJSON) captureLinesWarmAdmission = null;
             return result;
         });
+    },
+    /** Native-owned immutable provider DTO only; Swift retains the operation before admitting its write. */
+    appleReminderItemPrepare(sourceJSON: string, registryRaw: string | null): string {
+        return submit(async () => {
+            appleReminderWarmAdmission = null;
+            const adapter = appleReminderAdapter();
+            const source = appleReminderJSON(sourceJSON) as Omit<NativeAppleReminderImportRequest, 'generatedTaskId'>;
+            if (!source || typeof source !== 'object' || Array.isArray(source)
+                || Object.keys(source).sort().join(',') !== 'list,reminder,requestId,version'
+                || source.version !== 1 || typeof source.requestId !== 'string'
+                || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(source.requestId)
+                || !source.list || typeof source.list.id !== 'string' || typeof source.list.sourceId !== 'string'
+                || !source.reminder || typeof source.reminder !== 'object')
+                throw new Error('INVALID_INPUT: Invalid native Reminders source');
+            const registry = appleReminderRegistry(registryRaw);
+            if (registry.deleteImportedReminders) throw new Error('NOT_READY: Reminders source deletion is not available');
+            if (registry.selectedListId !== source.list.id) throw new Error('STALE_REVISION: The selected Reminders list changed');
+            const candidate = classifyAppleReminderForImport(source.reminder, source.list.id.trim(), new Set(registry.importedReminderIds));
+            if (candidate.kind !== 'candidate') return { kind: 'noop' };
+            const request: NativeAppleReminderImportRequest = { ...source, generatedTaskId: candidate.captureId ? null : generateUUID() };
+            const targetId = candidate.captureId ?? request.generatedTaskId!;
+            const stale = () => new Error('STALE_REVISION: Reminders import preparation changed');
+            const ready = () => {
+                if (appleReminderAdapter() !== adapter) throw stale();
+                requireSaved(); unwrap(contract.getDataSettings());
+                const status = getPersistenceStatus();
+                if (status.failed || status.queued || status.inFlight || status.immediate || status.retrying
+                    || useTaskStore.getState().editLockCount > 0 || useTaskStore.getState().isLoading) throw stale();
+                return status;
+            };
+            const status = ready(), state = useTaskStore.getState();
+            const references = [state._allTasks, state._allProjects, state._allSections, state._allAreas, state._allPeople, state.settings];
+            const frozen = JSON.parse(JSON.stringify(references)) as unknown;
+            const assertCurrent = () => {
+                if (ready().generation !== status.generation) throw stale();
+                const current = useTaskStore.getState();
+                const values = [current._allTasks, current._allProjects, current._allSections, current._allAreas, current._allPeople, current.settings];
+                if (current.lastDataChangeAt !== state.lastDataChangeAt || !values.every((value, index) => value === references[index])
+                    || !taskEditValuesEqual(values, frozen)) throw stale();
+            };
+            assertCurrent(); if (!await adapter.readRowBaseline()) throw stale(); assertCurrent();
+            const data = await adapter.getData({ rawTasks: true }); assertCurrent();
+            const matches = data.tasks.filter((task) => task.id === targetId);
+            if (matches.length > 1 || matches.length === 1 && !hasRawReadRow(matches[0])) throw stale();
+            const row = matches.length ? [...rawReadRow(matches[0], taskToSqliteRow(matches[0])).row] as (string | number | null)[] : null;
+            const device = row ? null : ensureDeviceId(data.settings);
+            const plan = prepareNativeAppleReminderImportItem({ request, target: { id: targetId, row }, factory: row ? null : {
+                preparedAt: new Date().toISOString(), deviceIdBefore: data.settings.deviceId ?? null,
+                deviceIdToInitialize: device!.updated ? device!.deviceId : null,
+                effectiveDefaultAreaId: resolveDefaultNewTaskAreaId(data.settings, data.areas ?? []) ?? null,
+            } });
+            if (!plan) throw new Error('INVALID_INPUT: Reminders candidate could not be prepared');
+            const planJSON = JSON.stringify({ request: plan.request, prepared: plan });
+            validatePreparedNativeAppleReminderImportItem(appleReminderJSON(planJSON));
+            const recoveryJSON = serializeBackupData(data);
+            if (new TextEncoder().encode(recoveryJSON).byteLength > 128 * 1024 * 1024)
+                throw new Error('INVALID_INPUT: Recovery snapshot exceeds 128 MiB');
+            assertCurrent(); appleReminderWarmAdmission = { planJSON, assertCurrent };
+            return { kind: 'prepared', planJSON, recoveryJSON };
+        });
+    },
+    /** Pure raw-cell rebase; only Swift owns the fixed-key read and compare-and-set. */
+    appleReminderRegistryPlan(planJSON: string, registryRaw: string | null): string {
+        return submit(async () => {
+            const plan = validatePreparedNativeAppleReminderImportItem(appleReminderJSON(planJSON));
+            const registry = appleReminderRegistry(registryRaw);
+            const nextRaw = JSON.stringify(normalizeAppleRemindersImportSettings({ ...registry,
+                importedReminderIds: [...registry.importedReminderIds, plan.result.importKey] }));
+            if (new TextEncoder().encode(nextRaw).byteLength > 1024 * 1024)
+                throw new Error('INVALID_INPUT: Reminders registry exceeds its limit');
+            return { nextRaw };
+        });
+    },
+    appleReminderItemValidate(planJSON: string): string {
+        return submit(async () => validatePreparedNativeAppleReminderImportItem(appleReminderJSON(planJSON)).result);
+    },
+    appleReminderItemAdmission(planJSON: string): string {
+        return submit(async () => {
+            if (appleReminderWarmAdmission?.planJSON !== planJSON) throw new Error('STALE_REVISION: Reminders import admission changed');
+            appleReminderWarmAdmission.assertCurrent(); return true;
+        });
+    },
+    appleReminderItemCommit(planJSON: string, firstAdmission: boolean): string {
+        return submit(async () => {
+            if (typeof firstAdmission !== 'boolean') throw new Error('INVALID_INPUT: Invalid Reminders import admission');
+            appleReminderAdapter();
+            if (firstAdmission) {
+                if (appleReminderWarmAdmission?.planJSON !== planJSON) throw new Error('STALE_REVISION: Reminders import admission changed');
+                appleReminderWarmAdmission.assertCurrent(); appleReminderWarmAdmission = null;
+            }
+            const result = unwrap(await appleReminderItemOwner.commit(appleReminderJSON(planJSON)));
+            // A receipt can prove a lost COMMIT reply while the loaded projection still needs recovery.
+            requireSaved();
+            return result;
+        });
+    },
+    appleReminderItemAcknowledged(): string {
+        return submit(async () => {
+            if (globalThis.__mindwtrHostPlatform === 'ios') {
+                logInfo('Native Reminders item and import registry confirmed', { scope: 'native-ios', force: true,
+                    context: { releaseCheck: 'v1.3.5/ios-reminders-item', outcome: 'confirmed' } });
+                await diagnosticsLog.serialize(async () => undefined);
+            }
+            return {};
+        });
+    },
+    appleReminderItemOutcome(planJSON: string): string {
+        return submit(async () => { appleReminderAdapter(); return unwrap(await appleReminderItemOwner.outcome(appleReminderJSON(planJSON))); });
     },
     pomodoroSessionRead(): string {
         return submit(async () => pomodoroAdapter().readPomodoroSession());
