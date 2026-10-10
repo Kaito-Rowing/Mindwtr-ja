@@ -1975,7 +1975,7 @@ private final class Engine: @unchecked Sendable {
     #endif
 
     private static let methods: [String: Int] = [
-        "pomodoroSessionReadHost": 0, "pomodoroTransitionWrite": 1, "pomodoroTransitionRetryOutcome": 1,
+        "pomodoroSessionReadHost": 0, "pomodoroTransitionWrite": 1, "pomodoroTransitionRetryOutcome": 1, "pomodoroTasks": 1,
         "logLine": 2,
         "dataSetting": 1,
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
@@ -18872,6 +18872,18 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func validateListAndInboxArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
+        if method == "pomodoroTasks" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 1_000_000,
+                  try NativeJSON.hasUniqueObjectKeys(encoded),
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys).isSubset(of: Set(["offset", "limit", "revision", "controls"])),
+                  Self.isInteger(input["offset"]), let offset = input["offset"] as? NSNumber,
+                  offset.doubleValue >= 0, offset.doubleValue <= 9_007_199_254_740_991,
+                  Self.isInteger(input["limit"]), let limit = input["limit"] as? NSNumber,
+                  limit.doubleValue >= 1, limit.doubleValue <= 100, input["revision"] is String else {
+                throw HostFailure("INVALID_INPUT: Pomodoro tasks require a bounded window and Focus revision")
+            }
+        }
         if ["somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 1_000_000,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else {

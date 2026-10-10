@@ -1779,6 +1779,19 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getFocusSectionWindow({ key: key as FocusTaskSectionKey, offset, limit, revision, ...(controls ? { controls: JSON.parse(controls) } : {}) }));
         });
     },
+    pomodoroTasks(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            const input = editorJson(json) as Parameters<typeof contract.getPomodoroTaskWindow>[0];
+            const page = unwrap(contract.getPomodoroTaskWindow(input));
+            if (globalThis.__mindwtrHostPlatform === 'ios' && input.offset === 0) {
+                logInfo('Native Pomodoro task choices loaded', { scope: 'native-ios', force: true,
+                    context: { releaseCheck: 'v1.3.5/ios-pomodoro-picker', outcome: 'confirmed' } });
+                await diagnosticsLog.serialize(async () => undefined);
+            }
+            return page;
+        });
+    },
     /** The task's View tab; core formats its fields, Markdown and checklist windows. */
     taskView(json: string): string {
         return submit(async () => {

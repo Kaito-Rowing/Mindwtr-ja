@@ -66,6 +66,47 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         do { try await work(); XCTFail("Expected refusal", file: file, line: line) } catch { }
     }
 
+    func testPomodoroPickerPagesBeyondFocusWindowWithoutChangingTimerOrTasks() async throws {
+        try await seed()
+        for id in ["picker581-a", "picker581-b"] {
+            try rows("INSERT INTO tasks(id,title,status,contexts,tags,createdAt,updatedAt,rev,revBy,timeSpentMinutes,isFocusedToday,pushCount,showFutureRecurrence,suppressMindwtrReminders) SELECT ?,?,'next',contexts,tags,createdAt,updatedAt,rev,revBy,0,0,0,0,0 FROM tasks WHERE id='task548'", [id, id])
+        }
+        let core = host(); _ = try await core.start()
+        let before = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let timer = try json(rows("SELECT * FROM native_pomodoro_session"))
+        let focus = try object(await core.call("focus", argumentsJSON: "[1]"))
+        let revision = try XCTUnwrap(focus["revision"] as? String)
+        var ids: [String] = []
+        for offset in 0..<3 {
+            let page = try await call(core, "pomodoroTasks", ["offset": offset, "limit": 1, "revision": revision])
+            XCTAssertEqual(page["total"] as? Int, 3)
+            XCTAssertEqual(page["revision"] as? String, revision)
+            let items = try XCTUnwrap(page["rows"] as? [[String: Any]])
+            XCTAssertEqual(items.count, 1)
+            ids.append(try XCTUnwrap(items.first?["id"] as? String))
+        }
+        XCTAssertEqual(Set(ids), Set(["task548", "picker581-a", "picker581-b"]))
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), before)
+        XCTAssertEqual(try json(rows("SELECT * FROM native_pomodoro_session")), timer)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testPomodoroPickerRejectsMalformedDuplicateAndStaleRequests() async throws {
+        try await seed(); let core = host(); _ = try await core.start()
+        let focus = try object(await core.call("focus", argumentsJSON: "[1]"))
+        let revision = try XCTUnwrap(focus["revision"] as? String)
+        let input: [String: Any] = ["offset": 0, "limit": 1, "revision": revision]
+        for change: [String: Any] in [["offset": true], ["offset": -1], ["limit": 101], ["limit": 0],
+            ["extra": true], ["controls": ["extra": true]], ["revision": "stale"]] {
+            var request = input; request.merge(change) { _, new in new }
+            await failure { _ = try await self.call(core, "pomodoroTasks", request) }
+        }
+        let duplicate = "{\"offset\":0,\"offset\":1,\"limit\":1,\"revision\":\"stale\"}"
+        await failure { _ = try await core.call("pomodoroTasks", argumentsJSON: self.json([duplicate])) }
+        await core.close()
+        await failure { _ = try await self.call(core, "pomodoroTasks", input) }
+    }
+
     func testHubPreservesFourWitnessesAndAddsPomodoro() async throws {
         try await seed(); let core = host(); _ = try await core.start()
         let options = try await call(core, "gtdWorkflowOptions")
@@ -203,6 +244,28 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
     #if DEBUG && os(iOS) && targetEnvironment(simulator)
+    func testIsolatedPomodoroPickerSavedDiagnostics() async throws {
+        let identifier = UUID().uuidString.lowercased()
+        let directory = root.appendingPathComponent("NativeUITests/" + identifier)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let faults = HostIOFaults(); faults.secretService = "mindwtr.native-keychain.fixture." + identifier
+        let core = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle, faults: faults)
+        addTeardownBlock { await core.close() }; _ = try await core.start()
+        let focus = try object(await core.call("focus", argumentsJSON: "[1]"))
+        let revision = try XCTUnwrap(focus["revision"] as? String)
+        _ = try await call(core, "pomodoroTasks", ["offset": 0, "limit": 1, "revision": revision])
+        _ = try await call(core, "pomodoroTasks", ["offset": 1, "limit": 1, "revision": revision])
+        await failure { _ = try await self.call(core, "pomodoroTasks", ["offset": 0, "limit": 1, "revision": "stale"]) }
+        let shared = try object(await core.diagnosticsFileAction("logShare"))
+        let url = try await core.validatedDiagnosticsShareURL(XCTUnwrap(shared["path"] as? String))
+        let markers = try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
+            .filter { $0.contains("v1.3.5/ios-pomodoro-picker") }
+        XCTAssertEqual(markers.count, 1)
+        let marker = try object(String(XCTUnwrap(markers.first)))
+        XCTAssertEqual(marker["message"] as? String, "Native Pomodoro task choices loaded")
+        XCTAssertEqual(marker["context"] as? [String: String], ["releaseCheck": "v1.3.5/ios-pomodoro-picker", "outcome": "confirmed"])
+    }
+
     func testIsolatedRealTerminalCleanupInjectorAlsoOwnsGtdSettings() async throws {
         let identifier = UUID().uuidString.lowercased()
         let directory = root.appendingPathComponent("NativeUITests/" + identifier)

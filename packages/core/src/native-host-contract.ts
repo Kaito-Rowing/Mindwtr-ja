@@ -1,3 +1,4 @@
+import { getPomodoroTaskChoices } from './pomodoro';
 import { createReferenceProjectNextActionMethods } from './native-host-contract-project-next-action';
 import { MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToFilters, areaFilterSelectionToValue, cycleAreaFilterSelection, isAreaFilterSelectionActive, isTaskVisibleInArea, isTaskVisibleInInbox, resolveAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
@@ -2637,6 +2638,32 @@ export function createNativeHostContract(options: {
             return { ok: true, value: {
                 direction: resolveAutoTextDirection(`${project.title ?? ''}\n${input.text}`.trim(), language),
             } };
+        },
+
+        getPomodoroTaskWindow(input: {
+            offset: number; limit: number; revision: string; controls?: NativeFocusControlsInput;
+        }): NativeHostResult<{
+            version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string; total: number;
+            rows: { id: string; title: string }[];
+        }> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input !== 'object' || Array.isArray(input)
+                || Object.keys(input).some((key) => !['offset', 'limit', 'revision', 'controls'].includes(key))
+                || !Number.isSafeInteger(input.offset) || input.offset < 0
+                || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW
+                || typeof input.revision !== 'string' || !isNativeJsonWithinBytes(input)) {
+                return fail('INVALID_INPUT', 'A bounded Pomodoro task window and Focus revision are required');
+            }
+            const now = new Date(), read = readFocusControls(input, now);
+            if (!read) return fail('INVALID_INPUT', 'The Focus controls are not valid');
+            const { model, revision: currentRevision } = focusModel(read.controls, now);
+            if (input.revision !== currentRevision) return fail('STALE_REVISION', 'Focus changed; restart paging');
+            const tasks = getPomodoroTaskChoices(model.lists);
+            const value = { version: NATIVE_HOST_CONTRACT_VERSION, revision: currentRevision, total: tasks.length,
+                rows: tasks.slice(input.offset, input.offset + input.limit).map(({ id, title }) => ({ id, title })) } as const;
+            return isNativeJsonWithinBytes(value) ? { ok: true, value }
+                : fail('INVALID_INPUT', 'Pomodoro task window exceeds the bounded native read');
         },
 
         /** A later window of one Focus section's rows. Send the `controls.state` the Focus read returned. */
