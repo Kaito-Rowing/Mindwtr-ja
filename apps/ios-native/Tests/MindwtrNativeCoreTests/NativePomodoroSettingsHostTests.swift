@@ -66,6 +66,36 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         do { try await work(); XCTFail("Expected refusal", file: file, line: line) } catch { }
     }
 
+    func testAlarmIntentReadsSavedPhaseWithoutCreditAndHonorsExplicitOff() async throws {
+        try await seed(); let core = host(); _ = try await core.start()
+        let before = try json(rows("SELECT * FROM native_pomodoro_session"))
+        let tasks = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let alarm = try object(await core.readPomodoroAlarmIntent())
+        XCTAssertEqual(alarm["kind"] as? String, "schedule")
+        XCTAssertEqual(alarm["phase"] as? String, "focus")
+        let details = try XCTUnwrap(alarm["details"] as? [String: Any])
+        XCTAssertEqual(details["has_complete_action"] as? Bool, false)
+        XCTAssertEqual(details["data"] as? [String: String], ["kind": "pomodoro", "phase": "focus-complete"])
+        XCTAssertEqual(try json(rows("SELECT * FROM native_pomodoro_session")), before)
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), tasks)
+        for method in ["pomodoroAlarmReadHost", "pomodoroAlarmRead"] {
+            await failure { _ = try await core.call(method) }
+        }
+        await core.close()
+        try rows("UPDATE settings SET data=json_set(data, '$.features.pomodoro', json('false'), '$.notificationsEnabled', json('false')) WHERE id=1")
+        let hidden = host(); _ = try await hidden.start()
+        let hiddenIntent = try object(await hidden.readPomodoroAlarmIntent())
+        XCTAssertEqual(hiddenIntent["kind"] as? String, "schedule")
+        await hidden.close()
+        try rows("UPDATE settings SET data=json_set(data, '$.gtd.pomodoro.completionAlert', json('false')) WHERE id=1")
+        let off = host(); _ = try await off.start()
+        let cancellation = try object(await off.readPomodoroAlarmIntent())
+        XCTAssertEqual(cancellation["kind"] as? String, "cancel")
+        XCTAssertEqual(cancellation["reason"] as? String, "completion-alert-off")
+        XCTAssertEqual(cancellation["preserveDue"] as? Bool, false)
+        XCTAssertEqual(try json(rows("SELECT * FROM native_pomodoro_session")), before)
+    }
+
     func testPanelReadsOverdueSavedSessionWithoutSpeculativeCreditAndKeepsHiddenRuntime() async throws {
         try await seed(); let core = host(); _ = try await core.start()
         let before = try json(rows("SELECT * FROM native_pomodoro_session"))
@@ -100,6 +130,7 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
             "autoStart": ["autoStartFocus": false, "autoStartBreaks": false]])
         await failure { _ = try await core.writePomodoroTransition(requestJSON: request) }
         let retained = try Data(contentsOf: journal)
+        await failure { _ = try await core.readPomodoroAlarmIntent() }
         await failure { _ = try await core.readPomodoroPanel(presentationJSON: self.json(["collapsed": false, "lastEvent": NSNull()])) }
         XCTAssertEqual(try Data(contentsOf: journal), retained)
         faults.journalRemove = nil
@@ -117,6 +148,8 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         XCTAssertEqual(missing["kind"] as? String, "uninitialized")
         XCTAssertEqual(missing["collapsed"] as? Bool, true)
         XCTAssertTrue(try rows("SELECT * FROM native_pomodoro_session").isEmpty)
+        let missingAlarm = try object(await core.readPomodoroAlarmIntent())
+        XCTAssertEqual(missingAlarm["kind"] as? String, "uninitialized")
         for raw in ["{}", "[]", "{\"collapsed\":0,\"lastEvent\":null}",
             "{\"collapsed\":false,\"collapsed\":true,\"lastEvent\":null}",
             "{\"collapsed\":false,\"lastEvent\":null,\"raw\":\"{}\"}"] {
@@ -130,6 +163,7 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         try rows("UPDATE native_pomodoro_session SET state_json='{}'")
         let corrupt = host(); _ = try await corrupt.start()
         await failure { _ = try await corrupt.readPomodoroPanel(presentationJSON: input) }
+        await failure { _ = try await corrupt.readPomodoroAlarmIntent() }
         XCTAssertEqual(try rows("SELECT state_json FROM native_pomodoro_session").first?["state_json"] as? String, "{}")
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
@@ -326,6 +360,8 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         await failure { _ = try await self.call(core, "pomodoroTasks", ["offset": 0, "limit": 1, "revision": "stale"]) }
         _ = try await core.readPomodoroPanel(presentationJSON: json(["collapsed": false, "lastEvent": NSNull()]))
         await failure { _ = try await core.readPomodoroPanel(presentationJSON: "{}") }
+        _ = try await core.readPomodoroAlarmIntent()
+        await failure { _ = try await core.call("pomodoroAlarmReadHost") }
         let message = "Native iOS Pomodoro panel transition acknowledged"
         for context in [["releaseCheck": "v1.3.5/ios-pomodoro-ui", "outcome": "pending"],
                         ["releaseCheck": "v1.3.5/ios-pomodoro-ui", "outcome": "confirmed", "title": "private"],
@@ -335,6 +371,11 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         let shared = try object(await core.diagnosticsFileAction("logShare"))
         let url = try await core.validatedDiagnosticsShareURL(XCTUnwrap(shared["path"] as? String))
         let savedLog = try String(contentsOf: url, encoding: .utf8)
+        let alarmMarkers = savedLog.split(separator: "\n").filter { $0.contains("v1.3.5/ios-pomodoro-alarm-plan") }
+        XCTAssertEqual(alarmMarkers.count, 1)
+        let alarmMarker = try object(String(XCTUnwrap(alarmMarkers.first)))
+        XCTAssertEqual(alarmMarker["message"] as? String, "Native Pomodoro alarm intent read")
+        XCTAssertEqual(alarmMarker["context"] as? [String: String], ["releaseCheck": "v1.3.5/ios-pomodoro-alarm-plan", "outcome": "uninitialized"])
         let panelMarkers = savedLog.split(separator: "\n").filter { $0.contains("v1.3.5/ios-pomodoro-panel") }
         XCTAssertEqual(panelMarkers.count, 1)
         let panelMarker = try object(String(XCTUnwrap(panelMarkers.first)))

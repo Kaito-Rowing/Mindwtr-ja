@@ -145,6 +145,7 @@ import { createNativeAppleReminderImportOwner } from '../../../packages/core/src
 import { prepareNativePomodoroTransition, validatePreparedNativePomodoroTransition,
     MAX_NATIVE_POMODORO_PLAN_BYTES, type NativePomodoroRequest } from '../../../packages/core/src/native-pomodoro-session';
 import { NativePomodoroTransitionRefusal } from '../../../packages/core/src/native-request-receipts';
+import { buildNativePomodoroAlarmIntent } from '../../../packages/core/src/native-pomodoro-alarm';
 import { createPreparedProjectAvailabilityMethods, createProjectAvailabilityMethods } from '../../../packages/core/src/native-host-contract-project-availability';
 import { SYNC_ENCRYPTION_STATE_KEY } from '../../../packages/core/src/sync-storage-keys';
 import { createNativeReminders } from './host-reminders';
@@ -1260,6 +1261,23 @@ const pomodoroAdapter = () => {
         || !bootAdapter.concurrentWritesGuarded || isSandboxMode() || isWorkspaceTransitionActive())
         throw new Error('NOT_READY: Pomodoro requires current validated personal storage');
     return bootAdapter;
+};
+const readSavedNativePomodoro = async () => {
+    const adapter = pomodoroAdapter();
+    const ready = () => {
+        requireSaved(); unwrap(contract.getDataSettings());
+        const status = getPersistenceStatus();
+        if (status.failed || status.queued || status.inFlight || status.immediate || status.retrying)
+            throw new Error('NOT_READY: Pomodoro presentation waits for saved data');
+    };
+    ready();
+    const before = useTaskStore.getState();
+    const session = await adapter.readPomodoroSession();
+    ready();
+    const current = useTaskStore.getState();
+    if (pomodoroAdapter() !== adapter || current.tasks !== before.tasks || current.settings !== before.settings)
+        throw new Error('STALE_REVISION: Pomodoro presentation changed; read again');
+    return { raw: session.raw, current };
 };
 let appleReminderWarmAdmission: { planJSON: string; assertCurrent: () => void } | null = null;
 const appleReminderAdapter = () => {
@@ -4251,28 +4269,27 @@ globalThis.MindwtrHost = {
     pomodoroPanelRead(json: string): string {
         return submit(async () => {
             const presentation = readNativePomodoroPresentation(pomodoroJSON(json, 8192));
-            const adapter = pomodoroAdapter();
-            const ready = () => {
-                requireSaved(); unwrap(contract.getDataSettings());
-                const status = getPersistenceStatus();
-                if (status.failed || status.queued || status.inFlight || status.immediate || status.retrying)
-                    throw new Error('NOT_READY: Pomodoro presentation waits for saved data');
-            };
-            ready();
-            const before = useTaskStore.getState();
-            const session = await adapter.readPomodoroSession();
-            ready();
-            const current = useTaskStore.getState();
-            if (pomodoroAdapter() !== adapter || current.tasks !== before.tasks || current.settings !== before.settings)
-                throw new Error('STALE_REVISION: Pomodoro presentation changed; read again');
+            const { raw, current } = await readSavedNativePomodoro();
             const t = (key: string) => unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key;
-            const panel = buildNativePomodoroPanel({ ...presentation, raw: session.raw, settings: current.settings,
+            const panel = buildNativePomodoroPanel({ ...presentation, raw, settings: current.settings,
                 liveTasks: current.tasks, nowMs: Date.now(), t });
             if (new TextEncoder().encode(JSON.stringify(panel)).byteLength > 1_000_000)
                 throw new Error('INVALID_INPUT: Pomodoro presentation exceeds the bounded native read');
             logInfo('Native Pomodoro panel state read', { scope: 'native-ios', force: true,
                 context: { releaseCheck: 'v1.3.5/ios-pomodoro-panel', outcome: panel.kind } });
             return panel;
+        });
+    },
+    pomodoroAlarmRead(): string {
+        return submit(async () => {
+            const { raw, current } = await readSavedNativePomodoro();
+            const t = (key: string) => unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key;
+            const intent = buildNativePomodoroAlarmIntent({ raw, settings: current.settings, nowMs: Date.now(), t });
+            if (new TextEncoder().encode(JSON.stringify(intent)).byteLength > 16_384)
+                throw new Error('INVALID_INPUT: Pomodoro alarm exceeds the native read limit');
+            logInfo('Native Pomodoro alarm intent read', { scope: 'native-ios', force: true,
+                context: { releaseCheck: 'v1.3.5/ios-pomodoro-alarm-plan', outcome: intent.kind } });
+            return intent;
         });
     },
     pomodoroSessionRead(): string {

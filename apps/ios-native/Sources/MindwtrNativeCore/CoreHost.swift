@@ -192,6 +192,9 @@ public final class CoreHost: @unchecked Sendable {
     public func readPomodoroPanel(presentationJSON: String) async throws -> String {
         try await perform { try $0.pomodoroFacade("pomodoroPanelReadHost", requestJSON: presentationJSON) }
     }
+    public func readPomodoroAlarmIntent() async throws -> String {
+        try await perform { try $0.pomodoroFacade("pomodoroAlarmReadHost") }
+    }
     public func readPomodoroSession() async throws -> String {
         try await perform { try $0.pomodoroFacade("pomodoroSessionReadHost") }
     }
@@ -1978,7 +1981,7 @@ private final class Engine: @unchecked Sendable {
     #endif
 
     private static let methods: [String: Int] = [
-        "pomodoroPanelReadHost": 1, "pomodoroSessionReadHost": 0, "pomodoroTransitionWrite": 1, "pomodoroTransitionRetryOutcome": 1, "pomodoroTasks": 1,
+        "pomodoroPanelReadHost": 1, "pomodoroAlarmReadHost": 0, "pomodoroSessionReadHost": 0, "pomodoroTransitionWrite": 1, "pomodoroTransitionRetryOutcome": 1, "pomodoroTasks": 1,
         "logLine": 2,
         "dataSetting": 1,
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
@@ -9353,6 +9356,7 @@ private final class Engine: @unchecked Sendable {
         }
         guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
         if pomodoroOwned, method == "pomodoroPanelReadHost" { return try invoke("pomodoroPanelRead", arguments: args) }
+        if pomodoroOwned, method == "pomodoroAlarmReadHost" { return try invoke("pomodoroAlarmRead", arguments: []) }
         guard Self.mutations.contains(method) else {
             if method == "iosSearchObservation" {
                 let observation = try searchObservation()
@@ -15798,7 +15802,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private static let pomodoroMethod = "pomodoroTransitionCommit"
-    static let pomodoroFacadeMethods: Set<String> = ["pomodoroPanelReadHost", "pomodoroSessionReadHost", "pomodoroTransitionWrite", "pomodoroTransitionRetryOutcome"]
+    static let pomodoroFacadeMethods: Set<String> = ["pomodoroPanelReadHost", "pomodoroAlarmReadHost", "pomodoroSessionReadHost", "pomodoroTransitionWrite", "pomodoroTransitionRetryOutcome"]
     private static let pomodoroFailure = HostFailure("Pomodoro transition requires its exact retained request")
     private static let pomodoroJournalLimit = 12_000_000
 
