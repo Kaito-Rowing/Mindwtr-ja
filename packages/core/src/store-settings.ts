@@ -35,7 +35,8 @@ import { buildLoadContext, runAutoArchive, runLoadMigrations } from './store-loa
 import { createSeedGettingStartedAction } from './getting-started-seed';
 import { beginNotifyProfile, endNotifyProfile, profilerNow, recordDerivedStateRebuild, type NotifyProfile } from './store-notify-profiler';
 import { buildGeneralSettingsUpdate } from './general-settings-model';
-import { buildGtdSettingsUpdate, GTD_DEFAULT_AREA_ACTIVE_OPTION, isGtdSettingStored } from './gtd-settings-model';
+import { buildGtdSettingsUpdate, GTD_DEFAULT_AREA_ACTIVE_OPTION, isGtdSettingStored, type GtdSettingsEdit } from './gtd-settings-model';
+import type { PomodoroDurations } from './pomodoro';
 import { DEFAULT_TASK_EDITOR_ORDER, TASK_EDITOR_SECTION_ORDER } from './task-editor-layout';
 import { generalPreferenceWitness } from './general-preference-witness';
 import { notificationSettingWitness } from './notification-settings-model';
@@ -106,9 +107,26 @@ export type GtdWorkflowDirectType = 'defaultScheduleTime' | 'focusTaskLimit' | '
 export type GtdWorkflowReviewType = 'dailyReviewFocusStep' | 'weeklyReviewContextStep';
 export type GtdWorkflowInboxType = 'inboxTwoMinute' | 'inboxProjectFirst' | 'inboxContextStep' | 'inboxSchedule';
 export type GtdWorkflowCaptureParseType = 'quickAddAutoClean' | 'naturalLanguageDates';
+export type GtdWorkflowPomodoroBooleanType = 'pomodoro' | 'pomodoroLinkTask' | 'pomodoroAutoStartBreaks'
+    | 'pomodoroAutoStartFocus' | 'pomodoroCompletionAlert';
+export type GtdWorkflowPomodoroType = GtdWorkflowPomodoroBooleanType | 'pomodoroDurations';
+export type GtdWorkflowPomodoroGate = { featuresPresent: boolean; enabled: { present: boolean; value: boolean | null } };
+export type GtdWorkflowPomodoroWitness = GtdWorkflowReviewWitness & { gate: GtdWorkflowPomodoroGate };
+export type GtdWorkflowPomodoroDurationsWitness = { parentPresent: boolean; present: boolean;
+    value: Partial<PomodoroDurations> | null; gate: GtdWorkflowPomodoroGate; stampPresent: boolean; stamp: string | null };
+/** Native's canonical pair uses the unchanged RN draft resolver/update path. */
+export const gtdWorkflowSettingsEdit = (edit: GtdSettingsEdit | { type: 'pomodoroDurations'; value: PomodoroDurations }): GtdSettingsEdit =>
+    edit.type === 'pomodoroDurations' && 'value' in edit
+        ? { type: edit.type, focusMinutes: String(edit.value.focusMinutes), breakMinutes: String(edit.value.breakMinutes) }
+        : edit;
+export const gtdWorkflowPomodoroField = (type: Exclude<GtdWorkflowPomodoroType, 'pomodoro'>) => ({
+    pomodoroLinkTask: 'linkTask', pomodoroAutoStartBreaks: 'autoStartBreaks',
+    pomodoroAutoStartFocus: 'autoStartFocus', pomodoroCompletionAlert: 'completionAlert',
+    pomodoroDurations: 'customDurations',
+} as const)[type];
 export type GtdWorkflowTaskEditorSection = 'scheduling' | 'organization' | 'details';
 export type GtdWorkflowType = GtdWorkflowDirectType | GtdWorkflowReviewType | GtdWorkflowInboxType
-    | GtdWorkflowCaptureParseType | 'defaultArea' | 'taskEditorSectionOpen' | 'taskEditorPreset'
+    | GtdWorkflowCaptureParseType | GtdWorkflowPomodoroType | 'defaultArea' | 'taskEditorSectionOpen' | 'taskEditorPreset'
     | 'taskEditorFieldVisible' | 'taskEditorFieldSection' | 'taskEditorOrder' | 'taskEditorReset';
 export type GtdWorkflowDirectWitness = { present: boolean; value: string | number | boolean | null;
     stampPresent: boolean; stamp: string | null };
@@ -138,7 +156,8 @@ export type GtdWorkflowTargetArea = { id: string; createdAt: string; updatedAt: 
     revPresent: boolean; rev: number | null; revByPresent: boolean; revBy: string | null };
 export type GtdWorkflowWitness = GtdWorkflowDirectWitness | GtdWorkflowCaptureParseWitness
     | GtdWorkflowReviewWitness | GtdWorkflowInboxWitness | GtdWorkflowAreaWitness
-    | GtdWorkflowTaskEditorWitness | GtdWorkflowPresetWitness;
+    | GtdWorkflowTaskEditorWitness | GtdWorkflowPresetWitness
+    | GtdWorkflowPomodoroWitness | GtdWorkflowPomodoroDurationsWitness;
 export const gtdWorkflowTaskEditorSelected = (witness: GtdWorkflowTaskEditorWitness): GtdWorkflowTaskEditorSelected => ({
     taskEditorPresent: witness.taskEditorPresent, sectionOpenPresent: witness.sectionOpenPresent,
     present: witness.present, value: witness.value,
@@ -201,6 +220,9 @@ const presetRaw = <T>(parent: Record<string, unknown> | undefined, field: string
 };
 /** One raw GTD scalar and its group stamp, without carrying the Settings row. */
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowDirectType): GtdWorkflowDirectWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: 'pomodoro'): GtdWorkflowReviewWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: Exclude<GtdWorkflowPomodoroBooleanType, 'pomodoro'>): GtdWorkflowPomodoroWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: 'pomodoroDurations'): GtdWorkflowPomodoroDurationsWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowReviewType): GtdWorkflowReviewWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowInboxType): GtdWorkflowInboxWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowCaptureParseType): GtdWorkflowCaptureParseWitness | null;
@@ -215,12 +237,38 @@ export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType,
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType, section?: GtdWorkflowTaskEditorSection): GtdWorkflowWitness | null {
     const group = settings.gtd;
     const stamps = settings.syncPreferencesUpdatedAt;
-    if (type !== 'quickAddAutoClean' && group !== undefined && (!group || typeof group !== 'object' || Array.isArray(group))
+    if (type !== 'quickAddAutoClean' && type !== 'pomodoro' && group !== undefined && (!group || typeof group !== 'object' || Array.isArray(group))
         || stamps !== undefined && (!stamps || typeof stamps !== 'object' || Array.isArray(stamps))) return null;
     const stampPresent = stamps !== undefined && owns(stamps, 'gtd') && stamps.gtd !== undefined;
     const stamp = stampPresent ? stamps?.gtd : null;
     if (stampPresent && !(typeof stamp === 'string' && stamp.length <= 40
         && Number.isFinite(Date.parse(stamp)) && new Date(stamp).toISOString() === stamp)) return null;
+    if (type === 'pomodoro' || type === 'pomodoroDurations' || type === 'pomodoroLinkTask'
+        || type === 'pomodoroAutoStartBreaks' || type === 'pomodoroAutoStartFocus' || type === 'pomodoroCompletionAlert') {
+        const featuresPresent = owns(settings, 'features') && settings.features !== undefined;
+        const features = featuresPresent ? settings.features : undefined;
+        if (featuresPresent && !plain(features)) return null;
+        const enabled = presetRaw(features as Record<string, unknown> | undefined, 'pomodoro',
+            (value): value is boolean => typeof value === 'boolean');
+        if (!enabled) return null;
+        const stampFields = { stampPresent, stamp: stampPresent ? stamp! : null };
+        if (type === 'pomodoro') return { parentPresent: featuresPresent, ...enabled, ...stampFields };
+        const gate = { featuresPresent, enabled };
+        const parentPresent = group !== undefined && owns(group, 'pomodoro') && group.pomodoro !== undefined;
+        const parent = parentPresent ? group?.pomodoro : undefined;
+        if (parentPresent && !plain(parent)) return null;
+        const field = gtdWorkflowPomodoroField(type);
+        if (type === 'pomodoroDurations') {
+            const raw = presetRaw(parent as Record<string, unknown> | undefined, field,
+                (value): value is Partial<PomodoroDurations> => plain(value)
+                    && Object.keys(value).every((key) => key === 'focusMinutes' || key === 'breakMinutes')
+                    && Object.values(value).every((item) => typeof item === 'number' && Number.isFinite(item)));
+            return raw ? { parentPresent, ...raw, gate, ...stampFields } : null;
+        }
+        const raw = presetRaw(parent as Record<string, unknown> | undefined, field,
+            (value): value is boolean => typeof value === 'boolean');
+        return raw ? { parentPresent, ...raw, gate, ...stampFields } : null;
+    }
     if (type === 'defaultArea') {
         const modePresent = group !== undefined && owns(group, 'defaultAreaMode') && group.defaultAreaMode !== undefined;
         const idPresent = group !== undefined && owns(group, 'defaultAreaId') && group.defaultAreaId !== undefined;
@@ -1027,7 +1075,8 @@ export const createSettingsActions = ({
             const current = gtdWorkflowWitness(durable.settings, edit.type,
                 edit.type === 'taskEditorSectionOpen' ? edit.section : undefined);
             if (!current) return memory;
-            const update = buildGtdSettingsUpdate(durable.settings, edit);
+            const settingsEdit = gtdWorkflowSettingsEdit(edit);
+            const update = buildGtdSettingsUpdate(durable.settings, settingsEdit);
             if (!update) return memory;
             const target = update.gtd;
             const after = (edit.type === 'taskEditorSectionOpen'
@@ -1055,7 +1104,7 @@ export const createSettingsActions = ({
             }
             if (!taskEditValuesEqual(current, expected)
                 || (durable.settings.deviceId ?? null) !== input.deviceIdBefore) return memory;
-            if (isGtdSettingStored(durable.settings, edit)) return memory;
+            if (isGtdSettingStored(durable.settings, settingsEdit)) return memory;
             if (edit.type === 'defaultArea' && (edit.value === '' || edit.value === GTD_DEFAULT_AREA_ACTIVE_OPTION
                 ? input.targetArea !== null
                 : !input.targetArea || !taskEditValuesEqual(input.targetArea,
