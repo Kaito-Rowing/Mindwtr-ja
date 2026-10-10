@@ -40,7 +40,8 @@ struct SettingsScreen: View {
             HStack(spacing: 12) {
                 Button {
                     renameFocused = false
-                    if model.settingsSyncPresented { syncField = nil; Task { await model.closeSyncSettings() } }
+                    if model.settingsRemindersPresented { model.closeAppleRemindersSettings() }
+                    else if model.settingsSyncPresented { syncField = nil; Task { await model.closeSyncSettings() } }
                     else if model.settingsDataPresented { model.closeDiagnostics(owner: model.settingsDiagnosticsOwner) }
                     else if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false; pomodoroDurationFocused = nil } }
                     else if model.settingsFeedbackPresented { model.closeFeedbackSettings() }
@@ -64,8 +65,12 @@ struct SettingsScreen: View {
                           || model.notificationSettingActive || (model.calendarSettingActive && !model.settingsCalendarCanCancel) || (model.settingsGtdPresented ? model.gtdWorkflowPending : model.generalPreferenceActive) || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
                           || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)))
                 .accessibilityLabel(model.label("common.back"))
-                .accessibilityIdentifier(model.settingsSyncPresented ? "sync-back" : model.settingsDataPresented ? "diagnostics-back" : model.settingsGtdPomodoroPresented ? "gtd-pomodoro-back" : model.settingsGtdArchivePresented ? "gtd-archive-back" : model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsFeedbackPresented ? "feedback-back" : model.settingsAboutPresented ? "about-back" : model.settingsNotificationsPresented ? "notifications-back" : model.settingsCalendarPresented ? "calendar-settings-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : model.settingsAdvancedPresented ? "advanced-back" : "settings-back")
-                if model.settingsSyncPresented {
+                .accessibilityIdentifier(model.settingsRemindersPresented ? "apple-reminders-back" : model.settingsSyncPresented ? "sync-back" : model.settingsDataPresented ? "diagnostics-back" : model.settingsGtdPomodoroPresented ? "gtd-pomodoro-back" : model.settingsGtdArchivePresented ? "gtd-archive-back" : model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsFeedbackPresented ? "feedback-back" : model.settingsAboutPresented ? "about-back" : model.settingsNotificationsPresented ? "notifications-back" : model.settingsCalendarPresented ? "calendar-settings-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : model.settingsAdvancedPresented ? "advanced-back" : "settings-back")
+                if model.settingsRemindersPresented {
+                    Text(model.label("settings.appleRemindersImport.appleReminders")).rnFont(20, .bold).foregroundStyle(palette.text)
+                        .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityAddTraits(.isHeader).accessibilityIdentifier("apple-reminders-title")
+                } else if model.settingsSyncPresented {
                     Text(model.settingsSync.text("title").isEmpty ? "Sync" : model.settingsSync.text("title"))
                         .rnFont(20, .bold).foregroundStyle(palette.text)
                         .frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
@@ -100,7 +105,8 @@ struct SettingsScreen: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 5)
             .background(palette.card)
-            if model.settingsSyncPresented { syncContent }
+            if model.settingsRemindersPresented { appleRemindersContent }
+            else if model.settingsSyncPresented { syncContent }
             else if model.settingsDataPresented {
                 DiagnosticsCard(model: model, palette: palette, owner: model.settingsDiagnosticsOwner)
             }
@@ -294,7 +300,8 @@ struct SettingsScreen: View {
             set: { if !$0 && !model.appLock.concealed { model.closeGtdTaskEditorField() } }
         )) { gtdTaskEditorFieldSheet }
         .accessibilityAction(.escape) {
-            if model.settingsSyncPresented { syncField = nil; Task { await model.closeSyncSettings() } }
+            if model.settingsRemindersPresented { model.closeAppleRemindersSettings() }
+            else if model.settingsSyncPresented { syncField = nil; Task { await model.closeSyncSettings() } }
             else if model.settingsDataPresented { model.closeDiagnostics(owner: model.settingsDiagnosticsOwner) }
             else if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false; pomodoroDurationFocused = nil } }
             else if model.settingsFeedbackPresented { model.closeFeedbackSettings() }
@@ -354,6 +361,15 @@ struct SettingsScreen: View {
                     if ["webdav", "selfhosted"].contains(model.settingsSync.object("panel").text("kind")) { syncRemoteContent }
                     if model.settingsSync.object("panel").text("kind") != "selfhosted",
                        !model.settingsSync.object("encryption").isEmpty { syncEncryptionContent }
+                    Button { syncField = nil; Task { await model.openAppleRemindersSettings() } } label: {
+                        HStack {
+                            Text(model.label("settings.appleRemindersImport.appleReminders")).rnFont(16, .semibold)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(); Image(systemName: "chevron.right").accessibilityHidden(true)
+                        }.frame(minHeight: 44).contentShape(Rectangle())
+                    }.buttonStyle(.plain).padding(14).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                        .disabled(!model.settingsSyncCanEdit || model.settingsSyncChecking || model.settingsSyncDraftDirty)
+                        .accessibilityIdentifier("sync-apple-reminders")
                     if let failure = model.settingsSyncError {
                         Text(failure).rnFont(14).foregroundStyle(palette.danger)
                             .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("sync-error")
@@ -382,6 +398,96 @@ struct SettingsScreen: View {
                 }
             }.padding(16).foregroundStyle(palette.text)
         }.accessibilityIdentifier("sync-screen")
+    }
+
+    private var appleRemindersContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if !model.appleRemindersSettings.isEmpty {
+                    Button { model.chooseAppleRemindersList() } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(model.label("settings.appleRemindersImport.captureList")).rnFont(14, .semibold)
+                            Text(model.appleRemindersSettings.text("selectedListTitle").isEmpty
+                                ? model.label("settings.appleRemindersImport.chooseCaptureList") : model.appleRemindersSettings.text("selectedListTitle"))
+                                .rnFont(16).fixedSize(horizontal: false, vertical: true)
+                        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }.buttonStyle(.plain).disabled(!model.appleRemindersCanEdit).accessibilityIdentifier("apple-reminders-list")
+                    Toggle(isOn: Binding(get: { model.appleRemindersSettings.flag("autoImportOnOpen") },
+                        set: { model.saveAppleRemindersPreference(["type": "autoImportOnOpen", "value": $0]) })) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(model.label("settings.appleRemindersImport.autoImport")).rnFont(16, .semibold)
+                            Text(model.label("settings.appleRemindersImport.autoImportDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }.disabled(!model.appleRemindersCanEdit).accessibilityIdentifier("apple-reminders-auto")
+                    Toggle(isOn: Binding(get: { model.appleRemindersSettings.flag("deleteImportedReminders") },
+                        set: { model.saveAppleRemindersPreference(["type": "deleteImportedReminders", "value": $0]) })) {
+                        Text(model.label("settings.appleRemindersImport.deleteAfterImport")).rnFont(16, .semibold)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }.disabled(!model.appleRemindersCanEdit || !model.appleRemindersSettings.flag("deleteImportedReminders"))
+                        .accessibilityIdentifier("apple-reminders-delete")
+                    Text("Source reminders are kept. Deleting them after import is not available yet.").rnFont(13)
+                        .foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button { model.importAppleRemindersNow() } label: {
+                        Text(model.label("settings.appleRemindersImport.importIncomplete")).rnFont(16, .semibold)
+                            .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, minHeight: 44)
+                    }.buttonStyle(.borderedProminent)
+                        .disabled(!model.appleRemindersCanEdit || model.appleRemindersSettings.flag("deleteImportedReminders"))
+                        .accessibilityIdentifier("apple-reminders-import")
+                    Text(model.label("settings.appleRemindersImport.importIncompleteDescription")).rnFont(13)
+                        .foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                if let status = model.appleRemindersStatus {
+                    Text(status).rnFont(14).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("apple-reminders-status")
+                }
+                if let failure = model.appleRemindersError {
+                    Text(failure).rnFont(14).foregroundStyle(palette.danger).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("apple-reminders-error")
+                }
+                if model.appleRemindersNeedsRetry || model.appleRemindersSettings.isEmpty {
+                    Button("Retry") { model.retryAppleReminders() }.buttonStyle(.bordered).frame(minHeight: 44)
+                        .disabled(model.busy).accessibilityIdentifier("apple-reminders-retry")
+                }
+                if model.busy { ProgressView().frame(maxWidth: .infinity).accessibilityIdentifier("apple-reminders-progress") }
+            }.padding(16).foregroundStyle(palette.text)
+        }.accessibilityIdentifier("apple-reminders-screen")
+        .sheet(isPresented: Binding(get: { !model.appleRemindersLists.isEmpty },
+            set: { if !$0 { model.closeAppleRemindersLists() } })) { appleRemindersListSheet }
+    }
+
+    private var appleRemindersListSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(model.appleRemindersLists.indices, id: \.self) { index in
+                        let list = model.appleRemindersLists[index]
+                        Button {
+                            model.saveAppleRemindersPreference(["type": "selectedList", "id": list.text("id"),
+                                "sourceId": list.text("sourceId"), "title": list.text("title")])
+                        } label: {
+                            HStack {
+                                Text(list.text("title")).rnFont(16).fixedSize(horizontal: false, vertical: true)
+                                Spacer()
+                                if list.text("id") == model.appleRemindersSettings.text("selectedListId") {
+                                    Image(systemName: "checkmark").accessibilityHidden(true)
+                                }
+                            }.frame(minHeight: 44).contentShape(Rectangle())
+                        }.buttonStyle(.plain).disabled(!model.appleRemindersCanEdit)
+                            .accessibilityIdentifier("apple-reminders-list-" + String(index))
+                    }
+                    if model.appleRemindersNeedsRetry {
+                        if let failure = model.appleRemindersError { Text(failure).rnFont(14).foregroundStyle(palette.danger) }
+                        Button("Retry") { model.retryAppleReminders() }.disabled(model.busy)
+                            .accessibilityIdentifier("apple-reminders-picker-retry")
+                    }
+                }.padding(16)
+            }.background(palette.bg).foregroundStyle(palette.text)
+                .navigationTitle(model.label("settings.appleRemindersImport.chooseCaptureList"))
+                .toolbar { ToolbarItem(placement: .cancellationAction) {
+                    Button(model.label("common.cancel")) { model.closeAppleRemindersLists() }.disabled(model.busy || model.appleRemindersNeedsRetry)
+                        .accessibilityIdentifier("apple-reminders-picker-cancel")
+                } }
+        }.interactiveDismissDisabled(model.busy || model.appleRemindersNeedsRetry)
     }
 
     private var syncEncryptionContent: some View {

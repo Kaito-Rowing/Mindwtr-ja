@@ -22,6 +22,10 @@
         <string>mind water</string>
       </dict>
     </array>
+    <key>NSRemindersUsageDescription</key>
+    <string>Mindwtr needs reminders access to import your chosen Apple Reminders capture list into Inbox.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Mindwtr needs reminders access to import your chosen Apple Reminders capture list into Inbox.</string>
     <key>NSCalendarsUsageDescription</key>
     <string>Mindwtr needs calendar access to show your events alongside tasks.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>

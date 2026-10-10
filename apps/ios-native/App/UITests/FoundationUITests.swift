@@ -1,6 +1,102 @@
 import XCTest
 
 final class FoundationUITests: XCTestCase {
+    private func task578App(_ suffix: String, flags: [String] = [], largest: Bool = false) throws -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", try task371Library(suffix, prefix: "MINDWTR_REMINDERS_UI_"),
+            "--native-apple-reminders-fixture", "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US"] + flags
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-AppleInterfaceStyle", "Dark"] }
+        app.launch(); task578Open(app); return app
+    }
+    private func task578Open(_ app: XCUIApplication) {
+        task371OpenSync(app, openFlow: false, backend: "off")
+        revealPagedElement(app, app.buttons["sync-apple-reminders"], in: app.scrollViews["sync-screen"])
+        boardTap(app, "sync-apple-reminders")
+        boardEnabled(app.buttons["apple-reminders-list"], timeout: 30)
+    }
+    private func task578Choose(_ app: XCUIApplication) {
+        revealPagedElement(app, app.buttons["apple-reminders-list"], in: app.scrollViews["apple-reminders-screen"])
+        boardTap(app, "apple-reminders-list")
+        boardEnabled(app.buttons["apple-reminders-list-0"], timeout: 30)
+        boardTap(app, "apple-reminders-list-0")
+    }
+    private func task578Status(_ app: XCUIApplication, _ text: String) {
+        let status = app.staticTexts["apple-reminders-status"]
+        revealPagedElement(app, status, in: app.scrollViews["apple-reminders-screen"])
+        expectation(for: NSPredicate { _, _ in status.exists && status.label.contains(text) }, evaluatedWith: status)
+        waitForExpectations(timeout: 30)
+    }
+    private func task578Import(_ app: XCUIApplication) {
+        revealPagedElement(app, app.buttons["apple-reminders-import"], in: app.scrollViews["apple-reminders-screen"])
+        boardEnabled(app.buttons["apple-reminders-import"]); boardTap(app, "apple-reminders-import")
+    }
+    private func task578RoundTrip(_ suffix: String, largest: Bool) throws {
+        let app = try task578App(suffix, largest: largest)
+        task578Choose(app)
+        boardEnabled(app.buttons["apple-reminders-list"])
+        XCTAssertTrue(app.buttons["apple-reminders-list"].label.contains("Capture List"))
+        let toggle = app.switches["apple-reminders-auto"]
+        for desired in ["1", "0"] {
+            revealPagedElement(app, toggle, in: app.scrollViews["apple-reminders-screen"])
+            boardEnabled(toggle); toggle.tap()
+            expectation(for: NSPredicate { _, _ in toggle.value as? String == desired && toggle.isEnabled }, evaluatedWith: toggle)
+            waitForExpectations(timeout: 30)
+        }
+        let deletion = app.switches["apple-reminders-delete"]
+        XCTAssertTrue(deletion.waitForExistence(timeout: 10))
+        XCTAssertEqual(deletion.value as? String, "0"); XCTAssertFalse(deletion.isEnabled)
+        task578Import(app); task578Status(app, "Imported 2 reminder(s)")
+        task578Import(app); task578Status(app, "Imported 0 reminder(s)")
+        app.terminate(); app.launch(); task578Open(app)
+        XCTAssertTrue(app.buttons["apple-reminders-list"].label.contains("Capture List"))
+        task578Import(app); task578Status(app, "Imported 0 reminder(s)")
+    }
+    func testTask578RemindersSettingsManualImportAndColdDedupe() throws { try task578RoundTrip("NORMAL", largest: false) }
+    func testTask578RemindersLargestTextManualImportAndColdDedupe() throws { try task578RoundTrip("LARGEST", largest: true) }
+    func testTask578RemindersDeniedPermissionLeavesSettingsUsable() throws {
+        let app = try task578App("DENIED", flags: ["--native-apple-reminders-denied"])
+        boardTap(app, "apple-reminders-list")
+        XCTAssertTrue(app.staticTexts["apple-reminders-error"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["apple-reminders-list-0"].exists)
+        boardEnabled(app.buttons["apple-reminders-back"])
+    }
+    func testTask578RemindersPreferenceExactWarmRetry() throws {
+        let app = try task578App("RETRY", flags: ["--native-apple-reminders-preference-failure-once"])
+        task578Choose(app)
+        boardEnabled(app.buttons["apple-reminders-picker-retry"], timeout: 30)
+        XCTAssertFalse(app.buttons["apple-reminders-picker-cancel"].isEnabled)
+        boardTap(app, "apple-reminders-picker-retry")
+        boardEnabled(app.buttons["apple-reminders-list"])
+        XCTAssertTrue(app.buttons["apple-reminders-list"].label.contains("Capture List"))
+        task578Import(app); task578Status(app, "Imported 2 reminder(s)")
+    }
+    func testTask578RemindersPreferenceColdReadDoesNotReplay() throws {
+        let app = try task578App("COLD", flags: ["--native-apple-reminders-preference-failure-once"])
+        task578Choose(app); boardEnabled(app.buttons["apple-reminders-picker-retry"], timeout: 30)
+        app.terminate(); app.launchArguments.removeAll { $0 == "--native-apple-reminders-preference-failure-once" }
+        app.launch(); task578Open(app)
+        XCTAssertTrue(app.buttons["apple-reminders-list"].label.contains("Capture List"))
+        XCTAssertFalse(app.buttons["apple-reminders-retry"].exists)
+        task578Import(app); task578Status(app, "Imported 2 reminder(s)")
+    }
+    func testTask578RemindersOptInColdStartupAndForegroundThrottle() throws {
+        let app = try task578App("AUTO")
+        task578Choose(app); boardEnabled(app.switches["apple-reminders-auto"])
+        app.switches["apple-reminders-auto"].tap()
+        expectation(for: NSPredicate { _, _ in app.switches["apple-reminders-auto"].value as? String == "1" && app.switches["apple-reminders-auto"].isEnabled }, evaluatedWith: app)
+        waitForExpectations(timeout: 30)
+        app.terminate(); let started = Date(); app.launch()
+        let first = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "task-title-", "Literal @home /due:tomorrow")).firstMatch
+        let second = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "task-title-", "Second reminder")).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 30))
+        XCTAssertTrue(second.waitForExistence(timeout: 30))
+        for _ in 0..<2 { XCUIDevice.shared.press(.home); app.activate(); boardEnabled(app.buttons["tab-menu"], timeout: 15) }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 25, "Throttle evidence must stay within the 30-second window")
+        XCTAssertTrue(first.exists)
+        XCTAssertTrue(second.exists)
+    }
+
     private func task496App(_ suffix: String, largest: Bool = false) throws -> XCUIApplication {
         let library = try task371Library(suffix, prefix: "MINDWTR_CALENDAR_PUSH_UI_")
         continueAfterFailure = false

@@ -4067,6 +4067,16 @@ globalThis.MindwtrHost = {
             return {};
         });
     },
+    appleReminderAccessAcknowledged(outcome: string): string {
+        return submit(async () => {
+            if (!['granted', 'denied', 'undetermined', 'unavailable'].includes(outcome))
+                throw new Error('INVALID_INPUT: Invalid Reminders permission');
+            logInfo('Native Reminders access request finished', { scope: 'native-ios', force: true,
+                context: { releaseCheck: 'v1.3.5/ios-reminders-access', outcome } });
+            await diagnosticsLog.serialize(async () => undefined);
+            return {};
+        });
+    },
     appleReminderSettingsOptions(registryRaw: string | null): string {
         return submit(async () => {
             const { importedReminderIds: _ids, ...settings } = appleReminderRegistry(registryRaw);

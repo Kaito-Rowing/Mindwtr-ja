@@ -2,7 +2,7 @@
 
 This is the SwiftUI/JavaScriptCore foundation from [ADR 0029](../../docs/adr/0029-native-clients-host-the-typescript-core.md). React Native in `apps/mobile/` remains the production client. This project is not a replacement build or a TestFlight release.
 
-The app uses the existing bundle identifier only on a simulator, and normally stores its disposable library under its own `Application Support/NativeFoundation` directory. Physical alpha testing requires a Debug build with `NATIVE_DEVICE_TEST` and the separate `tech.dongdongbh.mindwtr.native.dev` identifier; startup rejects any other physical identity before opening storage. It does not open the live RN library, credentials, App Groups or sync destinations. Do not install it over the RN app. Project defaults keep signing disabled; device testing uses existing development signing assets explicitly. Debug simulator and isolated device builds also accept one lowercase UUID via `--native-ui-test-library` to use a separate `NativeUITests/<UUID>` library and preference suite. Physical builds reject authentication-mock and RN-rehearsal arguments. The isolated Debug device build permits a one-shot Project download interruption after staging, only within an isolated `NativeUITests/<UUID>` library; other injected failures remain simulator-only.
+The app uses the existing bundle identifier only on a simulator, and normally stores its disposable library under its own `Application Support/NativeFoundation` directory. Physical alpha testing requires a Debug build with `NATIVE_DEVICE_TEST` and the separate `tech.dongdongbh.mindwtr.native.dev` identifier; startup rejects any other physical identity before opening storage. It does not open the live RN library, credentials, App Groups or sync destinations. Do not install it over the RN app. Device signing stays disabled by default; device testing uses existing development signing assets explicitly. Debug simulator builds use ad-hoc signing with a simulator-only Keychain group so real credential reads can run without a developer certificate. Debug simulator and isolated device builds also accept one lowercase UUID via `--native-ui-test-library` to use a separate `NativeUITests/<UUID>` library and preference suite. Physical builds reject authentication-mock and RN-rehearsal arguments. The isolated Debug device build permits a one-shot Project download interruption after staging, only within an isolated `NativeUITests/<UUID>` library; other injected failures remain simulator-only.
 
 ## Build and check
 
@@ -12,7 +12,7 @@ Use the repository's existing JavaScript dependencies. On a Mac with Xcode insta
 bash apps/ios-native/scripts/validate.sh
 ```
 
-This generates `Resources/core-host.js`, runs the Swift package's real JavaScriptCore/SQLite tests, and builds the simulator application without signing. Build artifacts and temporary files stay under `apps/ios-native/.build/`. The tracked `MindwtrNative.xcodeproj` and shared scheme are independent of Expo prebuild and CocoaPods.
+This generates `Resources/core-host.js`, runs the Swift package's real JavaScriptCore/SQLite tests, and compiles the simulator application without signing. This compile-only output does not prove Keychain behavior; runtime simulator tests must keep the Debug target’s signing and simulator entitlements enabled. Build artifacts and temporary files stay under `apps/ios-native/.build/`. The tracked `MindwtrNative.xcodeproj` and shared scheme are independent of Expo prebuild and CocoaPods.
 
 ## Project download fixture preflight
 

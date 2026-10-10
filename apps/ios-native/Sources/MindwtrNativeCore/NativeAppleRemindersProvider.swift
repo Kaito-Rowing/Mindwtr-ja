@@ -313,3 +313,22 @@ private final class NativeAppleRemindersSystemSDK: NativeAppleRemindersSDK {
     func cancelFetch(_ token: Any) {}
 }
 #endif
+
+#if DEBUG && targetEnvironment(simulator)
+final class NativeAppleRemindersFixtureSDK: NativeAppleRemindersSDK {
+    func requestPermission(_ completion: @escaping (Result<Void, NativeAppleRemindersError>) -> Void) { completion(.success(())) }
+    func lists() throws -> [NativeAppleReminderListDTO] {
+        [.init(identity: .init(id: "fixture-capture", sourceID: "fixture-account"), title: "Capture List", color: nil),
+         .init(identity: .init(id: "fixture-other", sourceID: "fixture-account"), title: "Other List", color: nil)]
+    }
+    func fetch(list: NativeAppleReminderListIdentity, receive: @escaping (() throws -> [NativeAppleReminderSDKRow]?) -> Void) throws -> Any {
+        let rows = [("fixture-first", "Literal @home /due:tomorrow", false), ("fixture-second", "Second reminder", false),
+                    ("fixture-done", "Completed reminder", true), ("fixture-empty", "  ", false)]
+            .map { id, title, completed in NativeAppleReminderSDKRow(list: list,
+                source: .init(id: id, title: title, notes: "Native Reminders fixture notes", completed: completed,
+                    creationDate: nil, startDate: nil, dueDate: nil)) }
+        receive { rows }; return UUID()
+    }
+    func cancelFetch(_ token: Any) {}
+}
+#endif

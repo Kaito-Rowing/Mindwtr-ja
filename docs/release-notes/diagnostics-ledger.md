@@ -30,6 +30,10 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.5 (add before tagging, trim in the release after)
 
+- `ios-reminders-foreground` — `apps/ios-native/App/CoreModel.swift`: `Native Reminders foreground import stopped` with `outcome=stopped` records a foreground import failure without surfacing an unsolicited toast or logging provider data. A retained item still uses the standard save-recovery gate. Successful run counts use `ios-reminders-run`.
+
+- `ios-reminders-access` — `apps/android-native/bundle/host-entry.ts`: `Native Reminders access request finished`, `releaseCheck=v1.3.5/ios-reminders-access`, and a fixed permission outcome prove the explicit callback drained and the active Settings request was readmitted. No account, list or reminder content is logged.
+
 - `ios-reminders-setting` — `apps/android-native/bundle/host-entry.ts`: saved Diagnostics must show `Native Reminders preference saved`, `releaseCheck=v1.3.5/ios-reminders-setting`, and `outcome=confirmed` after the fixed-cell CAS and readback complete. It logs no preference values, list identifiers, titles or imported reminder IDs.
 
 - **`v1.3.5/ios-reminders-run`** — `apps/android-native/bundle/host-entry.ts`. Forced `Native Reminders import run finished` records `outcome=completed|interrupted`, `importedCount` and `failedCount` after the private serial coordinator processes the bounded provider response. Imported count includes only settled item/registry acknowledgments. Interrupted does not mean the retained final item was undone. No source content or identifiers are logged; this path never deletes a reminder.

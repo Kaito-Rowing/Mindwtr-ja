@@ -161,6 +161,10 @@ final class NativeAppleRemindersJobs: @unchecked Sendable {
             }
         } else { startNext() }
     }
+    func isDrained(_ id: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return active?.id != id && !queued.contains(where: { $0.id == id })
+    }
     func next() -> Reply? {
         lock.lock()
         guard accepting, !ready.isEmpty else { lock.unlock(); return nil }

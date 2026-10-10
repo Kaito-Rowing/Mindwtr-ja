@@ -220,6 +220,7 @@ final class CoreModel: ObservableObject {
             if oldValue == .calendar && selectedSurface != .calendar { retireCalendarFeed() }
             if oldValue == .trash && selectedSurface != .trash { retireTrashPresentation(clearSelection: true) }
             if oldValue == .settings && selectedSurface != .settings {
+                retireAppleRemindersSettings()
                 retireNotificationSettingsPage()
                 retireCalendarSettingsPage()
                 calendarSubscriptionRuntimeRecovery = nil
@@ -398,12 +399,39 @@ final class CoreModel: ObservableObject {
         SettingsSyncFormKind(rawValue: settingsSync.object("panel").text("kind"))
     }
     private var settingsSyncTokenDraft: String? { settingsSyncTokenEdited ? settingsSyncToken : nil }
+    @Published private(set) var settingsRemindersPresented = false
+    @Published private(set) var appleRemindersSettings: CoreObject = [:]
+    @Published private(set) var appleRemindersLists: [CoreObject] = []
+    @Published private(set) var appleRemindersError: String?
+    @Published private(set) var appleRemindersStatus: String?
+    @Published private var appleRemindersPendingEdit: (json: String, expected: String?, host: CoreHost)?
+    @Published private var appleRemindersImportRetry = false
+    @Published private(set) var appleRemindersAutoNotice: String?
+    private var appleRemindersAutoRequested = false
+    private var appleRemindersAutoActive = false
+    private var appleRemindersAutoToken: UUID?
+    private var appleRemindersAutoOwner: UUID?
+    private var appleRemindersAutoTask: Task<Void, Never>?
+    private var appleRemindersAutoLastRun: TimeInterval = -.infinity
+    private var appleRemindersNoticeID = UUID()
+    private var appleRemindersRaw: String?
+    private var appleRemindersSession = UUID()
+    private var appleRemindersOwner: UUID?
+    private var appleRemindersTask: Task<Void, Never>?
+    private var appleRemindersActive = false
+    private var appleRemindersWaiter: (owner: UUID, continuation: CheckedContinuation<Bool, Never>)?
+    var appleRemindersNeedsRetry: Bool { appleRemindersPendingEdit != nil || appleRemindersImportRetry }
+    var appleRemindersCanEdit: Bool {
+        ready && settingsSyncPresented && settingsRemindersPresented && !busy && !retryNeeded
+            && !settingsSyncChecking && !settingsSyncRestartRequired && !appLock.concealed
+            && !appleRemindersSettings.isEmpty && !appleRemindersNeedsRetry
+    }
     var settingsSyncCanEdit: Bool {
-        ready && settingsSyncPresented && !busy && !retryNeeded && !settingsSyncNeedsReload
+        ready && settingsSyncPresented && !settingsRemindersPresented && !busy && !retryNeeded && !settingsSyncNeedsReload
             && !settingsSyncRestartRequired && !appLock.concealed && settingsSyncAvailable && !settingsSync.isEmpty
             && settingsSyncEncryptionOwner == nil
     }
-    var settingsSyncCanClose: Bool { !busy && !settingsSyncChecking && !settingsSyncRestartRequired && settingsSyncEncryptionOwner == nil }
+    var settingsSyncCanClose: Bool { !settingsRemindersPresented && !busy && !settingsSyncChecking && !settingsSyncRestartRequired && settingsSyncEncryptionOwner == nil }
     func settingsSyncActionEnabled(_ action: String) -> Bool {
         settingsSyncCanEdit && !settingsSyncChecking && settingsSyncURL == settingsSyncValidatedURL
             && (settingsSyncFormKind == .webdav || (settingsSyncFormKind == .selfhosted
@@ -1576,6 +1604,13 @@ final class CoreModel: ObservableObject {
     private var host: CoreHost? {
         didSet {
             if oldValue.map({ ObjectIdentifier($0) }) != host.map({ ObjectIdentifier($0) }) {
+                cancelAppleRemindersAutoImport()
+                appleRemindersAutoOwner = nil; appleRemindersAutoTask = nil; appleRemindersAutoToken = nil
+                appleRemindersAutoLastRun = -.infinity; appleRemindersAutoNotice = nil
+                retireAppleRemindersSettings()
+                appleRemindersOwner = nil; appleRemindersTask = nil
+                appleRemindersPendingEdit = nil
+                appleRemindersImportRetry = false
                 retireNotificationSettingsPage()
                 retireCalendarSettingsPage()
                 settingsAdvancedPresented = false
@@ -4988,6 +5023,11 @@ final class CoreModel: ObservableObject {
                         deviceStorage: (directory, namespace),
                         isolatedTestID: identifier)
                     #if DEBUG && targetEnvironment(simulator)
+                    if arguments.contains("--native-apple-reminders-fixture") {
+                        try await host!.configureIsolatedAppleRemindersFixture(
+                            denied: arguments.contains("--native-apple-reminders-denied"),
+                            failPreferenceOnce: arguments.contains("--native-apple-reminders-preference-failure-once"))
+                    }
                     if arguments.contains("--native-trash-bulk-fixture") || arguments.contains("--native-trash-purge-fixture") {
                         trashBulkFixtureEnabled = true
                         trashPurgeFixtureEnabled = arguments.contains("--native-trash-purge-fixture")
@@ -7288,6 +7328,240 @@ final class CoreModel: ObservableObject {
         if !failed.isEmpty { settingsSyncError = failed.map(text).joined(separator: "\n"); return false }
         settingsSyncStatus = toasts.map(text).filter { !$0.isEmpty }.joined(separator: "\n")
         return true
+    }
+
+    func requestAppleRemindersAutoImport(token: UUID?, active: Bool) {
+        guard let token, token == completedStartupToken else { return }
+        let currentActive = active && UIApplication.shared.applicationState == .active
+        let entered = currentActive && (!appleRemindersAutoActive || appleRemindersAutoToken != token)
+        appleRemindersAutoActive = currentActive; appleRemindersAutoToken = token
+        if !currentActive { cancelAppleRemindersAutoImport(); return }
+        if entered { appleRemindersAutoRequested = ProcessInfo.processInfo.systemUptime - appleRemindersAutoLastRun >= 30 }
+        admitAppleRemindersAutoImport()
+    }
+    func cancelAppleRemindersAutoImport() {
+        appleRemindersAutoActive = false; appleRemindersAutoRequested = false
+        appleRemindersAutoTask?.cancel(); appleRemindersAutoNotice = nil
+    }
+    private func admitAppleRemindersAutoImport() {
+        guard appleRemindersAutoRequested, appleRemindersAutoActive, appleRemindersAutoOwner == nil,
+              let token = appleRemindersAutoToken, token == completedStartupToken,
+              ready, !busy, !retryNeeded, !settingsSyncRestartRequired, !appLockRecoveryPending, !appLockActive,
+              !appLock.concealed, UIApplication.shared.applicationState == .active,
+              !settingsSyncPresented, operationContextClean, let currentHost = host else { return }
+        appleRemindersAutoRequested = false
+        guard ProcessInfo.processInfo.systemUptime - appleRemindersAutoLastRun >= 30 else { return }
+        appleRemindersAutoLastRun = ProcessInfo.processInfo.systemUptime
+        let owner = UUID(); appleRemindersAutoOwner = owner; busy = true
+        appleRemindersAutoTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.appleRemindersAutoOwner == owner {
+                    self.appleRemindersAutoOwner = nil; self.appleRemindersAutoTask = nil
+                    if self.host === currentHost { self.finishOperation() }
+                }
+            }
+            guard self.host === currentHost, self.appleRemindersAutoOwner == owner else { return }
+            do {
+                self.appleRemindersImportRetry = true
+                let value = try self.decode(await currentHost.importAppleReminders(automatic: true))
+                guard self.host === currentHost else { return }
+                guard ["noop", "completed", "interrupted"].contains(value.text("kind")) else { throw CocoaError(.coderReadCorrupt) }
+                let count = value.object("result")["importedCount"] as? Int ?? 0
+                guard count >= 0 && count <= 10_000 else { throw CocoaError(.coderReadCorrupt) }
+                // Read admission also proves that no accepted item still owns the journal.
+                _ = try await currentHost.readAppleRemindersSettings()
+                guard self.host === currentHost else { return }
+                self.appleRemindersImportRetry = false
+                if count > 0 { self.refreshRequested = true }
+                if count > 0 && !Task.isCancelled && self.appleRemindersAutoActive && !self.appLock.concealed {
+                    let message = self.label("settings.appleRemindersImport.importedCount").replacingOccurrences(of: "{{taskCount}}", with: String(count))
+                    let noticeID = UUID(); self.appleRemindersNoticeID = noticeID; self.appleRemindersAutoNotice = message
+                    UIAccessibility.post(notification: .announcement, argument: message)
+                    Task { [weak self] in
+                        try? await Task.sleep(nanoseconds: 4_200_000_000)
+                        if self?.appleRemindersNoticeID == noticeID { self?.appleRemindersAutoNotice = nil }
+                    }
+                }
+            } catch {
+                guard self.host === currentHost else { return }
+                // Cancellation can arrive after an accepted item. A read-only uncancelled probe distinguishes recovery from a harmless stopped read.
+                let healthy = await Task { (try? await currentHost.readAppleRemindersSettings()) != nil }.value
+                guard self.host === currentHost else { return }
+                self.appleRemindersImportRetry = !healthy
+                if !healthy { self.retryNeeded = true; self.error = "Reminders import needs recovery." }
+                _ = try? await currentHost.call("logLine", argumentsJSON: self.json([
+                    "Native Reminders foreground import stopped",
+                    #"{"releaseCheck":"v1.3.5/ios-reminders-foreground","outcome":"stopped"}"#,
+                ]))
+            }
+        }
+    }
+
+    func openAppleRemindersSettings() async {
+        guard settingsSyncCanEdit, !settingsSyncChecking, !settingsSyncDraftDirty, let currentHost = host else { return }
+        settingsRemindersPresented = true
+        appleRemindersSession = UUID()
+        appleRemindersActive = UIApplication.shared.applicationState == .active
+        appleRemindersError = nil; appleRemindersStatus = nil
+        busy = true; defer { finishOperation() }
+        do { try adoptAppleRemindersOptions(decode(try await currentHost.readAppleRemindersSettings()), from: currentHost) }
+        catch { appleRemindersError = error.localizedDescription }
+    }
+
+    func closeAppleRemindersSettings() {
+        guard settingsRemindersPresented, !busy, !retryNeeded, !appleRemindersNeedsRetry else { return }
+        retireAppleRemindersSettings()
+    }
+    private func retireAppleRemindersSettings() {
+        cancelAppleRemindersIntent()
+        settingsRemindersPresented = false
+        appleRemindersSettings = [:]; appleRemindersLists = []; appleRemindersRaw = nil
+        appleRemindersError = nil; appleRemindersStatus = nil
+    }
+    func cancelAppleRemindersIntent() {
+        appleRemindersSession = UUID(); appleRemindersActive = false
+        appleRemindersTask?.cancel(); appleRemindersLists = []
+        if let waiter = appleRemindersWaiter { appleRemindersWaiter = nil; waiter.continuation.resume(returning: false) }
+    }
+    func appleRemindersWillResignActive() { appleRemindersActive = false }
+    func appleRemindersDidBecomeActive() {
+        appleRemindersActive = true
+        if let waiter = appleRemindersWaiter {
+            appleRemindersWaiter = nil
+            waiter.continuation.resume(returning: appleRemindersCurrent(waiter.owner))
+        }
+    }
+    private func appleRemindersCurrent(_ owner: UUID) -> Bool {
+        appleRemindersOwner == owner && ready && settingsSyncPresented && settingsRemindersPresented
+            && !appLock.concealed && appleRemindersActive && UIApplication.shared.applicationState == .active
+    }
+    private func waitForAppleRemindersReadmission(_ owner: UUID, session: UUID, from currentHost: CoreHost) async -> Bool {
+        guard !Task.isCancelled, host === currentHost, appleRemindersSession == session,
+              appleRemindersOwner == owner, settingsRemindersPresented, !appLock.concealed else { return false }
+        if appleRemindersCurrent(owner) { return true }
+        return await withTaskCancellationHandler(operation: {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled, host === currentHost, appleRemindersSession == session,
+                      appleRemindersOwner == owner, settingsRemindersPresented, !appLock.concealed else {
+                    continuation.resume(returning: false); return
+                }
+                if appleRemindersCurrent(owner) { continuation.resume(returning: true) }
+                else { appleRemindersWaiter = (owner, continuation) }
+            }
+        }, onCancel: { [weak self] in
+            Task { @MainActor in
+                guard let self, self.appleRemindersWaiter?.owner == owner else { return }
+                let waiter = self.appleRemindersWaiter; self.appleRemindersWaiter = nil
+                waiter?.continuation.resume(returning: false)
+            }
+        })
+    }
+    private func adoptAppleRemindersOptions(_ options: CoreObject, from currentHost: CoreHost) throws {
+        guard host === currentHost, Set(options.keys) == Set(["settings", "expectedRaw"]),
+              options["expectedRaw"] is NSNull || options["expectedRaw"] is String,
+              let settings = options["settings"] as? CoreObject,
+              Set(settings.keys).isSubset(of: Set(["selectedListId", "selectedListTitle", "autoImportOnOpen", "deleteImportedReminders"])),
+              settingsSyncWireBool(settings["autoImportOnOpen"]) != nil, settingsSyncWireBool(settings["deleteImportedReminders"]) != nil,
+              ["selectedListId", "selectedListTitle"].allSatisfy({ settings[$0] == nil || settings[$0] is String }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        if settingsRemindersPresented && !appLock.concealed {
+            appleRemindersSettings = settings; appleRemindersRaw = options["expectedRaw"] as? String
+        }
+    }
+    func chooseAppleRemindersList() { guard appleRemindersCanEdit else { return }; beginAppleRemindersWork(.choose) }
+    func closeAppleRemindersLists() { if !busy { appleRemindersLists = [] } }
+    func saveAppleRemindersPreference(_ edit: CoreObject) {
+        guard appleRemindersCanEdit, let currentHost = host else { return }
+        do {
+            appleRemindersPendingEdit = (try json(edit), appleRemindersRaw, currentHost)
+            beginAppleRemindersWork(.save)
+        } catch { appleRemindersError = error.localizedDescription }
+    }
+    func importAppleRemindersNow() {
+        guard appleRemindersCanEdit, !appleRemindersSettings.flag("deleteImportedReminders") else { return }
+        if appleRemindersSettings.text("selectedListId").isEmpty { chooseAppleRemindersList(); return }
+        beginAppleRemindersWork(.importAll)
+    }
+    func retryAppleReminders() {
+        guard !busy, !appLock.concealed else { return }
+        beginAppleRemindersWork(appleRemindersPendingEdit != nil ? .save : appleRemindersImportRetry ? .recover : .reload)
+    }
+    private enum AppleRemindersWork: Equatable { case choose, save, importAll, recover, reload }
+    private func beginAppleRemindersWork(_ work: AppleRemindersWork) {
+        guard ready, ((settingsRemindersPresented && settingsSyncPresented) || (work == .recover && appleRemindersImportRetry) || (work == .save && appleRemindersPendingEdit != nil)),
+              !busy, !settingsSyncChecking, !appLock.concealed, appleRemindersOwner == nil, let currentHost = host else { return }
+        let owner = UUID(), session = appleRemindersSession
+        appleRemindersOwner = owner; appleRemindersError = nil; appleRemindersStatus = nil; busy = true
+        appleRemindersTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.appleRemindersOwner == owner {
+                    self.appleRemindersOwner = nil; self.appleRemindersTask = nil
+                    if let waiter = self.appleRemindersWaiter { self.appleRemindersWaiter = nil; waiter.continuation.resume(returning: false) }
+                    self.finishOperation()
+                }
+            }
+            guard self.host === currentHost, self.appleRemindersOwner == owner else { return }
+            @MainActor func current() -> Bool {
+                self.host === currentHost && self.appleRemindersSession == session
+                    && self.settingsRemindersPresented && !self.appLock.concealed
+            }
+            do {
+                switch work {
+                case .choose:
+                    let result = try self.decode(await currentHost.chooseAppleRemindersLists { [weak self] in
+                        guard let self else { return false }
+                        return await self.waitForAppleRemindersReadmission(owner, session: session, from: currentHost)
+                    })
+                    guard current(), !Task.isCancelled else { return }
+                    guard Set(result.keys) == Set(["permission", "lists"]), let lists = result["lists"] as? [CoreObject],
+                          lists.allSatisfy({ $0["id"] is String && $0["sourceId"] is String && $0["title"] is String }),
+                          Set(lists.map { $0.text("id") }).count == lists.count else { throw CocoaError(.coderReadCorrupt) }
+                    if result.text("permission") != "granted" { self.appleRemindersError = self.label("settings.appleRemindersImport.permissionRequired") }
+                    else if lists.isEmpty { self.appleRemindersError = self.label("settings.appleRemindersImport.noListsFound") }
+                    else { self.appleRemindersLists = lists }
+                case .save:
+                    guard let edit = self.appleRemindersPendingEdit, edit.host === currentHost else { throw CocoaError(.coderInvalidValue) }
+                    let result = try self.decode(await currentHost.setAppleRemindersSetting(editJSON: edit.json, expectedRaw: edit.expected))
+                    try self.adoptAppleRemindersOptions(result, from: currentHost)
+                    self.appleRemindersPendingEdit = nil; self.retryNeeded = false; self.error = nil
+                    if current() { self.appleRemindersLists = [] }
+                case .importAll:
+                    self.appleRemindersImportRetry = true
+                    let result = try self.decode(await currentHost.importAppleReminders())
+                    guard ["completed", "interrupted"].contains(result.text("kind")), let counts = result["result"] as? [String: Int],
+                          Set(counts.keys) == Set(["importedCount", "deletedCount", "deleteFailedCount", "skippedDuplicateCount", "skippedCompletedCount", "skippedEmptyTitleCount", "failedCount"]),
+                          counts.values.allSatisfy({ $0 >= 0 && $0 <= 10_000 }) else { throw CocoaError(.coderReadCorrupt) }
+                    if current() {
+                        let skipped = counts["skippedDuplicateCount"]! + counts["skippedCompletedCount"]! + counts["skippedEmptyTitleCount"]!
+                        self.appleRemindersStatus = [("importedCount", counts["importedCount"]!), ("skippedCount", skipped), ("failedCount", counts["failedCount"]!)]
+                            .filter { $0.0 == "importedCount" || $0.1 > 0 }
+                            .map { self.label("settings.appleRemindersImport." + $0.0).replacingOccurrences(of: "{{taskCount}}", with: String($0.1)) }.joined(separator: "\n")
+                    }
+                    try self.adoptAppleRemindersOptions(self.decode(try await currentHost.readAppleRemindersSettings()), from: currentHost)
+                    self.appleRemindersImportRetry = false; self.refreshRequested = true
+                case .recover:
+                    _ = try await currentHost.retryPending()
+                    try self.adoptAppleRemindersOptions(self.decode(try await currentHost.readAppleRemindersSettings()), from: currentHost)
+                    self.appleRemindersImportRetry = false; self.retryNeeded = false; self.error = nil; self.refreshRequested = true
+                    if current() { self.appleRemindersStatus = "Recovery finished. Import again to check the remaining reminders." }
+                case .reload:
+                    try self.adoptAppleRemindersOptions(self.decode(try await currentHost.readAppleRemindersSettings()), from: currentHost)
+                }
+            } catch {
+                guard self.host === currentHost else { return }
+                if current() && !Task.isCancelled { self.appleRemindersError = error.localizedDescription }
+                if work == .save || work == .importAll || work == .recover {
+                    do {
+                        guard !Task.isCancelled else { throw CancellationError() }
+                        try self.adoptAppleRemindersOptions(self.decode(try await currentHost.readAppleRemindersSettings()), from: currentHost)
+                        self.appleRemindersPendingEdit = nil; self.appleRemindersImportRetry = false; self.retryNeeded = false
+                    } catch { self.retryNeeded = true }
+                }
+            }
+        }
     }
 
     func openSyncSettings() async {
@@ -10352,6 +10626,7 @@ final class CoreModel: ObservableObject {
                     "settings.feedbackEmail", "settings.feedbackEmailPlaceholder", "settings.feedbackIncludeDiagnostics", "settings.feedbackIncludeDiagnosticsDesc", "settings.feedbackPrivacy",
                     "settings.feedbackSubmit", "settings.feedbackSending", "settings.feedbackSent", "settings.feedbackFailed", "settings.feedbackUnavailable", "settings.feedbackUnavailableDesc",
                     "settings.feedbackOpenGitHubIssue", "settings.feedbackGitHubDesc", "settings.feedbackOpenGitHubDiscussion", "settings.feedbackRequired", "settings.feedbackInvalidEmail",
+                    "settings.appleRemindersImport.appleReminders", "settings.appleRemindersImport.captureList", "settings.appleRemindersImport.chooseCaptureList", "settings.appleRemindersImport.deleteAfterImport", "settings.appleRemindersImport.deleteAfterImportDescription", "settings.appleRemindersImport.autoImport", "settings.appleRemindersImport.autoImportDescription", "settings.appleRemindersImport.importIncomplete", "settings.appleRemindersImport.importIncompleteDescription", "settings.appleRemindersImport.permissionRequired", "settings.appleRemindersImport.noListsFound", "settings.appleRemindersImport.importedCount", "settings.appleRemindersImport.skippedCount", "settings.appleRemindersImport.failedCount",
                     "viewSections.add", "viewSections.nameHint", "viewSections.namePlaceholder", "viewSections.updateFailed"]
         let result = try await query("strings", [try json(keys)])
         guard let translated = result["strings"] as? CoreObject, translated.values.allSatisfy({ $0 is String }) else {
@@ -28798,6 +29073,7 @@ final class CoreModel: ObservableObject {
     }
 
     func retry() async {
+        if appleRemindersNeedsRetry { retryAppleReminders(); return }
         if trashBulkRequest != nil { await retryTrashBulkRequest(); return }
         if notificationResponseRetry != nil { await retryNotificationResponses(); return }
         if notificationSettingRequest != nil { retryNotificationSettings(); return }
@@ -31710,6 +31986,7 @@ final class CoreModel: ObservableObject {
         defer {
             admitReminderLifecycle(); admitCalendarPushLifecycle(); admitSearchLifecycle(); admitNotificationResponses()
             if entityLinkTask == nil { requestEntityLinks() }
+            admitAppleRemindersAutoImport()
             #if DEBUG && targetEnvironment(simulator)
             publishTrashBulkTestState()
             #endif

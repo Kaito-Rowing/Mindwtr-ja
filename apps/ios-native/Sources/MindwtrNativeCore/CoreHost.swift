@@ -100,6 +100,7 @@ public final class CoreHost: @unchecked Sendable {
     private let reminderEffects = NativeReminderEffects()
     private let notificationAuthorization = NativeNotificationAuthorization()
     private let calendarAuthorization = NativeCalendarAuthorization()
+    private let appleRemindersAuthorization = NativeCalendarAuthorization() // Reuse the callback-drain/readmission gate, not its event requester.
 
     public init(databaseURL: URL, bundleURL: URL,
                 deviceStorage: (containerURL: URL, bundleIdentifier: String)? = nil) {
@@ -134,11 +135,37 @@ public final class CoreHost: @unchecked Sendable {
         try await perform { try $0.start(retainingReminderResponseIDs: retainingReminderResponseIDs) }
     }
 
-    func readAppleRemindersSettings() async throws -> String {
+    public func chooseAppleRemindersLists(readmission: @escaping @Sendable () async -> Bool) async throws -> String {
+        let owner: UUID
+        do { owner = try appleRemindersAuthorization.begin() }
+        catch { throw CoreHostRejection(message: "NOT_READY: Reminders access is unavailable") }
+        let cancellation = NativeAttachmentCancellation()
+        localAttachmentRequests.register(cancellation, id: owner)
+        defer { localAttachmentRequests.remove(owner); appleRemindersAuthorization.finish(owner) }
+        if Task.isCancelled { cancellation.cancel() }
+        return try await withTaskCancellationHandler(operation: {
+            let result: Result<String, Error>
+            do {
+                try await perform { try $0.beginAppleRemindersAccess(owner, cancellation: cancellation) }
+                guard await appleRemindersAuthorization.readmit(owner, check: readmission), !cancellation.isCancelled else {
+                    throw CancellationError()
+                }
+                let permission = try await perform(appleRemindersOwned: true) { try $0.requestAppleRemindersAccess(owner) }
+                guard await appleRemindersAuthorization.readmit(owner, check: readmission), !cancellation.isCancelled else {
+                    throw CancellationError()
+                }
+                result = .success(try await perform(appleRemindersOwned: true) { try $0.finishAppleRemindersAccess(owner, permission: permission) })
+            } catch { result = .failure(error) }
+            _ = try? await perform(reminderOwned: true, appleRemindersOwned: true) { $0.retireAppleRemindersAccess(owner) }
+            return try result.get()
+        }, onCancel: { cancellation.cancel(); self.appleRemindersAuthorization.cancelReadmission(owner) })
+    }
+
+    public func readAppleRemindersSettings() async throws -> String {
         try await perform { try $0.readAppleRemindersSettings() }
     }
 
-    func setAppleRemindersSetting(editJSON: String, expectedRaw: String?) async throws -> String {
+    public func setAppleRemindersSetting(editJSON: String, expectedRaw: String?) async throws -> String {
         let id = UUID(), cancellation = NativeAttachmentCancellation()
         localAttachmentRequests.register(cancellation, id: id)
         defer { localAttachmentRequests.remove(id) }
@@ -148,7 +175,7 @@ public final class CoreHost: @unchecked Sendable {
         }, onCancel: { cancellation.cancel() })
     }
 
-    func importAppleReminders(automatic: Bool = false) async throws -> String {
+    public func importAppleReminders(automatic: Bool = false) async throws -> String {
         let id = UUID(), cancellation = NativeAttachmentCancellation()
         localAttachmentRequests.register(cancellation, id: id)
         defer { localAttachmentRequests.remove(id) }
@@ -532,6 +559,11 @@ public final class CoreHost: @unchecked Sendable {
     }
     #endif
     #if DEBUG && os(iOS) && targetEnvironment(simulator)
+    #if targetEnvironment(simulator)
+    public func configureIsolatedAppleRemindersFixture(denied: Bool, failPreferenceOnce: Bool) async throws {
+        try await perform { try $0.configureIsolatedAppleRemindersFixture(denied: denied, failPreferenceOnce: failPreferenceOnce) }
+    }
+    #endif
     public func configureIsolatedCaptureTerminalFailureOnce() async throws {
         try await perform { try $0.configureIsolatedCaptureTerminalFailureOnce() }
     }
@@ -1057,6 +1089,7 @@ public final class CoreHost: @unchecked Sendable {
         await reminderEffects.closeAndDrain()
         await notificationAuthorization.closeAndDrain()
         await calendarAuthorization.closeAndDrain()
+        await appleRemindersAuthorization.closeAndDrain()
         if let jobs = try? await perform(reminderOwned: true, { $0.appleRemindersJobs }) { await jobs.closeAndDrain() }
         await withCheckedContinuation { continuation in
             queue.async { [engine] in
@@ -1066,7 +1099,7 @@ public final class CoreHost: @unchecked Sendable {
         }
     }
 
-    private func perform<T: Sendable>(reminderOwned: Bool = false,
+    private func perform<T: Sendable>(reminderOwned: Bool = false, appleRemindersOwned: Bool = false,
         _ work: @escaping @Sendable (Engine) throws -> T) async throws -> T {
         let cancellation = reminderOwned ? nil : NativeAttachmentCancellation(), request = UUID()
         if let cancellation { localAttachmentRequests.register(cancellation, id: request) }
@@ -1080,11 +1113,14 @@ public final class CoreHost: @unchecked Sendable {
                     let result: Result<T, Error>
                     do {
                         if cancellation?.isCancelled == true { throw CancellationError() }
+                        if !appleRemindersOwned { try engine.requireNoAppleRemindersAccess() }
                         result = .success(try work(engine))
                     } catch { result = .failure(error) }
                     if cancellation != nil { reminderEffects.finishOrdinary() }
-                    engine.reminderPostOperation()
-                    engine.searchPostOperation()
+                    if !engine.hasAppleRemindersAccess {
+                        engine.reminderPostOperation()
+                        engine.searchPostOperation()
+                    }
                     continuation.resume(with: result)
                 }
             }
@@ -15189,6 +15225,12 @@ private final class Engine: @unchecked Sendable {
     private var appleReminderJournalNeedsSync = false
     private var appleReminderRemovalPending = false
     private var appleReminderJournalBinding: MixedSaveFileBinding?
+    private var appleRemindersAccess: (id: UUID, runtime: JSContext, storage: NativeDeviceKV, generation: UInt64,
+        registry: String?, binding: [String: Any], library: OwnedDiscardIdentity, cancellation: NativeAttachmentCancellation)?
+    fileprivate var hasAppleRemindersAccess: Bool { appleRemindersAccess != nil }
+    func requireNoAppleRemindersAccess() throws {
+        guard appleRemindersAccess == nil else { throw HostFailure("NOT_READY: Reminders permission request is still active") }
+    }
     fileprivate var appleRemindersJobs: NativeAppleRemindersJobs?
     private var completedAppleReminderSnapshot: NativeBackupSnapshotReference?
     private static let appleReminderMethod = "appleReminderImportItemCommit"
@@ -15230,7 +15272,7 @@ private final class Engine: @unchecked Sendable {
         return ["namespace": location.bundleIdentifier, "device": String(identity.st_dev), "inode": String(identity.st_ino)]
     }
 
-    private func appleRemindersRead(_ request: [String: Any], cancellation: NativeAttachmentCancellation) throws -> Any {
+    private func appleRemindersRead(_ request: [String: Any], cancellation: NativeAttachmentCancellation, drainAccepted: Bool = false) throws -> Any {
         try cancellation.check()
         guard !localRequests.isClosing else { throw CancellationError() }
         if appleRemindersJobs == nil {
@@ -15249,6 +15291,7 @@ private final class Engine: @unchecked Sendable {
             if let reply = jobs.next() {
                 let value = try Self.appleReminderObject(reply.json, limit: NativeAppleRemindersJobs.maximumReplyBytes)
                 guard value["id"] as? String == ticket else { throw Self.appleReminderFailure }
+                if drainAccepted { while !jobs.isDrained(ticket) { Thread.sleep(forTimeInterval: 0.001) } }
                 if cancelled { throw CancellationError() }
                 guard reply.completed, Set(value.keys) == Set(["id", "value"]), let answer = value["value"] else {
                     throw HostFailure("NOT_READY: Apple Reminders could not be read")
@@ -15272,6 +15315,46 @@ private final class Engine: @unchecked Sendable {
                 startDate: row["startDate"] as? String, dueDate: row["dueDate"] as? String))
         }
         return try NativeAppleRemindersValidation.read(result, list: list).sources
+    }
+
+    func beginAppleRemindersAccess(_ id: UUID, cancellation: NativeAttachmentCancellation) throws {
+        try requireNoAppleRemindersAccess()
+        let storage = try requireDeviceStorageAdmission()
+        guard notificationSettingTurn == nil, calendarAccessTurn == nil, try editorDrafts.read() == nil,
+              let runtime = context, let library = calendarPushDatabaseBinding else { throw Self.appleReminderFailure }
+        try cancellation.check()
+        let raw = try storage.readAppleRemindersImportState()
+        _ = try Self.appleReminderRegistryRaw(raw.map { $0 as Any } ?? NSNull())
+        _ = try invoke("appleReminderImportOptions", arguments: [raw.map { $0 as Any } ?? NSNull()])
+        appleRemindersAccess = (id, runtime, storage, attachmentGeneration, raw, try appleReminderStorageBinding(), library, cancellation)
+    }
+    private func validateAppleRemindersAccess(_ id: UUID) throws -> NativeAttachmentCancellation {
+        guard let turn = appleRemindersAccess, turn.id == id, context === turn.runtime, deviceStorage === turn.storage,
+              attachmentGeneration == turn.generation, started, !closed, !localRequests.isClosing,
+              pending == nil, !recoveryActivationPending, try Self.bindingIdentity(databaseURL) == turn.library,
+              Self.equalJSON(try appleReminderStorageBinding(), turn.binding),
+              Self.taskDownloadOptionalEqual(try turn.storage.readAppleRemindersImportState(), turn.registry) else {
+            throw HostFailure("STALE_REVISION: Reminders access is no longer current")
+        }
+        try turn.cancellation.check(); return turn.cancellation
+    }
+    func requestAppleRemindersAccess(_ id: UUID) throws -> String {
+        let cancellation = try validateAppleRemindersAccess(id)
+        let result = try appleRemindersRead(["op": "requestPermission"], cancellation: cancellation, drainAccepted: true)
+        _ = try validateAppleRemindersAccess(id)
+        guard let value = result as? [String: Any], Set(value.keys) == Set(["status"]),
+              let status = value["status"] as? String, ["granted", "denied", "undetermined", "unavailable"].contains(status) else { throw Self.appleReminderFailure }
+        return status
+    }
+    func finishAppleRemindersAccess(_ id: UUID, permission: String) throws -> String {
+        let cancellation = try validateAppleRemindersAccess(id)
+        let lists: Any = permission == "granted" ? try appleRemindersRead(["op": "lists"], cancellation: cancellation) : [[String: Any]]()
+        _ = try validateAppleRemindersAccess(id)
+        _ = try? invoke("appleReminderAccessAcknowledged", arguments: [permission])
+        return try Self.ownedJSON(["permission": permission, "lists": lists])
+    }
+    func retireAppleRemindersAccess(_ id: UUID) {
+        if appleRemindersAccess?.id == id { appleRemindersAccess = nil }
     }
 
     func readAppleRemindersSettings() throws -> String {
@@ -21440,6 +21523,28 @@ private final class Engine: @unchecked Sendable {
             throw HostFailure("Isolated Calendar event task terminal cleanup interrupted")
         }
     }
+
+    #if targetEnvironment(simulator)
+    func configureIsolatedAppleRemindersFixture(denied: Bool, failPreferenceOnce: Bool) throws {
+        let directory = databaseURL.deletingLastPathComponent(), identifier = directory.lastPathComponent
+        guard !started, !closed, !invoking, pending == nil, let faults, faults.appleRemindersProviderFactory == nil, faults.configureDeviceStorage == nil,
+              databaseURL.lastPathComponent == "mindwtr.sqlite", directory.deletingLastPathComponent().lastPathComponent == "NativeUITests",
+              Self.ownedDiscardUUID(identifier) == identifier,
+              faults.secretService == "mindwtr.native-keychain.fixture." + identifier else { throw HostFailure("Isolated Reminders fixture is unavailable") }
+        faults.appleRemindersProviderFactory = {
+            .init(status: { denied ? .denied : .granted }, sdkFactory: { NativeAppleRemindersFixtureSDK() })
+        }
+        if failPreferenceOnce {
+            var fired = false
+            faults.configureDeviceStorage = { storage in
+                storage.faults.afterPromotion = { [weak storage] in
+                    guard !fired, storage?.hasPendingAppleRemindersImportMutation == true else { return }
+                    fired = true; throw HostFailure("Isolated Reminders preference acknowledgment interrupted")
+                }
+            }
+        }
+    }
+    #endif
 
     func configureIsolatedCaptureTerminalFailureOnce() throws {
         let directory = databaseURL.deletingLastPathComponent(), identifier = directory.lastPathComponent
