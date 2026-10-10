@@ -134,6 +134,16 @@ public final class CoreHost: @unchecked Sendable {
         try await perform { try $0.start(retainingReminderResponseIDs: retainingReminderResponseIDs) }
     }
 
+    func importAppleReminders(automatic: Bool = false) async throws -> String {
+        let id = UUID(), cancellation = NativeAttachmentCancellation()
+        localAttachmentRequests.register(cancellation, id: id)
+        defer { localAttachmentRequests.remove(id) }
+        if Task.isCancelled { cancellation.cancel() }
+        return try await withTaskCancellationHandler(operation: {
+            try await perform { try $0.importAppleReminders(automatic: automatic, cancellation: cancellation) }
+        }, onCancel: { cancellation.cancel() })
+    }
+
     func importAppleReminderItem(source: NativeAppleReminderSourceDTO, list: NativeAppleReminderListIdentity) async throws -> String {
         try await perform { try $0.importAppleReminderItem(source: source, list: list) }
     }
@@ -1033,6 +1043,7 @@ public final class CoreHost: @unchecked Sendable {
         await reminderEffects.closeAndDrain()
         await notificationAuthorization.closeAndDrain()
         await calendarAuthorization.closeAndDrain()
+        if let jobs = try? await perform(reminderOwned: true, { $0.appleRemindersJobs }) { await jobs.closeAndDrain() }
         await withCheckedContinuation { continuation in
             queue.async { [engine] in
                 engine.shutdown()
@@ -15164,6 +15175,7 @@ private final class Engine: @unchecked Sendable {
     private var appleReminderJournalNeedsSync = false
     private var appleReminderRemovalPending = false
     private var appleReminderJournalBinding: MixedSaveFileBinding?
+    fileprivate var appleRemindersJobs: NativeAppleRemindersJobs?
     private var completedAppleReminderSnapshot: NativeBackupSnapshotReference?
     private static let appleReminderMethod = "appleReminderImportItemCommit"
     private static let appleReminderLimit = 16 * 1024 * 1024
@@ -15202,6 +15214,117 @@ private final class Engine: @unchecked Sendable {
         defer { Darwin.close(fd) }
         guard fstat(fd, &identity) == 0, identity.st_mode & S_IFMT == S_IFDIR else { throw Self.appleReminderFailure }
         return ["namespace": location.bundleIdentifier, "device": String(identity.st_dev), "inode": String(identity.st_ino)]
+    }
+
+    private func appleRemindersRead(_ request: [String: Any], cancellation: NativeAttachmentCancellation) throws -> Any {
+        try cancellation.check()
+        guard !localRequests.isClosing else { throw CancellationError() }
+        if appleRemindersJobs == nil {
+            #if DEBUG
+            let factory = faults?.appleRemindersProviderFactory ?? { NativeAppleRemindersProvider() }
+            appleRemindersJobs = NativeAppleRemindersJobs(registry: localRequests, providerFactory: factory)
+            #else
+            appleRemindersJobs = NativeAppleRemindersJobs(registry: localRequests)
+            #endif
+        }
+        guard let jobs = appleRemindersJobs else { throw Self.appleReminderFailure }
+        let ticket = try jobs.submit(Self.ownedJSON(request))
+        var cancelled = false
+        while true {
+            if !cancelled && (cancellation.isCancelled || localRequests.isClosing) { cancelled = true; jobs.cancel(ticket) }
+            if let reply = jobs.next() {
+                let value = try Self.appleReminderObject(reply.json, limit: NativeAppleRemindersJobs.maximumReplyBytes)
+                guard value["id"] as? String == ticket else { throw Self.appleReminderFailure }
+                if cancelled { throw CancellationError() }
+                guard reply.completed, Set(value.keys) == Set(["id", "value"]), let answer = value["value"] else {
+                    throw HostFailure("NOT_READY: Apple Reminders could not be read")
+                }
+                return answer
+            }
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+    }
+
+    private func appleReminderSources(_ value: Any, list: NativeAppleReminderListIdentity) throws -> [NativeAppleReminderSourceDTO] {
+        guard let read = value as? [String: Any], Set(read.keys) == Set(["listId", "sourceId", "sources"]),
+              Self.ownedEqual(read["listId"] as? String ?? "", list.id), Self.ownedEqual(read["sourceId"] as? String ?? "", list.sourceID),
+              let rows = read["sources"] as? [[String: Any]], rows.count <= NativeAppleRemindersValidation.maximumRows else { throw Self.appleReminderFailure }
+        let result = try rows.map { row -> NativeAppleReminderSDKRow in
+            guard Set(row.keys).isSubset(of: Set(["id", "title", "notes", "completed", "creationDate", "startDate", "dueDate"])),
+                  Self.isBoolean(row["completed"]), let completed = row["completed"] as? Bool,
+                  row.allSatisfy({ $0.key == "completed" || $0.value is String }) else { throw Self.appleReminderFailure }
+            return NativeAppleReminderSDKRow(list: list, source: .init(id: row["id"] as? String, title: row["title"] as? String,
+                notes: row["notes"] as? String, completed: completed, creationDate: row["creationDate"] as? String,
+                startDate: row["startDate"] as? String, dueDate: row["dueDate"] as? String))
+        }
+        return try NativeAppleRemindersValidation.read(result, list: list).sources
+    }
+
+    func importAppleReminders(automatic: Bool, cancellation: NativeAttachmentCancellation) throws -> String {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let storage = try requireDeviceStorageAdmission()
+        guard notificationSettingTurn == nil, calendarAccessTurn == nil, try editorDrafts.read() == nil,
+              let runtime = context, let connection = database, let library = calendarPushDatabaseBinding else { throw Self.appleReminderFailure }
+        let binding = try appleReminderStorageBinding(), generation = attachmentGeneration
+        func current() throws {
+            try cancellation.check()
+            guard !localRequests.isClosing, started, !closed, context === runtime, database === connection,
+                  deviceStorage === storage, attachmentGeneration == generation,
+                  try Self.bindingIdentity(databaseURL) == library, Self.equalJSON(try appleReminderStorageBinding(), binding) else { throw Self.appleReminderFailure }
+        }
+        try current()
+        let raw = try storage.readAppleRemindersImportState()
+        _ = try Self.appleReminderRegistryRaw(raw.map { $0 as Any } ?? NSNull())
+        let options = try Self.appleReminderObject(invoke("appleReminderImportOptions", arguments: [raw.map { $0 as Any } ?? NSNull()]), limit: 8 * 1024 * 1024)
+        if automatic && (options["autoImportOnOpen"] as? Bool != true || options["selectedListId"] == nil) { return #"{"kind":"noop"}"# }
+        guard options["deleteImportedReminders"] as? Bool == false else { throw HostFailure("NOT_READY: Reminders source deletion is not available") }
+        guard let selected = options["selectedListId"] as? String, !selected.isEmpty else { throw HostFailure("NOT_READY: Choose a Reminders list") }
+        let permission = try appleRemindersRead(["op": "permission"], cancellation: cancellation) as? [String: Any]
+        try current()
+        guard permission?["status"] as? String == "granted" else {
+            if automatic { return #"{"kind":"noop"}"# }
+            throw HostFailure("NOT_READY: Apple Reminders access is required")
+        }
+        guard let lists = try appleRemindersRead(["op": "lists"], cancellation: cancellation) as? [[String: Any]] else { throw Self.appleReminderFailure }
+        try current()
+        let matches = lists.filter { Self.ownedEqual($0["id"] as? String ?? "", selected) }
+        guard matches.count == 1, let sourceID = matches[0]["sourceId"] as? String else { throw HostFailure("STALE_REVISION: The selected Reminders list changed") }
+        let list = NativeAppleReminderListIdentity(id: selected, sourceID: sourceID)
+        try NativeAppleRemindersValidation.identity(list)
+        let read = try appleRemindersRead(["op": "read", "listId": selected, "sourceId": sourceID], cancellation: cancellation)
+        try current()
+        let sources = try appleReminderSources(read, list: list)
+        completedAppleReminderSnapshot = nil
+        defer { completedAppleReminderSnapshot = nil }
+        var counts = ["importedCount": 0, "deletedCount": 0, "deleteFailedCount": 0, "skippedDuplicateCount": 0,
+                      "skippedCompletedCount": 0, "skippedEmptyTitleCount": 0, "failedCount": 0]
+        var interrupted = false
+        for source in sources {
+            try current()
+            do {
+                let value = try Self.appleReminderObject(importAppleReminderItem(source: source, list: list), limit: 8 * 1024 * 1024)
+                switch value["kind"] as? String {
+                case "published": counts["importedCount", default: 0] += 1
+                case "keptSource": counts["failedCount", default: 0] += 1
+                case "noop":
+                    let name: String
+                    switch value["reason"] as? String {
+                    case "duplicate": name = "skippedDuplicateCount"
+                    case "completed": name = "skippedCompletedCount"
+                    case "empty-title": name = "skippedEmptyTitleCount"
+                    default: throw Self.appleReminderFailure
+                    }
+                    counts[name, default: 0] += 1
+                default: throw Self.appleReminderFailure
+                }
+            } catch {
+                counts["failedCount", default: 0] += 1; interrupted = true
+                break
+            }
+        }
+        let outcome = interrupted ? "interrupted" : "completed"
+        _ = try? invoke("appleReminderImportRunAcknowledged", arguments: [outcome, counts["importedCount"]!, counts["failedCount"]!])
+        return try Self.ownedJSON(["kind": outcome, "result": counts])
     }
 
     private func appleReminderItem(_ command: PendingCommand) throws -> AppleReminderItem {
@@ -15346,7 +15469,8 @@ private final class Engine: @unchecked Sendable {
             "list": ["id": list.id, "sourceId": list.sourceID], "reminder": source.value])
         let response = try Self.appleReminderObject(invoke("appleReminderItemPrepare", arguments: [sourceJSON, raw.map { $0 as Any } ?? NSNull()]), limit: 150 * 1024 * 1024)
         try current()
-        if response["kind"] as? String == "noop", Set(response.keys) == Set(["kind"]) { return #"{"kind":"noop"}"# }
+        if response["kind"] as? String == "noop", Set(response.keys) == Set(["kind", "reason"]),
+           ["duplicate", "completed", "empty-title"].contains(response["reason"] as? String ?? "") { return try Self.ownedJSON(response) }
         guard Set(response.keys) == Set(["kind", "planJSON", "recoveryJSON"]), response["kind"] as? String == "prepared",
               let planJSON = response["planJSON"] as? String, let snapshot = response["recoveryJSON"] as? String,
               snapshot.utf8.count <= NativeBackupOperationFiles.maximumSnapshotBytes,
@@ -23973,6 +24097,7 @@ private final class Engine: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         closed = true
         startupAttachmentSaveResult = nil
+        if let jobs = appleRemindersJobs { Task { await jobs.closeAndDrain() }; appleRemindersJobs = nil }
         releaseRuntime()
     }
 

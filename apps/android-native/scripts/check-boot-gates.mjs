@@ -4367,7 +4367,7 @@ const poll = async (state, id) => {
     for (const raw of ['{', '[]', JSON.stringify({ importedReminderIds: [1] }), JSON.stringify({ deleteImportedReminders: 'true' })])
         assert.equal((await poll(state, state.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), raw))).ok, false);
     assert.equal((await poll(state, state.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), JSON.stringify({ ...JSON.parse(registry), deleteImportedReminders: true })))).ok, false);
-    assert.deepEqual((await poll(state, state.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), JSON.stringify({ ...JSON.parse(registry), importedReminderIds: [source.reminder.id] })))).value, { kind: 'noop' });
+    assert.deepEqual((await poll(state, state.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), JSON.stringify({ ...JSON.parse(registry), importedReminderIds: [source.reminder.id] })))).value, { kind: 'noop', reason: 'duplicate' });
     assert.equal(state.events.length, before, 'malformed, unsupported and duplicate sources perform no saved-data reads');
     const fresh = await ready575();
     const claim = await poll(fresh, fresh.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), registry));

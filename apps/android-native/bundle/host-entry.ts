@@ -4056,6 +4056,20 @@ globalThis.MindwtrHost = {
             return result;
         });
     },
+    appleReminderImportRunAcknowledged(outcome: string, importedCount: number, failedCount: number): string {
+        return submit(async () => {
+            if (globalThis.__mindwtrHostPlatform !== 'ios' || !['completed', 'interrupted'].includes(outcome)
+                || ![importedCount, failedCount].every((value) => Number.isInteger(value) && value >= 0 && value <= 10_000))
+                throw new Error('INVALID_INPUT: Invalid Reminders run outcome');
+            logInfo('Native Reminders import run finished', { scope: 'native-ios', force: true,
+                context: { releaseCheck: 'v1.3.5/ios-reminders-run', outcome, importedCount, failedCount } });
+            await diagnosticsLog.serialize(async () => undefined);
+            return {};
+        });
+    },
+    appleReminderImportOptions(registryRaw: string | null): string {
+        return submit(async () => appleReminderRegistry(registryRaw));
+    },
     /** Native-owned immutable provider DTO only; Swift retains the operation before admitting its write. */
     appleReminderItemPrepare(sourceJSON: string, registryRaw: string | null): string {
         return submit(async () => {
@@ -4073,7 +4087,7 @@ globalThis.MindwtrHost = {
             if (registry.deleteImportedReminders) throw new Error('NOT_READY: Reminders source deletion is not available');
             if (registry.selectedListId !== source.list.id) throw new Error('STALE_REVISION: The selected Reminders list changed');
             const candidate = classifyAppleReminderForImport(source.reminder, source.list.id.trim(), new Set(registry.importedReminderIds));
-            if (candidate.kind !== 'candidate') return { kind: 'noop' };
+            if (candidate.kind !== 'candidate') return { kind: 'noop', reason: candidate.kind };
             const request: NativeAppleReminderImportRequest = { ...source, generatedTaskId: candidate.captureId ? null : generateUUID() };
             const targetId = candidate.captureId ?? request.generatedTaskId!;
             const stale = () => new Error('STALE_REVISION: Reminders import preparation changed');

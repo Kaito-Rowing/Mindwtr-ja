@@ -22,6 +22,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // automation concurrent-write replay; capture routing reuses outcome below.
     'enabled',
     'retryCount',
+    // ios-reminders-run: aggregate acknowledged items and failures, never reminder content.
+    'importedCount', 'failedCount',
     // deferred-attachment-pass: which pass owes the deferred pre-sync phase's work.
     'owed',
     // candidate-ciphertext-probe: what the activation candidate's folder held (plaintext, encrypted or mixed).

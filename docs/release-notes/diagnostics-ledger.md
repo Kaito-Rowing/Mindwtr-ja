@@ -30,6 +30,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.5 (add before tagging, trim in the release after)
 
+- **`v1.3.5/ios-reminders-run`** — `apps/android-native/bundle/host-entry.ts`. Forced `Native Reminders import run finished` records `outcome=completed|interrupted`, `importedCount` and `failedCount` after the private serial coordinator processes the bounded provider response. Imported count includes only settled item/registry acknowledgments. Interrupted does not mean the retained final item was undone. No source content or identifiers are logged; this path never deletes a reminder.
+
 - `ios-reminders-item` — `apps/android-native/bundle/host-entry.ts` (`appleReminderItemAcknowledged`, called by the native journal owner): saved Diagnostics must show `Native Reminders item and import registry confirmed`, `releaseCheck=v1.3.5/ios-reminders-item`, and `outcome=confirmed` after the exact task receipt and retained registry publication settle. This internal import path keeps the source reminder; it does not prove source deletion or provider access.
 
 - **`v1.3.5/ios-pomodoro-absence`** — `packages/core/src/native-request-receipts.ts`. Forced `Native Pomodoro refused missing established session` with `outcome=refused` proves the native singleton was absent while SQL still held an established-transition receipt, so fresh initialization/adoption was refused. One newest receipt survives ordinary expiry to preserve this distinction. No task content, identifiers or raw source data are logged. The refusal survives logging failure.

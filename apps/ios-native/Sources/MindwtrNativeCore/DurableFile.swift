@@ -124,6 +124,7 @@ final class HostIOFaults {
     var secretBeforeOperation: ((String, String) -> Void)?
     var secretAfterOperation: ((String, String) -> Void)?
     var configureSecretJobs: ((NativeSecretJobs) -> Void)?
+    var appleRemindersProviderFactory: (() -> NativeAppleRemindersProvider)?
     var calendarReaderFactory: (() -> any NativeCalendarReading)?
     var configureCalendarJobs: ((NativeCalendarJobs) -> Void)?
     var cryptoBeforeOperation: ((String) -> Void)?
