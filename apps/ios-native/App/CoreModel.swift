@@ -218,6 +218,7 @@ final class CoreModel: ObservableObject {
                 cancelProjectFileImport()
             }
             if oldValue == .calendar && selectedSurface != .calendar { retireCalendarFeed() }
+            if oldValue == .trash && selectedSurface != .trash { retireTrashPresentation(clearSelection: true) }
             if oldValue == .settings && selectedSurface != .settings {
                 retireNotificationSettingsPage()
                 retireCalendarSettingsPage()
@@ -547,6 +548,17 @@ final class CoreModel: ObservableObject {
     @Published private(set) var gtdInbox: CoreObject = [:]
     @Published private(set) var settingsGtdCapturePresented = false
     @Published private(set) var gtdCapture: CoreObject = [:]
+    @Published private(set) var settingsGtdPomodoroPresented = false
+    @Published private(set) var gtdPomodoro: CoreObject = [:]
+    @Published private(set) var gtdPomodoroFocusDraft = ""
+    @Published private(set) var gtdPomodoroBreakDraft = ""
+    @Published private(set) var gtdPomodoroNotice: String?
+    private var gtdPomodoroNoticeShown = false
+    private var gtdPomodoroNoticeTask: Task<Void, Never>?
+    private var gtdPomodoroDraftDirty: Bool {
+        settingsGtdPomodoroPresented && (gtdPomodoroFocusDraft != gtdPomodoro.object("minutes").text("focus")
+            || gtdPomodoroBreakDraft != gtdPomodoro.object("minutes").text("break"))
+    }
     @Published private(set) var settingsGtdTaskEditorPresented = false
     @Published private(set) var gtdTaskEditor: CoreObject = [:]
     @Published private(set) var gtdTaskEditorPresetError: String?
@@ -570,10 +582,10 @@ final class CoreModel: ObservableObject {
     private var gtdWorkflowRequest: String?
     private var gtdWorkflowEdit: CoreObject = [:]
     var gtdWorkflowPending: Bool { gtdWorkflowRequest != nil || gtdWorkflowAwaitingRefresh }
-    var gtdWorkflowDraftDirty: Bool { settingsGtdPresented && !settingsGtdArchivePresented && !settingsGtdReviewPresented && !settingsGtdInboxPresented && !settingsGtdCapturePresented && !settingsGtdTaskEditorPresented && gtdScheduleDraft != gtdWorkflow.object("defaultScheduleTime").text("value") }
+    var gtdWorkflowDraftDirty: Bool { gtdPomodoroDraftDirty || (settingsGtdPresented && !settingsGtdPomodoroPresented && !settingsGtdArchivePresented && !settingsGtdReviewPresented && !settingsGtdInboxPresented && !settingsGtdCapturePresented && !settingsGtdTaskEditorPresented && gtdScheduleDraft != gtdWorkflow.object("defaultScheduleTime").text("value")) }
     var gtdWorkflowEnabled: Bool {
         ready && selectedSurface == .settings && settingsGtdPresented && !busy && !retryNeeded
-            && !gtdWorkflowPending && gtdWorkflowReadError == nil && !(settingsGtdArchivePresented ? gtdArchive : settingsGtdTaskEditorPresented ? gtdTaskEditor : settingsGtdCapturePresented ? gtdCapture : settingsGtdInboxPresented ? gtdInbox : settingsGtdReviewPresented ? gtdReview : gtdWorkflow).isEmpty
+            && !gtdWorkflowPending && gtdWorkflowReadError == nil && !(settingsGtdPomodoroPresented ? gtdPomodoro : settingsGtdArchivePresented ? gtdArchive : settingsGtdTaskEditorPresented ? gtdTaskEditor : settingsGtdCapturePresented ? gtdCapture : settingsGtdInboxPresented ? gtdInbox : settingsGtdReviewPresented ? gtdReview : gtdWorkflow).isEmpty
     }
     @Published private(set) var settingsDataPresented = false
     @Published private(set) var dataSettings: CoreObject = [:]
@@ -1149,6 +1161,60 @@ final class CoreModel: ObservableObject {
     @Published private(set) var trashCurrent = false
     @Published private(set) var trashError: String?
     private var trashRestoreRequest: (project: Bool, json: String)?
+    @Published private(set) var trashSelectionMode = false
+    @Published private(set) var trashSelectedTaskIDs: [String] = []
+    @Published private(set) var trashSelectedProjectIDs: [String] = []
+    private var trashSelectedTaskRevisions: CoreObject = [:]
+    private var trashSelectedProjectRevisions: CoreObject = [:]
+    private var trashPresentationGeneration = 0
+    private var trashReadGeneration = 0
+    private var trashBusyOwner: UUID?
+    private enum TrashBulkOperation {
+        case restore, purge
+        var write: String { self == .restore ? "trashItemsRestoreWrite" : "trashItemsPurgeWrite" }
+        var outcome: String { self == .restore ? "trashItemsRestoreRetryOutcome" : "trashItemsPurgeRetryOutcome" }
+    }
+    private struct TrashBulkRequest {
+        let operation: TrashBulkOperation
+        let selectionMode: Bool
+        let id: UUID
+        let host: CoreHost
+        let json: String
+        let count: Int
+        let presentation: Int
+        var dispatched = false
+    }
+    private var trashBulkRequest: TrashBulkRequest?
+    struct TrashPurgeConfirmation: Identifiable {
+        let id: UUID
+        let host: CoreHost
+        let json: String
+        let count: Int
+        let presentation: Int
+        let selectionMode: Bool
+        let copy: CoreObject
+    }
+    @Published private(set) var trashPurgeConfirmation: TrashPurgeConfirmation?
+    #if DEBUG && targetEnvironment(simulator)
+    @Published private(set) var trashBulkTestState = ""
+    private(set) var trashBulkFixtureEnabled = false
+    private var trashBulkTestMode = ""
+    private var trashBulkTestHeldOnce = false
+    private var trashBulkTestWaiter: CheckedContinuation<Void, Never>?
+    private var trashBulkTestSelectAll = false
+    private var trashBulkTestSubmissions = 0
+    private var trashBulkTestLastRequest = ""
+    private var trashBulkTestConfirmedCount = 0
+    private var trashBulkTestAwaitingRead = false
+    private var trashBulkTestReadFailed = false
+    private var trashBulkTestReplaced = false
+    private(set) var trashPurgeFixtureEnabled = false
+    private var trashPurgeTestMutationStarted = false
+    private var trashPurgeTestMutationCompleted = false
+    private var trashPurgeTestMutationError = ""
+    private var trashPurgeTestRetiredConfirmation: UUID?
+    private var trashPurgeTestRefreshRequest = ""
+    #endif
     @Published private(set) var theme: CoreObject = [:]
     @Published private(set) var area: CoreObject = [:]
     @Published private(set) var strings: CoreObject = [:]
@@ -1692,13 +1758,31 @@ final class CoreModel: ObservableObject {
     private var previewedText = ""
     private var captureID = UUID().uuidString
     private var capturePending = false
+    private enum CaptureSubmissionKind {
+        case single(next: String)
+        case lines(ids: [String])
+
+        var method: String {
+            switch self {
+            case .single: return "captureSubmit"
+            case .lines: return "captureLinesSubmit"
+            }
+        }
+    }
     private struct CaptureSubmission {
         let id: UUID
         let host: CoreHost
         let presentationID: UUID
         let navigationID: UUID
         let captureID: String
-        let next: String
+        let request: String
+        let kind: CaptureSubmissionKind
+    }
+    private struct CaptureLinesConfirmation {
+        let submission: CaptureSubmission
+        let text: String
+        let options: String
+        let count: Int
     }
     private struct CaptureEditHandoff {
         let host: CoreHost
@@ -1709,6 +1793,7 @@ final class CoreModel: ObservableObject {
     private var capturePresentationID = UUID()
     private var captureNavigationID = UUID()
     private var captureSubmission: CaptureSubmission?
+    private var captureLinesConfirmation: CaptureLinesConfirmation?
     private var captureBusyOwner: UUID?
     private var captureEditHandoff: CaptureEditHandoff?
     #if DEBUG && targetEnvironment(simulator)
@@ -1719,7 +1804,12 @@ final class CoreModel: ObservableObject {
     private var captureSaveEditTestReadHeld = false
     private var captureSaveEditTestSubmissions = 0
     private var captureSaveEditTestReplaced = false
+    private var captureLinesTestEnabled = false
+    private var captureLinesTestSubmissions = 0
+    private var captureLinesTestIDs: [String] = []
+    private var captureLinesTestPaste = "basic"
     var captureSaveEditFixtureEnabled: Bool { captureSaveEditTestMode != nil }
+    var captureLinesFixtureEnabled: Bool { captureLinesTestEnabled }
     var captureSaveEditPostAckTestHeld: Bool { captureSaveEditTestReadHeld && captureSaveEditTestWaiter != nil }
     #endif
     private var mindSweepRequest: String?
@@ -3006,8 +3096,19 @@ final class CoreModel: ObservableObject {
             && !historyArchiveSelectedIDs.isEmpty && historyArchiveSelectedRevisions.count == historyArchiveSelectedIDs.count
     }
     var historyPickerActionsEnabled: Bool { historyActionsEnabled && historyPickerCurrent }
-    var trashActionsEnabled: Bool {
+    private var trashOperationAdmissionEnabled: Bool {
         ready && selectedSurface == .trash && trashCurrent && !busy && !retryNeeded && !taskPresented
+            && !capturePresented && !areaPickerPresented && !appLock.concealed && !settingsSyncRestartRequired
+            && trashBulkRequest == nil
+    }
+    var trashActionsEnabled: Bool { trashOperationAdmissionEnabled && trashPurgeConfirmation == nil }
+    var trashClearEnabled: Bool { trashActionsEnabled && trash.number("total") > 0 }
+    var trashRowActionsEnabled: Bool { trashActionsEnabled && !trashSelectionMode }
+    var trashSelectedCount: Int { trashSelectedTaskIDs.count + trashSelectedProjectIDs.count }
+    var trashBulkRestoreEnabled: Bool {
+        trashActionsEnabled && trashSelectionMode && trashSelectedCount > 0
+            && trashSelectedTaskRevisions.count == trashSelectedTaskIDs.count
+            && trashSelectedProjectRevisions.count == trashSelectedProjectIDs.count
     }
     var quickAccessView: String { moreMenu.text("quickAccessView") }
     var quickAccessLabel: String {
@@ -3019,7 +3120,13 @@ final class CoreModel: ObservableObject {
     var canSave: Bool {
         ready && capturePresented && !appLock.concealed && !appLock.authenticating
             && UIApplication.shared.applicationState == .active && !busy && !retryNeeded && !capturePending
-            && !contextPickerPresented && captureIsCurrent && capture.flag("canSave")
+            && !contextPickerPresented && !captureLinesConfirmationPresented && captureIsCurrent && capture.flag("canSave")
+    }
+    var captureLinesConfirmationPresented: Bool { captureLinesConfirmation != nil && !bulkConfirm.isEmpty }
+    var canConfirmCaptureLines: Bool {
+        guard let confirmation = captureLinesConfirmation else { return false }
+        return ready && !busy && !retryNeeded && !capturePending && !appLock.concealed && !appLock.authenticating
+            && UIApplication.shared.applicationState == .active && captureLinesConfirmationCurrent(confirmation)
     }
     var contextPickerReady: Bool {
         !busy && !retryNeeded && captureIsCurrent && capture.object("picker").text("kind") == "context"
@@ -4753,6 +4860,7 @@ final class CoreModel: ObservableObject {
 
     func start() async {
         guard !busy else { return }
+        retireTrashPresentation(clearSelection: true)
         if projectFileAvailabilityPending {
             await retryProjectFileAvailability()
             return
@@ -4880,8 +4988,20 @@ final class CoreModel: ObservableObject {
                         deviceStorage: (directory, namespace),
                         isolatedTestID: identifier)
                     #if DEBUG && targetEnvironment(simulator)
+                    if arguments.contains("--native-trash-bulk-fixture") || arguments.contains("--native-trash-purge-fixture") {
+                        trashBulkFixtureEnabled = true
+                        trashPurgeFixtureEnabled = arguments.contains("--native-trash-purge-fixture")
+                        trashBulkTestMode = ProcessInfo.processInfo.environment["MINDWTR_TRASH_BULK_DELIVERY"] ?? ""
+                        publishTrashBulkTestState()
+                    }
                     if arguments.contains("--native-capture-save-edit-fixture") {
                         captureSaveEditTestMode = ProcessInfo.processInfo.environment["MINDWTR_CAPTURE_SAVE_EDIT_DELIVERY"] ?? ""
+                        publishCaptureSaveEditFixtureState()
+                    }
+                    if arguments.contains("--native-capture-lines-fixture") {
+                        captureLinesTestEnabled = true
+                        captureSaveEditTestMode = ProcessInfo.processInfo.environment["MINDWTR_CAPTURE_LINES_DELIVERY"] ?? ""
+                        captureLinesTestPaste = ProcessInfo.processInfo.environment["MINDWTR_CAPTURE_LINES_PASTE"] ?? "basic"
                         publishCaptureSaveEditFixtureState()
                     }
                     if arguments.contains("--native-capture-terminal-failure-once") {
@@ -5082,7 +5202,7 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .history
                 historyTabs = ["tab": "archived"]
             }
-            if ["taskDeleteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit"].contains(recovery.text("method")) { selectedSurface = .trash }
+            if ["taskDeleteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "trashItemsRestoreCommit", "trashItemsPurgeCommit"].contains(recovery.text("method")) { selectedSurface = .trash }
             if ["archivedTaskRestoreCommit", "archivedTasksRestoreCommit", "archivedTasksDeleteCommit", "archivedTasksDeleteUndoCommit", "archiveTaskCompletedAtCommit"].contains(recovery.text("method")) {
                 if recovery.text("source") == "reference" { selectedSurface = .reference }
                 else {
@@ -5155,6 +5275,7 @@ final class CoreModel: ObservableObject {
                 settingsGtdReviewPresented = ["dailyReviewFocusStep", "weeklyReviewContextStep"].contains(recovery.object("result").text("type"))
                 settingsGtdInboxPresented = ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"].contains(recovery.object("result").text("type"))
                 settingsGtdCapturePresented = ["defaultArea", "quickAddAutoClean", "naturalLanguageDates"].contains(recovery.object("result").text("type"))
+                settingsGtdPomodoroPresented = ["pomodoroLinkTask", "pomodoroAutoStartBreaks", "pomodoroAutoStartFocus", "pomodoroCompletionAlert", "pomodoroDurations"].contains(recovery.object("result").text("type"))
                 settingsGtdTaskEditorPresented = ["taskEditorSectionOpen", "taskEditorPreset", "taskEditorFieldVisible", "taskEditorFieldSection", "taskEditorOrder", "taskEditorReset"].contains(recovery.object("result").text("type"))
                 if ["taskEditorFieldSection", "taskEditorOrder"].contains(recovery.object("result").text("type")) {
                     gtdTaskEditorFieldId = recovery.object("result").text("field")
@@ -6830,6 +6951,10 @@ final class CoreModel: ObservableObject {
 
     func refresh() async {
         if selectedSurface == .calendar { calendarFeedRefreshRequested = true }
+        // The alert owns its frozen Trash projection until Confirm or Cancel.
+        // Ordinary reads resume on the next refresh; lifecycle/context changes
+        // retire the alert separately before requesting their own reads.
+        guard selectedSurface != .trash || trashPurgeConfirmation == nil else { return }
         guard !appLock.concealed, !savedSearchWritePresented, !settingsSyncRestartRequired,
               calendarSettingsCloseTask == nil else { return }
         if taskStartupSaveReceipt != nil {
@@ -6962,6 +7087,8 @@ final class CoreModel: ObservableObject {
         settingsGtdInboxPresented = false
         settingsGtdCapturePresented = false
         settingsGtdTaskEditorPresented = false
+        settingsGtdPomodoroPresented = false
+        clearGtdPomodoroNotice()
         gtdTaskEditorFieldId = nil
         gtdCaptureAreaPicker = false
         generalPreferencePicker = nil
@@ -7584,6 +7711,8 @@ final class CoreModel: ObservableObject {
         settingsGtdInboxPresented = false
         settingsGtdCapturePresented = false
         settingsGtdTaskEditorPresented = false
+        settingsGtdPomodoroPresented = false
+        clearGtdPomodoroNotice()
         gtdTaskEditorFieldId = nil
         gtdCaptureAreaPicker = false
         gtdWorkflowError = nil
@@ -7594,10 +7723,10 @@ final class CoreModel: ObservableObject {
     }
 
     func openGtdSubpage(_ page: String) async {
-        guard ["review", "inbox", "capture", "taskEditor", "autoArchive"].contains(page), gtdWorkflowEnabled,
-              !settingsGtdArchivePresented, !settingsGtdReviewPresented, !settingsGtdInboxPresented, !settingsGtdCapturePresented, !settingsGtdTaskEditorPresented else { return }
+        guard ["review", "inbox", "capture", "taskEditor", "autoArchive", "pomodoroSettings"].contains(page), gtdWorkflowEnabled,
+              !settingsGtdArchivePresented, !settingsGtdReviewPresented, !settingsGtdInboxPresented, !settingsGtdCapturePresented, !settingsGtdTaskEditorPresented, !settingsGtdPomodoroPresented else { return }
         if gtdWorkflowDraftDirty {
-            await commitGtdScheduleDraft()
+            await commitGtdSettingsDraft()
             guard gtdWorkflowError == nil else { return }
         }
         guard gtdWorkflowEnabled, !gtdWorkflowDraftDirty else { return }
@@ -7606,6 +7735,8 @@ final class CoreModel: ObservableObject {
         settingsGtdInboxPresented = page == "inbox"
         settingsGtdCapturePresented = page == "capture"
         settingsGtdTaskEditorPresented = page == "taskEditor"
+        settingsGtdPomodoroPresented = page == "pomodoroSettings"
+        clearGtdPomodoroNotice()
         if settingsGtdTaskEditorPresented {
             gtdTaskEditorFieldId = nil
             gtdTaskEditorExpandedResetKey = nil
@@ -7620,14 +7751,20 @@ final class CoreModel: ObservableObject {
 
     func closeGtdSettings() async {
         guard settingsGtdPresented, !busy, !retryNeeded, !gtdWorkflowPending else { return }
+        if gtdPomodoroDraftDirty {
+            await commitGtdSettingsDraft()
+            guard gtdWorkflowEnabled, !gtdWorkflowDraftDirty, gtdWorkflowError == nil else { return }
+        }
         if gtdTaskEditorFieldId != nil { closeGtdTaskEditorField(); return }
         if gtdCaptureAreaPicker { closeGtdCaptureAreaPicker(); return }
-        if settingsGtdArchivePresented || settingsGtdReviewPresented || settingsGtdInboxPresented || settingsGtdCapturePresented || settingsGtdTaskEditorPresented {
+        if settingsGtdPomodoroPresented || settingsGtdArchivePresented || settingsGtdReviewPresented || settingsGtdInboxPresented || settingsGtdCapturePresented || settingsGtdTaskEditorPresented {
             settingsGtdArchivePresented = false
             settingsGtdReviewPresented = false
             settingsGtdInboxPresented = false
             settingsGtdCapturePresented = false
             settingsGtdTaskEditorPresented = false
+            settingsGtdPomodoroPresented = false
+            clearGtdPomodoroNotice()
             gtdTaskEditorFieldId = nil
             gtdCaptureAreaPicker = false
             gtdWorkflowError = nil
@@ -7638,7 +7775,7 @@ final class CoreModel: ObservableObject {
             return
         }
         if gtdWorkflowDraftDirty {
-            await commitGtdScheduleDraft()
+            await commitGtdSettingsDraft()
             guard gtdWorkflowError == nil else { return }
         }
         guard !busy, !retryNeeded, !gtdWorkflowPending, !gtdWorkflowDraftDirty else { return }
@@ -7647,6 +7784,17 @@ final class CoreModel: ObservableObject {
     }
 
     private func readGtdSettings() async throws {
+        if settingsGtdPomodoroPresented {
+            let options = try await query("gtdPomodoroOptions", ["{}"])
+            let content = options.object("pomodoro"), expected = options.object("expected")
+            guard Set(options.keys) == Set(["pomodoro", "expected"]), !content.text("title").isEmpty,
+                  Set(expected.keys) == Set(["pomodoro", "pomodoroLinkTask", "pomodoroAutoStartBreaks", "pomodoroAutoStartFocus", "pomodoroCompletionAlert", "pomodoroDurations"]) else { throw CocoaError(.coderReadCorrupt) }
+            gtdPomodoro = content; gtdWorkflowExpected = expected
+            gtdPomodoroFocusDraft = content.object("minutes").text("focus")
+            gtdPomodoroBreakDraft = content.object("minutes").text("break")
+            gtdWorkflowReadError = nil; gtdWorkflowAwaitingRefresh = false
+            return
+        }
         if settingsGtdArchivePresented {
             let options = try await query("gtdArchiveOptions", ["{}"])
             let content = options.object("archive"), expected = options.object("expected")
@@ -7809,6 +7957,39 @@ final class CoreModel: ObservableObject {
         if !gtdWorkflowPending && gtdWorkflowError == nil && gtdWorkflowReadError == nil { gtdCaptureAreaPicker = false }
     }
 
+    func gtdWorkflowEditEnabled(_ edit: CoreObject) -> Bool {
+        gtdWorkflowEnabled && gtdWorkflowExpected[edit.text("type") == "taskEditorSectionOpen" ? edit.text("section") : edit.text("type")] is CoreObject
+    }
+
+    private func clearGtdPomodoroNotice() {
+        gtdPomodoroNoticeTask?.cancel(); gtdPomodoroNoticeTask = nil
+        gtdPomodoroNotice = nil; gtdPomodoroNoticeShown = false
+    }
+
+    func setGtdPomodoroDraft(_ field: String, _ value: String) {
+        guard settingsGtdPomodoroPresented, gtdWorkflowEditEnabled(["type": "pomodoroDurations"]) else { return }
+        if field == "focus" { gtdPomodoroFocusDraft = value }
+        else if field == "break" { gtdPomodoroBreakDraft = value }
+        gtdWorkflowError = nil
+    }
+
+    func commitGtdSettingsDraft() async {
+        guard settingsGtdPomodoroPresented else { await commitGtdScheduleDraft(); return }
+        guard gtdWorkflowEnabled, gtdPomodoroDraftDirty, !appLock.concealed,
+              let expected = gtdWorkflowExpected["pomodoroDurations"] as? CoreObject else { return }
+        busy = true
+        do {
+            let normalized = try await query("gtdWorkflowDraft", [try json(["type": "pomodoroDurations",
+                "focusMinutes": gtdPomodoroFocusDraft, "breakMinutes": gtdPomodoroBreakDraft, "expected": expected])])
+            guard normalized.flag("valid"), !normalized.object("value").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            finishOperation()
+            await saveGtdWorkflow(["type": "pomodoroDurations", "value": normalized.object("value")])
+        } catch {
+            gtdWorkflowError = error.localizedDescription
+            finishOperation()
+        }
+    }
+
     func setGtdScheduleDraft(_ value: String) {
         guard gtdWorkflowEnabled else { return }
         gtdScheduleDraft = value
@@ -7842,7 +8023,7 @@ final class CoreModel: ObservableObject {
     func chooseGtdWorkflow(_ edit: CoreObject) async {
         guard gtdWorkflowEnabled else { return }
         if gtdWorkflowDraftDirty {
-            await commitGtdScheduleDraft()
+            await commitGtdSettingsDraft()
             guard gtdWorkflowError == nil else { return }
         }
         guard gtdWorkflowEnabled, !gtdWorkflowDraftDirty else { return }
@@ -7872,6 +8053,15 @@ final class CoreModel: ObservableObject {
               !fieldEdit || result.text("field") == gtdWorkflowEdit.text("field"),
               result.text("type") == gtdWorkflowEdit.text("type"), result["changed"] is Bool,
               try json(["value": result["value"] ?? NSNull()]) == json(["value": gtdWorkflowEdit["value"] ?? NSNull()]) else { throw CocoaError(.coderReadCorrupt) }
+        if settingsGtdPomodoroPresented, !gtdPomodoroNoticeShown, result.flag("changed"), result.flag("value"),
+           ["pomodoroAutoStartBreaks", "pomodoroAutoStartFocus"].contains(result.text("type")) {
+            gtdPomodoroNoticeShown = true
+            gtdPomodoroNotice = gtdPomodoro.text("autoStartNotice")
+            gtdPomodoroNoticeTask = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+                self?.gtdPomodoroNotice = nil
+            }
+        }
         gtdWorkflowRequest = nil
         gtdWorkflowAwaitingRefresh = true
         gtdWorkflowError = nil
@@ -10101,7 +10291,7 @@ final class CoreModel: ObservableObject {
                     "appLock.authenticating", "appLock.useDevicePasscode", "appLock.unavailable", "appLock.cancelled", "appLock.failed",
                     "settings.iosSearchLabel", "settings.iosSearchDesc", "settings.iosSearchPaused", "settings.iosSearchFailed",
                     "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading", "common.ok", "common.noMatches",
-                    "common.play", "common.pause", "quickAdd.audioNoteTitle", "audio.loading",
+                    "common.play", "common.pause", "quickAdd.audioNoteTitle", "quickAdd.bulkCreateError", "audio.loading",
                     "attachments.title", "attachments.missing", "attachments.download", "attachments.addLink", "attachments.addFile",
                     "settings.attachmentsCleanupPendingDeletesConfirmAction", "persistence.saved",
                     "attachments.remove", "attachments.linkPlaceholder", "attachments.linkBatchHint",
@@ -10145,6 +10335,7 @@ final class CoreModel: ObservableObject {
                     "someday.title", "common.search", "filters.contexts", "filters.projects", "filters.timeEstimate",
                     "filters.more", "filters.priority", "filters.remove", "filters.active", "filters.clear", "taskEdit.energyLevel",
                     "taskEdit.locationLabel", "taskEdit.locationPlaceholder", "reference.title", "nav.history", "nav.trash",
+                    "task.trashOutcomeUnknown", "task.updateFailed",
                     "filters.matchAny", "filters.contextMatchMode", "filters.tagMatchMode",
                     "sort.label", "list.groupBy", "taskEdit.moreOptions", "dailyReview.completeDesc",
                     "settings.about", "settings.officialWebsite", "settings.videoTutorials", "settings.privacy", "settings.terms",
@@ -19108,7 +19299,7 @@ final class CoreModel: ObservableObject {
     }
 
     func closeTrash() async {
-        guard selectedSurface == .trash, !busy, !retryNeeded, !taskPresented else { return }
+        guard selectedSurface == .trash, !busy, !retryNeeded, !taskPresented, trashBulkRequest == nil else { return }
         selectedSurface = trashCaller
         await refresh()
     }
@@ -19120,7 +19311,7 @@ final class CoreModel: ObservableObject {
     }
 
     func restoreTrashItem(_ id: String, project: Bool) async {
-        guard trashActionsEnabled, let item = trash.objects("items").first(where: {
+        guard trashRowActionsEnabled, let item = trash.objects("items").first(where: {
             $0.text("type") == (project ? "project" : "task")
                 && (project ? $0.text("id") : $0.object("row").text("id")) == id
         }) else { return }
@@ -19165,27 +19356,430 @@ final class CoreModel: ObservableObject {
     }
 
     func loadMoreTrash() async {
-        guard trashActionsEnabled else { return }
+        guard trashActionsEnabled, let operationHost = host else { return }
         let count = trash.objects("items").count
         guard count < trash.number("total") else { return }
         trashLoadedDepth = count + min(pageSize, trash.number("total") - count)
-        busy = true
-        defer { finishOperation() }
+        let owner = UUID(); trashBusyOwner = owner; busy = true
+        defer { finishTrashOperation(owner, host: operationHost) }
         await readTrash()
     }
 
-    private func trashPage(offset: Int, limit: Int, revision: String? = nil) async throws -> CoreObject {
-        var input: CoreObject = ["offset": offset, "limit": limit]
-        if let revision { input["revision"] = revision }
-        return try await query("menuRead", ["trash", try json(input)])
+    func retireTrashPresentation(clearSelection: Bool = false) {
+        #if DEBUG && targetEnvironment(simulator)
+        if trashPurgeFixtureEnabled, let id = trashPurgeConfirmation?.id { trashPurgeTestRetiredConfirmation = id }
+        #endif
+        trashPurgeConfirmation = nil
+        trashPresentationGeneration += 1
+        trashReadGeneration += 1
+        trashCurrent = false
+        // Retirement invalidates reads and presentation only. An accepted native
+        // request retains its exact payload and original host until settlement.
+        if clearSelection, trashBulkRequest == nil { clearTrashSelection() }
+        #if DEBUG && targetEnvironment(simulator)
+        publishTrashBulkTestState()
+        #endif
     }
 
-    private func readTrash() async {
+    private func clearTrashSelection() {
+        trashPurgeConfirmation = nil
+        trashPresentationGeneration += 1
+        trashSelectionMode = false
+        trashSelectedTaskIDs = []; trashSelectedProjectIDs = []
+        trashSelectedTaskRevisions = [:]; trashSelectedProjectRevisions = [:]
+    }
+
+    var trashSelectionCanClose: Bool {
+        ready && selectedSurface == .trash && !busy && !retryNeeded && !taskPresented && !capturePresented
+            && !areaPickerPresented && !appLock.concealed && !settingsSyncRestartRequired && trashBulkRequest == nil && trashPurgeConfirmation == nil
+    }
+
+    private func finishTrashOperation(_ owner: UUID, host operationHost: CoreHost) {
+        guard host === operationHost, trashBusyOwner == owner else { return }
+        trashBusyOwner = nil
+        finishOperation()
+    }
+
+    func toggleTrashSelectionMode() async {
+        guard trashSelectionMode ? trashSelectionCanClose : trashActionsEnabled, let operationHost = host else { return }
+        if trashSelectionMode { clearTrashSelection() }
+        else { trashPresentationGeneration += 1; trashSelectionMode = true }
+        let owner = UUID(); trashBusyOwner = owner; busy = true
+        defer { finishTrashOperation(owner, host: operationHost) }
+        _ = await readTrash()
+    }
+
+    func trashItemSelected(_ item: CoreObject) -> Bool {
+        let project = item.text("type") == "project"
+        let id = project ? item.text("id") : item.object("row").text("id")
+        return (project ? trashSelectedProjectIDs : trashSelectedTaskIDs).contains { $0.utf8.elementsEqual(id.utf8) }
+    }
+
+    func toggleTrashItemSelection(_ displayed: CoreObject) async {
+        guard trashActionsEnabled, trashSelectionMode, let operationHost = host else { return }
+        let project = displayed.text("type") == "project"
+        let id = project ? displayed.text("id") : displayed.object("row").text("id")
+        let revision = project ? displayed.text("projectRevision") : displayed.object("row").text("taskRevision")
+        guard !id.isEmpty, !revision.isEmpty, trash.objects("items").contains(where: { item in
+            item.text("type") == displayed.text("type")
+                && (project ? item.text("id") : item.object("row").text("id")).utf8.elementsEqual(id.utf8)
+                && (project ? item.text("projectRevision") : item.object("row").text("taskRevision")).utf8.elementsEqual(revision.utf8)
+        }) else { return }
+        var ids = project ? trashSelectedProjectIDs : trashSelectedTaskIDs
+        if ids.contains(where: { $0.utf8.elementsEqual(id.utf8) }) { ids.removeAll { $0.utf8.elementsEqual(id.utf8) } }
+        else {
+            guard trashSelectedCount < 10_000 else { trashError = label("task.updateFailed"); return }
+            ids.append(id)
+        }
+        trashPresentationGeneration += 1
+        let revisionBeforeToggle = trash.text("revision")
+        let proposed: CoreObject = ["taskIds": project ? trashSelectedTaskIDs : ids,
+            "projectIds": project ? ids : trashSelectedProjectIDs]
+        let owner = UUID(); trashBusyOwner = owner; busy = true
+        defer { finishTrashOperation(owner, host: operationHost) }
+        let presentation = trashPresentationGeneration
+        let accepted = await readTrash(requestedSelection: proposed, displayedRevision: revisionBeforeToggle)
+        if !accepted {
+            guard host === operationHost, presentation == trashPresentationGeneration, selectedSurface == .trash,
+                  trashError?.hasPrefix("STALE_REVISION:") == true else { return }
+            let warning = trashError
+            // Refresh the old selection, never adopt a newly toggled row using
+            // a different revision than the row the user actually pressed.
+            _ = await readTrash()
+            if host === operationHost, presentation == trashPresentationGeneration { trashError = warning }
+        }
+    }
+
+    func selectAllTrashItems() async {
+        guard trashActionsEnabled, trashSelectionMode, let operationHost = host else { return }
+        trashPresentationGeneration += 1
+        let owner = UUID(); trashBusyOwner = owner; busy = true
+        defer { finishTrashOperation(owner, host: operationHost) }
+        #if DEBUG && targetEnvironment(simulator)
+        trashBulkTestSelectAll = true
+        defer { trashBulkTestSelectAll = false }
+        #endif
+        _ = await readTrash(selectAll: true)
+    }
+
+    private func trashSelectionRevisions(_ value: CoreObject, ids: [String], project: Bool) throws -> CoreObject {
+        guard let revisions = value[project ? "projectRevisions" : "taskRevisions"] as? CoreObject,
+              ids.count <= 10_000, Set(ids.map { Data($0.utf8) }).count == ids.count,
+              ids.allSatisfy({ !$0.isEmpty && $0.utf16.count <= (project ? 200 : 500) }),
+              revisions.count == ids.count,
+              Set(revisions.keys.map { Data($0.utf8) }) == Set(ids.map { Data($0.utf8) }),
+              revisions.values.allSatisfy({ ($0 as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true }) else {
+            // Swift dictionaries cannot bind canonically equivalent keys to two
+            // distinct UTF-8 IDs. Refuse ambiguity instead of retargeting a row.
+            throw CocoaError(.coderReadCorrupt)
+        }
+        return revisions
+    }
+
+    private func validateTrashSelection(_ selection: CoreObject) throws -> (tasks: [String], projects: [String]) {
+        guard Set(selection.keys) == Set(["taskIds", "taskRevisions", "projectIds", "projectRevisions"]),
+              let tasks = selection["taskIds"] as? [String], let projects = selection["projectIds"] as? [String],
+              tasks.count + projects.count <= 10_000, try json(selection).utf8.count <= 2_000_000 else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        _ = try trashSelectionRevisions(selection, ids: tasks, project: false)
+        _ = try trashSelectionRevisions(selection, ids: projects, project: true)
+        return (tasks, projects)
+    }
+
+    private func ownsTrashBulkRequest(_ request: TrashBulkRequest) -> Bool {
+        host === request.host && trashBulkRequest?.id == request.id
+            && trashBulkRequest?.host === request.host
+    }
+
+    private func trashBulkJSON(_ selection: CoreObject) throws -> String {
+        let all = try validateTrashSelection(selection)
+        guard !all.tasks.isEmpty || !all.projects.isEmpty else { throw CocoaError(.coderInvalidValue) }
+        var value = selection
+        value["requestId"] = UUID().uuidString.lowercased()
+        let encoded = try json(value)
+        guard encoded.utf8.count <= 2_000_000 else { throw CocoaError(.coderInvalidValue) }
+        return encoded
+    }
+
+    private func stageTrashPurge(_ selection: CoreObject, copy: CoreObject, host operationHost: CoreHost,
+                                presentation: Int, readOwner: UUID? = nil) throws {
+        let all = try validateTrashSelection(selection)
+        guard Set(copy.keys) == Set(["title", "message", "cancelLabel", "confirmLabel"]),
+              copy.values.allSatisfy({ ($0 as? String).map { !$0.isEmpty && $0.utf8.count <= 4_096 } == true }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        guard host === operationHost, presentation == trashPresentationGeneration,
+              trashPurgeConfirmation == nil,
+              (readOwner == nil ? trashOperationAdmissionEnabled : (busy && trashBusyOwner == readOwner && trashBulkRequest == nil)),
+              selectedSurface == .trash, !appLock.concealed,
+              UIApplication.shared.applicationState == .active, !Task.isCancelled else { throw CancellationError() }
+        trashPurgeConfirmation = TrashPurgeConfirmation(id: UUID(), host: operationHost,
+            json: try trashBulkJSON(selection), count: all.tasks.count + all.projects.count,
+            presentation: presentation, selectionMode: trashSelectionMode, copy: copy)
+        #if DEBUG && targetEnvironment(simulator)
+        publishTrashBulkTestState()
+        if let confirmation = trashPurgeConfirmation { runTrashPurgeFixtureMutation(confirmation) }
+        #endif
+    }
+
+    func requestTrashItemPurge(_ displayed: CoreObject) {
+        guard trashRowActionsEnabled, let operationHost = host else { return }
+        let project = displayed.text("type") == "project"
+        let id = project ? displayed.text("id") : displayed.object("row").text("id")
+        let revision = project ? displayed.text("projectRevision") : displayed.object("row").text("taskRevision")
+        guard !id.isEmpty, !revision.isEmpty, trash.objects("items").contains(where: {
+            $0.text("type") == displayed.text("type")
+                && (project ? $0.text("id") : $0.object("row").text("id")).utf8.elementsEqual(id.utf8)
+                && (project ? $0.text("projectRevision") : $0.object("row").text("taskRevision")).utf8.elementsEqual(revision.utf8)
+        }) else { return }
+        do {
+            try stageTrashPurge(["taskIds": project ? [] : [id], "taskRevisions": project ? [:] : [id: revision],
+                "projectIds": project ? [id] : [], "projectRevisions": project ? [id: revision] : [:]],
+                copy: trash.object("confirmations").object("purgeItem"), host: operationHost,
+                presentation: trashPresentationGeneration)
+        } catch { trashError = error.localizedDescription }
+    }
+
+    func requestSelectedTrashPurge() {
+        guard trashBulkRestoreEnabled, let operationHost = host else { return }
+        do {
+            try stageTrashPurge(["taskIds": trashSelectedTaskIDs, "taskRevisions": trashSelectedTaskRevisions,
+                "projectIds": trashSelectedProjectIDs, "projectRevisions": trashSelectedProjectRevisions],
+                copy: trash.object("confirmations").object("purgeSelection"), host: operationHost,
+                presentation: trashPresentationGeneration)
+        } catch { trashError = error.localizedDescription }
+    }
+
+    func requestClearTrashPurge() async {
+        guard trashClearEnabled, let operationHost = host else { return }
+        let presentation = trashPresentationGeneration, mode = trashSelectionMode
+        trashReadGeneration += 1
+        let generation = trashReadGeneration
+        let owner = UUID(); trashBusyOwner = owner; busy = true; trashError = nil
+        defer { finishTrashOperation(owner, host: operationHost) }
+        func current() -> Bool {
+            host === operationHost && trashBusyOwner == owner && presentation == trashPresentationGeneration
+                && generation == trashReadGeneration && mode == trashSelectionMode && selectedSurface == .trash
+                && ready && !retryNeeded && trashCurrent && trashBulkRequest == nil && trashPurgeConfirmation == nil && !appLock.concealed
+                && !areaPickerPresented && !taskPresented && !capturePresented && !settingsSyncRestartRequired
+                && UIApplication.shared.applicationState == .active && !Task.isCancelled
+        }
+        #if DEBUG && targetEnvironment(simulator)
+        trashBulkTestSelectAll = true
+        defer { trashBulkTestSelectAll = false }
+        #endif
+        for attempt in 0..<2 {
+            do {
+                let page = try await trashPage(offset: 0, limit: pageSize, current: current)
+                guard current(), !page.text("revision").isEmpty else { return }
+                let selection = try await query("trashSelection", [try json(["revision": page.text("revision")])], beforeDispatch: current)
+                guard current() else { return }
+                let all = try validateTrashSelection(selection), clear = page.object("emptyTrash")
+                guard all.tasks.count == page.number("taskCount"), all.projects.count == page.number("projectCount"),
+                      page.number("total") == all.tasks.count + all.projects.count,
+                      page.objects("items").count == min(pageSize, page.number("total")),
+                      clear.number("taskCount") == all.tasks.count, clear.number("projectCount") == all.projects.count else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try stageTrashPurge(selection, copy: clear.object("confirmation"), host: operationHost,
+                    presentation: presentation, readOwner: owner)
+                return
+            } catch {
+                guard current() else { return }
+                if attempt == 0, error.localizedDescription.hasPrefix("STALE_REVISION:") { continue }
+                trashError = error.localizedDescription
+                return
+            }
+        }
+    }
+
+    func cancelTrashPurge(_ id: UUID) {
+        guard trashPurgeConfirmation?.id == id else { return }
+        trashPurgeConfirmation = nil
+        #if DEBUG && targetEnvironment(simulator)
+        publishTrashBulkTestState()
+        #endif
+    }
+
+    func confirmTrashPurge(_ id: UUID) {
+        guard let confirmation = trashPurgeConfirmation, confirmation.id == id else { return }
+        guard trashOperationAdmissionEnabled, host === confirmation.host,
+              confirmation.presentation == trashPresentationGeneration,
+              confirmation.selectionMode == trashSelectionMode,
+              UIApplication.shared.applicationState == .active, !Task.isCancelled else {
+            cancelTrashPurge(id); return
+        }
+        // Consume this alert before awaiting. Its later dismissal can only cancel
+        // this ID and cannot erase the retained write or a replacement alert.
+        cancelTrashPurge(id)
+        let request = TrashBulkRequest(operation: .purge, selectionMode: confirmation.selectionMode,
+            id: confirmation.id, host: confirmation.host, json: confirmation.json,
+            count: confirmation.count, presentation: confirmation.presentation)
+        trashBusyOwner = request.id; busy = true; trashError = nil
+        trashBulkRequest = request
+        Task { await performTrashBulkRequest(request) }
+    }
+
+    func restoreSelectedTrashItems() async {
+        guard trashBulkRestoreEnabled, let operationHost = host else { return }
+        do {
+            let encoded = try trashBulkJSON(["taskIds": trashSelectedTaskIDs, "taskRevisions": trashSelectedTaskRevisions,
+                "projectIds": trashSelectedProjectIDs, "projectRevisions": trashSelectedProjectRevisions])
+            let request = TrashBulkRequest(operation: .restore, selectionMode: true, id: UUID(), host: operationHost,
+                json: encoded, count: trashSelectedCount, presentation: trashPresentationGeneration)
+            await performTrashBulkRequest(request)
+        } catch { trashError = error.localizedDescription }
+    }
+
+    private func performTrashBulkRequest(_ request: TrashBulkRequest) async {
+        let owner = request.id, operationHost = request.host, presentation = request.presentation
+        trashBusyOwner = owner; busy = true; trashError = nil
+        trashBulkRequest = request
+        defer { finishTrashOperation(owner, host: operationHost) }
+        do {
+            let result = try await query(request.operation.write, [request.json], beforeDispatch: {
+                guard self.ownsTrashBulkRequest(request), self.trashPresentationGeneration == presentation,
+                      self.selectedSurface == .trash, self.trashSelectionMode == request.selectionMode, self.trashCurrent,
+                      !self.areaPickerPresented, !self.taskPresented, !self.capturePresented, !self.settingsSyncRestartRequired,
+                      !self.appLock.concealed, UIApplication.shared.applicationState == .active, !Task.isCancelled else { return false }
+                self.trashBulkRequest?.dispatched = true
+                #if DEBUG && targetEnvironment(simulator)
+                if self.trashBulkFixtureEnabled {
+                    self.trashBulkTestSubmissions += 1; self.trashBulkTestLastRequest = request.json
+                    self.publishTrashBulkTestState()
+                }
+                #endif
+                return true
+            })
+            guard ownsTrashBulkRequest(request) else { return }
+            let canRead = trashPresentationGeneration == presentation && selectedSurface == .trash
+                && !appLock.concealed && UIApplication.shared.applicationState == .active && !Task.isCancelled
+            try acknowledgeTrashBulkRequest(result, request: request)
+            if canRead { _ = await readTrash() }
+            else { refreshRequested = true }
+        } catch {
+            if let current = trashBulkRequest, current.id == owner {
+                await handleTrashBulkError(error, request: current, retry: false)
+            } else if host === operationHost, trashBusyOwner == owner { trashError = error.localizedDescription }
+        }
+    }
+
+    private func acknowledgeTrashBulkRequest(_ result: CoreObject, request: TrashBulkRequest) throws {
+        guard ownsTrashBulkRequest(request), Set(result.keys) == Set(["count"]),
+              let count = result["count"] as? NSNumber, CFGetTypeID(count) != CFBooleanGetTypeID(),
+              count.doubleValue.isFinite, count.doubleValue.rounded(.towardZero) == count.doubleValue,
+              count.doubleValue == Double(request.count) else { throw CocoaError(.coderReadCorrupt) }
+        trashBulkRequest = nil
+        Task {
+            _ = try? await request.host.call("logLine", argumentsJSON: self.json([
+                "Native iOS bulk operation acknowledged",
+                self.json(["releaseCheck": "v1.3.5/ios-bulk-ui", "operation": request.operation == .restore ? "restore" : "purge", "outcome": "confirmed"]),
+            ]))
+        }
+        #if DEBUG && targetEnvironment(simulator)
+        if trashBulkFixtureEnabled {
+            trashBulkTestConfirmedCount = request.count
+            trashBulkTestAwaitingRead = trashBulkTestMode == "read-failure"
+            publishTrashBulkTestState()
+        }
+        #endif
+        retryNeeded = false; error = nil; trashError = nil
+        clearTrashSelection()
+        trashCurrent = false
+    }
+
+    private func handleTrashBulkError(_ failure: Error, request: TrashBulkRequest, retry: Bool) async {
+        guard ownsTrashBulkRequest(request) else { return }
+        if !request.dispatched || (!retry && isDefiniteRejection(failure)) {
+            trashBulkRequest = nil
+            retryNeeded = false; error = nil
+            if !request.dispatched, failure is CancellationError { return }
+            if trashPresentationGeneration == request.presentation, selectedSurface == .trash, !appLock.concealed {
+                _ = await readTrash()
+                guard host === request.host, trashBulkRequest == nil, selectedSurface == .trash,
+                      trashPresentationGeneration == request.presentation else { return }
+                trashError = failure.localizedDescription
+            }
+        } else {
+            retryNeeded = true; error = failure.localizedDescription
+            if selectedSurface == .trash { trashError = failure.localizedDescription }
+        }
+    }
+
+    private func retryTrashBulkRequest() async {
+        guard !busy, ready, let request = trashBulkRequest, ownsTrashBulkRequest(request) else { return }
+        let owner = UUID(); trashBusyOwner = owner; busy = true
+        defer { finishTrashOperation(owner, host: request.host) }
+        do {
+            let acknowledgment = try await request.host.retryPending()
+            guard ownsTrashBulkRequest(request) else { return }
+            let outcome = try await query(request.operation.outcome, [request.json], beforeDispatch: {
+                self.ownsTrashBulkRequest(request) && !Task.isCancelled
+            })
+            guard ownsTrashBulkRequest(request) else { return }
+            if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                let unknown = label("task.trashOutcomeUnknown")
+                retryNeeded = true; error = unknown
+                if selectedSurface == .trash { trashError = unknown }
+                return
+            }
+            guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let result = outcome.object("result")
+            if let acknowledgment, !(try json(result)).utf8.elementsEqual((try json(decode(acknowledgment))).utf8) {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let canRead = selectedSurface == .trash && !appLock.concealed
+                && UIApplication.shared.applicationState == .active && !Task.isCancelled
+            try acknowledgeTrashBulkRequest(result, request: request)
+            if canRead { _ = await readTrash() }
+            else { refreshRequested = true }
+        } catch { await handleTrashBulkError(error, request: request, retry: true) }
+    }
+
+    private func trashPage(offset: Int, limit: Int, revision: String? = nil, selected: CoreObject = [:],
+                           current: @escaping @MainActor () -> Bool) async throws -> CoreObject {
+        var input: CoreObject = ["offset": offset, "limit": limit]
+        if !selected.isEmpty { input["selected"] = selected }
+        if let revision { input["revision"] = revision }
+        return try await query("menuRead", ["trash", try json(input)], beforeDispatch: current)
+    }
+
+    @discardableResult private func readTrash(selectAll: Bool = false, requestedSelection: CoreObject? = nil,
+                                              displayedRevision: String? = nil) async -> Bool {
+        guard let readHost = host, selectedSurface == .trash, trashBulkRequest == nil else { return false }
+        trashReadGeneration += 1
+        let generation = trashReadGeneration, presentation = trashPresentationGeneration, mode = trashSelectionMode
+        let requestedTasks = mode ? (requestedSelection?["taskIds"] as? [String] ?? trashSelectedTaskIDs) : []
+        let requestedProjects = mode ? (requestedSelection?["projectIds"] as? [String] ?? trashSelectedProjectIDs) : []
+        func current() -> Bool {
+            host === readHost && generation == trashReadGeneration && presentation == trashPresentationGeneration
+                && selectedSurface == .trash && mode == trashSelectionMode && trashBulkRequest == nil
+                && !appLock.concealed && !Task.isCancelled && UIApplication.shared.applicationState == .active
+        }
         trashCurrent = false
         trashError = nil
         for attempt in 0..<2 {
             do {
-                var next = try await trashPage(offset: 0, limit: pageSize)
+                var selected: CoreObject = ["taskIds": requestedTasks, "projectIds": requestedProjects]
+                var next = try await trashPage(offset: 0, limit: pageSize, revision: displayedRevision, selected: selected, current: current)
+                guard current() else { return false }
+                var metadata: CoreObject = [:]
+                if mode {
+                    metadata = try await query("trashSelection", [try json(["revision": next.text("revision")])], beforeDispatch: current)
+                    guard current() else { return false }
+                    let all = try validateTrashSelection(metadata)
+                    guard all.tasks.count == next.number("taskCount"), all.projects.count == next.number("projectCount") else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    if selectAll {
+                        selected = ["taskIds": all.tasks, "projectIds": all.projects]
+                        next = try await trashPage(offset: 0, limit: pageSize, revision: next.text("revision"), selected: selected, current: current)
+                        guard current() else { return false }
+                    }
+                }
                 guard !next.text("revision").isEmpty, next.number("total") >= 0,
                       next.number("taskCount") >= 0, next.number("projectCount") >= 0,
                       next.number("total") == next.number("taskCount") + next.number("projectCount"),
@@ -19196,29 +19790,189 @@ final class CoreModel: ObservableObject {
                 let target = min(trashLoadedDepth, next.number("total"))
                 while items.count < target {
                     let limit = min(pageSize, target - items.count)
-                    let page = try await trashPage(offset: items.count, limit: limit, revision: next.text("revision"))
-                    guard page.text("revision") == next.text("revision"), page.number("total") == next.number("total"),
+                    let page = try await trashPage(offset: items.count, limit: limit, revision: next.text("revision"), selected: selected, current: current)
+                    guard current() else { return false }
+                    guard page.text("revision").utf8.elementsEqual(next.text("revision").utf8), page.number("total") == next.number("total"),
                           page.number("taskCount") == next.number("taskCount"), page.number("projectCount") == next.number("projectCount"),
                           page.text("summary") == next.text("summary"), page.text("retentionHint") == next.text("retentionHint"),
-                          page.objects("items").count == limit else { throw CocoaError(.coderReadCorrupt) }
+                          page.objects("items").count == limit,
+                          (try json(page.object("selected"))).utf8.elementsEqual((try json(next.object("selected"))).utf8),
+                          (try json(page.object("labels"))).utf8.elementsEqual((try json(next.object("labels"))).utf8) else { throw CocoaError(.coderReadCorrupt) }
                     items += page.objects("items")
                 }
-                var identities: Set<String> = []
+                var identities: Set<Data> = []
                 for item in items {
                     let kind = item.text("type")
                     let id = kind == "task" ? item.object("row").text("id") : item.text("id")
                     guard ["task", "project"].contains(kind), !id.isEmpty,
-                          identities.insert(kind + ":" + id).inserted else { throw CocoaError(.coderReadCorrupt) }
+                          identities.insert(Data((kind + ":" + id).utf8)).inserted else { throw CocoaError(.coderReadCorrupt) }
                 }
+                let membership = next.object("selected")
+                guard Set(membership.keys).isSubset(of: Set(["taskIds", "projectIds", "taskRevisions", "projectRevisions"])),
+                      let tasks = membership["taskIds"] as? [String], let projects = membership["projectIds"] as? [String] else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                var taskRevisions: CoreObject = [:], projectRevisions: CoreObject = [:]
+                if mode {
+                    let all = try validateTrashSelection(metadata)
+                    let allTasks = Set(all.tasks.map { Data($0.utf8) }), allProjects = Set(all.projects.map { Data($0.utf8) })
+                    let expectedTasks = (selected["taskIds"] as? [String] ?? []).filter { allTasks.contains(Data($0.utf8)) }
+                    let expectedProjects = (selected["projectIds"] as? [String] ?? []).filter { allProjects.contains(Data($0.utf8)) }
+                    guard tasks.map({ Data($0.utf8) }) == expectedTasks.map({ Data($0.utf8) }),
+                          projects.map({ Data($0.utf8) }) == expectedProjects.map({ Data($0.utf8) }) else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    for item in items {
+                        let project = item.text("type") == "project"
+                        let id = project ? item.text("id") : item.object("row").text("id")
+                        let displayedRevision = project ? item.text("projectRevision") : item.object("row").text("taskRevision")
+                        guard (project ? allProjects : allTasks).contains(Data(id.utf8)),
+                              let revision = metadata.object(project ? "projectRevisions" : "taskRevisions")[id] as? String,
+                              displayedRevision.utf8.elementsEqual(revision.utf8) else { throw CocoaError(.coderReadCorrupt) }
+                    }
+                    for id in tasks { taskRevisions[id] = metadata.object("taskRevisions")[id] }
+                    for id in projects { projectRevisions[id] = metadata.object("projectRevisions")[id] }
+                    _ = try trashSelectionRevisions(["taskRevisions": taskRevisions], ids: tasks, project: false)
+                    _ = try trashSelectionRevisions(["projectRevisions": projectRevisions], ids: projects, project: true)
+                } else if !tasks.isEmpty || !projects.isEmpty { throw CocoaError(.coderReadCorrupt) }
+                for project in [false, true] {
+                    let field = project ? "projectRevisions" : "taskRevisions"
+                    if membership[field] != nil {
+                        let returned = try trashSelectionRevisions(membership, ids: project ? projects : tasks, project: project)
+                        guard (try json(returned)).utf8.elementsEqual((try json(project ? projectRevisions : taskRevisions)).utf8) else {
+                            throw CocoaError(.coderReadCorrupt)
+                        }
+                    }
+                }
+                guard current() else { return false }
                 next["items"] = items
+                trashSelectedTaskIDs = tasks; trashSelectedProjectIDs = projects
+                trashSelectedTaskRevisions = taskRevisions; trashSelectedProjectRevisions = projectRevisions
                 trash = next
                 trashCurrent = true
-                return
+                #if DEBUG && targetEnvironment(simulator)
+                publishTrashBulkTestState()
+                #endif
+                return true
             } catch {
-                if attempt == 1 { trashError = error.localizedDescription }
+                guard current() else { return false }
+                if displayedRevision == nil, attempt == 0, error.localizedDescription.hasPrefix("STALE_REVISION:") { continue }
+                trashError = error.localizedDescription
+                return false
             }
         }
+        return false
     }
+
+    #if DEBUG && targetEnvironment(simulator)
+    private func publishTrashBulkTestState() {
+        guard trashBulkFixtureEnabled else { return }
+        trashBulkTestState = (try? json(["held": trashBulkTestWaiter != nil, "busy": busy, "retry": retryNeeded,
+            "submissions": trashBulkTestSubmissions, "requestId": (try? decode(trashBulkTestLastRequest).text("requestId")) ?? "",
+            "requestBytes": trashBulkTestLastRequest.utf8.count, "requestJSON": trashBulkTestLastRequest,
+            "pending": trashBulkRequest != nil, "confirmedCount": trashBulkTestConfirmedCount,
+            "confirmation": trashPurgeConfirmation != nil, "confirmationCount": trashPurgeConfirmation?.count ?? 0,
+            "confirmationRequest": trashPurgeConfirmation?.json ?? "",
+            "selectedCount": trashSelectedCount, "selectionMode": trashSelectionMode,
+            "loaded": trash.objects("items").count, "total": trash.number("total"),
+            "readFailed": trashBulkTestReadFailed, "replaced": trashBulkTestReplaced,
+            "mutationCompleted": trashPurgeTestMutationCompleted, "mutationError": trashPurgeTestMutationError,
+            "refreshConfirmationRequest": trashPurgeTestRefreshRequest,
+            "retiredConfirmation": trashPurgeTestRetiredConfirmation != nil])) ?? ""
+    }
+
+    var trashPurgeFixtureCanConfirm: Bool {
+        !trashPurgeFixtureEnabled || !["arrival", "stale-target"].contains(trashBulkTestMode)
+            || (trashPurgeTestMutationCompleted && trashPurgeTestMutationError.isEmpty)
+    }
+
+    private func runTrashPurgeFixtureMutation(_ confirmation: TrashPurgeConfirmation) {
+        guard trashPurgeFixtureEnabled else { return }
+        if trashBulkTestMode == "late-replacement" {
+            guard let retired = trashPurgeTestRetiredConfirmation else { return }
+            confirmTrashPurge(retired)
+            cancelTrashPurge(retired)
+            trashPurgeTestMutationCompleted = true
+            publishTrashBulkTestState()
+            return
+        }
+        guard !trashPurgeTestMutationStarted,
+              ["arrival", "stale-target", "area-retire", "navigate-retire", "ordinary-refresh"].contains(trashBulkTestMode) else { return }
+        trashPurgeTestMutationStarted = true
+        let mode = trashBulkTestMode
+        Task { [weak self] in
+            guard let self, self.host === confirmation.host, self.trashPurgeConfirmation?.id == confirmation.id else { return }
+            do {
+                if mode == "ordinary-refresh" {
+                    self.trashPurgeTestRefreshRequest = confirmation.json
+                    self.publishTrashBulkTestState()
+                    await self.refresh()
+                } else if mode == "area-retire" {
+                    await self.openAreaPicker()
+                    guard let next = self.area.objects("options").first(where: { $0.text("id") == "task503-area-a" })?.object("next"),
+                          !next.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+                    await self.selectArea(next)
+                    self.closeAreaPicker()
+                } else if mode == "navigate-retire" {
+                    await self.closeTrash()
+                } else if mode == "arrival" {
+                    // A staged live Reference task becomes a real saved Trash
+                    // arrival after the alert froze its IDs. No projection fake.
+                    let editor = try self.decode(try await confirmation.host.call("editorModel",
+                        argumentsJSON: try self.json(["task508-arrival"])))
+                    let request = try self.json(["requestId": UUID().uuidString.lowercased(),
+                        "taskId": "task508-arrival", "taskRevision": editor.text("taskRevision"), "source": "reference"])
+                    _ = try await confirmation.host.call("taskDelete", argumentsJSON: try self.json([request]))
+                } else {
+                    let frozen = try self.decode(confirmation.json)
+                    guard let id = (frozen["taskIds"] as? [String])?.first,
+                          let revision = frozen.object("taskRevisions")[id] as? String else { throw CocoaError(.coderReadCorrupt) }
+                    let request = try self.json(["requestId": UUID().uuidString.lowercased(),
+                        "taskId": id, "taskRevision": revision])
+                    _ = try await confirmation.host.call("trashTaskRestoreWrite", argumentsJSON: try self.json([request]))
+                }
+                guard self.host === confirmation.host else { return }
+                self.trashPurgeTestMutationCompleted = true
+            } catch { self.trashPurgeTestMutationError = error.localizedDescription }
+            self.publishTrashBulkTestState()
+        }
+    }
+
+    func exerciseRetiredTrashPurgeFixtureConfirmation() {
+        guard trashPurgeFixtureEnabled, let id = trashPurgeTestRetiredConfirmation else { return }
+        confirmTrashPurge(id)
+    }
+
+    func releaseTrashBulkFixtureResponse() {
+        guard trashBulkFixtureEnabled else { return }
+        let waiter = trashBulkTestWaiter; trashBulkTestWaiter = nil
+        waiter?.resume(); publishTrashBulkTestState()
+    }
+
+    func replaceTrashBulkFixtureReadHost() {
+        guard trashBulkFixtureEnabled, trashBulkTestMode == "hold-selection", trashBulkTestWaiter != nil,
+              trashBulkRequest == nil, let originalHost = host,
+              let selection = try? NativeAppLaunch.selection.get(),
+              case let .isolated(database, directory, namespace, identifier) = selection,
+              let bundle = Bundle.main.url(forResource: "core-host", withExtension: "js") else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                await originalHost.close()
+                let replacement = CoreHost(databaseURL: database, bundleURL: bundle,
+                    deviceStorage: (directory, namespace), isolatedTestID: identifier)
+                _ = try await replacement.start()
+                guard self.host === originalHost else { await replacement.close(); return }
+                self.retireTrashPresentation(clearSelection: true)
+                self.host = replacement; self.startupSyncCompletedHost = replacement; self.completedStartupToken = UUID()
+                self.trashBusyOwner = nil; self.busy = false; self.retryNeeded = false; self.ready = true
+                self.trashBulkTestReplaced = true
+                self.releaseTrashBulkFixtureResponse()
+                await self.refresh()
+            } catch { self.error = error.localizedDescription; self.releaseTrashBulkFixtureResponse() }
+        }
+    }
+    #endif
 
     func openHistory() async {
         guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !taskPresented, !capturePresented else { return }
@@ -24446,6 +25200,7 @@ final class CoreModel: ObservableObject {
 
     func selectArea(_ next: CoreObject) async {
         guard ready, areaPickerPresented, !busy, !retryNeeded else { return }
+        if selectedSurface == .trash { retireTrashPresentation() }
         busy = true
         error = nil
         defer { finishOperation() }
@@ -27716,7 +28471,7 @@ final class CoreModel: ObservableObject {
         let options = capture.object("options")
         let picker = contextPickerPresented ? ["kind": "context", "query": contextQuery] : nil
         previewTask?.cancel()
-        guard !busy, !retryNeeded, capturePresented else { return }
+        guard !busy, !retryNeeded, capturePresented, !captureLinesConfirmationPresented else { return }
         previewTask = Task {
             do {
                 try await Task.sleep(nanoseconds: 120_000_000)
@@ -27732,7 +28487,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openContextPicker() {
-        guard capturePresented, !busy, !retryNeeded else { return }
+        guard capturePresented, !busy, !retryNeeded, !captureLinesConfirmationPresented else { return }
         contextQuery = ""
         contextPickerPresented = true
         textChanged()
@@ -27754,7 +28509,7 @@ final class CoreModel: ObservableObject {
     }
 
     private func applyCaptureEdit(_ edit: CoreObject?, clearContextQuery: Bool = false, closeContextPicker: Bool = false) async {
-        guard !busy, !retryNeeded else { return }
+        guard !busy, !retryNeeded, !captureLinesConfirmationPresented else { return }
         busy = true
         invalidatePreview()
         defer { finishOperation() }
@@ -27807,9 +28562,59 @@ final class CoreModel: ObservableObject {
 
     func saveCapture(openAfterSave: Bool = false) async {
         guard canSave, let currentHost = host else { return }
-        let submission = CaptureSubmission(id: UUID(), host: currentHost, presentationID: capturePresentationID,
-            navigationID: captureNavigationID, captureID: captureID,
-            next: openAfterSave ? "open" : capture.object("options").flag("addAnother") ? "addAnother" : "close")
+        do {
+            let payload = try json(["text": draft, "options": capture.object("options"),
+                                    "captureId": captureID, "openAfterSave": openAfterSave])
+            let next = openAfterSave ? "open" : capture.object("options").flag("addAnother") ? "addAnother" : "close"
+            let submission = CaptureSubmission(id: UUID(), host: currentHost, presentationID: capturePresentationID,
+                navigationID: captureNavigationID, captureID: captureID, request: payload, kind: .single(next: next))
+            await submitCapture(submission)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func requestCaptureClose() {
+        guard !busy, !retryNeeded else { return }
+        if captureLinesConfirmationPresented { cancelCaptureLinesConfirmation() }
+        else { capturePresented = false }
+    }
+
+    func cancelCaptureLinesConfirmation() {
+        captureLinesConfirmation = nil
+        bulkConfirm = [:]
+    }
+
+    private func captureLinesConfirmationCurrent(_ confirmation: CaptureLinesConfirmation) -> Bool {
+        let submitted = confirmation.submission
+        guard host === submitted.host, capturePresentationCurrent(submitted),
+              captureNavigationID == submitted.navigationID,
+              draft.utf8.elementsEqual(confirmation.text.utf8),
+              noteDraft == capture.object("options").text("note"),
+              let options = try? json(capture.object("options")) else { return false }
+        return options.utf8.elementsEqual(confirmation.options.utf8)
+    }
+
+    func confirmCaptureLines() async {
+        guard canConfirmCaptureLines, let confirmation = captureLinesConfirmation else { return }
+        cancelCaptureLinesConfirmation()
+        guard (2...1000).contains(confirmation.count) else {
+            notice = label("quickAdd.bulkCreateError") + "\n≤ 1000 " + label("common.tasks")
+            return
+        }
+        do {
+            let ids = (0..<confirmation.count).map { _ in UUID().uuidString.lowercased() }
+            #if DEBUG && targetEnvironment(simulator)
+            if captureLinesTestEnabled { captureLinesTestIDs = ids }
+            #endif
+            let request = try json(["text": confirmation.text, "options": try decode(confirmation.options), "captureIds": ids])
+            let original = confirmation.submission
+            let submission = CaptureSubmission(id: UUID(), host: original.host, presentationID: original.presentationID,
+                navigationID: original.navigationID, captureID: original.captureID, request: request, kind: .lines(ids: ids))
+            await submitCapture(submission)
+        } catch { notice = error.localizedDescription }
+    }
+
+    private func submitCapture(_ submission: CaptureSubmission) async {
+        let currentHost = submission.host
         captureSubmission = submission
         captureBusyOwner = submission.id
         var dispatched = false
@@ -27825,13 +28630,12 @@ final class CoreModel: ObservableObject {
             }
         }
         do {
-            let payload = try json(["text": draft, "options": capture.object("options"),
-                                    "captureId": submission.captureID, "openAfterSave": openAfterSave])
             capturePending = true
             #if DEBUG && targetEnvironment(simulator)
             if captureSaveEditFixtureEnabled { captureSaveEditTestSubmissions += 1; publishCaptureSaveEditFixtureState() }
+            if captureLinesTestEnabled, case .lines = submission.kind { captureLinesTestSubmissions += 1; publishCaptureSaveEditFixtureState() }
             #endif
-            let result = try await query("captureSubmit", [payload], beforeDispatch: {
+            let result = try await query(submission.kind.method, [submission.request], beforeDispatch: {
                 guard self.captureSubmissionCurrent(submission), self.capturePresentationCurrent(submission),
                       self.captureNavigationID == submission.navigationID, !self.appLock.concealed,
                       UIApplication.shared.applicationState == .active else { return false }
@@ -27839,12 +28643,12 @@ final class CoreModel: ObservableObject {
                 return true
             })
             #if DEBUG && targetEnvironment(simulator)
-            await holdCaptureSaveEditAcknowledgementIfNeeded(submission)
+            if result.text("kind") == "saved" { await holdCaptureSaveEditAcknowledgementIfNeeded(submission) }
             #endif
             guard captureSubmissionCurrent(submission) else { return }
             try acknowledgeCaptureResult(result, submission: submission)
             #if DEBUG && targetEnvironment(simulator)
-            if captureSaveEditTestMode == "read-failure" {
+            if result.text("kind") == "saved", captureSaveEditTestMode == "read-failure" {
                 captureSaveEditTestMode = ""
                 throw CocoaError(.fileReadUnknown)
             }
@@ -27994,6 +28798,7 @@ final class CoreModel: ObservableObject {
     }
 
     func retry() async {
+        if trashBulkRequest != nil { await retryTrashBulkRequest(); return }
         if notificationResponseRetry != nil { await retryNotificationResponses(); return }
         if notificationSettingRequest != nil { retryNotificationSettings(); return }
         if calendarSettingRequest != nil { retryCalendarSettings(); return }
@@ -29560,21 +30365,70 @@ final class CoreModel: ObservableObject {
     func retireCaptureEditNavigation() {
         captureNavigationID = UUID()
         captureEditHandoff = nil
+        cancelCaptureLinesConfirmation()
     }
 
     private func acknowledgeCaptureResult(_ result: CoreObject, submission: CaptureSubmission) throws {
         guard captureSubmissionCurrent(submission), ["saved", "refused", "confirmLines"].contains(result.text("kind")) else {
             throw CocoaError(.coderReadCorrupt)
         }
-        if result.text("kind") == "saved" {
-            guard result.text("taskId").utf8.elementsEqual(submission.captureID.lowercased().utf8),
-                  result.text("next") == submission.next else { throw CocoaError(.coderReadCorrupt) }
+        switch submission.kind {
+        case .single(let next):
+            if result.text("kind") == "saved" {
+                guard result.text("taskId").utf8.elementsEqual(submission.captureID.lowercased().utf8),
+                      result.text("next") == next else { throw CocoaError(.coderReadCorrupt) }
+            }
+        case .lines(let ids):
+            if result.text("kind") == "saved" {
+                guard Set(result.keys) == Set(["kind", "taskIds"]), let returned = result["taskIds"] as? [String],
+                      returned.count == ids.count, zip(returned, ids).allSatisfy({ $0.0.utf8.elementsEqual($0.1.utf8) }) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                Task {
+                    _ = try? await submission.host.call("logLine", argumentsJSON: self.json([
+                        "Native iOS bulk operation acknowledged",
+                        #"{"releaseCheck":"v1.3.5/ios-bulk-ui","operation":"capture","outcome":"confirmed"}"#,
+                    ]))
+                }
+            } else if result.text("kind") != "refused" || Set(result.keys) != Set(["kind", "notice"])
+                || result.object("notice").text("message").isEmpty {
+                throw CocoaError(.coderReadCorrupt)
+            }
         }
         // Receipt settlement belongs to the submitted host; presentation belongs to this sheet episode.
         capturePending = false
         captureSubmission = nil
         retryNeeded = false
         guard capturePresentationCurrent(submission) else { return }
+        if case .lines = submission.kind {
+            if result.text("kind") == "saved" {
+                notice = nil
+                capturePresented = false; capture = [:]; draft = ""; noteDraft = ""
+                captureID = UUID().uuidString
+            } else if captureNavigationID == submission.navigationID, !appLock.concealed,
+                      UIApplication.shared.applicationState == .active, !Task.isCancelled {
+                notice = result.object("notice").text("message")
+            }
+            return
+        }
+        if result.text("kind") == "confirmLines" {
+            let copy = result.object("confirm")
+            guard Set(result.keys) == Set(["kind", "confirm", "lineCount"]),
+                  let count = result["lineCount"] as? NSNumber, CFGetTypeID(count) != CFBooleanGetTypeID(),
+                  count.doubleValue.rounded(.towardZero) == count.doubleValue, count.doubleValue >= 2,
+                  count.doubleValue < Double(Int.max),
+                  Set(copy.keys) == Set(["title", "message", "confirmLabel", "cancelLabel"]),
+                  copy.values.allSatisfy({ ($0 as? String)?.isEmpty == false }) else { throw CocoaError(.coderReadCorrupt) }
+            guard captureNavigationID == submission.navigationID, !appLock.concealed,
+                  UIApplication.shared.applicationState == .active, !Task.isCancelled else { return }
+            let original = try decode(submission.request)
+            let confirmation = CaptureLinesConfirmation(submission: submission, text: original.text("text"),
+                options: try json(original.object("options")), count: count.intValue)
+            guard captureLinesConfirmationCurrent(confirmation) else { return }
+            captureLinesConfirmation = confirmation
+            bulkConfirm = copy
+            return
+        }
         let open = result.text("kind") == "saved" && result.text("next") == "open"
             && captureNavigationID == submission.navigationID && !appLock.concealed
             && UIApplication.shared.applicationState == .active && !Task.isCancelled
@@ -29628,8 +30482,7 @@ final class CoreModel: ObservableObject {
             }
         case "refused": notice = result.object("notice").text("message")
         case "confirmLines":
-            // Bulk import requires the snapshot/file IO contract, outside this foundation.
-            bulkConfirm = result.object("confirm")
+            break // The owning submission installs the in-sheet question and its frozen input.
         default: notice = capture.object("failureNotices").object("save").text("message")
         }
     }
@@ -29639,7 +30492,23 @@ final class CoreModel: ObservableObject {
         guard captureSaveEditFixtureEnabled else { return }
         captureSaveEditTestState = (try? json(["submissions": captureSaveEditTestSubmissions,
             "held": captureSaveEditTestWaiter != nil, "replaced": captureSaveEditTestReplaced,
-            "readHeld": captureSaveEditTestReadHeld, "retry": retryNeeded, "busy": busy])) ?? ""
+            "readHeld": captureSaveEditTestReadHeld, "retry": retryNeeded, "busy": busy,
+            "linesSubmissions": captureLinesTestSubmissions, "linesIds": captureLinesTestIDs])) ?? ""
+    }
+
+    func pasteCaptureLinesFixture() {
+        guard captureLinesTestEnabled, capturePresented, !busy, !retryNeeded, !capturePending,
+              !captureLinesConfirmationPresented else { return }
+        switch captureLinesTestPaste {
+        case "invalid": draft = "Task500 planned +Task500 project\nTask500 bad /due:whenever"
+        case "paragraph": draft = "Task500 paragraph first\n\nparagraph second"
+        case "count": draft = (0...1000).map { "Task500 row \($0)" }.joined(separator: "\n")
+        case "bytes":
+            draft = (0..<500).map { "Task500 row \($0)" }.joined(separator: "\n")
+            noteDraft = String(repeating: "é", count: 10_000)
+        default: draft = "Task500 first @home\nTask500 second"
+        }
+        textChanged()
     }
 
     private func holdCaptureSaveEditAcknowledgementIfNeeded(_ submission: CaptureSubmission) async {
@@ -30549,7 +31418,7 @@ final class CoreModel: ObservableObject {
             generalPreferenceThemeTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
-        if ["gtdWorkflowOptions", "gtdArchiveOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureParseOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions"].contains(method), gtdWorkflowAwaitingRefresh, gtdWorkflowTestReadFailures > 0 {
+        if ["gtdWorkflowOptions", "gtdPomodoroOptions", "gtdArchiveOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureParseOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions"].contains(method), gtdWorkflowAwaitingRefresh, gtdWorkflowTestReadFailures > 0 {
             gtdWorkflowTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
@@ -30730,6 +31599,25 @@ final class CoreModel: ObservableObject {
         guard beforeDispatch?() != false else { throw CancellationError() }
         let result = try await host.call(method, argumentsJSON: json(args))
         #if DEBUG && targetEnvironment(simulator)
+        if trashBulkFixtureEnabled {
+            let holdSelection = method == "trashSelection" && trashBulkTestMode == "hold-selection" && trashBulkTestSelectAll
+            let holdAck = ["trashItemsRestoreWrite", "trashItemsPurgeWrite"].contains(method) && trashBulkTestMode == "hold-ack"
+            let holdRefresh = method == "areaFilter" && trashBulkTestMode == "ordinary-refresh"
+                && trashPurgeTestMutationStarted && trashPurgeConfirmation != nil
+            if (holdSelection || holdAck || holdRefresh), !trashBulkTestHeldOnce {
+                // The real Host has already returned this response. This delays
+                // App delivery only and never substitutes a storage failure.
+                trashBulkTestHeldOnce = true
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    trashBulkTestWaiter = continuation; publishTrashBulkTestState()
+                }
+            }
+            if method == "menuRead", args.first as? String == "trash", trashBulkTestAwaitingRead {
+                trashBulkTestAwaitingRead = false; trashBulkTestReadFailed = true
+                publishTrashBulkTestState()
+                throw CocoaError(.fileReadUnknown)
+            }
+        }
         if method == "areaFilter", captureSaveEditTestMode == "hold-read", !captureSaveEditTestHeldOnce,
            !capturePresented, !capturePending, captureEditHandoff?.host === host {
             captureSaveEditTestHeldOnce = true
@@ -30822,6 +31710,9 @@ final class CoreModel: ObservableObject {
         defer {
             admitReminderLifecycle(); admitCalendarPushLifecycle(); admitSearchLifecycle(); admitNotificationResponses()
             if entityLinkTask == nil { requestEntityLinks() }
+            #if DEBUG && targetEnvironment(simulator)
+            publishTrashBulkTestState()
+            #endif
         }
         busy = false
         if projectFileAvailabilityPending {

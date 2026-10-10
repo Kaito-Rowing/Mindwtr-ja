@@ -8,6 +8,7 @@ struct SettingsScreen: View {
     let palette: AppPalette
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var gtdTimeFocused: Bool
+    @FocusState private var pomodoroDurationFocused: String?
     @FocusState private var renameFocused: Bool
     @FocusState private var taxonomyNameFocused: Bool
     @State private var taxonomyDeleteConfirmPresented = false
@@ -41,7 +42,7 @@ struct SettingsScreen: View {
                     renameFocused = false
                     if model.settingsSyncPresented { syncField = nil; Task { await model.closeSyncSettings() } }
                     else if model.settingsDataPresented { model.closeDiagnostics(owner: model.settingsDiagnosticsOwner) }
-                    else if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
+                    else if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false; pomodoroDurationFocused = nil } }
                     else if model.settingsFeedbackPresented { model.closeFeedbackSettings() }
                     else if model.settingsAboutPresented { model.closeAboutSettings() }
                     else if model.settingsNotificationsPresented { model.closeNotificationSettings() }
@@ -63,7 +64,7 @@ struct SettingsScreen: View {
                           || model.notificationSettingActive || (model.calendarSettingActive && !model.settingsCalendarCanCancel) || (model.settingsGtdPresented ? model.gtdWorkflowPending : model.generalPreferenceActive) || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
                           || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)))
                 .accessibilityLabel(model.label("common.back"))
-                .accessibilityIdentifier(model.settingsSyncPresented ? "sync-back" : model.settingsDataPresented ? "diagnostics-back" : model.settingsGtdArchivePresented ? "gtd-archive-back" : model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsFeedbackPresented ? "feedback-back" : model.settingsAboutPresented ? "about-back" : model.settingsNotificationsPresented ? "notifications-back" : model.settingsCalendarPresented ? "calendar-settings-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : model.settingsAdvancedPresented ? "advanced-back" : "settings-back")
+                .accessibilityIdentifier(model.settingsSyncPresented ? "sync-back" : model.settingsDataPresented ? "diagnostics-back" : model.settingsGtdPomodoroPresented ? "gtd-pomodoro-back" : model.settingsGtdArchivePresented ? "gtd-archive-back" : model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsFeedbackPresented ? "feedback-back" : model.settingsAboutPresented ? "about-back" : model.settingsNotificationsPresented ? "notifications-back" : model.settingsCalendarPresented ? "calendar-settings-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : model.settingsAdvancedPresented ? "advanced-back" : "settings-back")
                 if model.settingsSyncPresented {
                     Text(model.settingsSync.text("title").isEmpty ? "Sync" : model.settingsSync.text("title"))
                         .rnFont(20, .bold).foregroundStyle(palette.text)
@@ -91,7 +92,7 @@ struct SettingsScreen: View {
                         .frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
                         .accessibilityIdentifier("advanced-title")
                 } else {
-                Text(model.settingsDataPresented ? model.dataSettings.text("title") : model.settingsGtdArchivePresented ? (model.gtdArchive.text("title").isEmpty ? model.label("settings.autoArchive") : model.gtdArchive.text("title")) : model.settingsGtdTaskEditorPresented ? model.gtdTaskEditor.text("title") : model.settingsGtdCapturePresented ? (model.gtdCapture.text("title").isEmpty ? model.label("settings.captureSettings") : model.gtdCapture.text("title")) : model.settingsGtdInboxPresented ? (model.gtdInbox.text("title").isEmpty ? model.label("settings.inboxProcessing") : model.gtdInbox.text("title")) : model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
+                Text(model.settingsDataPresented ? model.dataSettings.text("title") : model.settingsGtdPomodoroPresented ? model.gtdPomodoro.text("title") : model.settingsGtdArchivePresented ? (model.gtdArchive.text("title").isEmpty ? model.label("settings.autoArchive") : model.gtdArchive.text("title")) : model.settingsGtdTaskEditorPresented ? model.gtdTaskEditor.text("title") : model.settingsGtdCapturePresented ? (model.gtdCapture.text("title").isEmpty ? model.label("settings.captureSettings") : model.gtdCapture.text("title")) : model.settingsGtdInboxPresented ? (model.gtdInbox.text("title").isEmpty ? model.label("settings.inboxProcessing") : model.gtdInbox.text("title")) : model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
                     .rnFont(20, .bold).foregroundStyle(palette.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
@@ -103,6 +104,7 @@ struct SettingsScreen: View {
             else if model.settingsDataPresented {
                 DiagnosticsCard(model: model, palette: palette, owner: model.settingsDiagnosticsOwner)
             }
+            else if model.settingsGtdPomodoroPresented { gtdPomodoroContent }
             else if model.settingsGtdArchivePresented { gtdArchiveContent }
             else if model.settingsGtdTaskEditorPresented { gtdTaskEditorContent }
             else if model.settingsGtdCapturePresented { gtdCaptureContent }
@@ -294,7 +296,7 @@ struct SettingsScreen: View {
         .accessibilityAction(.escape) {
             if model.settingsSyncPresented { syncField = nil; Task { await model.closeSyncSettings() } }
             else if model.settingsDataPresented { model.closeDiagnostics(owner: model.settingsDiagnosticsOwner) }
-            else if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
+            else if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false; pomodoroDurationFocused = nil } }
             else if model.settingsFeedbackPresented { model.closeFeedbackSettings() }
             else if model.settingsAboutPresented { model.closeAboutSettings() }
             else if model.settingsNotificationsPresented { model.closeNotificationSettings() }
@@ -529,9 +531,7 @@ struct SettingsScreen: View {
                 VStack(alignment: .leading, spacing: 12) {
                     generalSettingLabel(model.gtdWorkflow.object("features"), description: "description")
                     palette.border.frame(height: 0.5)
-                    Toggle(isOn: .constant(model.gtdWorkflow.object("pomodoro").flag("value"))) {
-                        generalSettingLabel(model.gtdWorkflow.object("pomodoro"), description: "description")
-                    }.disabled(true).opacity(0.55).accessibilityIdentifier("gtd-pomodoro")
+                    gtdToggle(model.gtdWorkflow.object("pomodoro"))
                     if model.gtdWorkflow["pomodoroSettings"] is CoreObject { gtdNavigationRow("pomodoroSettings") }
                 }.padding(14).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 0) {
@@ -646,6 +646,81 @@ struct SettingsScreen: View {
                 gtdFeedback
             }.padding(16).padding(.bottom, 24)
         }.accessibilityIdentifier("gtd-review-scroll")
+    }
+
+    private var gtdPomodoroContent: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(model.gtdPomodoro.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    let controls = model.gtdPomodoro.object("controls")
+                    if controls.isEmpty {
+                        let enable = model.gtdPomodoro.object("enable")
+                        Button { Task { await model.chooseGtdWorkflow(enable.object("edit")) } } label: {
+                            Text(enable.text("label")).rnFont(16).frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).padding(14)
+                        }.buttonStyle(.plain).foregroundStyle(palette.tint)
+                            .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                            .disabled(!model.gtdWorkflowEditEnabled(enable.object("edit")))
+                            .accessibilityIdentifier("gtd-pomodoro-enable")
+                    } else {
+                        VStack(alignment: .leading, spacing: 0) {
+                            VStack(alignment: .leading, spacing: 12) {
+                                let preset = controls.object("customPreset")
+                                generalSettingLabel(preset, description: "description")
+                                let durationLayout = dynamicTypeSize.isAccessibilitySize
+                                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                                    : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+                                durationLayout {
+                                    ForEach(["focus", "break"], id: \.self) { field in
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(preset.text(field + "Label")).rnFont(13).foregroundStyle(palette.secondary)
+                                            TextField("", text: Binding(
+                                                get: { field == "focus" ? model.gtdPomodoroFocusDraft : model.gtdPomodoroBreakDraft },
+                                                set: { model.setGtdPomodoroDraft(field, $0) }))
+                                                .rnFont(16).keyboardType(.numberPad).focused($pomodoroDurationFocused, equals: field)
+                                                .padding(12).frame(minHeight: 44)
+                                                .background(palette.bg, in: RoundedRectangle(cornerRadius: 8))
+                                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                                                .accessibilityLabel(preset.text(field + "Label"))
+                                                .accessibilityIdentifier("gtd-pomodoro-" + field + "-minutes")
+                                                .disabled(!model.gtdWorkflowEditEnabled(["type": "pomodoroDurations"]))
+                                        }
+                                    }
+                                }
+                            }.padding(14)
+                            ForEach(["linkTask", "autoStartBreaks", "autoStartFocus", "completionAlert"], id: \.self) { field in
+                                palette.border.frame(height: 0.5)
+                                gtdToggle(controls.object(field)).padding(14)
+                            }
+                        }.background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    gtdFeedback
+                }.padding(16).padding(.bottom, 24)
+            }.accessibilityIdentifier("gtd-pomodoro-scroll")
+            if let notice = model.gtdPomodoroNotice {
+                Text(notice).rnFont(13).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(14).background(palette.card)
+                    .accessibilityIdentifier("gtd-pomodoro-auto-start-notice")
+            }
+        }
+            .onChange(of: model.gtdPomodoroNotice) { notice in
+                if let notice { UIAccessibility.post(notification: .announcement, argument: notice) }
+            }
+            .onChange(of: pomodoroDurationFocused) { [old = pomodoroDurationFocused] _ in
+                if old != nil && !model.appLock.concealed { Task { await model.commitGtdSettingsDraft() } }
+            }
+            .toolbar {
+                if pomodoroDurationFocused != nil {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button(model.label("common.done")) {
+                            pomodoroDurationFocused = nil
+                            Task { await model.commitGtdSettingsDraft() }
+                        }.accessibilityIdentifier("gtd-pomodoro-keyboard-done")
+                    }
+                }
+            }
     }
 
     private var gtdInboxContent: some View {
@@ -939,7 +1014,7 @@ struct SettingsScreen: View {
         Toggle(isOn: Binding(get: { row.flag("value") }, set: { _ in
             Task { await model.chooseGtdWorkflow(row.object("edit")) }
         })) { generalSettingLabel(row, description: "description") }
-            .disabled(!model.gtdWorkflowEnabled).frame(minHeight: 44)
+            .disabled(!model.gtdWorkflowEditEnabled(row.object("edit"))).frame(minHeight: 44)
             .tint(palette.tint)
             .accessibilityIdentifier("gtd-" + row.object("edit").text("type")
                 + (row.object("edit").text("type") == "taskEditorSectionOpen" ? "-" + row.object("edit").text("section") : ""))
@@ -961,7 +1036,7 @@ struct SettingsScreen: View {
         return VStack(spacing: 0) {
             if divider { palette.border.frame(height: 0.5) }
             Button {
-                if ["review", "inbox", "capture", "taskEditor", "autoArchive"].contains(field) { Task { await model.openGtdSubpage(field); gtdTimeFocused = false } }
+                if ["review", "inbox", "capture", "taskEditor", "autoArchive", "pomodoroSettings"].contains(field) { Task { await model.openGtdSubpage(field); gtdTimeFocused = false } }
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -971,8 +1046,8 @@ struct SettingsScreen: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: "chevron.right").foregroundStyle(palette.secondary).accessibilityHidden(true)
                 }.padding(14).frame(minHeight: 48)
-            }.buttonStyle(.plain).disabled(!["review", "inbox", "capture", "taskEditor", "autoArchive"].contains(field) || !model.gtdWorkflowEnabled)
-                .opacity(["review", "inbox", "capture", "taskEditor", "autoArchive"].contains(field) ? 1 : 0.55).accessibilityIdentifier("gtd-" + field)
+            }.buttonStyle(.plain).disabled(!["review", "inbox", "capture", "taskEditor", "autoArchive", "pomodoroSettings"].contains(field) || !model.gtdWorkflowEnabled)
+                .opacity(["review", "inbox", "capture", "taskEditor", "autoArchive", "pomodoroSettings"].contains(field) ? 1 : 0.55).accessibilityIdentifier("gtd-" + field)
         }
     }
 

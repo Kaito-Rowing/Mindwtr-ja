@@ -10,15 +10,86 @@ struct CaptureSheet: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            sheet.accessibilityHidden(model.contextPickerPresented)
+            if !model.captureLinesConfirmationPresented {
+                sheet.accessibilityHidden(model.contextPickerPresented)
+            }
             if model.contextPickerPresented {
                 Color.black.opacity(0.35).ignoresSafeArea()
                     .onTapGesture { model.closeContextPicker() }
                 ContextPicker(model: model, palette: palette)
                     .padding(.horizontal, 20).frame(maxHeight: .infinity)
             }
+            if model.captureLinesConfirmationPresented { linesConfirmation }
         }
-        .frame(maxHeight: model.contextPickerPresented ? .infinity : nil, alignment: .bottom)
+        .frame(maxHeight: model.contextPickerPresented || model.captureLinesConfirmationPresented ? .infinity : nil, alignment: .bottom)
+        .onChange(of: model.draft) { _ in model.textChanged() }
+        .onChange(of: model.noteDraft) { _ in model.textChanged() }
+        .onChange(of: model.contextQuery) { _ in model.textChanged() }
+        .onChange(of: model.captureLinesConfirmationPresented) { presented in
+            if presented { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
+        }
+    }
+
+    private var linesConfirmation: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                Button { model.requestCaptureClose() } label: {
+                    Color.black.opacity(0.35).ignoresSafeArea().contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+                .accessibilityLabel(model.bulkConfirm.text("cancelLabel"))
+                .accessibilityIdentifier("capture-lines-backdrop")
+                ViewThatFits(in: .vertical) {
+                    linesConfirmationContent.fixedSize(horizontal: false, vertical: true)
+                    ScrollView { linesConfirmationContent }
+                        .accessibilityIdentifier("capture-lines-scroll")
+                }
+                .padding(20).frame(maxWidth: 520)
+                .frame(maxHeight: max(120, geometry.size.height - 40))
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(palette.border, lineWidth: 1))
+                .padding(20).accessibilityElement(children: .contain)
+                .accessibilityIdentifier("capture-lines-confirmation")
+            }
+        }
+    }
+
+    private var linesConfirmationContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                Text(model.bulkConfirm.text("title")).rnFont(18, .bold).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader).accessibilityIdentifier("capture-lines-title")
+                Spacer(minLength: 0)
+                Button { model.requestCaptureClose() } label: {
+                    AppIcon(name: "x", size: 18).frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+                .accessibilityLabel(model.bulkConfirm.text("cancelLabel"))
+                .accessibilityIdentifier("capture-lines-close")
+            }
+            Text(model.bulkConfirm.text("message")).rnFont(14).foregroundStyle(palette.secondary)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("capture-lines-message")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { linesConfirmationButtons }
+                VStack(spacing: 12) { linesConfirmationButtons }
+            }
+        }
+    }
+
+    @ViewBuilder private var linesConfirmationButtons: some View {
+        Button { model.cancelCaptureLinesConfirmation() } label: {
+            Text(model.bulkConfirm.text("cancelLabel")).rnFont(14, .semibold)
+                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+        .accessibilityIdentifier("capture-lines-cancel")
+        Button { Task { await model.confirmCaptureLines() } } label: {
+            Text(model.bulkConfirm.text("confirmLabel")).rnFont(14, .bold)
+                .foregroundStyle(palette.captureForeground).padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 44).background(palette.captureBackground, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain).disabled(!model.canConfirmCaptureLines)
+        .accessibilityIdentifier("capture-lines-create")
     }
 
     private var sheet: some View {
@@ -27,7 +98,7 @@ struct CaptureSheet: View {
                 Text(copy.text("title")).rnFont(16, .bold).accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("capture-title")
                 Spacer()
-                Button { model.capturePresented = false } label: {
+                Button { model.requestCaptureClose() } label: {
                     AppIcon(name: "x", size: 18).foregroundStyle(palette.secondary).frame(width: 48, height: 36)
                 }
                 .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
@@ -41,7 +112,7 @@ struct CaptureSheet: View {
                         Text(copy.text("inputLabel")).rnFont(15).foregroundStyle(palette.secondary)
                             .padding(.horizontal, 12).padding(.vertical, 11).allowsHitTesting(false).accessibilityHidden(true)
                     }
-                    CaptureTextInput(text: $model.draft, enabled: !model.busy && !model.retryNeeded,
+                    CaptureTextInput(text: $model.draft, enabled: !model.busy && !model.retryNeeded && !model.captureLinesConfirmationPresented,
                         color: UIColor(palette.text), label: copy.text("inputLabel"), hint: copy.text("inputHint")) {
                         Task { await model.saveCapture() }
                     }
@@ -143,8 +214,13 @@ struct CaptureSheet: View {
 
 #if DEBUG && os(iOS) && targetEnvironment(simulator)
             if model.captureSaveEditFixtureEnabled {
-                Text(model.captureSaveEditTestState).rnFont(10)
+                Text(model.captureSaveEditTestState).rnFont(10).lineLimit(1)
                     .accessibilityIdentifier("capture-save-edit-fixture-state")
+                if model.captureLinesFixtureEnabled {
+                    Button("Paste fixture") { model.pasteCaptureLinesFixture() }
+                        .accessibilityIdentifier("capture-lines-fixture-paste")
+                        .rnFont(10).buttonStyle(.bordered).frame(minHeight: 44)
+                }
                 HStack {
                     Button("Release") { model.releaseCaptureSaveEditFixtureAcknowledgement() }
                         .accessibilityIdentifier("capture-save-edit-fixture-release")
@@ -159,15 +235,6 @@ struct CaptureSheet: View {
         }
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 20)
         .background { CaptureCorners().fill(palette.card).ignoresSafeArea(edges: .bottom) }
-        .onChange(of: model.draft) { _ in model.textChanged() }
-        .onChange(of: model.noteDraft) { _ in model.textChanged() }
-        .onChange(of: model.contextQuery) { _ in model.textChanged() }
-        .alert(model.bulkConfirm.text("title"), isPresented: Binding(
-            get: { !model.bulkConfirm.isEmpty }, set: { if !$0 { model.bulkConfirm = [:] } }
-        )) {
-            Button(model.bulkConfirm.text("confirmLabel")) {}.disabled(true)
-            Button(model.bulkConfirm.text("cancelLabel"), role: .cancel) { model.bulkConfirm = [:] }
-        } message: { Text(model.bulkConfirm.text("message")) }
     }
 
     @ViewBuilder private var saveButtons: some View {

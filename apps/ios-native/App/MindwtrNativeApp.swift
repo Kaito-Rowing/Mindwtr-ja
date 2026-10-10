@@ -517,6 +517,7 @@ private struct AppLockRoot: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
             observedApplicationActive = false
+            model.retireTrashPresentation()
             model.retireCaptureEditNavigation()
             model.suspendEntityLinks()
             model.notificationSettingsWillResignActive()
@@ -544,6 +545,7 @@ private struct AppLockRoot: View {
             if next == .background { model.cancelNotificationSettingsIntent(); model.cancelCalendarSettingsIntent(); model.retireCalendarFeed() }
             model.observeForegroundSyncScene(next, token: startupToken)
             if next != .active {
+                model.retireTrashPresentation()
                 model.retireCaptureEditNavigation()
                 model.suspendEntityLinks()
                 model.cancelForegroundSync()
@@ -568,6 +570,7 @@ private struct AppLockRoot: View {
         }
         .onChange(of: lock.concealed) { concealed in
             if concealed {
+                model.retireTrashPresentation()
                 model.retireCaptureEditNavigation()
                 model.suspendEntityLinks()
                 model.cancelNotificationSettingsIntent()

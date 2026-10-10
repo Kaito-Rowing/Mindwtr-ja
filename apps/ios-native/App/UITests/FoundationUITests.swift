@@ -21146,18 +21146,19 @@ final class FoundationUITests: XCTestCase {
         boardTap(app, "task-view-close"); boardTap(app, "search-close")
     }
 
-    func testTrashTaskRestoreSwipeOnly() {
+    func testTrashTaskRestoreSwipeOnly() throws {
         continueAfterFailure = false
-        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "65bbce86-d72b-44f3-952b-e6f7b2ca8084"]
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", try task371Library("SWIPE", prefix: "MINDWTR_TRASH_TASK_RESTORE_UI_")]
         app.launch(); task149OpenTrash(app); _ = task149RevealRestore(app)
         XCTAssertFalse(app.buttons["task-view-close"].exists, "A Trash row does not open the editor")
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Trash Restore requires a tap"; shot.lifetime = .keepAlways; add(shot)
         app.terminate()
     }
 
-    private func task149RestoreFlow(_ library: String) {
+    private func task149RestoreFlow(_ library: String, largest: Bool = false) {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
         app.launch(); task149OpenTrash(app); task149RevealRestore(app).tap()
         let row = app.descendants(matching: .any).matching(identifier: "trash-task-task149-task").firstMatch
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: row); waitForExpectations(timeout: 30)
@@ -21165,12 +21166,12 @@ final class FoundationUITests: XCTestCase {
         app.terminate(); app.launch(); task149OpenTrash(app); task149Restored(app); app.terminate()
     }
 
-    func testTrashTaskRestoreNormal() { task149RestoreFlow("a1bc4ceb-57b5-48f2-bb5c-ab1fb080533a") }
-    func testTrashTaskRestoreLargest() { task149RestoreFlow("4fc168a7-3b68-4026-b424-9ecad0b6e129") }
+    func testTrashTaskRestoreNormal() throws { task149RestoreFlow(try task371Library("NORMAL", prefix: "MINDWTR_TRASH_TASK_RESTORE_UI_")) }
+    func testTrashTaskRestoreLargest() throws { task149RestoreFlow(try task371Library("LARGEST", prefix: "MINDWTR_TRASH_TASK_RESTORE_UI_"), largest: true) }
 
-    func testTrashTaskRestoreFailedSave() {
+    func testTrashTaskRestoreFailedSave() throws {
         continueAfterFailure = false
-        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e42c775b-1f7e-4ef3-8791-4b10400213b0"]
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", try task371Library("RETRY", prefix: "MINDWTR_TRASH_TASK_RESTORE_UI_")]
         app.launch(); task149OpenTrash(app); task149RevealRestore(app).tap()
         for _ in 0..<2 {
             let retry = app.buttons["trash-retry"]; boardEnabled(retry, timeout: 30)
@@ -21181,9 +21182,9 @@ final class FoundationUITests: XCTestCase {
         boardEnabled(app.buttons["trash-retry"], timeout: 30); app.terminate()
     }
 
-    func testTrashTaskRestoreColdRecovery() {
+    func testTrashTaskRestoreColdRecovery() throws {
         continueAfterFailure = false
-        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e42c775b-1f7e-4ef3-8791-4b10400213b0"]
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", try task371Library("RETRY", prefix: "MINDWTR_TRASH_TASK_RESTORE_UI_")]
         app.launch(); XCTAssertTrue(app.staticTexts["trash-title"].waitForExistence(timeout: 30)); task149Restored(app)
         app.terminate(); app.launch(); task149OpenTrash(app); task149Restored(app); app.terminate()
     }
@@ -21230,18 +21231,19 @@ final class FoundationUITests: XCTestCase {
         boardTap(app, "task-view-close"); boardTap(app, "search-close")
     }
 
-    func testTrashProjectRestoreSwipeOnly() {
+    func testTrashProjectRestoreSwipeOnly() throws {
         continueAfterFailure = false
-        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "ca5b39db-5e6b-4c89-abca-d872679a209a"]
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", try task371Library("SWIPE", prefix: "MINDWTR_TRASH_PROJECT_RESTORE_UI_")]
         app.launch(); task149OpenTrash(app); _ = task150RevealRestore(app)
         XCTAssertFalse(app.buttons["task-view-close"].exists, "A Trash row does not open the editor")
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Trash Restore requires a tap"; shot.lifetime = .keepAlways; add(shot)
         app.terminate()
     }
 
-    private func task150RestoreFlow(_ library: String) {
+    private func task150RestoreFlow(_ library: String, largest: Bool = false) {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
         app.launch(); task149OpenTrash(app); task150RevealRestore(app).tap()
         let row = app.descendants(matching: .any).matching(identifier: "trash-project-task150-project").firstMatch
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: row); waitForExpectations(timeout: 30)
@@ -21249,12 +21251,12 @@ final class FoundationUITests: XCTestCase {
         app.terminate(); app.launch(); task149OpenTrash(app); task150Restored(app); app.terminate()
     }
 
-    func testTrashProjectRestoreNormal() { task150RestoreFlow("86cba5e6-ab45-4925-997b-7ff0d476267f") }
-    func testTrashProjectRestoreLargest() { task150RestoreFlow("1fd8cab7-17aa-4833-acd2-d0bbf6f392d7") }
+    func testTrashProjectRestoreNormal() throws { task150RestoreFlow(try task371Library("NORMAL", prefix: "MINDWTR_TRASH_PROJECT_RESTORE_UI_")) }
+    func testTrashProjectRestoreLargest() throws { task150RestoreFlow(try task371Library("LARGEST", prefix: "MINDWTR_TRASH_PROJECT_RESTORE_UI_"), largest: true) }
 
-    func testTrashProjectRestoreFailedSave() {
+    func testTrashProjectRestoreFailedSave() throws {
         continueAfterFailure = false
-        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "0b17ead4-bca6-479d-a000-75cf85fe4315"]
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", try task371Library("RETRY", prefix: "MINDWTR_TRASH_PROJECT_RESTORE_UI_")]
         app.launch(); task149OpenTrash(app); task150RevealRestore(app).tap()
         for _ in 0..<2 {
             let retry = app.buttons["trash-retry"]; boardEnabled(retry, timeout: 30)
@@ -21265,9 +21267,9 @@ final class FoundationUITests: XCTestCase {
         boardEnabled(app.buttons["trash-retry"], timeout: 30); app.terminate()
     }
 
-    func testTrashProjectRestoreColdRecovery() {
+    func testTrashProjectRestoreColdRecovery() throws {
         continueAfterFailure = false
-        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "0b17ead4-bca6-479d-a000-75cf85fe4315"]
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", try task371Library("RETRY", prefix: "MINDWTR_TRASH_PROJECT_RESTORE_UI_")]
         app.launch(); XCTAssertTrue(app.staticTexts["trash-title"].waitForExistence(timeout: 30)); task150Restored(app)
         app.terminate(); app.launch(); task149OpenTrash(app); task150Restored(app); app.terminate()
     }
@@ -27281,4 +27283,1000 @@ extension FoundationUITests {
         XCTAssertTrue(app.textViews["capture-input"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists)
         boardTap(app, "capture-close"); task497SavedOnce(app, title: title)
     }
+
+    private func task500App(_ suffix: String, paste: String = "basic", mode: String = "", largest: Bool = false, retry: Bool = false) throws -> XCUIApplication {
+        let library = try task371Library(suffix, prefix: "MINDWTR_CAPTURE_LINES_UI_")
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "--native-capture-lines-fixture", "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        if retry { app.launchArguments.append("--native-capture-terminal-failure-once") }
+        app.launchEnvironment["MINDWTR_CAPTURE_LINES_DELIVERY"] = mode
+        app.launchEnvironment["MINDWTR_CAPTURE_LINES_PASTE"] = paste
+        app.launch(); boardEnabled(app.buttons["capture-open"], timeout: 30)
+        return app
+    }
+
+    private func task500Capture(_ app: XCUIApplication) {
+        boardTap(app, "capture-open"); boardTap(app, "capture-lines-fixture-paste")
+        boardEnabled(app.buttons["capture-save"], timeout: 30)
+    }
+
+    private func task500Question(_ app: XCUIApplication, edit: Bool = false, count: Int = 2,
+                                 title: String? = nil, createLabel: String = "Create tasks", cancelLabel: String = "Cancel") {
+        boardTap(app, edit ? "capture-save-edit" : "capture-save")
+        let create = app.buttons["capture-lines-create"]
+        boardEnabled(create, timeout: 30)
+        XCTAssertEqual(app.staticTexts["capture-lines-title"].label, title ?? "Create \(count) tasks?")
+        XCTAssertEqual(create.label, createLabel)
+        XCTAssertEqual(app.buttons["capture-lines-cancel"].label, cancelLabel)
+        XCTAssertEqual(app.alerts.count, 0, "The confirmation belongs to the Capture sheet")
+        XCTAssertFalse(app.textViews["capture-input"].exists, "Underlying controls must be hidden from accessibility")
+        let scroll = app.scrollViews["capture-lines-scroll"]
+        if !create.isHittable && scroll.exists { revealPagedElement(app, create, in: scroll) }
+        XCTAssertTrue(create.isHittable)
+        XCTAssertGreaterThanOrEqual(create.frame.height, 44 - 0.01)
+        XCTAssertGreaterThanOrEqual(app.buttons["capture-lines-cancel"].frame.height, 44 - 0.01)
+    }
+
+    private func task500Held(_ app: XCUIApplication) -> [String] {
+        let state = app.staticTexts["capture-save-edit-fixture-state"]
+        XCTAssertTrue(state.waitForExistence(timeout: 30))
+        expectation(for: NSPredicate { [weak self] _, _ in self?.task497State(app)["held"] as? Bool == true }, evaluatedWith: state)
+        waitForExpectations(timeout: 30)
+        XCTAssertEqual(task497State(app)["linesSubmissions"] as? Int, 1)
+        let ids = task497State(app)["linesIds"] as? [String] ?? []
+        XCTAssertEqual(ids.count, 2); XCTAssertEqual(Set(ids).count, 2)
+        return ids
+    }
+
+    private func task500Rows(_ app: XCUIApplication, expected: [String] = []) -> [String] {
+        boardTap(app, "tab-inbox")
+        let ids = ["Task500 first", "Task500 second"].map { title -> String in
+            let rows = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier BEGINSWITH %@", title, "task-title-"))
+            XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 30))
+            XCTAssertEqual(rows.count, 1, title)
+            return String(rows.firstMatch.identifier.dropFirst("task-title-".count))
+        }
+        XCTAssertEqual(Set(ids).count, 2)
+        if !expected.isEmpty { XCTAssertEqual(ids, expected) }
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        return ids
+    }
+
+    private func task500SavedOnce(_ app: XCUIApplication, expected: [String] = []) {
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.textViews["capture-input"])
+        waitForExpectations(timeout: 30)
+        let ids = task500Rows(app, expected: expected)
+        app.terminate()
+        app.launchArguments.removeAll { $0 == "--native-capture-terminal-failure-once" }
+        app.launch(); boardEnabled(app.buttons["capture-open"], timeout: 30)
+        _ = task500Rows(app, expected: ids)
+        XCTAssertFalse(app.textViews["capture-input"].exists, "Cold launch does not recreate an old Capture intent")
+    }
+
+    private func task500Normal(_ suffix: String, largest: Bool, edit: Bool) throws {
+        let app = try task500App(suffix, largest: largest); defer { app.terminate() }
+        boardTap(app, "tab-focus"); task500Capture(app)
+        let addAnother = app.switches["capture-add-another"]
+        if addAnother.value as? String != "1" { boardEnabled(addAnother); addAnother.tap() }
+        task500Question(app, edit: edit)
+        XCTAssertEqual(app.staticTexts["capture-lines-message"].label, "Task500 first @home\nTask500 second")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task500 confirmation " + suffix
+        shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "capture-lines-create")
+        task500SavedOnce(app)
+    }
+
+    func testTask500OrdinarySaveBulkClosesAddAnotherFromFocusNormal() throws { try task500Normal("NORMAL", largest: false, edit: false) }
+    func testTask500SaveEditBulkClosesAddAnotherFromFocusLargest() throws { try task500Normal("LARGEST", largest: true, edit: true) }
+
+    func testTask500CancelHeaderBackdropPreserveDraftWithoutSubmitting() throws {
+        let app = try task500App("CANCEL"); defer { app.terminate() }
+        task500Capture(app); boardTap(app, "capture-options")
+        let note = app.descendants(matching: .any).matching(identifier: "capture-note").firstMatch
+        boardEnabled(note); note.tap(); note.typeText("Task500 retained note")
+        for control in ["capture-lines-cancel", "capture-lines-close", "capture-lines-backdrop"] {
+            task500Question(app)
+            if control == "capture-lines-backdrop" {
+                app.buttons[control].coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).tap()
+            } else { boardTap(app, control) }
+            boardEnabled(app.buttons["capture-save"])
+            XCTAssertEqual(app.textViews["capture-input"].value as? String, "Task500 first @home\nTask500 second")
+            XCTAssertEqual(note.value as? String, "Task500 retained note")
+            XCTAssertEqual(task497State(app)["linesSubmissions"] as? Int, 0)
+            XCTAssertEqual(task497State(app)["linesIds"] as? [String], [])
+        }
+        boardTap(app, "capture-close"); boardTap(app, "tab-inbox")
+        XCTAssertFalse(app.buttons["Task500 first"].exists); XCTAssertFalse(app.buttons["Task500 second"].exists)
+        boardTap(app, "capture-open"); boardEnabled(app.buttons["capture-save"])
+        XCTAssertEqual(app.textViews["capture-input"].value as? String, "Task500 first @home\nTask500 second")
+        task500Question(app); boardTap(app, "capture-lines-create"); task500SavedOnce(app)
+    }
+
+    func testTask500ParagraphUsesSharedSingleCaptureClassification() throws {
+        let app = try task500App("PARAGRAPH", paste: "paragraph"); defer { app.terminate() }
+        task500Capture(app); boardTap(app, "capture-save-edit")
+        boardEnabled(app.textFields["task-editor-title"], timeout: 30)
+        XCTAssertFalse(app.buttons["capture-lines-create"].exists)
+        XCTAssertTrue((app.textFields["task-editor-title"].value as? String ?? "").contains("Task500 paragraph first"))
+        XCTAssertFalse(app.textViews["capture-input"].exists)
+    }
+
+    func testTask500InvalidLaterDateRetainsDraftWithoutCreatingRowsOrProject() throws {
+        let app = try task500App("INVALID", paste: "invalid"); defer { app.terminate() }
+        task500Capture(app); task500Question(app); boardTap(app, "capture-lines-create")
+        boardEnabled(app.buttons["capture-save"], timeout: 30)
+        XCTAssertTrue(app.staticTexts["capture-notice"].label.contains("/due:whenever"))
+        XCTAssertEqual(app.textViews["capture-input"].value as? String, "Task500 planned +Task500 project\nTask500 bad /due:whenever")
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        boardTap(app, "capture-close"); boardTap(app, "tab-inbox")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "task-title-", "Task500")).count, 0)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        XCTAssertTrue(app.staticTexts["projects-empty"].waitForExistence(timeout: 30))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "project-open-")).count, 0)
+    }
+
+    func testTask500CountAndPreparedByteBoundsRetainEditableDraft() throws {
+        let countApp = try task500App("COUNT", paste: "count")
+        defer { countApp.terminate() }
+        // Choose the real shared language setting, rather than injecting translated fixture copy.
+        task97Open(countApp); task97Picker(countApp, "language"); task97Choose(countApp, "zh")
+        task97Picker(countApp, "language")
+        let selected = countApp.buttons["general-option-zh"]
+        revealPagedElement(countApp, selected, in: countApp.scrollViews.containing(.button, identifier: "general-option-zh").firstMatch)
+        XCTAssertTrue(selected.isSelected)
+        boardTap(countApp, "general-picker-cancel"); boardTap(countApp, "general-back"); boardTap(countApp, "settings-back")
+        task500Capture(countApp)
+        task500Question(countApp, count: 1001, title: "创建 1001 个任务？", createLabel: "创建任务", cancelLabel: "取消")
+        boardTap(countApp, "capture-lines-create")
+        boardEnabled(countApp.buttons["capture-save"])
+        XCTAssertEqual(countApp.staticTexts["capture-notice"].label, "无法创建全部任务。\n≤ 1000 个任务")
+        XCTAssertFalse(countApp.staticTexts["capture-notice"].label.contains("Create up to"))
+        XCTAssertEqual(task497State(countApp)["linesSubmissions"] as? Int, 0)
+        XCTAssertEqual(task497State(countApp)["linesIds"] as? [String], [])
+        XCTAssertTrue((countApp.textViews["capture-input"].value as? String ?? "").contains("Task500 row 1000"))
+        countApp.terminate()
+        let byteApp = try task500App("BYTES", paste: "bytes"); defer { byteApp.terminate() }
+        task500Capture(byteApp); task500Question(byteApp, count: 500); boardTap(byteApp, "capture-lines-create")
+        boardEnabled(byteApp.buttons["capture-save"], timeout: 30)
+        XCTAssertFalse(byteApp.buttons["capture-lines-create"].exists)
+        XCTAssertTrue(byteApp.staticTexts["persistence-error"].exists || byteApp.staticTexts["capture-notice"].exists)
+        XCTAssertTrue(byteApp.buttons["capture-save"].isEnabled, "A definite size refusal leaves an editable draft")
+        XCTAssertTrue((byteApp.textViews["capture-input"].value as? String ?? "").contains("Task500 row 499"))
+        boardTap(byteApp, "capture-options")
+        XCTAssertEqual(byteApp.descendants(matching: .any).matching(identifier: "capture-note").firstMatch.value as? String, String(repeating: "é", count: 10_000))
+        boardTap(byteApp, "capture-close"); boardTap(byteApp, "tab-inbox")
+        XCTAssertFalse(byteApp.buttons["Task500 row 0"].exists); XCTAssertFalse(byteApp.buttons["Task500 row 499"].exists)
+    }
+
+    func testTask500DoubleConfirmAndOldReplyPreserveNewerSheet() throws {
+        let app = try task500App("SHEET", mode: "hold"); defer { app.terminate() }
+        task500Capture(app); task500Question(app)
+        app.buttons["capture-lines-create"].doubleTap(); let ids = task500Held(app)
+        boardTap(app, "capture-save-edit-fixture-new-sheet")
+        boardTap(app, "capture-save-edit-fixture-release"); boardEnabled(app.buttons["capture-save"], timeout: 30)
+        XCTAssertEqual(app.textViews["capture-input"].value as? String, "Task497 newer draft")
+        XCTAssertEqual(task497State(app)["linesSubmissions"] as? Int, 1)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        boardTap(app, "capture-close"); task500SavedOnce(app, expected: ids)
+    }
+
+    func testTask500HostReplacementRetiresOldBatchPresentation() throws {
+        let app = try task500App("HOST", mode: "hold"); defer { app.terminate() }
+        task500Capture(app); task500Question(app); boardTap(app, "capture-lines-create"); let ids = task500Held(app)
+        boardTap(app, "capture-save-edit-fixture-host")
+        expectation(for: NSPredicate { [weak self] _, _ in self?.task497State(app)["replaced"] as? Bool == true }, evaluatedWith: app.staticTexts["capture-save-edit-fixture-state"])
+        waitForExpectations(timeout: 30)
+        boardTap(app, "capture-save-edit-fixture-release"); boardEnabled(app.buttons["capture-save"], timeout: 30)
+        XCTAssertEqual(app.textViews["capture-input"].value as? String, "Task497 replacement draft")
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["capture-open"], timeout: 30)
+        _ = task500Rows(app, expected: ids)
+    }
+
+    func testTask500ActualTerminalFailureRetriesExactBatchOnce() throws {
+        let app = try task500App("RETRY", retry: true); defer { app.terminate() }
+        task500Capture(app); task500Question(app, edit: true); boardTap(app, "capture-lines-create")
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+        let ids = task497State(app)["linesIds"] as? [String] ?? []
+        XCTAssertEqual(ids.count, 2); XCTAssertEqual(task497State(app)["linesSubmissions"] as? Int, 1)
+        XCTAssertEqual(app.textViews["capture-input"].value as? String, "Task500 first @home\nTask500 second")
+        XCTAssertFalse(app.buttons["capture-save"].isEnabled)
+        boardTap(app, "persistence-retry"); task500SavedOnce(app, expected: ids)
+    }
+
+    func testTask500ColdTerminalRecoveryCreatesExactRowsWithoutCaptureIntent() throws {
+        let app = try task500App("COLD", retry: true); defer { app.terminate() }
+        task500Capture(app); task500Question(app, edit: true); boardTap(app, "capture-lines-create")
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+        let ids = task497State(app)["linesIds"] as? [String] ?? []; XCTAssertEqual(ids.count, 2)
+        app.terminate()
+        // The isolated injector is configured only before a request exists; cold replay uses the real pending journal.
+        app.launchArguments.removeAll { $0 == "--native-capture-terminal-failure-once" }
+        app.launch(); boardEnabled(app.buttons["capture-open"], timeout: 30)
+        XCTAssertFalse(app.textViews["capture-input"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        task500SavedOnce(app, expected: ids)
+    }
+
+    func testTask500PostreceiptReadRetryDoesNotResubmitBatch() throws {
+        let app = try task500App("READ", mode: "read-failure"); defer { app.terminate() }
+        task500Capture(app); task500Question(app); boardTap(app, "capture-lines-create")
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+        XCTAssertFalse(app.textViews["capture-input"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        boardTap(app, "persistence-retry")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["persistence-retry"])
+        waitForExpectations(timeout: 30); task500SavedOnce(app)
+    }
+
+    func testTask500BackgroundRetiresQuestionAndKeepsAcceptedBatchDurable() throws {
+        let questionApp = try task500App("QUESTION_BACKGROUND")
+        task500Capture(questionApp); task500Question(questionApp)
+        XCUIDevice.shared.press(.home); questionApp.activate()
+        boardEnabled(questionApp.buttons["capture-save"], timeout: 30)
+        XCTAssertFalse(questionApp.buttons["capture-lines-create"].exists)
+        XCTAssertEqual(questionApp.textViews["capture-input"].value as? String, "Task500 first @home\nTask500 second")
+        XCTAssertEqual(task497State(questionApp)["linesSubmissions"] as? Int, 0)
+        boardTap(questionApp, "capture-close"); boardTap(questionApp, "tab-inbox")
+        XCTAssertFalse(questionApp.buttons["Task500 first"].exists); questionApp.terminate()
+        let acceptedApp = try task500App("ACCEPTED_BACKGROUND", mode: "hold"); defer { acceptedApp.terminate() }
+        task500Capture(acceptedApp); task500Question(acceptedApp); boardTap(acceptedApp, "capture-lines-create")
+        let ids = task500Held(acceptedApp)
+        XCUIDevice.shared.press(.home); acceptedApp.activate()
+        boardTap(acceptedApp, "capture-save-edit-fixture-release"); task500SavedOnce(acceptedApp, expected: ids)
+    }
+
+    // Externally staged, isolated Trash libraries; these use the actual public
+    // native bulk owner. Delivery holds occur after a real Host response. The
+    // terminal flag uses the native journalRemove fault, never an App save fake.
+    private func task503App(_ suffix: String, mode: String = "", largest: Bool = false,
+                            terminal: Bool = false, language: String = "en-US") throws -> XCUIApplication {
+        let library = try task371Library(suffix, prefix: "MINDWTR_TRASH_BULK_UI_")
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "--native-trash-bulk-fixture",
+            "-AppleLanguages", "(" + language + ")", "-AppleLocale", language.replacingOccurrences(of: "-", with: "_")]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        if terminal { app.launchArguments.append("--native-capture-terminal-failure-once") }
+        app.launchEnvironment["MINDWTR_TRASH_BULK_DELIVERY"] = mode
+        app.launch(); task149OpenTrash(app)
+        boardEnabled(app.buttons["trash-select-toggle"], timeout: 30)
+        return app
+    }
+
+    private func task503State(_ app: XCUIApplication) -> [String: Any] {
+        guard let bytes = app.staticTexts["trash-bulk-fixture-state"].label.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return [:] }
+        return value
+    }
+
+    private func task503Wait(_ app: XCUIApplication, _ predicate: @escaping ([String: Any]) -> Bool) {
+        let state = app.staticTexts["trash-bulk-fixture-state"]
+        XCTAssertTrue(state.waitForExistence(timeout: 30))
+        expectation(for: NSPredicate { [weak self] _, _ in predicate(self?.task503State(app) ?? [:]) }, evaluatedWith: state)
+        waitForExpectations(timeout: 30)
+    }
+
+    private func task503TapRow(_ app: XCUIApplication, _ id: String) {
+        let row = app.buttons[id]
+        let list = app.descendants(matching: .any).matching(identifier: "trash-scroll").firstMatch
+        revealPagedElement(app, row, in: list)
+        let selectedCount = (task503State(app)["selectedCount"] as? Int ?? -1) + (row.isSelected ? -1 : 1)
+        for attempt in 0..<2 {
+            boardTap(app, id)
+            task503Wait(app) { $0["busy"] as? Bool == false }
+            if task503State(app)["selectedCount"] as? Int == selectedCount { return }
+            // A minute rollover can reject the displayed revision; press the refreshed row explicitly.
+            guard attempt == 0, app.staticTexts["trash-error"].exists,
+                  app.staticTexts["trash-error"].label.hasPrefix("STALE_REVISION:") else { break }
+            revealPagedElement(app, row, in: list)
+        }
+        XCTAssertEqual(task503State(app)["selectedCount"] as? Int, selectedCount, "Trash selection did not settle for " + id)
+    }
+
+    private func task503Count(_ app: XCUIApplication, _ count: Int) {
+        task503Wait(app) { $0["selectedCount"] as? Int == count }
+        let label = app.staticTexts["trash-bulk-count"]; XCTAssertTrue(label.exists)
+        XCTAssertTrue(label.label.contains(String(count)), label.label)
+    }
+
+    private func task503SelectAll(_ app: XCUIApplication, count: Int = 140) {
+        boardTap(app, "trash-select-toggle")
+        XCTAssertFalse(app.buttons["trash-bulk-restore"].isEnabled)
+        boardTap(app, "trash-bulk-select-all"); task503Count(app, count)
+        XCTAssertFalse(app.buttons["trash-bulk-select-all"].isEnabled)
+        boardEnabled(app.buttons["trash-bulk-restore"], timeout: 30)
+    }
+
+    private func task503Restored(_ app: XCUIApplication, count: Int = 140, requestID: String? = nil) {
+        XCTAssertTrue(app.staticTexts["trash-empty"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["trash-bulk-restore"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        task503Wait(app) { $0["pending"] as? Bool == false && $0["confirmedCount"] as? Int == count }
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 1)
+        if let requestID { XCTAssertEqual(task503State(app)["requestId"] as? String, requestID) }
+    }
+
+    func testTask503MixedSelectionDoneAndStaticRows() throws {
+        let app = try task503App("MANUAL"); defer { app.terminate() }
+        let staticRow = app.descendants(matching: .any).matching(identifier: "trash-task-task503-child").firstMatch
+        boardEnabled(staticRow); staticRow.tap()
+        XCTAssertFalse(app.buttons["task-view-close"].exists)
+        boardTap(app, "trash-select-toggle")
+        let child = app.buttons["trash-select-task-task503-child"], parent = app.buttons["trash-select-project-task503-project"]
+        task503TapRow(app, child.identifier); task503Count(app, 1); XCTAssertTrue(child.isSelected)
+        task503TapRow(app, parent.identifier); task503Count(app, 2); XCTAssertTrue(parent.isSelected)
+        XCTAssertTrue(child.label.hasPrefix("Select "))
+        XCTAssertFalse(app.buttons["trash-restore-task503-child"].exists)
+        task503TapRow(app, child.identifier); task503Count(app, 1); XCTAssertFalse(child.isSelected)
+        boardTap(app, "trash-select-toggle"); XCTAssertFalse(app.buttons["trash-bulk-restore"].exists)
+        boardTap(app, "trash-select-toggle"); task503Count(app, 0)
+        XCTAssertFalse(app.buttons["trash-bulk-restore"].isEnabled)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+    }
+
+    func testTask503FullFilteredSelectAllRestoresBeyondLoadedPages() throws {
+        let app = try task503App("NORMAL"); defer { app.terminate() }
+        XCTAssertEqual(task503State(app)["loaded"] as? Int, 50)
+        task503SelectAll(app); XCTAssertEqual(task503State(app)["loaded"] as? Int, 50)
+        for id in ["trash-select-toggle", "trash-bulk-select-all", "trash-bulk-restore"] {
+            XCTAssertGreaterThanOrEqual(app.buttons[id].frame.height, 44 - 0.001)
+        }
+        boardTap(app, "trash-bulk-restore"); XCTAssertFalse(app.alerts.firstMatch.exists)
+        task503Restored(app)
+        app.terminate(); app.launch(); task149OpenTrash(app)
+        XCTAssertTrue(app.staticTexts["trash-empty"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.buttons["trash-bulk-restore"].exists)
+    }
+
+    func testTask503LargestLocalizedDarkRestoreControls() throws {
+        let app = try task503App("LOCALIZED", largest: true, language: "zh-Hans"); defer { app.terminate() }
+        XCTAssertEqual(app.buttons["trash-select-toggle"].label, "选择")
+        task503SelectAll(app)
+        XCTAssertEqual(app.buttons["trash-bulk-restore"].label, "恢复")
+        for id in ["trash-select-toggle", "trash-bulk-select-all", "trash-bulk-restore"] {
+            let action = app.buttons[id]; XCTAssertTrue(action.isHittable)
+            XCTAssertGreaterThanOrEqual(action.frame.height, 44 - 0.001)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task503 largest localized Trash selection"
+        shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "trash-bulk-restore"); XCTAssertFalse(app.alerts.firstMatch.exists); task503Restored(app)
+    }
+
+    func testTask503SelectedChildAndDeletedParentRestoreAsOneAction() throws {
+        let app = try task503App("OVERLAP"); defer { app.terminate() }
+        boardTap(app, "trash-select-toggle")
+        task503TapRow(app, "trash-select-task-task503-child"); task503TapRow(app, "trash-select-project-task503-project")
+        task503Count(app, 2); boardTap(app, "trash-bulk-restore")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        task503Wait(app) { $0["confirmedCount"] as? Int == 2 && $0["pending"] as? Bool == false && $0["busy"] as? Bool == false }
+        XCTAssertFalse(app.buttons["trash-bulk-restore"].exists)
+        for id in ["trash-task-task503-child", "trash-project-task503-project", "trash-task-task503-cascade"] {
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: id).firstMatch.exists)
+        }
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trash-task-task503-independent").firstMatch.exists)
+        XCTAssertEqual(task503State(app)["total"] as? Int, 137, "Only the selected pair plus its matching unselected cascade leave Trash")
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 1)
+    }
+
+    func testTask503LargestRTLSelectionRemainsAccessibleAndNonMutating() throws {
+        let app = try task503App("RTL", largest: true, language: "ar"); defer { app.terminate() }
+        XCTAssertEqual(app.buttons["trash-select-toggle"].label, "يختار")
+        task503SelectAll(app)
+        XCTAssertEqual(app.buttons["trash-bulk-restore"].label, "استعادة")
+        for id in ["trash-select-toggle", "trash-bulk-select-all", "trash-bulk-restore"] {
+            let action = app.buttons[id]; XCTAssertTrue(action.isHittable)
+            XCTAssertGreaterThanOrEqual(action.frame.height, 44 - 0.001)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task503 largest RTL Trash selection"
+        shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "trash-select-toggle")
+        XCTAssertFalse(app.buttons["trash-bulk-restore"].exists)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+    }
+
+    func testTask503AreaPrunesOffpageSelectionWithoutSelectingNewRows() throws {
+        let app = try task503App("AREA"); defer { app.terminate() }
+        task503SelectAll(app)
+        boardTap(app, "area-open"); boardTap(app, "area-option-task503-area-a")
+        boardEnabled(app.buttons["area-option-task503-area-a"])
+        app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        task503Count(app, 67)
+        boardTap(app, "area-open"); boardTap(app, "area-option-__all__")
+        boardEnabled(app.buttons["area-option-__all__"])
+        app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        task503Count(app, 67)
+        XCTAssertTrue(app.buttons["trash-bulk-select-all"].isEnabled)
+        XCTAssertEqual(task503State(app)["total"] as? Int, 140)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+        boardTap(app, "trash-select-toggle"); boardTap(app, "trash-select-toggle"); task503Count(app, 0)
+    }
+
+    func testTask503ActualTerminalFailureRetainsSelectionAndExactRetry() throws {
+        let app = try task503App("RETRY", terminal: true); defer { app.terminate() }
+        task503SelectAll(app); app.buttons["trash-bulk-restore"].doubleTap()
+        boardEnabled(app.buttons["trash-retry"], timeout: 30); task503Count(app, 140)
+        let before = task503State(app), id = try XCTUnwrap(before["requestId"] as? String)
+        XCTAssertEqual(UUID(uuidString: id)?.uuidString.lowercased(), id)
+        XCTAssertEqual(before["submissions"] as? Int, 1); XCTAssertEqual(before["pending"] as? Bool, true)
+        XCTAssertFalse(app.buttons["trash-back"].isEnabled); XCTAssertFalse(app.buttons["trash-select-toggle"].isEnabled)
+        XCTAssertFalse(app.buttons["trash-bulk-restore"].isEnabled); XCTAssertFalse(app.staticTexts["trash-empty"].exists)
+        boardTap(app, "trash-retry"); task503Restored(app, requestID: id)
+        XCTAssertEqual(task503State(app)["requestBytes"] as? Int, before["requestBytes"] as? Int)
+    }
+
+    func testTask503ColdTerminalReplayProjectsTrashWithoutSelectionOrResubmit() throws {
+        let app = try task503App("COLD", terminal: true); defer { app.terminate() }
+        task503SelectAll(app); boardTap(app, "trash-bulk-restore"); boardEnabled(app.buttons["trash-retry"], timeout: 30)
+        XCTAssertEqual(task503State(app)["pending"] as? Bool, true)
+        app.terminate(); app.launchArguments.removeAll { $0 == "--native-capture-terminal-failure-once" }; app.launch()
+        XCTAssertTrue(app.staticTexts["trash-title"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["trash-empty"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["trash-bulk-restore"].exists); XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+        app.terminate(); app.launch(); task149OpenTrash(app)
+        XCTAssertTrue(app.staticTexts["trash-empty"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+
+    func testTask503AcknowledgedRestoreReadFailureRetriesOnlyProjection() throws {
+        let app = try task503App("READ", mode: "read-failure"); defer { app.terminate() }
+        task503SelectAll(app); boardTap(app, "trash-bulk-restore"); boardEnabled(app.buttons["trash-retry"], timeout: 30)
+        let before = task503State(app)
+        XCTAssertEqual(before["pending"] as? Bool, false); XCTAssertEqual(before["confirmedCount"] as? Int, 140)
+        XCTAssertEqual(before["readFailed"] as? Bool, true); XCTAssertEqual(before["submissions"] as? Int, 1)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists); XCTAssertFalse(app.buttons["trash-bulk-restore"].exists)
+        boardTap(app, "trash-retry"); task503Restored(app, requestID: before["requestId"] as? String)
+    }
+
+    private func task503BackgroundAndReturn(_ app: XCUIApplication) {
+        XCUIDevice.shared.press(.home)
+        let background = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.state == .runningBackground || app.state == .runningBackgroundSuspended
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [background], timeout: 10), .completed)
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        // shortcut: iOS 27 reports foreground before its zoom finishes; remove when XCTest waits for that transition.
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    func testTask503BackgroundRetiresHeldSelectAllAdoption() throws {
+        let app = try task503App("SELECTION_BACKGROUND", mode: "hold-selection"); defer { app.terminate() }
+        boardTap(app, "trash-select-toggle"); boardTap(app, "trash-bulk-select-all")
+        task503Wait(app) { $0["held"] as? Bool == true }
+        XCTAssertEqual(task503State(app)["selectedCount"] as? Int, 0)
+        task503BackgroundAndReturn(app); boardTap(app, "trash-bulk-fixture-release")
+        boardEnabled(app.buttons["trash-bulk-select-all"], timeout: 30); task503Count(app, 0)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+        boardTap(app, "trash-bulk-select-all"); task503Count(app, 140)
+        boardTap(app, "trash-select-toggle"); boardTap(app, "trash-select-toggle"); task503Count(app, 0)
+    }
+
+    func testTask503ReplacementHostRefusesHeldOldSelection() throws {
+        let app = try task503App("HOST", mode: "hold-selection"); defer { app.terminate() }
+        boardTap(app, "trash-select-toggle"); boardTap(app, "trash-bulk-select-all")
+        task503Wait(app) { $0["held"] as? Bool == true }; boardTap(app, "trash-bulk-fixture-host")
+        task503Wait(app) { $0["replaced"] as? Bool == true && $0["busy"] as? Bool == false }
+        boardEnabled(app.buttons["trash-select-toggle"], timeout: 30)
+        XCTAssertFalse(app.buttons["trash-bulk-restore"].exists)
+        XCTAssertEqual(task503State(app)["selectedCount"] as? Int, 0)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+        boardTap(app, "trash-select-toggle"); task503Count(app, 0)
+        boardTap(app, "trash-bulk-select-all"); task503Count(app, 140)
+    }
+
+    func testTask503BackgroundKeepsAcceptedHeldAcknowledgmentOwned() throws {
+        let app = try task503App("ACK_BACKGROUND", mode: "hold-ack"); defer { app.terminate() }
+        task503SelectAll(app); boardTap(app, "trash-bulk-restore")
+        task503Wait(app) { $0["held"] as? Bool == true }
+        let before = task503State(app)
+        XCTAssertEqual(before["pending"] as? Bool, true); XCTAssertEqual(before["submissions"] as? Int, 1)
+        task503BackgroundAndReturn(app)
+        XCTAssertEqual(task503State(app)["pending"] as? Bool, true)
+        boardTap(app, "trash-bulk-fixture-release"); task503Restored(app, requestID: before["requestId"] as? String)
+    }
+
+    func testTask503SelectionBoundsRefuseWithoutTruncationAndDoneRemainsAvailable() throws {
+        for suffix in ["COUNT", "BYTES"] {
+            let app = try task503App(suffix)
+            boardTap(app, "trash-select-toggle"); boardEnabled(app.buttons["trash-retry"], timeout: 30)
+            XCTAssertTrue(app.staticTexts["trash-error"].exists)
+            XCTAssertFalse(app.buttons["trash-bulk-restore"].isEnabled)
+            XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+            boardTap(app, "trash-select-toggle"); boardEnabled(app.buttons["trash-select-toggle"], timeout: 30)
+            XCTAssertFalse(app.buttons["trash-bulk-restore"].exists)
+            XCTAssertFalse(app.buttons["persistence-retry"].exists); app.terminate()
+        }
+    }
+
+    // Task508 uses real public Host calls and the existing isolated terminal
+    // journalRemove fault. These authored cases require staged libraries +507.
+    private func task508App(_ suffix: String, mode: String = "", largest: Bool = false,
+                            terminal: Bool = false, language: String = "en-US") throws -> XCUIApplication {
+        let library = try task371Library(suffix, prefix: "MINDWTR_TRASH_PURGE_UI_")
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "--native-trash-purge-fixture",
+            "-AppleLanguages", "(" + language + ")", "-AppleLocale", language.replacingOccurrences(of: "-", with: "_")]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        if terminal { app.launchArguments.append("--native-capture-terminal-failure-once") }
+        app.launchEnvironment["MINDWTR_TRASH_BULK_DELIVERY"] = mode
+        app.launch(); task149OpenTrash(app)
+        boardEnabled(app.buttons["trash-clear"], timeout: 30)
+        return app
+    }
+
+    private func task508Alert(_ app: XCUIApplication, message: String? = nil) {
+        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.alerts.firstMatch.buttons.matching(identifier: "trash-purge-cancel").firstMatch.exists)
+        XCTAssertTrue(app.alerts.firstMatch.buttons.matching(identifier: "trash-purge-confirm").firstMatch.exists)
+        if let message { XCTAssertTrue(app.alerts.firstMatch.staticTexts[message].exists, message) }
+    }
+
+    private func task508Settled(_ app: XCUIApplication, count: Int, total: Int, submissions: Int = 1) {
+        task503Wait(app) {
+            $0["pending"] as? Bool == false && $0["busy"] as? Bool == false
+                && $0["confirmedCount"] as? Int == count && $0["total"] as? Int == total
+        }
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, submissions)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        XCTAssertFalse(app.buttons["task-view-close"].exists)
+    }
+
+    private func task508FrozenRequest(_ app: XCUIApplication) throws -> [String: Any] {
+        let text = try XCTUnwrap(task503State(app)["requestJSON"] as? String)
+        return try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+    }
+
+    func testTask508SingleTaskAndProjectPurgeCancelThenConfirm() throws {
+        for (suffix, identity, action) in [
+            ("SINGLE_TASK", "trash-task-task503-child", "trash-purge-task-task503-child"),
+            ("SINGLE_PROJECT", "trash-project-task503-project", "trash-purge-project-task503-project"),
+        ] {
+            let app = try task508App(suffix); defer { app.terminate() }
+            let row = app.descendants(matching: .any).matching(identifier: identity).firstMatch
+            boardEnabled(row); row.swipeLeft(); boardTap(app, action)
+            task508Alert(app, message: "This action cannot be undone.")
+            boardTap(app, "trash-purge-cancel")
+            XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+            XCTAssertTrue(row.exists)
+            row.swipeLeft(); boardTap(app, action); task508Alert(app)
+            boardTap(app, "trash-purge-confirm"); task508Settled(app, count: 1, total: 139)
+            XCTAssertFalse(row.exists)
+            if suffix == "SINGLE_PROJECT" {
+                XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trash-task-task503-child").firstMatch.exists)
+                XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trash-task-task503-cascade").firstMatch.exists)
+            }
+        }
+    }
+
+    func testTask508MixedSelectedPurgeCancelAndDuplicateConfirm() throws {
+        let app = try task508App("MIXED"); defer { app.terminate() }
+        boardTap(app, "trash-select-toggle")
+        task503TapRow(app, "trash-select-task-task503-child"); task503TapRow(app, "trash-select-project-task503-project")
+        task503Count(app, 2); boardTap(app, "trash-bulk-purge"); task508Alert(app)
+        boardTap(app, "trash-purge-cancel"); task503Count(app, 2)
+        XCTAssertTrue(app.buttons["trash-select-task-task503-child"].isSelected)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+        boardTap(app, "trash-bulk-purge"); task508Alert(app)
+        app.alerts.firstMatch.buttons.matching(identifier: "trash-purge-confirm").firstMatch.doubleTap(); task508Settled(app, count: 2, total: 138)
+        XCTAssertFalse(app.buttons["trash-bulk-purge"].exists)
+        for id in ["task503-cascade", "task503-independent"] {
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trash-task-" + id).firstMatch.exists)
+        }
+        let request = try task508FrozenRequest(app)
+        XCTAssertEqual(request["taskIds"] as? [String], ["task503-child"])
+        XCTAssertEqual(request["projectIds"] as? [String], ["task503-project"])
+    }
+
+    func testTask508ClearFullFilteredTrashBeyondLoadedPageInBothModes() throws {
+        for suffix in ["CLEAR", "CLEAR_SELECTED"] {
+            let app = try task508App(suffix); defer { app.terminate() }
+            XCTAssertEqual(task503State(app)["loaded"] as? Int, 50)
+            if suffix == "CLEAR_SELECTED" {
+                boardTap(app, "trash-select-toggle")
+                task503TapRow(app, "trash-select-task-task503-child"); task503TapRow(app, "trash-select-project-task503-project")
+                task503Count(app, 2)
+            }
+            boardTap(app, "trash-clear")
+            task508Alert(app, message: "This will permanently delete all trashed tasks and projects.")
+            boardTap(app, "trash-purge-confirm"); task508Settled(app, count: 140, total: 0)
+            XCTAssertTrue(app.staticTexts["trash-empty"].exists)
+            let request = try task508FrozenRequest(app)
+            XCTAssertEqual((request["taskIds"] as? [String])?.count, 138)
+            XCTAssertEqual((request["projectIds"] as? [String])?.count, 2)
+            XCTAssertFalse(app.buttons["trash-clear"].exists)
+        }
+    }
+
+    func testTask508NarrowedIncludedAndExcludedAreaClearCounts() throws {
+        for suffix in ["AREA_INCLUDED", "AREA_EXCLUDED"] {
+            let app = try task508App(suffix); defer { app.terminate() }
+            boardTap(app, "area-open"); boardTap(app, "area-option-task503-area-a")
+            boardEnabled(app.buttons["area-option-task503-area-a"])
+            if suffix == "AREA_EXCLUDED" {
+                boardTap(app, "area-option-task503-area-a"); boardEnabled(app.buttons["area-option-task503-area-a"])
+            }
+            app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+            boardEnabled(app.buttons["trash-clear"], timeout: 30)
+            boardTap(app, "trash-clear")
+            let count = suffix == "AREA_INCLUDED" ? 67 : 73
+            task508Alert(app, message: "\(count - 1) tasks · 1 project\nThis action cannot be undone.")
+            boardTap(app, "trash-purge-confirm"); task508Settled(app, count: count, total: 0)
+            boardTap(app, "area-open"); boardTap(app, "area-option-__all__")
+            boardEnabled(app.buttons["area-option-__all__"])
+            app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+            task503Wait(app) { $0["total"] as? Int == 140 - count && $0["busy"] as? Bool == false }
+            let retained = suffix == "AREA_INCLUDED" ? "task503-other-project" : "task503-project"
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trash-project-" + retained).firstMatch.exists)
+        }
+    }
+
+    func testTask508LargestLocalizedAndRTLPermanentControls() throws {
+        for (suffix, language, deleteLabel, clearLabel) in [
+            ("LOCALIZED", "zh-Hans", "永久删除", "清空垃圾桶"),
+            ("RTL", "ar", "حذف نهائيا", "مسح سلة المهملات"),
+        ] {
+            let app = try task508App(suffix, largest: true, language: language); defer { app.terminate() }
+            XCTAssertEqual(app.buttons["trash-clear"].label, clearLabel)
+            task503SelectAll(app)
+            XCTAssertEqual(app.buttons["trash-bulk-purge"].label, deleteLabel)
+            for id in ["trash-select-toggle", "trash-clear", "trash-bulk-select-all", "trash-bulk-restore", "trash-bulk-purge"] {
+                let action = app.buttons[id]; XCTAssertTrue(action.isHittable)
+                XCTAssertGreaterThanOrEqual(action.frame.height, 44 - 0.001)
+            }
+            boardTap(app, "trash-bulk-purge"); task508Alert(app)
+            for id in ["trash-purge-cancel", "trash-purge-confirm"] {
+                let action = app.alerts.firstMatch.buttons.matching(identifier: id).firstMatch
+                let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: action)
+                XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 10), .completed)
+            }
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task508 largest " + language + " permanent confirmation"
+            shot.lifetime = .keepAlways; add(shot)
+            boardTap(app, "trash-purge-cancel"); task503Count(app, 140)
+            XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+        }
+    }
+
+    func testTask508AlertOpenSavedArrivalSurvivesFrozenClear() throws {
+        let app = try task508App("ARRIVAL", mode: "arrival"); defer { app.terminate() }
+        boardTap(app, "trash-clear"); task508Alert(app)
+        // Confirm is enabled only after actual Reference->Trash Host persistence.
+        boardEnabled(app.alerts.firstMatch.buttons.matching(identifier: "trash-purge-confirm").firstMatch, timeout: 30)
+        boardTap(app, "trash-purge-confirm"); task508Settled(app, count: 140, total: 1)
+        XCTAssertEqual(task503State(app)["mutationCompleted"] as? Bool, true)
+        XCTAssertEqual(task503State(app)["mutationError"] as? String, "")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trash-task-task508-arrival").firstMatch.exists)
+        let request = try task508FrozenRequest(app)
+        XCTAssertEqual((request["taskIds"] as? [String])?.count, 138)
+        XCTAssertFalse((request["taskIds"] as? [String] ?? []).contains("task508-arrival"))
+    }
+
+    func testTask508OrdinaryRefreshPreservesOpenFrozenPurgeConfirmation() throws {
+        let app = try task508App("ALERT_REFRESH", mode: "ordinary-refresh"); defer { app.terminate() }
+        boardTap(app, "trash-clear"); task508Alert(app)
+        // The isolated fixture requests the shipping refresh() after the real
+        // alert opens. Without the guard it holds an actual areaFilter reply
+        // while busy, making the old enabled Confirm silently cancel the claim.
+        task503Wait(app) { $0["mutationCompleted"] as? Bool == true || $0["held"] as? Bool == true }
+        let state = task503State(app)
+        XCTAssertEqual(state["mutationError"] as? String, "")
+        XCTAssertEqual(state["held"] as? Bool, false)
+        XCTAssertEqual(state["busy"] as? Bool, false)
+        XCTAssertEqual(state["confirmation"] as? Bool, true)
+        XCTAssertEqual(state["confirmationCount"] as? Int, 140)
+        XCTAssertEqual(state["submissions"] as? Int, 0)
+        let frozen = try XCTUnwrap(state["refreshConfirmationRequest"] as? String)
+        XCTAssertFalse(frozen.isEmpty)
+        XCTAssertEqual(state["confirmationRequest"] as? String, frozen)
+        boardTap(app, "trash-purge-confirm"); task508Settled(app, count: 140, total: 0)
+        XCTAssertEqual(task503State(app)["requestJSON"] as? String, frozen)
+        let request = try task508FrozenRequest(app)
+        XCTAssertEqual((request["taskIds"] as? [String])?.count, 138)
+        XCTAssertEqual((request["projectIds"] as? [String])?.count, 2)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
+    func testTask508ChangedSelectedTargetRefusesWithoutReprepare() throws {
+        let app = try task508App("STALE", mode: "stale-target"); defer { app.terminate() }
+        boardTap(app, "trash-select-toggle")
+        task503TapRow(app, "trash-select-task-task503-child"); task503TapRow(app, "trash-select-project-task503-project")
+        task503Count(app, 2)
+        boardTap(app, "trash-bulk-purge"); task508Alert(app)
+        XCTAssertEqual(task503State(app)["confirmationCount"] as? Int, 2)
+        boardEnabled(app.alerts.firstMatch.buttons.matching(identifier: "trash-purge-confirm").firstMatch, timeout: 30); boardTap(app, "trash-purge-confirm")
+        boardEnabled(app.buttons["trash-bulk-purge"], timeout: 30)
+        task503Wait(app) { $0["busy"] as? Bool == false && $0["pending"] as? Bool == false && $0["selectedCount"] as? Int == 1 }
+        XCTAssertTrue(app.staticTexts["trash-error"].exists)
+        let project = app.buttons["trash-select-project-task503-project"]
+        revealPagedElement(app, project, in: app.descendants(matching: .any).matching(identifier: "trash-scroll").firstMatch)
+        XCTAssertTrue(project.exists)
+        XCTAssertTrue(project.isSelected)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 1)
+        XCTAssertEqual(task503State(app)["confirmedCount"] as? Int, 0)
+        XCTAssertEqual(task503State(app)["total"] as? Int, 139)
+        XCTAssertEqual(task503State(app)["mutationCompleted"] as? Bool, true)
+        XCTAssertEqual((try task508FrozenRequest(app))["taskIds"] as? [String], ["task503-child"])
+        XCTAssertEqual((try task508FrozenRequest(app))["projectIds"] as? [String], ["task503-project"])
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+
+    func testTask508BackgroundRetiresHeldNonselectionClearMetadata() throws {
+        let app = try task508App("CLEAR_BACKGROUND", mode: "hold-selection"); defer { app.terminate() }
+        boardTap(app, "trash-clear"); task503Wait(app) { $0["held"] as? Bool == true }
+        task503BackgroundAndReturn(app); boardTap(app, "trash-bulk-fixture-release")
+        boardEnabled(app.buttons["trash-clear"], timeout: 30)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+        XCTAssertEqual(task503State(app)["selectionMode"] as? Bool, false)
+    }
+
+    func testTask508ReplacementHostRefusesHeldNonselectionClearMetadata() throws {
+        let app = try task508App("CLEAR_HOST", mode: "hold-selection"); defer { app.terminate() }
+        boardTap(app, "trash-clear"); task503Wait(app) { $0["held"] as? Bool == true }
+        boardTap(app, "trash-bulk-fixture-host")
+        task503Wait(app) { $0["replaced"] as? Bool == true && $0["busy"] as? Bool == false }
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+        XCTAssertEqual(task503State(app)["selectionMode"] as? Bool, false)
+    }
+
+    func testTask508BackgroundCancelsAlertAndLateConfirmCannotSubmit() throws {
+        let app = try task508App("ALERT_BACKGROUND"); defer { app.terminate() }
+        boardTap(app, "trash-clear"); task508Alert(app)
+        task503BackgroundAndReturn(app)
+        boardEnabled(app.buttons["trash-purge-fixture-late-confirm"], timeout: 30)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        boardTap(app, "trash-purge-fixture-late-confirm")
+        XCTAssertEqual(task503State(app)["retiredConfirmation"] as? Bool, true)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+        boardTap(app, "trash-clear"); task508Alert(app); boardTap(app, "trash-purge-cancel")
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+    }
+
+    func testTask508ActualTerminalFailureRetainsExactPurgeRetry() throws {
+        let app = try task508App("RETRY", terminal: true); defer { app.terminate() }
+        task503SelectAll(app); boardTap(app, "trash-bulk-purge"); task508Alert(app)
+        app.alerts.firstMatch.buttons.matching(identifier: "trash-purge-confirm").firstMatch.doubleTap()
+        boardEnabled(app.buttons["trash-retry"], timeout: 30); task503Count(app, 140)
+        let before = task503State(app), id = try XCTUnwrap(before["requestId"] as? String)
+        XCTAssertEqual(UUID(uuidString: id)?.uuidString.lowercased(), id)
+        XCTAssertEqual(before["submissions"] as? Int, 1); XCTAssertEqual(before["pending"] as? Bool, true)
+        XCTAssertFalse(app.buttons["trash-clear"].isEnabled); XCTAssertFalse(app.buttons["trash-bulk-purge"].isEnabled)
+        XCTAssertFalse(app.buttons["trash-bulk-restore"].isEnabled)
+        boardTap(app, "trash-retry"); task508Settled(app, count: 140, total: 0)
+        XCTAssertEqual(task503State(app)["requestJSON"] as? String, before["requestJSON"] as? String)
+        XCTAssertEqual(task503State(app)["requestId"] as? String, id)
+    }
+
+    func testTask508ColdTerminalReplayProjectsTrashWithoutPurgeResubmit() throws {
+        let app = try task508App("COLD", terminal: true); defer { app.terminate() }
+        boardTap(app, "trash-clear"); task508Alert(app); boardTap(app, "trash-purge-confirm")
+        boardEnabled(app.buttons["trash-retry"], timeout: 30)
+        XCTAssertEqual(task503State(app)["pending"] as? Bool, true)
+        app.terminate(); app.launchArguments.removeAll { $0 == "--native-capture-terminal-failure-once" }; app.launch()
+        XCTAssertTrue(app.staticTexts["trash-title"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["trash-empty"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.alerts.firstMatch.exists); XCTAssertFalse(app.buttons["trash-bulk-purge"].exists)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists); XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        app.terminate(); app.launch(); task149OpenTrash(app)
+        XCTAssertTrue(app.staticTexts["trash-empty"].waitForExistence(timeout: 30))
+    }
+
+    func testTask508BackgroundKeepsAcceptedPurgeAcknowledgmentOwned() throws {
+        let app = try task508App("ACK_BACKGROUND", mode: "hold-ack"); defer { app.terminate() }
+        boardTap(app, "trash-clear"); task508Alert(app); boardTap(app, "trash-purge-confirm")
+        task503Wait(app) { $0["held"] as? Bool == true }
+        let before = task503State(app)
+        XCTAssertEqual(before["pending"] as? Bool, true)
+        task503BackgroundAndReturn(app)
+        XCTAssertEqual(task503State(app)["pending"] as? Bool, true)
+        boardTap(app, "trash-bulk-fixture-release"); task508Settled(app, count: 140, total: 0)
+        XCTAssertEqual(task503State(app)["requestJSON"] as? String, before["requestJSON"] as? String)
+    }
+
+    func testTask508AcknowledgedPurgeReadFailureRetriesOnlyProjection() throws {
+        let app = try task508App("READ", mode: "read-failure"); defer { app.terminate() }
+        boardTap(app, "trash-clear"); task508Alert(app); boardTap(app, "trash-purge-confirm")
+        boardEnabled(app.buttons["trash-retry"], timeout: 30)
+        let before = task503State(app)
+        XCTAssertEqual(before["pending"] as? Bool, false); XCTAssertEqual(before["confirmedCount"] as? Int, 140)
+        XCTAssertEqual(before["readFailed"] as? Bool, true); XCTAssertEqual(before["submissions"] as? Int, 1)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        boardTap(app, "trash-retry"); task508Settled(app, count: 140, total: 0)
+        XCTAssertEqual(task503State(app)["requestJSON"] as? String, before["requestJSON"] as? String)
+    }
+
+    func testTask508ClearBoundsRefuseWithoutConfirmationOrTruncation() throws {
+        for suffix in ["COUNT", "BYTES"] {
+            let app = try task508App(suffix); defer { app.terminate() }
+            boardTap(app, "trash-clear"); boardEnabled(app.buttons["trash-retry"], timeout: 30)
+            XCTAssertFalse(app.alerts.firstMatch.exists); XCTAssertTrue(app.staticTexts["trash-error"].exists)
+            XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+            XCTAssertEqual(task503State(app)["selectionMode"] as? Bool, false)
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        }
+    }
+
+
+    func testTask508AreaAndNavigationRetireUnsubmittedConfirmation() throws {
+        for (suffix, mode) in [("ALERT_AREA", "area-retire"), ("ALERT_NAVIGATION", "navigate-retire")] {
+            let app = try task508App(suffix, mode: mode); defer { app.terminate() }
+            boardTap(app, "trash-clear")
+            if mode == "navigate-retire" {
+                XCTAssertTrue(app.staticTexts["inbox-title"].waitForExistence(timeout: 30))
+                task149OpenTrash(app)
+            }
+            boardEnabled(app.buttons["trash-clear"], timeout: 30)
+            task503Wait(app) { $0["mutationCompleted"] as? Bool == true && $0["busy"] as? Bool == false }
+            XCTAssertFalse(app.alerts.firstMatch.exists)
+            XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+            XCTAssertEqual(task503State(app)["mutationError"] as? String, "")
+            XCTAssertEqual(task503State(app)["total"] as? Int, mode == "area-retire" ? 67 : 140)
+            boardTap(app, "trash-purge-fixture-late-confirm")
+            XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+        }
+    }
+
+    func testTask508OldAlertCallbacksCannotConsumeReplacementConfirmation() throws {
+        let app = try task508App("ALERT_REPLACEMENT", mode: "late-replacement"); defer { app.terminate() }
+        boardTap(app, "trash-clear"); task508Alert(app)
+        task503BackgroundAndReturn(app)
+        boardEnabled(app.buttons["trash-clear"], timeout: 30)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        // Opening the replacement exercises the old confirm + dismissal IDs
+        // synchronously against the new real snapshot; neither may consume it.
+        boardTap(app, "trash-clear"); task508Alert(app)
+        boardTap(app, "trash-purge-cancel")
+        XCTAssertEqual(task503State(app)["mutationCompleted"] as? Bool, true)
+        XCTAssertEqual(task503State(app)["submissions"] as? Int, 0)
+    }
+
+    private func task551App(_ suffix: String, flags: [String] = [], largest: Bool = false) throws -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", try task371Library(suffix, prefix: "MINDWTR_POMODORO_SETTINGS_UI_")] + flags
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-AppleLanguages", "(ar)", "-AppleLocale", "ar_SA"] }
+        app.launch(); task103Open(app); boardTap(app, "gtd-pomodoroSettings")
+        boardEnabled(app.buttons["gtd-pomodoro-back"], timeout: 30)
+        return app
+    }
+
+    private func task551Toggle(_ app: XCUIApplication, _ field: String) -> XCUIElement {
+        let control = app.switches["gtd-" + field]
+        revealPagedElement(app, control, in: app.scrollViews["gtd-pomodoro-scroll"])
+        boardEnabled(control)
+        return control
+    }
+
+    private func task551SetToggle(_ app: XCUIApplication, _ field: String, _ value: String) {
+        let control = task551Toggle(app, field)
+        XCTAssertNotEqual(control.value as? String, value)
+        control.tap()
+        expectation(for: NSPredicate(format: "value == %@ AND enabled == true", value), evaluatedWith: control)
+        waitForExpectations(timeout: 30)
+    }
+
+    private func task551Minutes(_ app: XCUIApplication, _ field: String, _ draft: String, expected: String) {
+        let input = app.textFields["gtd-pomodoro-" + field + "-minutes"]
+        revealPagedElement(app, input, in: app.scrollViews["gtd-pomodoro-scroll"])
+        replaceTextView(input, with: draft, tapOffset: CGVector(dx: 0.5, dy: 0.5))
+        boardTap(app, "gtd-pomodoro-keyboard-done")
+        expectation(for: NSPredicate(format: "value == %@ AND enabled == true", expected), evaluatedWith: input)
+        waitForExpectations(timeout: 30)
+    }
+
+    func testTask551ExistingGtdScheduleDraftStillSavesAndRecovers() throws {
+        task103Normal(try task371Library("SCHEDULE", prefix: "MINDWTR_POMODORO_SETTINGS_UI_"))
+    }
+
+    func testTask551PomodoroSettingsPersistAndNoticeAppearsOncePerVisit() throws {
+        let app = try task551App("NORMAL"); defer { app.terminate() }
+        task551Minutes(app, "focus", "999", expected: "180")
+        task551Minutes(app, "break", "0", expected: "1")
+        task551Minutes(app, "focus", "35", expected: "35")
+        task551SetToggle(app, "pomodoroLinkTask", "0")
+        task551SetToggle(app, "pomodoroCompletionAlert", "0")
+        task551SetToggle(app, "pomodoroAutoStartBreaks", "1")
+        let notice = app.staticTexts["gtd-pomodoro-auto-start-notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: notice)
+        waitForExpectations(timeout: 8)
+        task551SetToggle(app, "pomodoroAutoStartFocus", "1")
+        XCTAssertFalse(notice.exists)
+        app.terminate(); app.launch(); task103Open(app); boardTap(app, "gtd-pomodoroSettings")
+        boardEnabled(app.buttons["gtd-pomodoro-back"], timeout: 30)
+        XCTAssertEqual(app.textFields["gtd-pomodoro-focus-minutes"].value as? String, "35")
+        XCTAssertEqual(app.textFields["gtd-pomodoro-break-minutes"].value as? String, "1")
+        for field in ["pomodoroLinkTask", "pomodoroCompletionAlert"] { XCTAssertEqual(task551Toggle(app, field).value as? String, "0") }
+        XCTAssertEqual(task551Toggle(app, "pomodoroAutoStartBreaks").value as? String, "1")
+        task551SetToggle(app, "pomodoroAutoStartFocus", "0")
+        task551SetToggle(app, "pomodoroAutoStartFocus", "1")
+        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+    }
+
+    func testTask551LargestRTLPomodoroSettingsAndFeatureGate() throws {
+        let app = try task551App("LARGEST", largest: true); defer { app.terminate() }
+        let control = task551Toggle(app, "pomodoroCompletionAlert")
+        XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+        task551SetToggle(app, "pomodoroCompletionAlert", "0")
+        task551Minutes(app, "focus", "40", expected: "40")
+        boardTap(app, "gtd-pomodoro-back")
+        let feature = app.switches["gtd-pomodoro"]
+        revealPagedElement(app, feature, in: app.scrollViews["gtd-scroll"]); boardEnabled(feature)
+        feature.tap()
+        expectation(for: NSPredicate(format: "value == '0' AND enabled == true"), evaluatedWith: feature)
+        waitForExpectations(timeout: 30)
+        XCTAssertFalse(app.buttons["gtd-pomodoroSettings"].exists)
+        feature.tap()
+        expectation(for: NSPredicate(format: "value == '1' AND enabled == true"), evaluatedWith: feature)
+        waitForExpectations(timeout: 30)
+        boardTap(app, "gtd-pomodoroSettings")
+        boardEnabled(app.buttons["gtd-pomodoro-back"], timeout: 30)
+        XCTAssertEqual(app.textFields["gtd-pomodoro-focus-minutes"].value as? String, "40")
+        XCTAssertEqual(task551Toggle(app, "pomodoroCompletionAlert").value as? String, "0")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Largest RTL Pomodoro settings"; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    func testTask551MalformedDurationsLeaveOtherPreferencesUsable() throws {
+        let app = try task551App("MALFORMED"); defer { app.terminate() }
+        for field in ["focus", "break"] {
+            let input = app.textFields["gtd-pomodoro-" + field + "-minutes"]
+            XCTAssertTrue(input.exists); XCTAssertFalse(input.isEnabled)
+        }
+        task551SetToggle(app, "pomodoroLinkTask", "0")
+        let focus = app.textFields["gtd-pomodoro-focus-minutes"]
+        XCTAssertTrue(focus.exists); XCTAssertFalse(focus.isEnabled)
+    }
+
+    func testTask551AcknowledgedSettingsReadRetryPreservesSavedToggle() throws {
+        let app = try task551App("READ_RETRY", flags: ["--native-gtd-workflow-read-failure"]); defer { app.terminate() }
+        task551Toggle(app, "pomodoroLinkTask").tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-pomodoro-scroll"]); boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-pomodoro-back"].isEnabled)
+            retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-pomodoro-back"], timeout: 30)
+        XCTAssertEqual(task551Toggle(app, "pomodoroLinkTask").value as? String, "0")
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+
+    func testTask551RefusedSettingsEditCanBeCorrected() throws {
+        let app = try task551App("REFUSAL", flags: ["--native-gtd-workflow-refusal"]); defer { app.terminate() }
+        task551Toggle(app, "pomodoroLinkTask").tap()
+        XCTAssertTrue(app.staticTexts["gtd-error"].waitForExistence(timeout: 30))
+        XCTAssertEqual(task551Toggle(app, "pomodoroLinkTask").value as? String, "1")
+        task551SetToggle(app, "pomodoroLinkTask", "0")
+    }
+
+    func testTask551RealTerminalFailureRetriesSettingsOnce() throws {
+        let app = try task551App("TERMINAL_RETRY", flags: ["--native-capture-terminal-failure-once"]); defer { app.terminate() }
+        task551Toggle(app, "pomodoroLinkTask").tap()
+        let retry = app.buttons["gtd-retry"]
+        revealPagedElement(app, retry, in: app.scrollViews["gtd-pomodoro-scroll"]); boardEnabled(retry, timeout: 30)
+        XCTAssertFalse(app.buttons["gtd-pomodoro-back"].isEnabled)
+        retry.tap(); boardEnabled(app.buttons["gtd-pomodoro-back"], timeout: 30)
+        XCTAssertEqual(task551Toggle(app, "pomodoroLinkTask").value as? String, "0")
+        XCTAssertFalse(app.buttons["gtd-retry"].exists)
+    }
+
+    func testTask551ColdSettingsRecoveryReopensPomodoroPage() throws {
+        let app = try task551App("TERMINAL_COLD", flags: ["--native-capture-terminal-failure-once"]); defer { app.terminate() }
+        task551Toggle(app, "pomodoroLinkTask").tap()
+        let retry = app.buttons["gtd-retry"]
+        revealPagedElement(app, retry, in: app.scrollViews["gtd-pomodoro-scroll"]); boardEnabled(retry, timeout: 30)
+        app.terminate(); app.launchArguments.removeAll { $0 == "--native-capture-terminal-failure-once" }; app.launch()
+        boardEnabled(app.buttons["gtd-pomodoro-back"], timeout: 30)
+        XCTAssertEqual(task551Toggle(app, "pomodoroLinkTask").value as? String, "0")
+        XCTAssertFalse(app.buttons["gtd-retry"].exists)
+    }
+
 }

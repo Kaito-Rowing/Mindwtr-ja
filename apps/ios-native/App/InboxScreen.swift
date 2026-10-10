@@ -178,7 +178,7 @@ struct InboxScreen: View {
             }
             if model.capturePresented {
                 Color.black.opacity(0.35).ignoresSafeArea()
-                    .onTapGesture { if !model.busy && !model.retryNeeded { model.capturePresented = false } }
+                    .onTapGesture { model.requestCaptureClose() }
                 CaptureSheet(model: model, palette: palette)
                     .frame(maxWidth: 860)
             }
