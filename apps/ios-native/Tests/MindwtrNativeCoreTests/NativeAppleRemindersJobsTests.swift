@@ -10,6 +10,33 @@ final class NativeAppleRemindersJobsTests: XCTestCase {
     // Start, callback handoff, then drained settlement; this is not a provider drain.
     private func barrier(_ jobs: NativeAppleRemindersJobs) { jobs.workerBarrier(); jobs.workerBarrier(); jobs.workerBarrier() }
 
+    func testAcceptedRemovalCancellationAndCloseWaitForSDKReturn() async throws {
+        let sdk = AppleRemindersTestSDK(); let row = AppleRemindersTestSDK.row(); sdk.immediate = [row]
+        let entered = expectation(description: "SDK removal accepted"), drained = expectation(description: "close drained")
+        let gate = DispatchSemaphore(value: 0), finished = DispatchSemaphore(value: 0)
+        sdk.afterRemove = { entered.fulfill(); _ = gate.wait(timeout: .now() + 5) }
+        let jobs = NativeAppleRemindersJobs(registry: .init(), providerFactory: { .init(status: { .granted }, sdkFactory: { sdk }) })
+        let json = try JSONSerialization.data(withJSONObject: ["op": "remove", "listId": "list", "sourceId": "account", "source": row.source.providerValue])
+        let id = try jobs.submit(String(decoding: json, as: UTF8.self))
+        await fulfillment(of: [entered], timeout: 3)
+        jobs.cancel(id); XCTAssertFalse(jobs.isDrained(id)); XCTAssertNil(jobs.next())
+        Task { await jobs.closeAndDrain(); finished.signal(); drained.fulfill() }
+        XCTAssertEqual(finished.wait(timeout: .now() + 0.05), .timedOut)
+        gate.signal(); await fulfillment(of: [drained], timeout: 3)
+        XCTAssertTrue(jobs.isDrained(id)); XCTAssertEqual(sdk.removals, ["item"])
+        XCTAssertEqual(jobs.counters.active, 0); XCTAssertNil(jobs.next())
+    }
+
+    func testQueuedRemovalCancellationNeverCallsSDK() throws {
+        let sdk = AppleRemindersTestSDK(), row = AppleRemindersTestSDK.row()
+        let jobs = NativeAppleRemindersJobs(registry: .init(), providerFactory: { .init(status: { .granted }, sdkFactory: { sdk }) })
+        let a = try jobs.submit(read); barrier(jobs)
+        let data = try JSONSerialization.data(withJSONObject: ["op": "remove", "listId": "list", "sourceId": "account", "source": row.source.providerValue])
+        let b = try jobs.submit(String(decoding: data, as: UTF8.self)); jobs.cancel(b); jobs.cancel(a); barrier(jobs)
+        XCTAssertEqual(sdk.removals, [])
+        XCTAssertNotNil(jobs.next()); XCTAssertNotNil(jobs.next())
+    }
+
     func testClosedGrammarEscapedDuplicatesAndByteIDsRefuseBeforeFactory() throws {
         var factories = 0
         let jobs = NativeAppleRemindersJobs(registry: .init(), providerFactory: { factories += 1; return .init() })

@@ -15306,14 +15306,7 @@ private final class Engine: @unchecked Sendable {
         guard let read = value as? [String: Any], Set(read.keys) == Set(["listId", "sourceId", "sources"]),
               Self.ownedEqual(read["listId"] as? String ?? "", list.id), Self.ownedEqual(read["sourceId"] as? String ?? "", list.sourceID),
               let rows = read["sources"] as? [[String: Any]], rows.count <= NativeAppleRemindersValidation.maximumRows else { throw Self.appleReminderFailure }
-        let result = try rows.map { row -> NativeAppleReminderSDKRow in
-            guard Set(row.keys).isSubset(of: Set(["id", "title", "notes", "completed", "creationDate", "startDate", "dueDate"])),
-                  Self.isBoolean(row["completed"]), let completed = row["completed"] as? Bool,
-                  row.allSatisfy({ $0.key == "completed" || $0.value is String }) else { throw Self.appleReminderFailure }
-            return NativeAppleReminderSDKRow(list: list, source: .init(id: row["id"] as? String, title: row["title"] as? String,
-                notes: row["notes"] as? String, completed: completed, creationDate: row["creationDate"] as? String,
-                startDate: row["startDate"] as? String, dueDate: row["dueDate"] as? String))
-        }
+        let result = try rows.map { NativeAppleReminderSDKRow(list: list, source: try NativeAppleRemindersValidation.source($0)) }
         return try NativeAppleRemindersValidation.read(result, list: list).sources
     }
 
@@ -15426,7 +15419,7 @@ private final class Engine: @unchecked Sendable {
         _ = try Self.appleReminderRegistryRaw(raw.map { $0 as Any } ?? NSNull())
         let options = try Self.appleReminderObject(invoke("appleReminderImportOptions", arguments: [raw.map { $0 as Any } ?? NSNull()]), limit: 8 * 1024 * 1024)
         if automatic && (options["autoImportOnOpen"] as? Bool != true || options["selectedListId"] == nil) { return #"{"kind":"noop"}"# }
-        guard options["deleteImportedReminders"] as? Bool == false else { throw HostFailure("NOT_READY: Reminders source deletion is not available") }
+        guard let deleteSources = options["deleteImportedReminders"] as? Bool else { throw Self.appleReminderFailure }
         guard let selected = options["selectedListId"] as? String, !selected.isEmpty else { throw HostFailure("NOT_READY: Choose a Reminders list") }
         let permission = try appleRemindersRead(["op": "permission"], cancellation: cancellation) as? [String: Any]
         try current()
@@ -15453,7 +15446,32 @@ private final class Engine: @unchecked Sendable {
             do {
                 let value = try Self.appleReminderObject(importAppleReminderItem(source: source, list: list), limit: 8 * 1024 * 1024)
                 switch value["kind"] as? String {
-                case "published": counts["importedCount", default: 0] += 1
+                case "published":
+                    counts["importedCount", default: 0] += 1
+                    if deleteSources {
+                        do {
+                            try current()
+                            guard let result = value["result"] as? [String: Any], let taskID = result["taskId"] as? String,
+                                  try appleReminderSavedTaskIsLive(taskID, connection: connection) else { throw Self.appleReminderFailure }
+                            let latestRaw = try storage.readAppleRemindersImportState()
+                            let latest = try Self.appleReminderObject(invoke("appleReminderImportOptions", arguments: [latestRaw.map { $0 as Any } ?? NSNull()]), limit: 8 * 1024 * 1024)
+                            guard latest["deleteImportedReminders"] as? Bool == true,
+                                  Self.ownedEqual(latest["selectedListId"] as? String ?? "", selected),
+                                  let imported = latest["importedReminderIds"] as? [String], let importID = result["importKey"] as? String,
+                                  imported.contains(where: { Self.ownedEqual($0, importID) }) else { throw Self.appleReminderFailure }
+                            try current()
+                            let answer = try appleRemindersRead(["op": "remove", "listId": list.id, "sourceId": list.sourceID,
+                                "source": source.providerValue], cancellation: cancellation, drainAccepted: true)
+                            guard let reply = answer as? [String: Any], Set(reply.keys) == ["removed"],
+                                  Self.isBoolean(reply["removed"]), reply["removed"] as? Bool == true else { throw Self.appleReminderFailure }
+                            counts["deletedCount", default: 0] += 1
+                            _ = try? invoke("appleReminderSourceRemovalAcknowledged", arguments: ["confirmed"])
+                        } catch {
+                            counts["deleteFailedCount", default: 0] += 1
+                            _ = try? invoke("appleReminderSourceRemovalAcknowledged", arguments: ["unconfirmed"])
+                        }
+                        try current()
+                    }
                 case "keptSource": counts["failedCount", default: 0] += 1
                 case "noop":
                     let name: String
@@ -15474,6 +15492,24 @@ private final class Engine: @unchecked Sendable {
         let outcome = interrupted ? "interrupted" : "completed"
         _ = try? invoke("appleReminderImportRunAcknowledged", arguments: [outcome, counts["importedCount"]!, counts["failedCount"]!])
         return try Self.ownedJSON(["kind": outcome, "result": counts])
+    }
+
+    private func appleReminderSavedTaskIsLive(_ id: String, connection: SQLiteBridge) throws -> Bool {
+        // A pre-existing transaction cannot prove the saved task; leave it untouched.
+        _ = try connection.execute("BEGIN DEFERRED")
+        do {
+            let rows = try NativeJSON.jsonObject(with: Data(connection.execute("SELECT id,deletedAt,purgedAt FROM tasks WHERE id=?",
+                parametersJSON: Self.ownedJSON([id]), readOnly: true).utf8)) as? [[String: Any]]
+            guard let rows, rows.count <= 1 else { throw Self.appleReminderFailure }
+            var live = false
+            if let row = rows.first {
+                guard Set(row.keys) == ["id", "deletedAt", "purgedAt"], Self.ownedEqual(row["id"] as? String ?? "", id),
+                      [row["deletedAt"], row["purgedAt"]].allSatisfy({ $0 is NSNull || $0 is String }) else { throw Self.appleReminderFailure }
+                live = [row["deletedAt"], row["purgedAt"]].allSatisfy { $0 is NSNull || ($0 as? String) == "" }
+            }
+            _ = try connection.execute("ROLLBACK")
+            return live
+        } catch { _ = try? connection.execute("ROLLBACK"); throw error }
     }
 
     private func appleReminderItem(_ command: PendingCommand) throws -> AppleReminderItem {

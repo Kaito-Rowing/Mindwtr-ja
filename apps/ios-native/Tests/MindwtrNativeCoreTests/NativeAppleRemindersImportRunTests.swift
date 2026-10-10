@@ -45,10 +45,106 @@ final class NativeAppleRemindersImportRunTests: XCTestCase {
     }
     private func row(_ id: String, title: String = "Literal @home /due:today", completed: Bool = false) -> NativeAppleReminderSDKRow {
         .init(list: .init(id: "list", sourceID: "account"), source: .init(id: id, title: title, notes: "Notes", completed: completed,
-            creationDate: nil, startDate: nil, dueDate: nil))
+            creationDate: nil, startDate: nil, dueDate: nil, revision: "revision-1"))
     }
     private func refused(_ work: () async throws -> Void, file: StaticString = #filePath, line: UInt = #line) async {
         do { try await work(); XCTFail("Expected refusal", file: file, line: line) } catch { }
+    }
+
+    func testOnlyNewlyPublishedItemsDeleteAndColdDuplicateNeverRetries() async throws {
+        try settings(ids: ["known"], delete: true)
+        let sdk = AppleRemindersTestSDK(); sdk.immediate = [row("known"), row("done", completed: true), row("empty", title: " "), row("first"), row("second")]
+        let core = host(sdk); _ = try await core.start()
+        sdk.beforeRemove = { XCTAssertEqual(try self.rows().count, sdk.removals.count + 1) }
+        let reply = try object(await core.importAppleReminders())
+        XCTAssertEqual((reply["result"] as? [String: Int])?["deletedCount"], 2)
+        XCTAssertEqual((reply["result"] as? [String: Int])?["deleteFailedCount"], 0)
+        XCTAssertEqual(sdk.removals, ["first", "second"])
+        let log = try String(contentsOf: root.appendingPathComponent("logs/mindwtr.log"), encoding: .utf8)
+        XCTAssertTrue(log.contains("v1.3.5/ios-reminders-source-removal")); XCTAssertTrue(log.contains("confirmed"))
+        await core.close()
+        let next = host(sdk); _ = try await next.start(); _ = try await next.importAppleReminders()
+        XCTAssertEqual(sdk.removals, ["first", "second"])
+    }
+
+    func testDeleteFailurePreservesSavedTaskAndRegistryWithoutRetry() async throws {
+        try settings(delete: true)
+        let sdk = AppleRemindersTestSDK(); sdk.immediate = [row("first")]
+        var attempts = 0; sdk.beforeRemove = { attempts += 1; throw NativeAppleRemindersError.failed }
+        let core = host(sdk); _ = try await core.start()
+        let reply = try object(await core.importAppleReminders())
+        let counts = try XCTUnwrap(reply["result"] as? [String: Int])
+        XCTAssertEqual(counts["importedCount"], 1); XCTAssertEqual(counts["deletedCount"], 0)
+        XCTAssertEqual(counts["deleteFailedCount"], 1); XCTAssertEqual(counts["failedCount"], 0)
+        XCTAssertEqual(try rows().count, 1)
+        _ = try await core.importAppleReminders(); XCTAssertEqual(attempts, 1)
+        await core.close()
+        let next = host(sdk); _ = try await next.start(); _ = try await next.importAppleReminders()
+        XCTAssertEqual(attempts, 1); XCTAssertEqual(sdk.removals, [])
+    }
+
+    func testLostRemovalAcknowledgementIsNotRetried() async throws {
+        try settings(delete: true)
+        let sdk = AppleRemindersTestSDK(); sdk.immediate = [row("first")]
+        sdk.afterRemove = { throw NativeAppleRemindersError.failed }
+        let core = host(sdk); _ = try await core.start()
+        let reply = try object(await core.importAppleReminders())
+        XCTAssertEqual((reply["result"] as? [String: Int])?["deleteFailedCount"], 1)
+        XCTAssertEqual(sdk.removals, ["first"])
+        await core.close()
+        let next = host(sdk); _ = try await next.start(); _ = try await next.importAppleReminders()
+        XCTAssertEqual(sdk.removals, ["first"]); XCTAssertEqual(try rows().count, 1)
+    }
+
+    func testMissingRevisionKeepsSourceButStillImports() async throws {
+        try settings(delete: true)
+        var source = row("first").source; source.revision = nil
+        let sdk = AppleRemindersTestSDK(); sdk.immediate = [.init(list: row("first").list, source: source)]
+        let core = host(sdk); _ = try await core.start()
+        let reply = try object(await core.importAppleReminders())
+        XCTAssertEqual((reply["result"] as? [String: Int])?["importedCount"], 1)
+        XCTAssertEqual((reply["result"] as? [String: Int])?["deleteFailedCount"], 1)
+        XCTAssertEqual(sdk.removals, [])
+    }
+
+    func testRefusedTransactionEntryCannotDeleteOrRollbackUnownedTransaction() async throws {
+        try settings(delete: true)
+        let sdk = AppleRemindersTestSDK(); sdk.immediate = [row("first")]
+        let faults = HostIOFaults(), core = host(sdk, faults: faults); _ = try await core.start()
+        var published = false, rejected = false, rollbacks = 0
+        faults.journalRemove = { published = true }
+        faults.beforeSQL = { sql in
+            if published && sql == "BEGIN DEFERRED" { rejected = true; throw HostFailure("Existing transaction") }
+            if rejected && sql == "ROLLBACK" { rollbacks += 1 }
+        }
+        let reply = try object(await core.importAppleReminders())
+        XCTAssertTrue(rejected); XCTAssertEqual(rollbacks, 0); XCTAssertEqual(sdk.removals, [])
+        XCTAssertEqual((reply["result"] as? [String: Int])?["deleteFailedCount"], 1)
+        XCTAssertEqual(try rows().count, 1)
+    }
+
+    func testMissingSourceIDCannotDeleteButTaskIsSaved() async throws {
+        try settings(delete: true)
+        let sdk = AppleRemindersTestSDK(); sdk.immediate = [row("")]
+        let core = host(sdk); _ = try await core.start()
+        let reply = try object(await core.importAppleReminders())
+        XCTAssertEqual((reply["result"] as? [String: Int])?["importedCount"], 1)
+        XCTAssertEqual((reply["result"] as? [String: Int])?["deleteFailedCount"], 1)
+        XCTAssertEqual(sdk.removals, []); XCTAssertEqual(try rows().count, 1)
+    }
+
+    func testTaskDeletedAfterPublicationKeepsReminder() async throws {
+        try settings(delete: true)
+        let sdk = AppleRemindersTestSDK(); sdk.immediate = [row("first")]
+        let faults = HostIOFaults(), core = host(sdk, faults: faults); _ = try await core.start()
+        faults.journalRemove = {
+            let db = try SQLiteBridge(url: self.database); defer { db.close() }
+            _ = try db.execute("UPDATE tasks SET deletedAt='2026-10-10T00:00:00.000Z'")
+        }
+        let reply = try object(await core.importAppleReminders())
+        XCTAssertEqual((reply["result"] as? [String: Int])?["importedCount"], 1)
+        XCTAssertEqual((reply["result"] as? [String: Int])?["deleteFailedCount"], 1)
+        XCTAssertEqual(sdk.removals, [])
     }
 
     func testSharedSkipCountsAndLiteralTasksWithOneSnapshot() async throws {
@@ -98,6 +194,7 @@ final class NativeAppleRemindersImportRunTests: XCTestCase {
     }
 
     func testMidRunSaveFailureStopsAndColdRecoveryOnlySettlesAcceptedItem() async throws {
+        try settings(delete: true)
         let sdk = AppleRemindersTestSDK(); sdk.immediate = [row("first"), row("second"), row("third")]
         let faults = HostIOFaults(), core = host(sdk, faults: faults); _ = try await core.start()
         var inserts = 0
@@ -109,9 +206,11 @@ final class NativeAppleRemindersImportRunTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path)); await core.close(); XCTAssertEqual(try rows().count, 1)
         let next = host(sdk); _ = try await next.start(); XCTAssertEqual(try rows().count, 2)
         XCTAssertEqual(sdk.fetches, 1, "Cold item recovery must not fetch or replay unaccepted provider rows")
+        XCTAssertEqual(sdk.removals, ["first"], "Cold recovery cannot replay source removal")
         let resumed = try object(await next.importAppleReminders())
         XCTAssertEqual((resumed["result"] as? [String: Int])?["importedCount"], 1)
         XCTAssertEqual((resumed["result"] as? [String: Int])?["skippedDuplicateCount"], 2)
+        XCTAssertEqual(sdk.removals, ["first", "third"])
         await next.close(); XCTAssertEqual(try rows().count, 3)
     }
 
@@ -123,11 +222,10 @@ final class NativeAppleRemindersImportRunTests: XCTestCase {
         await core.close()
     }
 
-    func testDisabledAutomaticAndUnsupportedDeletionDoNotReadProvider() async throws {
+    func testDisabledAutomaticDoesNotReadProvider() async throws {
         try settings(automatic: false, delete: true)
         let sdk = AppleRemindersTestSDK(), core = host(sdk); _ = try await core.start()
         let result = try object(await core.importAppleReminders(automatic: true)); XCTAssertEqual(result["kind"] as? String, "noop")
-        await refused { _ = try await core.importAppleReminders() }
         XCTAssertEqual(sdk.requests, 0); XCTAssertEqual(sdk.listReads, 0); XCTAssertEqual(sdk.fetches, 0); XCTAssertEqual(snapshotCount, 0)
         await core.close(); XCTAssertEqual(try rows().count, 0)
     }

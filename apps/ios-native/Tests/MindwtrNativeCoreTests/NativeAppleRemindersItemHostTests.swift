@@ -76,14 +76,13 @@ final class NativeAppleRemindersItemHostTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 
-    func testDeleteEnabledIsPreservedAndRefusedBeforeTaskWrite() async throws {
+    func testDeleteEnabledItemSettlementSavesTaskAndPreservesPreference() async throws {
         var original = try registry(); original["deleteImportedReminders"] = true; try setRegistry(original)
         let core = host(); _ = try await core.start()
-        let before = try json(rows("SELECT * FROM tasks"))
-        await refused { _ = try await core.importAppleReminderItem(source: self.source(), list: self.list) }
+        _ = try await core.importAppleReminderItem(source: source(), list: list)
         await core.close()
-        XCTAssertEqual(try json(rows("SELECT * FROM tasks")), before)
-        XCTAssertEqual(try json(registry()), try json(original))
+        XCTAssertEqual(try rows("SELECT * FROM tasks").count, 1)
+        XCTAssertEqual(try registry()["deleteImportedReminders"] as? Bool, true)
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 

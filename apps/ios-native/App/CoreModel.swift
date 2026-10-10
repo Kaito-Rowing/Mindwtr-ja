@@ -7480,7 +7480,7 @@ final class CoreModel: ObservableObject {
         } catch { appleRemindersError = error.localizedDescription }
     }
     func importAppleRemindersNow() {
-        guard appleRemindersCanEdit, !appleRemindersSettings.flag("deleteImportedReminders") else { return }
+        guard appleRemindersCanEdit else { return }
         if appleRemindersSettings.text("selectedListId").isEmpty { chooseAppleRemindersList(); return }
         beginAppleRemindersWork(.importAll)
     }
@@ -7536,7 +7536,8 @@ final class CoreModel: ObservableObject {
                           counts.values.allSatisfy({ $0 >= 0 && $0 <= 10_000 }) else { throw CocoaError(.coderReadCorrupt) }
                     if current() {
                         let skipped = counts["skippedDuplicateCount"]! + counts["skippedCompletedCount"]! + counts["skippedEmptyTitleCount"]!
-                        self.appleRemindersStatus = [("importedCount", counts["importedCount"]!), ("skippedCount", skipped), ("failedCount", counts["failedCount"]!)]
+                        self.appleRemindersStatus = [("importedCount", counts["importedCount"]!), ("skippedCount", skipped), ("failedCount", counts["failedCount"]!),
+                            ("deletedCount", counts["deletedCount"]!), ("deleteFailedCount", counts["deleteFailedCount"]!)]
                             .filter { $0.0 == "importedCount" || $0.1 > 0 }
                             .map { self.label("settings.appleRemindersImport." + $0.0).replacingOccurrences(of: "{{taskCount}}", with: String($0.1)) }.joined(separator: "\n")
                     }
@@ -10626,7 +10627,7 @@ final class CoreModel: ObservableObject {
                     "settings.feedbackEmail", "settings.feedbackEmailPlaceholder", "settings.feedbackIncludeDiagnostics", "settings.feedbackIncludeDiagnosticsDesc", "settings.feedbackPrivacy",
                     "settings.feedbackSubmit", "settings.feedbackSending", "settings.feedbackSent", "settings.feedbackFailed", "settings.feedbackUnavailable", "settings.feedbackUnavailableDesc",
                     "settings.feedbackOpenGitHubIssue", "settings.feedbackGitHubDesc", "settings.feedbackOpenGitHubDiscussion", "settings.feedbackRequired", "settings.feedbackInvalidEmail",
-                    "settings.appleRemindersImport.appleReminders", "settings.appleRemindersImport.captureList", "settings.appleRemindersImport.chooseCaptureList", "settings.appleRemindersImport.deleteAfterImport", "settings.appleRemindersImport.deleteAfterImportDescription", "settings.appleRemindersImport.autoImport", "settings.appleRemindersImport.autoImportDescription", "settings.appleRemindersImport.importIncomplete", "settings.appleRemindersImport.importIncompleteDescription", "settings.appleRemindersImport.permissionRequired", "settings.appleRemindersImport.noListsFound", "settings.appleRemindersImport.importedCount", "settings.appleRemindersImport.skippedCount", "settings.appleRemindersImport.failedCount",
+                    "settings.appleRemindersImport.appleReminders", "settings.appleRemindersImport.captureList", "settings.appleRemindersImport.chooseCaptureList", "settings.appleRemindersImport.deleteAfterImport", "settings.appleRemindersImport.deleteAfterImportDescription", "settings.appleRemindersImport.autoImport", "settings.appleRemindersImport.autoImportDescription", "settings.appleRemindersImport.importIncomplete", "settings.appleRemindersImport.importIncompleteDescription", "settings.appleRemindersImport.permissionRequired", "settings.appleRemindersImport.noListsFound", "settings.appleRemindersImport.importedCount", "settings.appleRemindersImport.skippedCount", "settings.appleRemindersImport.failedCount", "settings.appleRemindersImport.deletedCount", "settings.appleRemindersImport.deleteFailedCount",
                     "viewSections.add", "viewSections.nameHint", "viewSections.namePlaceholder", "viewSections.updateFailed"]
         let result = try await query("strings", [try json(keys)])
         guard let translated = result["strings"] as? CoreObject, translated.values.allSatisfy({ $0 is String }) else {

@@ -424,15 +424,15 @@ struct SettingsScreen: View {
                         set: { model.saveAppleRemindersPreference(["type": "deleteImportedReminders", "value": $0]) })) {
                         Text(model.label("settings.appleRemindersImport.deleteAfterImport")).rnFont(16, .semibold)
                             .fixedSize(horizontal: false, vertical: true)
-                    }.disabled(!model.appleRemindersCanEdit || !model.appleRemindersSettings.flag("deleteImportedReminders"))
+                    }.disabled(!model.appleRemindersCanEdit)
                         .accessibilityIdentifier("apple-reminders-delete")
-                    Text("Source reminders are kept. Deleting them after import is not available yet.").rnFont(13)
+                    Text(model.label("settings.appleRemindersImport.deleteAfterImportDescription")).rnFont(13)
                         .foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                     Button { model.importAppleRemindersNow() } label: {
                         Text(model.label("settings.appleRemindersImport.importIncomplete")).rnFont(16, .semibold)
                             .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, minHeight: 44)
                     }.buttonStyle(.borderedProminent)
-                        .disabled(!model.appleRemindersCanEdit || model.appleRemindersSettings.flag("deleteImportedReminders"))
+                        .disabled(!model.appleRemindersCanEdit)
                         .accessibilityIdentifier("apple-reminders-import")
                     Text(model.label("settings.appleRemindersImport.importIncompleteDescription")).rnFont(13)
                         .foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)

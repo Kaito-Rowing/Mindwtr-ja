@@ -63,6 +63,10 @@ final class NativeAppleRemindersSettingsTests: XCTestCase {
         XCTAssertEqual(saved["autoImportOnOpen"] as? Bool, true)
         let cleared = try object(await core.setAppleRemindersSetting(editJSON: #"{"type":"deleteImportedReminders","value":false}"#, expectedRaw: raw))
         XCTAssertEqual((cleared["settings"] as? [String: Any])?["deleteImportedReminders"] as? Bool, false)
+        let enabled = try object(await core.setAppleRemindersSetting(editJSON: #"{"type":"deleteImportedReminders","value":true}"#,
+            expectedRaw: try XCTUnwrap(cleared["expectedRaw"] as? String)))
+        XCTAssertEqual((enabled["settings"] as? [String: Any])?["deleteImportedReminders"] as? Bool, true)
+        XCTAssertEqual(try object(XCTUnwrap(enabled["expectedRaw"] as? String))["importedReminderIds"] as? [String], ["one", "two"])
         let log = try String(contentsOf: root.appendingPathComponent("logs/mindwtr.log"), encoding: .utf8)
         XCTAssertTrue(log.contains("Native Reminders preference saved")); XCTAssertTrue(log.contains("v1.3.5/ios-reminders-setting"))
         await core.close(); try assertNoTaskWrites()
@@ -100,11 +104,11 @@ final class NativeAppleRemindersSettingsTests: XCTestCase {
         XCTAssertEqual(try object(deniedCurrent)["expectedRaw"] as? String, initial)
     }
 
-    func testMalformedEditsAndDeletionEnableCannotMutate() async throws {
+    func testMalformedEditsCannotMutate() async throws {
         try seed(initial); let core = host(); _ = try await core.start()
         for edit in [#"{"type":"autoImportOnOpen","value":true,"value":false}"#,
                      #"{"type":"autoImportOnOpen","value":1}"#, #"{"type":"importedReminderIds","value":[]}"#,
-                     #"{"type":"deleteImportedReminders","value":true}"#] {
+                     #"{"type":"deleteImportedReminders","value":"true"}"#] {
             await refused { _ = try await core.setAppleRemindersSetting(editJSON: edit, expectedRaw: initial) }
         }
         let current = try await core.readAppleRemindersSettings()

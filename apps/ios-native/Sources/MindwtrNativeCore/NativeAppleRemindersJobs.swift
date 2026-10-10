@@ -1,12 +1,13 @@
 import Foundation
 
-/// Private read-only tickets. No Host/JSC entry point is installed by this prerequisite.
+/// Private serial tickets; an accepted SDK mutation retains ownership through its return.
 final class NativeAppleRemindersJobs: @unchecked Sendable {
     static let maximumRequestBytes = NativeCalendarJobs.maximumRequestBytes
     static let maximumReplyBytes = NativeCalendarJobs.maximumReplyBytes
     struct Reply: Sendable { let json: String; let completed: Bool }
     private enum Request {
         case permission, requestPermission, lists, read(NativeAppleReminderListIdentity)
+        case remove(NativeAppleReminderListIdentity, NativeAppleReminderSourceDTO)
     }
     private final class Job {
         let id: String, registryID: UUID, token: NativeAttachmentCancellation, request: Request
@@ -47,6 +48,14 @@ final class NativeAppleRemindersJobs: @unchecked Sendable {
                 }
                 let identity = NativeAppleReminderListIdentity(id: id, sourceID: sourceID)
                 try NativeAppleRemindersValidation.identity(identity); return .read(identity)
+            case "remove":
+                guard Set(value.keys) == ["op", "listId", "sourceId", "source"],
+                      let id = value["listId"] as? String, let sourceID = value["sourceId"] as? String,
+                      let row = value["source"] as? [String: Any] else { throw NativeAppleRemindersError.invalid }
+                let identity = NativeAppleReminderListIdentity(id: id, sourceID: sourceID)
+                let source = try NativeAppleRemindersValidation.source(row)
+                try NativeAppleRemindersValidation.identity(identity); try NativeAppleRemindersValidation.removal(source)
+                return .remove(identity, source)
             default: throw NativeAppleRemindersError.invalid
             }
         } catch { throw NativeAppleRemindersError.invalid }
@@ -82,6 +91,9 @@ final class NativeAppleRemindersJobs: @unchecked Sendable {
             switch job.request {
             case .permission: finish(job, result: .success(["status": provider.permission().rawValue]))
             case .lists: finish(job, result: .success(try provider.lists().map(\.value)))
+            case .remove(let list, let source):
+                try provider.remove(list: list, source: source, cancellation: job.token)
+                finish(job, result: .success(["removed": true]))
             case .requestPermission:
                 provider.requestPermission { [self, job] result in
                     worker.async { self.finish(job, result: result.map { ["status": $0.rawValue] as Any }) }
@@ -116,7 +128,7 @@ final class NativeAppleRemindersJobs: @unchecked Sendable {
         case .listChanged: return "Apple Reminders list changed"
         case .tooLarge: return "Apple Reminders reply exceeds the limit"
         case .cancelled: return "Apple Reminders request cancelled"
-        case .failed: return "Apple Reminders read failed"
+        case .failed: return "Apple Reminders operation failed"
         }
     }
     private func error(_ error: NativeAppleRemindersError, id: String) -> String {

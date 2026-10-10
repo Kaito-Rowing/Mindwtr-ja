@@ -4056,6 +4056,16 @@ globalThis.MindwtrHost = {
             return result;
         });
     },
+    appleReminderSourceRemovalAcknowledged(outcome: string): string {
+        return submit(async () => {
+            if (globalThis.__mindwtrHostPlatform !== 'ios' || !['confirmed', 'unconfirmed'].includes(outcome))
+                throw new Error('INVALID_INPUT: Invalid Reminders removal outcome');
+            logInfo('Native Reminders source removal finished', { scope: 'native-ios', force: true,
+                context: { releaseCheck: 'v1.3.5/ios-reminders-source-removal', outcome } });
+            await diagnosticsLog.serialize(async () => undefined);
+            return {};
+        });
+    },
     appleReminderImportRunAcknowledged(outcome: string, importedCount: number, failedCount: number): string {
         return submit(async () => {
             if (globalThis.__mindwtrHostPlatform !== 'ios' || !['completed', 'interrupted'].includes(outcome)
@@ -4100,8 +4110,6 @@ globalThis.MindwtrHost = {
                 if (!['autoImportOnOpen', 'deleteImportedReminders'].includes(edit.type as string)
                     || Object.keys(edit).sort().join(',') !== 'type,value' || typeof edit.value !== 'boolean')
                     throw new Error('INVALID_INPUT: Invalid Reminders preference');
-                if (edit.type === 'deleteImportedReminders' && edit.value)
-                    throw new Error('NOT_READY: Reminders source deletion is not available');
                 registry[edit.type as 'autoImportOnOpen' | 'deleteImportedReminders'] = edit.value;
             }
             return { nextRaw: JSON.stringify(normalizeAppleRemindersImportSettings(registry)) };
@@ -4132,7 +4140,6 @@ globalThis.MindwtrHost = {
                 || !source.reminder || typeof source.reminder !== 'object')
                 throw new Error('INVALID_INPUT: Invalid native Reminders source');
             const registry = appleReminderRegistry(registryRaw);
-            if (registry.deleteImportedReminders) throw new Error('NOT_READY: Reminders source deletion is not available');
             if (registry.selectedListId !== source.list.id) throw new Error('STALE_REVISION: The selected Reminders list changed');
             const candidate = classifyAppleReminderForImport(source.reminder, source.list.id.trim(), new Set(registry.importedReminderIds));
             if (candidate.kind !== 'candidate') return { kind: 'noop', reason: candidate.kind };

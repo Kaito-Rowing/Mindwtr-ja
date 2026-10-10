@@ -30,13 +30,15 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.5 (add before tagging, trim in the release after)
 
+- `ios-reminders-source-removal` — `apps/android-native/bundle/host-entry.ts`: saved Diagnostics must show `Native Reminders source removal finished`, `releaseCheck=v1.3.5/ios-reminders-source-removal`, and `outcome=confirmed|unconfirmed` after an opt-in removal attempt following durable task/registry publication. Confirmed means the SDK returned success; unconfirmed can include an accepted deletion with a lost acknowledgment and must not be read as proof the source still exists. No automatic retry on duplicates or cold recovery. No reminder content or identifiers are logged.
+
 - `ios-reminders-foreground` — `apps/ios-native/App/CoreModel.swift`: `Native Reminders foreground import stopped` with `outcome=stopped` records a foreground import failure without surfacing an unsolicited toast or logging provider data. A retained item still uses the standard save-recovery gate. Successful run counts use `ios-reminders-run`.
 
 - `ios-reminders-access` — `apps/android-native/bundle/host-entry.ts`: `Native Reminders access request finished`, `releaseCheck=v1.3.5/ios-reminders-access`, and a fixed permission outcome prove the explicit callback drained and the active Settings request was readmitted. No account, list or reminder content is logged.
 
 - `ios-reminders-setting` — `apps/android-native/bundle/host-entry.ts`: saved Diagnostics must show `Native Reminders preference saved`, `releaseCheck=v1.3.5/ios-reminders-setting`, and `outcome=confirmed` after the fixed-cell CAS and readback complete. It logs no preference values, list identifiers, titles or imported reminder IDs.
 
-- **`v1.3.5/ios-reminders-run`** — `apps/android-native/bundle/host-entry.ts`. Forced `Native Reminders import run finished` records `outcome=completed|interrupted`, `importedCount` and `failedCount` after the private serial coordinator processes the bounded provider response. Imported count includes only settled item/registry acknowledgments. Interrupted does not mean the retained final item was undone. No source content or identifiers are logged; this path never deletes a reminder.
+- **`v1.3.5/ios-reminders-run`** — `apps/android-native/bundle/host-entry.ts`. Forced `Native Reminders import run finished` records `outcome=completed|interrupted`, `importedCount` and `failedCount` after the private serial coordinator processes the bounded provider response. Imported count includes only settled item/registry acknowledgments. Interrupted does not mean the retained final item was undone. No source content or identifiers are logged; optional source removal has its own outcome marker.
 
 - `ios-reminders-item` — `apps/android-native/bundle/host-entry.ts` (`appleReminderItemAcknowledged`, called by the native journal owner): saved Diagnostics must show `Native Reminders item and import registry confirmed`, `releaseCheck=v1.3.5/ios-reminders-item`, and `outcome=confirmed` after the exact task receipt and retained registry publication settle. This internal import path keeps the source reminder; it does not prove source deletion or provider access.
 

@@ -9,6 +9,9 @@ final class AppleRemindersTestSDK: NativeAppleRemindersSDK, @unchecked Sendable 
     var receive: ((() throws -> [NativeAppleReminderSDKRow]?) -> Void)?
     var beforeFetchReturn: (() -> Void)?
     var immediate: [NativeAppleReminderSDKRow]?
+    var beforeRemove: (() throws -> Void)?
+    var afterRemove: (() throws -> Void)?
+    private(set) var removals: [String] = []
     private(set) var requests = 0
     private(set) var listReads = 0
     private(set) var fetches = 0
@@ -28,16 +31,56 @@ final class AppleRemindersTestSDK: NativeAppleRemindersSDK, @unchecked Sendable 
         lock.lock(); cancellations.append(token as! UUID); lock.unlock()
         // Real EventKit suppresses the completion; deliberately do not call receive.
     }
+    func remove(list: NativeAppleReminderListIdentity, source: NativeAppleReminderSourceDTO, cancellation: NativeAttachmentCancellation) throws {
+        try beforeRemove?()
+        guard !cancellation.isCancelled else { throw NativeAppleRemindersError.cancelled }
+        guard let actual = immediate?.first(where: { $0.source.id == source.id }), actual.list.matches(list) else {
+            throw NativeAppleRemindersError.listChanged
+        }
+        try NativeAppleRemindersValidation.unchanged(actual.source, expected: source)
+        lock.lock(); removals.append(source.id!); lock.unlock()
+        try afterRemove?()
+    }
     func deliver(_ rows: [NativeAppleReminderSDKRow]?) { receive? { rows } }
     static func row(_ id: String = "item", completed: Bool = false,
                     list: String = "list", account: String = "account", notes: String? = nil) -> NativeAppleReminderSDKRow {
         .init(list: .init(id: list, sourceID: account), source: .init(id: id, title: " Title ", notes: notes,
-            completed: completed, creationDate: nil, startDate: nil, dueDate: nil))
+            completed: completed, creationDate: nil, startDate: nil, dueDate: nil, revision: "revision-1"))
     }
 }
 
 final class NativeAppleRemindersProviderTests: XCTestCase {
     private let list = NativeAppleReminderListIdentity(id: "list", sourceID: "account")
+
+    func testRemovalRequiresFreshPermissionListAndUnchangedSource() throws {
+        let sdk = AppleRemindersTestSDK(); let source = AppleRemindersTestSDK.row().source
+        sdk.immediate = [.init(list: list, source: source)]
+        var permission = NativeAppleRemindersPermission.denied
+        let provider = NativeAppleRemindersProvider(status: { permission }, sdkFactory: { sdk })
+        XCTAssertThrowsError(try provider.remove(list: list, source: source, cancellation: .init()))
+        permission = .granted
+        XCTAssertThrowsError(try provider.remove(list: .init(id: "list", sourceID: "other"), source: source, cancellation: .init()))
+        var changed = source; changed.revision = "revision-2"
+        sdk.immediate = [.init(list: list, source: changed)]
+        XCTAssertThrowsError(try provider.remove(list: list, source: source, cancellation: .init()))
+        sdk.immediate = [.init(list: list, source: source)]
+        let cancelled = NativeAttachmentCancellation(); cancelled.cancel()
+        XCTAssertThrowsError(try provider.remove(list: list, source: source, cancellation: cancelled))
+        XCTAssertEqual(sdk.removals, [])
+        try provider.remove(list: list, source: source, cancellation: .init())
+        XCTAssertEqual(sdk.removals, ["item"])
+    }
+
+    func testRemovalWitnessIsPrivateAndExactAndMissingWitnessRefuses() throws {
+        let source = AppleRemindersTestSDK.row(notes: "caf\u{e9}").source
+        XCTAssertNil(source.value["revision"]); XCTAssertEqual(source.providerValue["revision"] as? String, "revision-1")
+        let changed = AppleRemindersTestSDK.row(notes: "cafe\u{301}").source
+        XCTAssertThrowsError(try NativeAppleRemindersValidation.unchanged(changed, expected: source))
+        var missing = source; missing.revision = nil
+        XCTAssertThrowsError(try NativeAppleRemindersValidation.removal(missing))
+        XCTAssertThrowsError(try NativeAppleRemindersValidation.source(["completed": 1]))
+        XCTAssertThrowsError(try NativeAppleRemindersValidation.source(["completed": false, "other": "value"]))
+    }
 
     func testPassivePermissionNeverCreatesSDKAndDeniedReadsNeverFetch() throws {
         var factories = 0

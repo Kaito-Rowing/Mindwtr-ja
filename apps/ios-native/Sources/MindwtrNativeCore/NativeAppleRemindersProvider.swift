@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 enum NativeAppleRemindersPermission: String, Sendable { case granted, denied, undetermined, unavailable }
 enum NativeAppleRemindersError: Error, Equatable, Sendable { case denied, unavailable, invalid, listChanged, tooLarge, cancelled, failed }
@@ -22,6 +23,10 @@ struct NativeAppleReminderSourceDTO: Sendable {
     let id: String?, title: String?, notes: String?
     let completed: Bool
     let creationDate: String?, startDate: String?, dueDate: String?
+    var revision: String? = nil
+    var providerValue: [String: Any] {
+        var result = value; if let revision { result["revision"] = revision }; return result
+    }
     var value: [String: Any] {
         var result: [String: Any] = ["completed": completed]
         for (name, value) in [("id", id), ("title", title), ("notes", notes),
@@ -34,7 +39,7 @@ struct NativeAppleReminderSourceDTO: Sendable {
 struct NativeAppleReminderReadDTO: Sendable {
     let list: NativeAppleReminderListIdentity
     let sources: [NativeAppleReminderSourceDTO]
-    var value: [String: Any] { ["listId": list.id, "sourceId": list.sourceID, "sources": sources.map(\.value)] }
+    var value: [String: Any] { ["listId": list.id, "sourceId": list.sourceID, "sources": sources.map(\.providerValue)] }
 }
 
 /// SDK callback input stays on its stack; only validated immutable DTOs leave it.
@@ -48,6 +53,7 @@ protocol NativeAppleRemindersSDK: AnyObject {
     func fetch(list: NativeAppleReminderListIdentity,
                receive: @escaping (() throws -> [NativeAppleReminderSDKRow]?) -> Void) throws -> Any
     func cancelFetch(_ token: Any)
+    func remove(list: NativeAppleReminderListIdentity, source: NativeAppleReminderSourceDTO, cancellation: NativeAttachmentCancellation) throws
 }
 
 enum NativeAppleRemindersValidation {
@@ -70,6 +76,23 @@ enum NativeAppleRemindersValidation {
             guard minimumBytes <= NativeCalendarJobs.maximumReplyBytes else { throw NativeAppleRemindersError.tooLarge }
         }
     }
+    static func source(_ row: [String: Any]) throws -> NativeAppleReminderSourceDTO {
+        guard Set(row.keys).isSubset(of: ["id", "title", "notes", "completed", "creationDate", "startDate", "dueDate", "revision"]),
+              let completed = row["completed"] as? NSNumber, CFGetTypeID(completed) == CFBooleanGetTypeID(),
+              row.allSatisfy({ $0.key == "completed" || $0.value is String }) else { throw NativeAppleRemindersError.invalid }
+        return .init(id: row["id"] as? String, title: row["title"] as? String, notes: row["notes"] as? String,
+            completed: completed.boolValue, creationDate: row["creationDate"] as? String, startDate: row["startDate"] as? String,
+            dueDate: row["dueDate"] as? String, revision: row["revision"] as? String)
+    }
+    static func removal(_ source: NativeAppleReminderSourceDTO) throws {
+        guard let id = source.id, NativeCalendarWriteValidation.id(id), !source.completed,
+              let revision = source.revision, NativeCalendarWriteValidation.id(revision) else { throw NativeAppleRemindersError.invalid }
+    }
+    static func unchanged(_ actual: NativeAppleReminderSourceDTO, expected: NativeAppleReminderSourceDTO) throws {
+        try removal(expected)
+        guard try JSONSerialization.data(withJSONObject: actual.providerValue, options: [.sortedKeys])
+            == JSONSerialization.data(withJSONObject: expected.providerValue, options: [.sortedKeys]) else { throw NativeAppleRemindersError.listChanged }
+    }
     static func read(_ rows: [NativeAppleReminderSDKRow]?, list: NativeAppleReminderListIdentity) throws -> NativeAppleReminderReadDTO {
         guard let rows else { throw NativeAppleRemindersError.failed }
         guard rows.count <= maximumRows else { throw NativeAppleRemindersError.tooLarge }
@@ -81,7 +104,7 @@ enum NativeAppleRemindersValidation {
                 guard id.utf8.count <= 1024 else { throw NativeAppleRemindersError.tooLarge }
                 if !id.isEmpty, !ids.insert(Data(id.utf8)).inserted { throw NativeAppleRemindersError.invalid }
             }
-            for value in [source.id, source.title, source.notes, source.creationDate, source.startDate, source.dueDate] {
+            for value in [source.id, source.title, source.notes, source.creationDate, source.startDate, source.dueDate, source.revision] {
                 try text(value); minimumBytes += value?.utf8.count ?? 0
             }
             // Bound raw payload before whole JSON encoding; jobs also check escapes/envelope bytes.
@@ -144,6 +167,13 @@ final class NativeAppleRemindersProvider {
     func requireList(_ identity: NativeAppleReminderListIdentity) throws {
         try NativeAppleRemindersValidation.identity(identity)
         guard try lists().filter({ $0.identity.matches(identity) }).count == 1 else { throw NativeAppleRemindersError.listChanged }
+    }
+    func remove(list: NativeAppleReminderListIdentity, source: NativeAppleReminderSourceDTO, cancellation: NativeAttachmentCancellation) throws {
+        try NativeAppleRemindersValidation.removal(source)
+        _ = try NativeAppleRemindersValidation.read([.init(list: list, source: source)], list: list)
+        try requireList(list)
+        guard !cancellation.isCancelled else { throw NativeAppleRemindersError.cancelled }
+        try sdk().remove(list: list, source: source, cancellation: cancellation)
     }
     func beginRead(list: NativeAppleReminderListIdentity, cancellation: NativeAttachmentCancellation,
                    completion: @escaping (Result<NativeAppleReminderReadDTO, NativeAppleRemindersError>) -> Void) throws -> UUID {
@@ -292,14 +322,30 @@ private final class NativeAppleRemindersSystemSDK: NativeAppleRemindersSDK {
                 let calendar = Calendar.current
                 return try reminders.map { reminder in
                     guard let sourceList = reminder.calendar else { throw NativeAppleRemindersError.listChanged }
-                    return NativeAppleReminderSDKRow(list: try Self.identity(sourceList), source: .init(
-                        id: reminder.calendarItemIdentifier, title: reminder.title, notes: reminder.notes,
-                        completed: reminder.isCompleted, creationDate: NativeAppleRemindersDates.date(reminder.creationDate),
-                        startDate: NativeAppleRemindersDates.components(reminder.startDateComponents, calendar: calendar),
-                        dueDate: NativeAppleRemindersDates.components(reminder.dueDateComponents, calendar: calendar)))
+                    return NativeAppleReminderSDKRow(list: try Self.identity(sourceList), source: Self.source(reminder, calendar: calendar))
                 }
             }
         }
+    }
+    private static func source(_ reminder: EKReminder, calendar: Calendar) -> NativeAppleReminderSourceDTO {
+        .init(id: reminder.calendarItemIdentifier, title: reminder.title, notes: reminder.notes,
+            completed: reminder.isCompleted, creationDate: NativeAppleRemindersDates.date(reminder.creationDate),
+            startDate: NativeAppleRemindersDates.components(reminder.startDateComponents, calendar: calendar),
+            dueDate: NativeAppleRemindersDates.components(reminder.dueDateComponents, calendar: calendar),
+            revision: reminder.lastModifiedDate.map { String($0.timeIntervalSince1970.bitPattern, radix: 16) })
+    }
+    func remove(list: NativeAppleReminderListIdentity, source: NativeAppleReminderSourceDTO, cancellation: NativeAttachmentCancellation) throws {
+        try NativeAppleRemindersValidation.removal(source)
+        let store = store
+        store.reset()
+        guard let reminder = store.calendarItem(withIdentifier: source.id!) as? EKReminder,
+              let calendar = reminder.calendar, calendar.allowsContentModifications,
+              try Self.identity(calendar).matches(list) else { throw NativeAppleRemindersError.listChanged }
+        try NativeAppleRemindersValidation.unchanged(Self.source(reminder, calendar: .current), expected: source)
+        guard Self.permission() == .granted else { throw NativeAppleRemindersError.denied }
+        guard !cancellation.isCancelled else { throw NativeAppleRemindersError.cancelled }
+        // EventKit has no compare-and-delete; never retry an uncertain commit.
+        try store.remove(reminder, commit: true)
     }
     func cancelFetch(_ token: Any) { store.cancelFetchRequest(token) }
 }
@@ -310,12 +356,16 @@ private final class NativeAppleRemindersSystemSDK: NativeAppleRemindersSDK {
     func lists() throws -> [NativeAppleReminderListDTO] { throw NativeAppleRemindersError.unavailable }
     func fetch(list: NativeAppleReminderListIdentity,
                receive: @escaping (() throws -> [NativeAppleReminderSDKRow]?) -> Void) throws -> Any { throw NativeAppleRemindersError.unavailable }
+    func remove(list: NativeAppleReminderListIdentity, source: NativeAppleReminderSourceDTO, cancellation: NativeAttachmentCancellation) throws {
+        throw NativeAppleRemindersError.unavailable
+    }
     func cancelFetch(_ token: Any) {}
 }
 #endif
 
 #if DEBUG && targetEnvironment(simulator)
 final class NativeAppleRemindersFixtureSDK: NativeAppleRemindersSDK {
+    private var removed = Set<String>()
     func requestPermission(_ completion: @escaping (Result<Void, NativeAppleRemindersError>) -> Void) { completion(.success(())) }
     func lists() throws -> [NativeAppleReminderListDTO] {
         [.init(identity: .init(id: "fixture-capture", sourceID: "fixture-account"), title: "Capture List", color: nil),
@@ -324,10 +374,16 @@ final class NativeAppleRemindersFixtureSDK: NativeAppleRemindersSDK {
     func fetch(list: NativeAppleReminderListIdentity, receive: @escaping (() throws -> [NativeAppleReminderSDKRow]?) -> Void) throws -> Any {
         let rows = [("fixture-first", "Literal @home /due:tomorrow", false), ("fixture-second", "Second reminder", false),
                     ("fixture-done", "Completed reminder", true), ("fixture-empty", "  ", false)]
+            .filter { !removed.contains($0.0) }
             .map { id, title, completed in NativeAppleReminderSDKRow(list: list,
                 source: .init(id: id, title: title, notes: "Native Reminders fixture notes", completed: completed,
-                    creationDate: nil, startDate: nil, dueDate: nil)) }
+                    creationDate: nil, startDate: nil, dueDate: nil, revision: "fixture-1")) }
         receive { rows }; return UUID()
+    }
+    func remove(list: NativeAppleReminderListIdentity, source: NativeAppleReminderSourceDTO, cancellation: NativeAttachmentCancellation) throws {
+        try NativeAppleRemindersValidation.removal(source)
+        guard !cancellation.isCancelled else { throw NativeAppleRemindersError.cancelled }
+        removed.insert(source.id!)
     }
     func cancelFetch(_ token: Any) {}
 }

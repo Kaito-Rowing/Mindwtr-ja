@@ -45,13 +45,30 @@ final class FoundationUITests: XCTestCase {
         }
         let deletion = app.switches["apple-reminders-delete"]
         XCTAssertTrue(deletion.waitForExistence(timeout: 10))
-        XCTAssertEqual(deletion.value as? String, "0"); XCTAssertFalse(deletion.isEnabled)
+        XCTAssertEqual(deletion.value as? String, "0"); XCTAssertTrue(deletion.isEnabled)
         task578Import(app); task578Status(app, "Imported 2 reminder(s)")
         task578Import(app); task578Status(app, "Imported 0 reminder(s)")
         app.terminate(); app.launch(); task578Open(app)
         XCTAssertTrue(app.buttons["apple-reminders-list"].label.contains("Capture List"))
         task578Import(app); task578Status(app, "Imported 0 reminder(s)")
     }
+    private func task579DeleteRoundTrip(_ suffix: String, largest: Bool) throws {
+        let app = try task578App(suffix, largest: largest); task578Choose(app)
+        let toggle = app.switches["apple-reminders-delete"]
+        revealPagedElement(app, toggle, in: app.scrollViews["apple-reminders-screen"])
+        boardEnabled(toggle); toggle.tap()
+        expectation(for: NSPredicate { _, _ in toggle.value as? String == "1" && toggle.isEnabled }, evaluatedWith: toggle)
+        waitForExpectations(timeout: 30)
+        task578Import(app); task578Status(app, "Imported 2 reminder(s)")
+        task578Status(app, "Deleted 2 imported reminder(s)")
+        task578Import(app); task578Status(app, "Imported 0 reminder(s)")
+        app.terminate(); app.launch(); task578Open(app)
+        XCTAssertEqual(app.switches["apple-reminders-delete"].value as? String, "1")
+        task578Import(app); task578Status(app, "Imported 0 reminder(s)")
+        XCTAssertFalse(app.staticTexts["apple-reminders-status"].label.contains("Deleted"))
+    }
+    func testTask579RemindersDeleteAfterSavedImport() throws { try task579DeleteRoundTrip("DELETE", largest: false) }
+    func testTask579RemindersDeleteLargestText() throws { try task579DeleteRoundTrip("DELETE_LARGEST", largest: true) }
     func testTask578RemindersSettingsManualImportAndColdDedupe() throws { try task578RoundTrip("NORMAL", largest: false) }
     func testTask578RemindersLargestTextManualImportAndColdDedupe() throws { try task578RoundTrip("LARGEST", largest: true) }
     func testTask578RemindersDeniedPermissionLeavesSettingsUsable() throws {
