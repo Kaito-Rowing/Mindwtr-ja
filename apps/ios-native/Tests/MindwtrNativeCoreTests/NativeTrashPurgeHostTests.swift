@@ -12,7 +12,12 @@ final class NativeTrashPurgeHostTests: XCTestCase {
 
     override func setUpWithError() throws {
         guard let path = ProcessInfo.processInfo.environment["MINDWTR_CORE_BUNDLE"] else { throw XCTSkip("Actual core-host.js bundle required") }
-        root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".mindwtr-native-tests/" + UUID().uuidString)
+        #if os(macOS)
+        let base = FileManager.default.homeDirectoryForCurrentUser
+        #else
+        let base = try XCTUnwrap(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first)
+        #endif
+        root = base.appendingPathComponent(".mindwtr-native-tests/" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         bundle = root.appendingPathComponent("clock.js")
         let clock = """
