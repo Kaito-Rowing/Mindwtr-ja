@@ -1,3 +1,5 @@
+import type { Task } from './types';
+
 export type PomodoroPhase = 'focus' | 'break';
 export type PomodoroEvent = 'focus-finished' | 'break-finished';
 
@@ -343,4 +345,14 @@ export function formatPomodoroClock(totalSeconds: number): string {
 
     const totalMinutes = Math.floor(safeSeconds / 60);
     return `${String(totalMinutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+export function getPomodoroTaskChoices(pools: {
+    focusedTasks: readonly Task[]; schedule: readonly Task[]; nextActions: readonly Task[]; reviewDue: readonly Task[];
+}): Task[] {
+    const byId = new Map<string, Task>();
+    for (const task of [...pools.focusedTasks, ...pools.schedule, ...pools.nextActions, ...pools.reviewDue]) {
+        if (!task.deletedAt) byId.set(task.id, task);
+    }
+    return Array.from(byId.values());
 }
