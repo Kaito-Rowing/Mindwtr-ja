@@ -28392,4 +28392,104 @@ extension FoundationUITests {
         XCTAssertFalse(app.buttons["gtd-retry"].exists)
     }
 
+    private func task583App(_ suffix: String, largest: Bool = false, flags: [String] = []) throws -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", try task371Library(suffix, prefix: "MINDWTR_POMODORO_PANEL_UI_")] + flags
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); boardEnabled(app.buttons["tab-focus"], timeout: 40); boardTap(app, "tab-focus")
+        boardEnabled(app.buttons["pomodoro-toggle"], timeout: 30)
+        return app
+    }
+
+    private func task583Tap(_ app: XCUIApplication, _ id: String) {
+        let button = app.buttons[id]
+        revealPagedElement(app, button, in: app.scrollViews.firstMatch)
+        boardEnabled(button); button.tap()
+        boardEnabled(app.buttons["pomodoro-toggle"], timeout: 30)
+    }
+
+    func testTask583PomodoroControlsPersistAndCollapse() throws {
+        let app = try task583App("CONTROLS"); defer { app.terminate() }
+        XCTAssertEqual(app.staticTexts["pomodoro-clock"].label, "25:00")
+        task583Tap(app, "pomodoro-preset-quick")
+        XCTAssertEqual(app.staticTexts["pomodoro-clock"].label, "15:00")
+        task583Tap(app, "pomodoro-toggle")
+        XCTAssertEqual(app.buttons["pomodoro-toggle"].label, "Pause")
+        task583Tap(app, "pomodoro-toggle")
+        XCTAssertEqual(app.buttons["pomodoro-toggle"].label, "Start")
+        task583Tap(app, "pomodoro-reset")
+        XCTAssertEqual(app.staticTexts["pomodoro-clock"].label, "15:00")
+        task583Tap(app, "pomodoro-switch")
+        XCTAssertEqual(app.staticTexts["pomodoro-clock"].label, "03:00")
+        boardTap(app, "pomodoro-collapse")
+        XCTAssertFalse(app.buttons["pomodoro-toggle"].exists)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-focus"], timeout: 40); boardTap(app, "tab-focus")
+        boardEnabled(app.buttons["pomodoro-collapse"], timeout: 30)
+        XCTAssertFalse(app.buttons["pomodoro-toggle"].exists)
+        boardTap(app, "pomodoro-collapse"); boardEnabled(app.buttons["pomodoro-toggle"])
+        XCTAssertEqual(app.staticTexts["pomodoro-clock"].label, "03:00")
+        XCTAssertFalse(app.staticTexts["pomodoro-error"].exists)
+    }
+
+    func testTask583LinkedTaskCompletesAndPickerChangesTask() throws {
+        let app = try task583App("LINKED"); defer { app.terminate() }
+        let linked = app.staticTexts["pomodoro-task"]
+        revealPagedElement(app, linked, in: app.scrollViews.firstMatch)
+        XCTAssertEqual(linked.label, "Task583 outside Focus")
+        task583Tap(app, "pomodoro-complete")
+        XCTAssertTrue(app.staticTexts["task-completion-notice"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        // RN keeps the linked task after completion; the saved row is checked by the fixture audit.
+        XCTAssertEqual(linked.label, "Task583 outside Focus")
+        let change = app.buttons["pomodoro-link"]
+        revealPagedElement(app, change, in: app.scrollViews.firstMatch); boardEnabled(change); change.tap()
+        boardTap(app, "pomodoro-choice-task583-next")
+        boardEnabled(app.buttons["pomodoro-toggle"], timeout: 30)
+        XCTAssertEqual(linked.label, "Task583 next")
+        XCTAssertFalse(app.staticTexts["pomodoro-error"].exists)
+    }
+
+    func testTask583OverdueCreditAppearsOnceAcrossRestart() throws {
+        let app = try task583App("OVERDUE"); defer { app.terminate() }
+        let count = app.staticTexts["pomodoro-count"]
+        XCTAssertEqual(count.label, "Focus sessions completed: 1")
+        XCTAssertEqual(app.staticTexts["pomodoro-clock"].label, "05:00")
+        XCTAssertTrue(app.staticTexts["pomodoro-event"].exists)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-focus"], timeout: 40); boardTap(app, "tab-focus")
+        boardEnabled(app.buttons["pomodoro-toggle"], timeout: 30)
+        XCTAssertEqual(count.label, "Focus sessions completed: 1")
+        XCTAssertEqual(app.staticTexts["pomodoro-clock"].label, "05:00")
+        XCTAssertFalse(app.staticTexts["pomodoro-event"].exists)
+    }
+
+    func testTask583LargestTextTimerControls() throws {
+        let app = try task583App("LARGEST", largest: true); defer { app.terminate() }
+        task583Tap(app, "pomodoro-preset-deep")
+        XCTAssertEqual(app.staticTexts["pomodoro-clock"].label, "50:00")
+        task583Tap(app, "pomodoro-switch")
+        XCTAssertEqual(app.staticTexts["pomodoro-clock"].label, "10:00")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task583 largest Pomodoro"; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func task583Recovery(_ suffix: String, cold: Bool) throws {
+        let flag = "--native-pomodoro-terminal-failure-once"
+        let app = try task583App(suffix, flags: [flag]); defer { app.terminate() }
+        boardTap(app, "pomodoro-toggle")
+        let retry = app.buttons["pomodoro-retry"]
+        revealPagedElement(app, retry, in: app.scrollViews.firstMatch); boardEnabled(retry, timeout: 30)
+        XCTAssertFalse(app.buttons["pomodoro-toggle"].isEnabled)
+        if cold {
+            app.terminate(); app.launchArguments.removeAll { $0 == flag }; app.launch()
+            boardEnabled(app.buttons["tab-focus"], timeout: 40); boardTap(app, "tab-focus")
+        } else { retry.tap() }
+        boardEnabled(app.buttons["pomodoro-toggle"], timeout: 30)
+        XCTAssertEqual(app.buttons["pomodoro-toggle"].label, "Pause")
+        XCTAssertFalse(app.buttons["pomodoro-retry"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+
+    func testTask583RealTerminalFailureRetriesExactTimerCommand() throws { try task583Recovery("RETRY", cold: false) }
+    func testTask583ColdRecoverySettlesTimerWithoutRepeatingStart() throws { try task583Recovery("COLD", cold: true) }
+
 }

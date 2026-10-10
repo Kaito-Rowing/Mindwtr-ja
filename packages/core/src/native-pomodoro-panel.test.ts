@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildNativePomodoroPanel, readNativePomodoroPresentation } from './native-pomodoro-panel';
 import { getPomodoroTaskChoices } from './pomodoro';
+import { taskRevisionOf } from './native-request-receipts';
 import { decodeNativePomodoroSession, prepareNativePomodoroTransition } from './native-pomodoro-session';
 import type { AppSettings, Task } from './types';
 
@@ -78,12 +79,15 @@ describe('native Pomodoro presentation using RN timer helpers', () => {
         state.session.phaseEndsAt = new Date(now - 60_000).toISOString();
         const view = ready(panel(JSON.stringify(state)));
         expect(view.needsReconcile).toBe(true); expect(view.clock).toBe('00:00');
+        expect(view.observation).toEqual({ nowMs: now, localDayKey: '2026-10-10' });
+        expect(view.completionEvent).toBe('focus-finished');
         expect(view.phase).toBe('focus'); expect(view.completedToday).toBe(0); expect(view.event).toBeNull();
     });
     it('keeps a selected live task outside the Focus picker and does not clear it when linking is off', () => {
         const state = initial(); state.session.selectedTaskId = 'outside'; const raw = JSON.stringify(state);
         const view = ready(panel(raw, { liveTasks: [task('outside', 'Outside current filters')] }));
-        expect(view.selectedTask).toEqual({ id: 'outside', title: 'Outside current filters' });
+        expect(view.selectedTask).toEqual({ id: 'outside', title: 'Outside current filters', taskRevision: taskRevisionOf(task('outside')), completionSource: 'ordinary' });
+        expect(ready(panel(raw, { liveTasks: [{ ...task('outside'), status: 'reference' }] })).selectedTask?.completionSource).toBe('reference');
         expect(view.selectionMissing).toBe(false);
         expect(ready(panel(raw)).selectionMissing).toBe(true);
         const off = ready(panel(raw, { settings: { features: { pomodoro: true } } }));

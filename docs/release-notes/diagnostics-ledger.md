@@ -30,6 +30,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.5 (add before tagging, trim in the release after)
 
+- `ios-pomodoro-ui` — `apps/ios-native/App/CoreModel.swift`, through the restricted `logLine` boundary: with Diagnostics enabled, `Native iOS Pomodoro panel transition acknowledged` and `outcome=confirmed` prove the App accepted the transition acknowledgment and then read the admitted saved panel state before releasing its exact retry request. SQL-only proof with pending projection emits no marker. This does not prove alarm delivery. No task/session identifiers, content or timer values are logged.
+
 - `ios-pomodoro-panel` — `apps/android-native/bundle/host-entry.ts`: `Native Pomodoro panel state read` with `releaseCheck=v1.3.5/ios-pomodoro-panel` and `outcome=ready|uninitialized` proves a bounded saved-session projection completed against canonical task/settings data. It does not prove UI display, initialization, timer completion, credit or alarms. Malformed, pending-save and unready reads emit no marker. No session/task identifiers, content or timer values are logged.
 
 - `ios-pomodoro-picker` — `apps/android-native/bundle/host-entry.ts`: saved Diagnostics must show `Native Pomodoro task choices loaded`, `releaseCheck=v1.3.5/ios-pomodoro-picker`, and `outcome=confirmed` after an accepted first page under the current Focus revision. Later pages and rejected requests emit no marker. This proves the native read path, not task selection, timer activation or UI display. No task content, identifiers, filters or counts are logged.

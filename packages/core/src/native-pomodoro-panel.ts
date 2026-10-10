@@ -1,5 +1,6 @@
 import { tFallback } from './i18n';
 import { decodeNativePomodoroSession } from './native-pomodoro-session';
+import { taskRevisionOf } from './native-request-receipts';
 import { formatPomodoroClock, getPomodoroFocusSessionsCompletedToday, getPomodoroLocalDayKey,
     getPomodoroPresetOptions, type PomodoroEvent } from './pomodoro';
 import { resolvePomodoroSession } from './pomodoro-session';
@@ -36,16 +37,21 @@ export function buildNativePomodoroPanel(input: {
 }) {
     if (!Number.isSafeInteger(input.nowMs) || Math.abs(input.nowMs) > 8_640_000_000_000_000
         || typeof input.collapsed !== 'boolean') throw new Error('Invalid Pomodoro presentation');
+    const tr = (key: string, fallback: string) => tFallback(input.t, key, fallback);
     const options = input.settings.gtd?.pomodoro;
     const autoStart = { autoStartFocus: options?.autoStartFocus === true, autoStartBreaks: options?.autoStartBreaks === true };
+    const day = getPomodoroLocalDayKey(input.nowMs);
     const common = { visible: resolveFeatureFlags(input.settings).pomodoro, autoStart,
+        observation: { nowMs: input.nowMs, localDayKey: day },
+        text: { title: tr('pomodoro.mobileTitle', 'Pomodoro Timer'),
+            collapse: input.collapsed ? tr('pomodoro.expand', 'Expand timer') : tr('pomodoro.collapse', 'Collapse timer') },
         completionAlert: options?.completionAlert !== false, collapsed: input.collapsed, linkTaskEnabled: options?.linkTask === true };
     if (input.raw === null) return { kind: 'uninitialized' as const, ...common };
     const state = decodeNativePomodoroSession(input.raw), session = state.session;
-    const day = getPomodoroLocalDayKey(input.nowMs);
     const needsReconcile = session.timerState.isRunning && Date.parse(session.phaseEndsAt!) <= input.nowMs;
     // Completion counters and the next phase belong to the durable transition, not a display tick.
-    const remaining = needsReconcile ? 0 : resolvePomodoroSession(session, input.nowMs, autoStart, day).timerState.remainingSeconds;
+    const resolved = resolvePomodoroSession(session, input.nowMs, autoStart, day);
+    const remaining = needsReconcile ? 0 : resolved.timerState.remainingSeconds;
     const { linkTaskEnabled } = common;
     const selected = linkTaskEnabled && session.selectedTaskId
         ? input.liveTasks.find((task) => task.id === session.selectedTaskId) : undefined;
@@ -53,7 +59,6 @@ export function buildNativePomodoroPanel(input: {
     if (lastEvent && !['focus-finished', 'break-finished'].includes(lastEvent.value)) throw new Error('Invalid Pomodoro feedback');
     const event = lastEvent?.sessionID === state.sessionID && lastEvent.generation === state.generation && !needsReconcile
         ? lastEvent.value : null;
-    const tr = (key: string, fallback: string) => tFallback(input.t, key, fallback);
     const phase = session.timerState.phase, isRunning = session.timerState.isRunning;
     return {
         kind: 'ready' as const,
@@ -63,24 +68,27 @@ export function buildNativePomodoroPanel(input: {
         clock: formatPomodoroClock(remaining),
         phase,
         isRunning,
-        phaseEndsAt: session.phaseEndsAt ?? null,
+        phaseEndsAtMs: session.phaseEndsAt ? Date.parse(session.phaseEndsAt) : null,
         needsReconcile,
+        completionEvent: needsReconcile ? resolved.lastEvent : null,
         completedToday: getPomodoroFocusSessionsCompletedToday(session.sessionHistory, day),
         durations: { ...session.durations },
         presets: getPomodoroPresetOptions(options?.customDurations).map((preset) => ({ ...preset,
             active: preset.focusMinutes === session.durations.focusMinutes && preset.breakMinutes === session.durations.breakMinutes })),
-        selectedTask: selected ? { id: selected.id, title: selected.title } : null,
+        selectedTask: selected ? { id: selected.id, title: selected.title, taskRevision: taskRevisionOf(selected),
+            completionSource: selected.status === 'reference' ? 'reference' : 'ordinary' } : null,
         selectionMissing: linkTaskEnabled && session.selectedTaskId !== undefined && selected === undefined,
         event: event === 'focus-finished' ? tr('pomodoro.focusComplete', 'Focus session complete. Take a short break.')
             : event === 'break-finished' ? tr('pomodoro.breakComplete', 'Break complete. Ready for the next focus session.') : null,
         text: {
-            title: tr('pomodoro.mobileTitle', 'Pomodoro Timer'),
+            title: common.text.title,
             phase: phase === 'focus' ? tr('pomodoro.phaseFocusShort', 'Focus') : tr('pomodoro.phaseBreakShort', 'Break'),
             state: isRunning ? tr('pomodoro.running', 'Running') : tr('pomodoro.paused', 'Paused'),
             toggle: isRunning ? tr('common.pause', 'Pause') : tr('common.start', 'Start'),
             reset: tr('common.reset', 'Reset'),
             switchPhase: phase === 'focus' ? tr('pomodoro.switchToBreak', 'Switch to Break') : tr('pomodoro.switchToFocus', 'Switch to Focus'),
-            collapse: input.collapsed ? tr('pomodoro.expand', 'Expand timer') : tr('pomodoro.collapse', 'Collapse timer'),
+            collapse: common.text.collapse,
+            more: tr('common.more', 'More'),
             sessionsDone: tr('pomodoro.sessionsDone', 'Focus sessions completed'),
             selectedTask: tr('pomodoro.selectedTask', 'Timer task'),
             timerOnly: tr('pomodoro.timerOnly', 'Timer only'),

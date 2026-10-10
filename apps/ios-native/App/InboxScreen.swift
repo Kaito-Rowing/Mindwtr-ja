@@ -360,6 +360,7 @@ struct InboxScreen: View {
                         .rnFont(14, .semibold).frame(minHeight: 44).disabled(model.busy || model.retryNeeded)
                         .accessibilityIdentifier("focus-retry")
                 }
+                PomodoroTimerPanel(model: model, palette: palette)
                 if !model.focus.isEmpty {
                     focusToolbar
                     focusFilterRows

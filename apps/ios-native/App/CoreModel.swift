@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import MindwtrNativeCore
 import SwiftUI
 import UIKit
@@ -261,6 +262,27 @@ final class CoreModel: ObservableObject {
     @Published private(set) var focusCurrent = false
     @Published private(set) var focusLoading = false
     @Published private(set) var focusError: String?
+    @Published private(set) var pomodoroPanel: CoreObject = [:]
+    @Published private(set) var pomodoroError: String?
+    @Published private(set) var pomodoroPickerPresented = false
+    @Published private(set) var pomodoroTasks: [CoreObject] = []
+    @Published private(set) var pomodoroTaskCount = 0
+    private var pomodoroFeedback: CoreObject?
+    private var pomodoroCollapsed = false
+    private var initialPomodoroCollapsed = false
+    private var pomodoroCollapsePreference = "nativeFoundation.pomodoro.collapsed"
+    private var pomodoroNeedsRead = true
+    private var pomodoroWorkHost: CoreHost?
+    private var pomodoroWork: Task<Void, Never>?
+    private var pomodoroWake: Task<Void, Never>?
+    private var pomodoroPickerRevision = ""
+    private struct PomodoroCommand {
+        let host: CoreHost
+        let request: String
+        let action: String
+        let before: CoreObject
+    }
+    private var pomodoroCommand: PomodoroCommand?
     @Published private(set) var reviewOverview: CoreObject = [:]
     @Published private(set) var reviewGuide: CoreObject = [:]
     @Published private(set) var reviewKind = ""
@@ -1604,6 +1626,10 @@ final class CoreModel: ObservableObject {
     private var host: CoreHost? {
         didSet {
             if oldValue.map({ ObjectIdentifier($0) }) != host.map({ ObjectIdentifier($0) }) {
+                pomodoroWork?.cancel(); pomodoroWake?.cancel()
+                pomodoroWork = nil; pomodoroWake = nil; pomodoroWorkHost = nil
+                pomodoroCommand = nil; pomodoroFeedback = nil; pomodoroPanel = [:]
+                pomodoroError = nil; pomodoroNeedsRead = true; pomodoroPickerPresented = false
                 cancelAppleRemindersAutoImport()
                 appleRemindersAutoOwner = nil; appleRemindersAutoTask = nil; appleRemindersAutoToken = nil
                 appleRemindersAutoLastRun = -.infinity; appleRemindersAutoNotice = nil
@@ -5044,6 +5070,9 @@ final class CoreModel: ObservableObject {
                         captureLinesTestPaste = ProcessInfo.processInfo.environment["MINDWTR_CAPTURE_LINES_PASTE"] ?? "basic"
                         publishCaptureSaveEditFixtureState()
                     }
+                    if arguments.contains("--native-pomodoro-terminal-failure-once") {
+                        try await host!.configureIsolatedCaptureTerminalFailureOnce(pomodoroOnly: true)
+                    }
                     if arguments.contains("--native-capture-terminal-failure-once") {
                         try await host!.configureIsolatedCaptureTerminalFailureOnce()
                     }
@@ -5084,6 +5113,8 @@ final class CoreModel: ObservableObject {
                     initialProjectShowCompleted = try legacy.value(forKey: "mindwtr:view:project-detail:show-completed:v1") == "true"
                     projectShowCompletedPreference = "nativeRNRehearsal.project.showCompleted"
                     focusShowDetailsPreference = "nativeRNRehearsal.focus.showDetails"
+                    pomodoroCollapsePreference = "nativeRNRehearsal.pomodoro.collapsed"
+                    initialPomodoroCollapsed = try legacy.value(forKey: "@mindwtr_pomodoro_collapsed") == "true"
                     focusExpandedSectionsPreference = "nativeRNRehearsal.focus.expandedSections"
                     referenceViewPreference = "nativeRNRehearsal.reference.view"
                     historyViewPreferences = ["done": "nativeRNRehearsal.history.done.view",
@@ -5154,6 +5185,7 @@ final class CoreModel: ObservableObject {
                let initialManageOpenSections {
                 preferenceDefaults.set(initialManageOpenSections, forKey: manageOpenSectionsPreference)
             }
+            pomodoroCollapsed = (preferenceDefaults.object(forKey: pomodoroCollapsePreference) as? Bool) ?? initialPomodoroCollapsed
             focusShowDetails = (preferenceDefaults.object(forKey: focusShowDetailsPreference) as? Bool)
                 ?? initialFocusShowDetails
             var expanded = initialFocusExpandedSections
@@ -6858,6 +6890,8 @@ final class CoreModel: ObservableObject {
         guard !Task.isCancelled, let token, token == completedStartupToken else { return }
         let wasActive = foregroundSyncSceneActive
         foregroundSyncSceneActive = active && UIApplication.shared.applicationState == .active
+        if foregroundSyncSceneActive { pomodoroNeedsRead = true; admitPomodoroRuntime() }
+        else { pomodoroWake?.cancel(); pomodoroWake = nil }
         guard foregroundSyncSceneActive else { cancelForegroundSync(); return }
         if !wasActive && !appLock.concealed, let currentHost = host {
             let generation = foregroundSyncGeneration
@@ -28941,7 +28975,7 @@ final class CoreModel: ObservableObject {
 
     private var referenceCompletionPending: Bool {
         guard let request = taskCompletionRequest, let submitted = try? decode(request) else { return false }
-        return submitted.text("source") == "reference"
+        return selectedSurface == .reference && submitted.text("source") == "reference"
     }
 
     private func completeReferenceTask(_ displayed: CoreObject) async {
@@ -29030,13 +29064,19 @@ final class CoreModel: ObservableObject {
                 $0.text("id") == id && !$0.flag("readOnly") && !$0.object("meta").text("statusLabel").isEmpty
             }) else { return }
         }
+        await saveTaskCompletion(id, taskRevision: taskRevision)
+    }
+
+    private func saveTaskCompletion(_ id: String, taskRevision: String, reference: Bool = false) async {
         busy = true
         invalidatePreview()
         defer { finishOperation() }
         var acknowledgment: CoreObject?
         do {
             let requestID = UUID().uuidString.lowercased()
-            let request = try json(["id": id, "requestId": requestID, "taskRevision": taskRevision])
+            var input: CoreObject = ["id": id, "requestId": requestID, "taskRevision": taskRevision]
+            if reference { input["source"] = "reference" }
+            let request = try json(input)
             taskActionRequestID = requestID
             taskCompletionRequest = request
             let result = try await query("taskCompletion", [request])
@@ -29074,6 +29114,7 @@ final class CoreModel: ObservableObject {
     }
 
     func retry() async {
+        if pomodoroCommand != nil { await retryPomodoro(); return }
         if appleRemindersNeedsRetry { retryAppleReminders(); return }
         if trashBulkRequest != nil { await retryTrashBulkRequest(); return }
         if notificationResponseRetry != nil { await retryNotificationResponses(); return }
@@ -31093,6 +31134,211 @@ final class CoreModel: ObservableObject {
         focusOrderError = label("settings.feedback.actionFailed")
     }
 
+    var pomodoroInputsEnabled: Bool {
+        ready && !busy && !retryNeeded && !appLock.concealed && !taskPresented
+            && !settingsSyncRestartRequired && pomodoroPanel.text("kind") == "ready"
+            && UIApplication.shared.applicationState == .active
+    }
+
+    private func readPomodoroPanel(_ owner: CoreHost) async throws -> CoreObject {
+        let value = try decode(await owner.readPomodoroPanel(presentationJSON: json([
+            "collapsed": pomodoroCollapsed, "lastEvent": pomodoroFeedback as Any? ?? NSNull()])))
+        guard host === owner, !Task.isCancelled else { throw CancellationError() }
+        guard ["ready", "uninitialized"].contains(value.text("kind")), value["visible"] is Bool,
+              value["completionAlert"] is Bool, value.object("observation")["nowMs"] is NSNumber,
+              !value.object("observation").text("localDayKey").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        pomodoroPanel = value
+        if !value.flag("linkTaskEnabled") { pomodoroPickerPresented = false }
+        return value
+    }
+
+    private func admitPomodoroRuntime() {
+        guard pomodoroNeedsRead, pomodoroWork == nil, pomodoroWorkHost == nil, pomodoroCommand == nil,
+              ready, !busy, !retryNeeded, !taskPresented, !capturePresented, !projectRenameEditing,
+              !appLock.concealed, !settingsSyncRestartRequired, completedStartupToken != nil,
+              UIApplication.shared.applicationState == .active, let owner = host else { return }
+        pomodoroWork = Task { [weak self, weak owner] in
+            guard let self, let owner, self.host === owner else { return }
+            await self.performPomodoroAction(nil)
+            guard self.host === owner else { return }
+            self.pomodoroWork = nil
+            self.admitPomodoroRuntime()
+        }
+    }
+
+    private func armPomodoroDeadline() {
+        pomodoroWake?.cancel(); pomodoroWake = nil
+        guard !retryNeeded, pomodoroError == nil, UIApplication.shared.applicationState == .active,
+              pomodoroPanel.flag("isRunning"), let owner = host,
+              let deadline = pomodoroPanel["phaseEndsAtMs"] as? NSNumber else { return }
+        let seconds = min(86_400, max(0.05, deadline.doubleValue / 1000 - Date().timeIntervalSince1970))
+        pomodoroWake = Task { [weak self, weak owner] in
+            do { try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) } catch { return }
+            guard let self, let owner, self.host === owner else { return }
+            self.pomodoroWake = nil; self.pomodoroNeedsRead = true
+            self.admitPomodoroRuntime()
+        }
+    }
+
+    func performPomodoroAction(_ requestedAction: String?, values: CoreObject = [:]) async {
+        guard ready, !busy, !retryNeeded, !appLock.concealed, !taskPresented,
+              !settingsSyncRestartRequired, pomodoroWorkHost == nil, let owner = host else { return }
+        busy = true; pomodoroWorkHost = owner; pomodoroNeedsRead = false; pomodoroError = nil
+        defer {
+            if host === owner, pomodoroWorkHost === owner {
+                finishOperation(); pomodoroWorkHost = nil; armPomodoroDeadline()
+                admitPomodoroRuntime()
+            }
+        }
+        do {
+            let before = try await readPomodoroPanel(owner)
+            let action: String?
+            if before.text("kind") == "uninitialized" { action = "adoptLegacy" }
+            else if let requestedAction { action = requestedAction }
+            else if before.flag("selectionMissing") { action = "selectTask" }
+            else { action = before.flag("needsReconcile") ? "reconcile" : nil }
+            if let action {
+                guard ["adoptLegacy", "reconcile", "toggle", "reset", "switchPhase", "setDurations", "selectTask"].contains(action) else { throw CocoaError(.coderInvalidValue) }
+                var input: CoreObject = ["action": action, "requestId": UUID().uuidString.lowercased(),
+                    "observedAtMs": before.object("observation")["nowMs"] ?? NSNull(),
+                    "localDayKey": before.object("observation").text("localDayKey"), "autoStart": before.object("autoStart")]
+                if action == "setDurations" { input["durations"] = values.object("durations") }
+                if action == "selectTask" { input["taskId"] = values["taskId"] ?? NSNull() }
+                let command = PomodoroCommand(host: owner, request: try json(input), action: action, before: before)
+                pomodoroCommand = command
+                try await settlePomodoroCommand(command)
+            }
+        } catch {
+            guard host === owner else { return }
+            if isDefiniteRejection(error) { pomodoroCommand = nil }
+            if pomodoroCommand != nil { retryNeeded = true; self.error = error.localizedDescription }
+            pomodoroError = error.localizedDescription
+        }
+    }
+
+    private func settlePomodoroCommand(_ command: PomodoroCommand) async throws {
+        let raw = try await command.host.writePomodoroTransition(requestJSON: command.request)
+        guard host === command.host, pomodoroCommand?.request == command.request else { throw CancellationError() }
+        let confirmation = try decode(raw)
+        let result: CoreObject
+        if confirmation.text("kind") == "noop" {
+            result = [:]
+            guard Set(confirmation.keys) == Set(["kind"]), command.action == "reconcile" else { throw CocoaError(.coderReadCorrupt) }
+            pomodoroFeedback = nil
+        } else {
+            guard Set(confirmation.keys) == Set(["kind", "result", "projectionReloaded"]),
+                  confirmation.text("kind") == "confirmed", let projected = confirmation["projectionReloaded"] as? NSNumber,
+                  CFGetTypeID(projected) == CFBooleanGetTypeID() else { throw CocoaError(.coderReadCorrupt) }
+            result = confirmation.object("result")
+            guard Set(result.keys) == Set(["sessionID", "generation", "completedFocusSessions", "creditedMinutes", "creditDisposition"]),
+                  let id = UUID(uuidString: result.text("sessionID")), id.uuidString.lowercased() == result.text("sessionID"),
+                  let generation = result["generation"] as? NSNumber, generation.doubleValue >= 0,
+                  generation.doubleValue.rounded() == generation.doubleValue, generation.doubleValue <= 9_007_199_254_740_991,
+                  command.action == "adoptLegacy" || result.text("sessionID") == command.before.text("sessionID") else { throw CocoaError(.coderReadCorrupt) }
+            for field in ["generation", "completedFocusSessions", "creditedMinutes"] {
+                guard let number = result[field] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                      number.doubleValue.isFinite, number.doubleValue >= 0,
+                      number.doubleValue.rounded() == number.doubleValue, number.doubleValue <= 9_007_199_254_740_991 else { throw CocoaError(.coderReadCorrupt) }
+            }
+            guard ["credited", "unlinked", "unavailable", "capped", "none"].contains(result.text("creditDisposition")) else { throw CocoaError(.coderReadCorrupt) }
+            pomodoroFeedback = nil
+            let event = command.before.text("completionEvent")
+            if ["reconcile", "toggle", "selectTask"].contains(command.action), ["focus-finished", "break-finished"].contains(event),
+               generation.doubleValue == Double(command.before.number("generation")) + 1 {
+                pomodoroFeedback = ["sessionID": result.text("sessionID"), "generation": generation, "value": event]
+            }
+        }
+        // SQL proof can precede canonical projection; keep the exact request until this read is admitted.
+        let saved = try await readPomodoroPanel(command.host)
+        guard saved.text("kind") == "ready" else { throw CocoaError(.coderReadCorrupt) }
+        if !result.isEmpty {
+            guard saved.text("sessionID") == result.text("sessionID"),
+                  saved.number("generation") >= result.number("generation") else { throw CocoaError(.coderReadCorrupt) }
+        }
+        pomodoroCommand = nil; retryNeeded = false
+        _ = try? await command.host.call("logLine", argumentsJSON: json(["Native iOS Pomodoro panel transition acknowledged",
+            try json(["releaseCheck": "v1.3.5/ios-pomodoro-ui", "outcome": "confirmed"])]))
+    }
+
+    func retryPomodoro() async {
+        guard let command = pomodoroCommand else { pomodoroNeedsRead = true; admitPomodoroRuntime(); return }
+        guard ready, !busy, host === command.host, !appLock.concealed else { return }
+        busy = true; pomodoroWorkHost = command.host; pomodoroError = nil
+        defer {
+            if host === command.host, pomodoroWorkHost === command.host {
+                finishOperation(); pomodoroWorkHost = nil; armPomodoroDeadline()
+            }
+        }
+        do {
+            try await settlePomodoroCommand(command)
+            self.error = nil
+        } catch {
+            guard host === command.host else { return }
+            if isDefiniteRejection(error) { pomodoroCommand = nil }
+            pomodoroError = error.localizedDescription
+            retryNeeded = pomodoroCommand != nil
+            if retryNeeded { self.error = error.localizedDescription }
+        }
+    }
+
+    func togglePomodoroCollapsed() {
+        pomodoroCollapsed.toggle()
+        preferenceDefaults.set(pomodoroCollapsed, forKey: pomodoroCollapsePreference)
+        pomodoroPanel["collapsed"] = pomodoroCollapsed
+        pomodoroNeedsRead = true; admitPomodoroRuntime()
+    }
+
+    func closePomodoroPicker() { pomodoroPickerPresented = false }
+    func openPomodoroPicker() async {
+        guard pomodoroInputsEnabled, pomodoroPanel.flag("linkTaskEnabled"), focusCurrent else { return }
+        pomodoroPickerPresented = true; pomodoroTasks = []; pomodoroTaskCount = 0
+        pomodoroPickerRevision = focus.text("revision")
+        await loadMorePomodoroTasks()
+    }
+    func loadMorePomodoroTasks() async {
+        guard pomodoroInputsEnabled, pomodoroPickerPresented, !pomodoroPickerRevision.isEmpty,
+              pomodoroTasks.isEmpty || pomodoroTasks.count < pomodoroTaskCount else { return }
+        busy = true
+        defer { finishOperation() }
+        // One fresh Focus snapshot may replace stale pages; never mix revisions.
+        for attempt in 0..<2 {
+            let revision = pomodoroPickerRevision, offset = pomodoroTasks.count
+            do {
+                let page = try await query("pomodoroTasks", [try json(["offset": offset, "limit": 100,
+                    "revision": revision, "controls": focus.object("controls").object("state")])])
+                guard pomodoroPickerPresented, revision == pomodoroPickerRevision, revision == focus.text("revision"),
+                      page.text("revision") == revision, page.number("total") >= offset,
+                      page.objects("rows").count == min(100, page.number("total") - offset),
+                      offset == 0 || page.number("total") == pomodoroTaskCount else { throw CocoaError(.coderReadCorrupt) }
+                pomodoroTaskCount = page.number("total"); pomodoroTasks += page.objects("rows")
+                pomodoroError = nil
+                return
+            } catch {
+                pomodoroError = error.localizedDescription
+                guard attempt == 0, pomodoroPickerPresented, !Task.isCancelled else { return }
+                await readFocus(ownsOperation: true)
+                guard pomodoroPickerPresented, focusCurrent else { return }
+                pomodoroPickerRevision = focus.text("revision")
+                pomodoroTasks = []; pomodoroTaskCount = 0
+            }
+        }
+    }
+    func choosePomodoroTask(_ id: String?) async {
+        guard pomodoroInputsEnabled, id == nil || (pomodoroPickerRevision == focus.text("revision")
+            && pomodoroTasks.contains(where: { $0.text("id") == id })) else { return }
+        pomodoroPickerPresented = false
+        await performPomodoroAction("selectTask", values: ["taskId": id as Any? ?? NSNull()])
+    }
+    func completePomodoroTask() async {
+        guard pomodoroInputsEnabled else { return }
+        let selected = pomodoroPanel.object("selectedTask")
+        guard !selected.text("id").isEmpty, !selected.text("taskRevision").isEmpty,
+              selected.text("taskRevision").utf16.count <= 200 else { return }
+        await saveTaskCompletion(selected.text("id"), taskRevision: selected.text("taskRevision"),
+                                 reference: selected.text("completionSource") == "reference")
+        pomodoroFeedback = nil; pomodoroNeedsRead = true; admitPomodoroRuntime()
+    }
+
     func openFocusPanel(_ name: String) {
         guard focusControlsEnabled, ["view", "filters"].contains(name) else { return }
         focusPanel = name
@@ -31984,10 +32230,11 @@ final class CoreModel: ObservableObject {
         return error is CoreHostRejection
     }
     private func finishOperation() {
+        if pomodoroWorkHost == nil { pomodoroNeedsRead = true }
         defer {
             admitReminderLifecycle(); admitCalendarPushLifecycle(); admitSearchLifecycle(); admitNotificationResponses()
             if entityLinkTask == nil { requestEntityLinks() }
-            admitAppleRemindersAutoImport()
+            admitAppleRemindersAutoImport(); admitPomodoroRuntime()
             #if DEBUG && targetEnvironment(simulator)
             publishTrashBulkTestState()
             #endif

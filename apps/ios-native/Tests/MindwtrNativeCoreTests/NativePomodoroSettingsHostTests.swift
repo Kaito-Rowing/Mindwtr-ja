@@ -326,6 +326,12 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         await failure { _ = try await self.call(core, "pomodoroTasks", ["offset": 0, "limit": 1, "revision": "stale"]) }
         _ = try await core.readPomodoroPanel(presentationJSON: json(["collapsed": false, "lastEvent": NSNull()]))
         await failure { _ = try await core.readPomodoroPanel(presentationJSON: "{}") }
+        let message = "Native iOS Pomodoro panel transition acknowledged"
+        for context in [["releaseCheck": "v1.3.5/ios-pomodoro-ui", "outcome": "pending"],
+                        ["releaseCheck": "v1.3.5/ios-pomodoro-ui", "outcome": "confirmed", "title": "private"],
+                        ["releaseCheck": "wrong", "outcome": "confirmed"]] {
+            await failure { _ = try await core.call("logLine", argumentsJSON: self.json([message, self.json(context)])) }
+        }
         let shared = try object(await core.diagnosticsFileAction("logShare"))
         let url = try await core.validatedDiagnosticsShareURL(XCTUnwrap(shared["path"] as? String))
         let savedLog = try String(contentsOf: url, encoding: .utf8)

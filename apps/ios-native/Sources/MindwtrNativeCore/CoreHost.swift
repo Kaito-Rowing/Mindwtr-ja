@@ -567,8 +567,8 @@ public final class CoreHost: @unchecked Sendable {
         try await perform { try $0.configureIsolatedAppleRemindersFixture(denied: denied, failPreferenceOnce: failPreferenceOnce) }
     }
     #endif
-    public func configureIsolatedCaptureTerminalFailureOnce() async throws {
-        try await perform { try $0.configureIsolatedCaptureTerminalFailureOnce() }
+    public func configureIsolatedCaptureTerminalFailureOnce(pomodoroOnly: Bool = false) async throws {
+        try await perform { try $0.configureIsolatedCaptureTerminalFailureOnce(pomodoroOnly: pomodoroOnly) }
     }
     public func configureIsolatedCalendarEventTaskTerminalFailureOnce() async throws {
         try await perform { try $0.configureIsolatedCalendarEventTaskTerminalFailureOnce() }
@@ -18486,6 +18486,8 @@ private final class Engine: @unchecked Sendable {
         #endif
         case "Native iOS launch selection admitted":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-launch-selection", "outcome": "confirmed"])
+        case "Native iOS Pomodoro panel transition acknowledged":
+            valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-pomodoro-ui", "outcome": "confirmed"])
         case "Native iOS bulk operation acknowledged":
             valid = Set(context.keys) == Set(["releaseCheck", "operation", "outcome"])
                 && context["releaseCheck"] as? String == "v1.3.5/ios-bulk-ui"
@@ -21609,7 +21611,7 @@ private final class Engine: @unchecked Sendable {
     }
     #endif
 
-    func configureIsolatedCaptureTerminalFailureOnce() throws {
+    func configureIsolatedCaptureTerminalFailureOnce(pomodoroOnly: Bool = false) throws {
         let directory = databaseURL.deletingLastPathComponent(), identifier = directory.lastPathComponent
         guard !started, !closed, !invoking, pending == nil, let faults, faults.journalRemove == nil,
               databaseURL.lastPathComponent == "mindwtr.sqlite", directory.deletingLastPathComponent().lastPathComponent == "NativeUITests",
@@ -21620,7 +21622,9 @@ private final class Engine: @unchecked Sendable {
         }
         var fired = false
         faults.journalRemove = { [unowned self] in
-            guard !fired, let command = self.pending, ["captureCommit", "captureLinesCommit", "trashItemsRestoreCommit", "trashItemsPurgeCommit", "gtdWorkflowCommit"].contains(command.method),
+            guard !fired, let command = self.pending,
+                  (pomodoroOnly ? command.method == Self.pomodoroMethod
+                    : ["captureCommit", "captureLinesCommit", "trashItemsRestoreCommit", "trashItemsPurgeCommit", "gtdWorkflowCommit"].contains(command.method)),
                   let terminal = command.terminal, case .success = terminal else { return }
             fired = true
             throw HostFailure("Isolated capture terminal cleanup interrupted")
