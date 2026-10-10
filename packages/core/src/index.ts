@@ -283,6 +283,7 @@ export * from './context-color';
 export * from './capture';
 export * from './capture-session';
 export * from './quick-capture-model';
+export * from './apple-reminders-import-model';
 export * from './capture-deeplink';
 export * from './dropbox-auth-callback';
 export * from './entry-points';
