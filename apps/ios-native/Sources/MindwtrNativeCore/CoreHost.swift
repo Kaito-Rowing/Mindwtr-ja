@@ -493,6 +493,9 @@ public final class CoreHost: @unchecked Sendable {
     }
     #endif
     #if DEBUG && os(iOS) && targetEnvironment(simulator)
+    public func configureIsolatedCaptureTerminalFailureOnce() async throws {
+        try await perform { try $0.configureIsolatedCaptureTerminalFailureOnce() }
+    }
     public func configureIsolatedCalendarEventTaskTerminalFailureOnce() async throws {
         try await perform { try $0.configureIsolatedCalendarEventTaskTerminalFailureOnce() }
     }
@@ -16879,6 +16882,8 @@ private final class Engine: @unchecked Sendable {
                 && faults?.secretService == "mindwtr.native-keychain.fixture." + identifier
                 && Self.equalJSON(context, ["outcome": "injected"])
         #endif
+        case "Native iOS retained editor draft protected from late close":
+            valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-editor-retained-close", "outcome": "ignored"])
         case "Native iOS launch selection admitted":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-launch-selection", "outcome": "confirmed"])
         case "Native iOS reminder lifecycle reconciled":
@@ -19930,6 +19935,24 @@ private final class Engine: @unchecked Sendable {
                   let terminal = command.terminal, case .success = terminal else { return }
             fired = true
             throw HostFailure("Isolated Calendar event task terminal cleanup interrupted")
+        }
+    }
+
+    func configureIsolatedCaptureTerminalFailureOnce() throws {
+        let directory = databaseURL.deletingLastPathComponent(), identifier = directory.lastPathComponent
+        guard !started, !closed, !invoking, pending == nil, let faults, faults.journalRemove == nil,
+              databaseURL.lastPathComponent == "mindwtr.sqlite", directory.deletingLastPathComponent().lastPathComponent == "NativeUITests",
+              Self.ownedDiscardUUID(identifier) == identifier,
+              faults.secretService == "mindwtr.native-keychain.fixture." + identifier,
+              try mixedSaveFileBinding(journalURL, maximumBytes: Self.ownedSaveMaximumBytes) == nil else {
+            throw HostFailure("Isolated capture fixture is unavailable")
+        }
+        var fired = false
+        faults.journalRemove = { [unowned self] in
+            guard !fired, let command = self.pending, command.method == "captureCommit",
+                  let terminal = command.terminal, case .success = terminal else { return }
+            fired = true
+            throw HostFailure("Isolated capture terminal cleanup interrupted")
         }
     }
     #endif

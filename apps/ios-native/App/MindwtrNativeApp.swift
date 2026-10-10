@@ -517,6 +517,7 @@ private struct AppLockRoot: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
             observedApplicationActive = false
+            model.retireCaptureEditNavigation()
             model.suspendEntityLinks()
             model.notificationSettingsWillResignActive()
             model.calendarSettingsWillResignActive()
@@ -543,6 +544,7 @@ private struct AppLockRoot: View {
             if next == .background { model.cancelNotificationSettingsIntent(); model.cancelCalendarSettingsIntent(); model.retireCalendarFeed() }
             model.observeForegroundSyncScene(next, token: startupToken)
             if next != .active {
+                model.retireCaptureEditNavigation()
                 model.suspendEntityLinks()
                 model.cancelForegroundSync()
                 model.cancelReminderLifecycle()
@@ -566,6 +568,7 @@ private struct AppLockRoot: View {
         }
         .onChange(of: lock.concealed) { concealed in
             if concealed {
+                model.retireCaptureEditNavigation()
                 model.suspendEntityLinks()
                 model.cancelNotificationSettingsIntent()
                 model.cancelCalendarSettingsIntent()
@@ -597,6 +600,18 @@ private struct AppLockRoot: View {
             if clean { model.externalContextBecameClean() }
         }
         #if DEBUG && targetEnvironment(simulator)
+        .overlay(alignment: .bottom) {
+            if model.captureSaveEditPostAckTestHeld {
+                VStack {
+                    Text(model.captureSaveEditTestState).rnFont(10)
+                        .accessibilityIdentifier("capture-save-edit-fixture-state")
+                    Button("Release capture read") { model.releaseCaptureSaveEditFixtureAcknowledgement() }
+                        .buttonStyle(.bordered).frame(minHeight: 44)
+                        .accessibilityIdentifier("capture-save-edit-fixture-release")
+                }
+                .padding(16).background(palette.card)
+            }
+        }
         .onChange(of: model.morePresented) { presented in
             if presented {
                 model.deliverEntityLinkTestInput("more")

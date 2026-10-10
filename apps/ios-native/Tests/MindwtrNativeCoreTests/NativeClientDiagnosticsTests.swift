@@ -46,6 +46,7 @@ final class NativeClientDiagnosticsTests: XCTestCase {
     }
     private var approved: [(String, [String: Any])] {
         var result: [(String, [String: Any])] = [
+            ("Native iOS retained editor draft protected from late close", ["releaseCheck": "v1.3.5/ios-editor-retained-close", "outcome": "ignored"]),
             ("Native iOS launch selection admitted", ["releaseCheck": "v1.3.5/ios-launch-selection", "outcome": "confirmed"]),
             ("Native iOS reminder lifecycle reconciled", ["releaseCheck": "v1.3.5/ios-reminder-lifecycle", "outcome": "confirmed"]),
             ("Native iOS foreground activation refreshed", ["releaseCheck": "v1.3.5/ios-foreground-activation", "outcome": "refreshed"]),
@@ -110,6 +111,12 @@ final class NativeClientDiagnosticsTests: XCTestCase {
         }
         for field in ["taskId", "text", "url", "passphrase"] {
             refused.append(try json([message, json(["releaseCheck": "v1.3.5/ios-search-publication", "outcome": "publicationQueued", "count": 0, field: "Synthetic private value"])]))
+        }
+        for context in [
+            ["releaseCheck": "v1.3.5/ios-editor-retained-close", "outcome": "saved"],
+            ["releaseCheck": "v1.3.5/ios-editor-retained-close", "outcome": "ignored", "taskId": "Synthetic private value"],
+        ] {
+            refused.append(try json(["Native iOS retained editor draft protected from late close", json(context)]))
         }
         for raw in refused {
             do { _ = try await core.call("logLine", argumentsJSON: raw); XCTFail("Expected closed client diagnostic refusal") } catch {}

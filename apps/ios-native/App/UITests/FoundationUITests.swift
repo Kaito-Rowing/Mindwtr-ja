@@ -27096,4 +27096,189 @@ extension FoundationUITests {
         XCTAssertFalse(app.staticTexts["feedback-error"].exists); XCTAssertFalse(app.staticTexts["feedback-sent"].exists)
         boardTap(app, "feedback-back"); boardTap(app, "about-back"); boardTap(app, "settings-back"); app.terminate()
     }
+
+    private func task497App(_ suffix: String, mode: String = "", largest: Bool = false, retry: Bool = false) throws -> XCUIApplication {
+        let library = try task371Library(suffix, prefix: "MINDWTR_CAPTURE_SAVE_EDIT_UI_")
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "--native-capture-save-edit-fixture", "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        if retry { app.launchArguments.append("--native-capture-terminal-failure-once") }
+        app.launchEnvironment["MINDWTR_CAPTURE_SAVE_EDIT_DELIVERY"] = mode
+        app.launch(); boardEnabled(app.buttons["capture-open"], timeout: 30)
+        return app
+    }
+    private func task497Capture(_ app: XCUIApplication, title: String) {
+        boardTap(app, "capture-open")
+        let input = app.textViews["capture-input"]; boardEnabled(input); input.typeText(title)
+        boardEnabled(app.buttons["capture-save-edit"])
+    }
+    private func task497Editor(_ app: XCUIApplication, title: String, readRetry: Bool = false) {
+        let input = app.textFields["task-editor-title"]
+        boardEnabled(input, timeout: 30)
+        XCTAssertEqual(input.value as? String, title)
+        XCTAssertTrue(app.buttons["task-editor-save"].exists)
+        XCTAssertFalse(app.textViews["capture-input"].exists)
+        XCTAssertEqual(app.buttons["persistence-retry"].exists, readRetry)
+    }
+    private func task497State(_ app: XCUIApplication) -> [String: Any] {
+        guard let bytes = app.staticTexts["capture-save-edit-fixture-state"].label.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return [:] }
+        return value
+    }
+    private func task497Held(_ app: XCUIApplication) {
+        let state = app.staticTexts["capture-save-edit-fixture-state"]
+        XCTAssertTrue(state.waitForExistence(timeout: 30))
+        expectation(for: NSPredicate { [weak self] _, _ in self?.task497State(app)["held"] as? Bool == true }, evaluatedWith: state)
+        waitForExpectations(timeout: 30)
+        XCTAssertEqual(task497State(app)["submissions"] as? Int, 1)
+    }
+    private func task497SavedOnce(_ app: XCUIApplication, title: String) {
+        boardTap(app, "tab-inbox")
+        let task = app.buttons[title]; XCTAssertTrue(task.waitForExistence(timeout: 30))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@ AND identifier BEGINSWITH %@", title, "task-title-")).count, 1)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["capture-open"], timeout: 30)
+        XCTAssertTrue(app.buttons[title].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+    }
+    private func task497Normal(_ suffix: String, largest: Bool) throws {
+        let app = try task497App(suffix, largest: largest); defer { app.terminate() }
+        boardTap(app, "tab-focus")
+        let title = "Task497 full captured task " + suffix
+        task497Capture(app, title: title + " @home #capture497")
+        let addAnother = app.switches["capture-add-another"]
+        if addAnother.value as? String != "1" { boardEnabled(addAnother); addAnother.tap() }
+        boardTap(app, "capture-options")
+        let note = app.descendants(matching: .any).matching(identifier: "capture-note").firstMatch
+        boardEnabled(note); note.tap(); note.typeText("Task497 full note")
+        let save = app.buttons["capture-save-edit"]; boardEnabled(save)
+        XCTAssertTrue(save.isHittable); XCTAssertGreaterThanOrEqual(save.frame.height, 44 - 0.01)
+        XCTAssertGreaterThanOrEqual(app.buttons["capture-save"].frame.height, 44 - 0.01)
+        save.tap(); task497Editor(app, title: title)
+        let editorScroll = app.scrollViews["task-editor-scroll"]
+        let details = app.buttons["task-editor-section-details"]
+        if details.exists {
+            revealPagedElement(app, details, in: editorScroll, outerEdge: true)
+            if details.value as? String == "Expand" { details.tap() }
+        }
+        let editorNote = app.textViews["task-editor-note"]
+        revealPagedElement(app, editorNote, in: editorScroll, outerEdge: true)
+        XCTAssertEqual(editorNote.value as? String, "Task497 full note")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task497 save edit " + suffix
+        shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "task-view-close")
+        XCTAssertFalse(app.buttons[title].exists, "New Inbox task should remain outside the Focus projection")
+        task497SavedOnce(app, title: title)
+    }
+    func testTask497SaveEditOverridesAddAnotherFromFilteredSurfaceNormal() throws { try task497Normal("NORMAL", largest: false) }
+    func testTask497SaveEditOverridesAddAnotherFromFilteredSurfaceLargest() throws { try task497Normal("LARGEST", largest: true) }
+    func testTask497ActualTerminalFailureExactRetryOpensAcknowledgedTaskOnce() throws {
+        let app = try task497App("RETRY", retry: true); defer { app.terminate() }
+        let title = "Task497 exact retry"
+        task497Capture(app, title: title); boardTap(app, "capture-save-edit")
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+        XCTAssertEqual(app.textViews["capture-input"].value as? String, title)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        XCTAssertFalse(app.buttons["capture-save-edit"].isEnabled)
+        boardTap(app, "persistence-retry"); task497Editor(app, title: title)
+        boardTap(app, "task-view-close"); task497SavedOnce(app, title: title)
+    }
+    func testTask497PostcommitProjectionFailureOpensWithoutResubmitting() throws {
+        let app = try task497App("READ", mode: "read-failure"); defer { app.terminate() }
+        let title = "Task497 acknowledged read failure"
+        task497Capture(app, title: title); boardTap(app, "capture-save-edit")
+        task497Editor(app, title: title, readRetry: true); boardTap(app, "task-view-close")
+        // Closing the clean editor refreshes its caller and clears the read failure.
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["persistence-retry"])
+        waitForExpectations(timeout: 30)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        boardTap(app, "capture-open")
+        XCTAssertEqual(task497State(app)["submissions"] as? Int, 1)
+        boardTap(app, "capture-close")
+        task497SavedOnce(app, title: title)
+    }
+    func testTask497DuplicatePressAndOldReplyCannotDismissNewSheet() throws {
+        let app = try task497App("SHEET", mode: "hold"); defer { app.terminate() }
+        let title = "Task497 old sheet task"
+        task497Capture(app, title: title); app.buttons["capture-save-edit"].doubleTap(); task497Held(app)
+        XCTAssertFalse(app.buttons["capture-save-edit"].isEnabled)
+        boardTap(app, "capture-save-edit-fixture-new-sheet")
+        XCTAssertEqual(app.textViews["capture-input"].value as? String, "Task497 newer draft")
+        boardTap(app, "capture-save-edit-fixture-release")
+        boardEnabled(app.buttons["capture-save-edit"], timeout: 30)
+        XCTAssertEqual(app.textViews["capture-input"].value as? String, "Task497 newer draft")
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        XCTAssertEqual(task497State(app)["submissions"] as? Int, 1)
+        boardTap(app, "capture-close"); task497SavedOnce(app, title: title)
+    }
+    func testTask497HostReplacementRetiresOldAcknowledgement() throws {
+        let app = try task497App("HOST", mode: "hold"); defer { app.terminate() }
+        let title = "Task497 old host task"
+        task497Capture(app, title: title); boardTap(app, "capture-save-edit"); task497Held(app)
+        boardTap(app, "capture-save-edit-fixture-host")
+        expectation(for: NSPredicate { [weak self] _, _ in self?.task497State(app)["replaced"] as? Bool == true }, evaluatedWith: app.staticTexts["capture-save-edit-fixture-state"])
+        waitForExpectations(timeout: 30)
+        boardTap(app, "capture-save-edit-fixture-release")
+        boardEnabled(app.buttons["capture-save-edit"], timeout: 30)
+        XCTAssertEqual(app.textViews["capture-input"].value as? String, "Task497 replacement draft")
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["capture-open"], timeout: 30)
+        XCTAssertTrue(app.buttons[title].waitForExistence(timeout: 30)); XCTAssertFalse(app.buttons["task-editor-save"].exists)
+    }
+    func testTask497BackgroundRetiresEditNavigationWhileSaveRemainsDurable() throws {
+        let app = try task497App("BACKGROUND", mode: "hold"); defer { app.terminate() }
+        let title = "Task497 background saved task"
+        task497Capture(app, title: title); boardTap(app, "capture-save-edit"); task497Held(app)
+        XCUIDevice.shared.press(.home); app.activate()
+        boardTap(app, "capture-save-edit-fixture-release")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.textViews["capture-input"])
+        waitForExpectations(timeout: 30)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists); task497SavedOnce(app, title: title)
+    }
+    func testTask497BackgroundAfterAcknowledgementRetiresClosedSheetHandoff() throws {
+        let app = try task497App("ACK_BACKGROUND", mode: "hold-read"); defer { app.terminate() }
+        let title = "Task497 post acknowledgement background task"
+        task497Capture(app, title: title); boardTap(app, "capture-save-edit"); task497Held(app)
+        XCTAssertEqual(task497State(app)["readHeld"] as? Bool, true)
+        XCTAssertEqual(task497State(app)["retry"] as? Bool, false)
+        XCTAssertFalse(app.textViews["capture-input"].exists, "The acknowledgement already closed CaptureSheet")
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        XCUIDevice.shared.press(.home); app.activate()
+        boardTap(app, "capture-save-edit-fixture-release")
+        boardEnabled(app.buttons["capture-open"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        task497SavedOnce(app, title: title)
+    }
+    func testTask497PriorDraftGateProtectsDraftAndConsumesNewNavigation() throws {
+        let app = try task497App("DRAFT"); defer { app.terminate() }
+        let oldTitle = "Task497 prior task", draftTitle = "Task497 protected prior draft", newTitle = "Task497 saved behind draft gate"
+        task497Capture(app, title: oldTitle); boardTap(app, "capture-save")
+        boardEnabled(app.buttons[oldTitle], timeout: 30); app.buttons[oldTitle].tap()
+        if !app.textFields["task-editor-title"].exists { boardTap(app, "task-mode-edit") }
+        boardEnabled(app.textFields["task-editor-title"])
+        replaceProjectNotesText(app.textFields["task-editor-title"], with: draftTitle)
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 30)
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-keep-for-later")
+        boardEnabled(app.buttons["task-recovery-open"], timeout: 30)
+        task497Capture(app, title: newTitle); boardTap(app, "capture-save-edit")
+        boardEnabled(app.buttons["task-recovery-resume"], timeout: 30)
+        XCTAssertEqual(app.staticTexts["task-recovery-title"].label, draftTitle)
+        boardTap(app, "task-recovery-keep")
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        XCTAssertTrue(app.buttons[newTitle].waitForExistence(timeout: 30))
+        boardTap(app, "task-recovery-open"); boardTap(app, "task-recovery-resume")
+        task497Editor(app, title: draftTitle)
+    }
+    func testTask497NormalSaveStillKeepsAddAnotherDraft() throws {
+        let app = try task497App("SAVE"); defer { app.terminate() }
+        let title = "Task497 ordinary add another"
+        task497Capture(app, title: title)
+        let addAnother = app.switches["capture-add-another"]
+        if addAnother.value as? String != "1" { boardEnabled(addAnother); addAnother.tap() }
+        boardTap(app, "capture-save")
+        expectation(for: NSPredicate(format: "value == %@ OR value == %@", "", app.textViews["capture-input"].label), evaluatedWith: app.textViews["capture-input"])
+        waitForExpectations(timeout: 30)
+        XCTAssertTrue(app.textViews["capture-input"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        boardTap(app, "capture-close"); task497SavedOnce(app, title: title)
+    }
 }

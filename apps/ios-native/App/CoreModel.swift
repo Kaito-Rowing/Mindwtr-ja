@@ -1175,7 +1175,13 @@ final class CoreModel: ObservableObject {
     @Published private(set) var retryNeeded = false
     @Published private(set) var error: String?
     @Published var capturePresented = false {
-        didSet { if capturePresented { foregroundSyncIntent = nil } }
+        didSet {
+            if capturePresented != oldValue {
+                capturePresentationID = UUID()
+                retireCaptureEditNavigation()
+            }
+            if capturePresented { foregroundSyncIntent = nil }
+        }
     }
     @Published private(set) var areaPickerPresented = false {
         didSet { if areaPickerPresented { foregroundSyncIntent = nil } }
@@ -1686,6 +1692,36 @@ final class CoreModel: ObservableObject {
     private var previewedText = ""
     private var captureID = UUID().uuidString
     private var capturePending = false
+    private struct CaptureSubmission {
+        let id: UUID
+        let host: CoreHost
+        let presentationID: UUID
+        let navigationID: UUID
+        let captureID: String
+        let next: String
+    }
+    private struct CaptureEditHandoff {
+        let host: CoreHost
+        let presentationID: UUID
+        let navigationID: UUID
+        let taskID: String
+    }
+    private var capturePresentationID = UUID()
+    private var captureNavigationID = UUID()
+    private var captureSubmission: CaptureSubmission?
+    private var captureBusyOwner: UUID?
+    private var captureEditHandoff: CaptureEditHandoff?
+    #if DEBUG && targetEnvironment(simulator)
+    @Published private(set) var captureSaveEditTestState = ""
+    private var captureSaveEditTestMode: String?
+    private var captureSaveEditTestWaiter: CheckedContinuation<Void, Never>?
+    private var captureSaveEditTestHeldOnce = false
+    private var captureSaveEditTestReadHeld = false
+    private var captureSaveEditTestSubmissions = 0
+    private var captureSaveEditTestReplaced = false
+    var captureSaveEditFixtureEnabled: Bool { captureSaveEditTestMode != nil }
+    var captureSaveEditPostAckTestHeld: Bool { captureSaveEditTestReadHeld && captureSaveEditTestWaiter != nil }
+    #endif
     private var mindSweepRequest: String?
     private var mindSweepRequestID: String?
     private var mindSweepRequestGroup: String?
@@ -2980,7 +3016,11 @@ final class CoreModel: ObservableObject {
     private var captureIsCurrent: Bool {
         previewedText == draft && capture.object("options").text("note") == noteDraft
     }
-    var canSave: Bool { !busy && !retryNeeded && !contextPickerPresented && captureIsCurrent && capture.flag("canSave") }
+    var canSave: Bool {
+        ready && capturePresented && !appLock.concealed && !appLock.authenticating
+            && UIApplication.shared.applicationState == .active && !busy && !retryNeeded && !capturePending
+            && !contextPickerPresented && captureIsCurrent && capture.flag("canSave")
+    }
     var contextPickerReady: Bool {
         !busy && !retryNeeded && captureIsCurrent && capture.object("picker").text("kind") == "context"
             && capture.object("picker").text("query") == contextQuery
@@ -4840,6 +4880,13 @@ final class CoreModel: ObservableObject {
                         deviceStorage: (directory, namespace),
                         isolatedTestID: identifier)
                     #if DEBUG && targetEnvironment(simulator)
+                    if arguments.contains("--native-capture-save-edit-fixture") {
+                        captureSaveEditTestMode = ProcessInfo.processInfo.environment["MINDWTR_CAPTURE_SAVE_EDIT_DELIVERY"] ?? ""
+                        publishCaptureSaveEditFixtureState()
+                    }
+                    if arguments.contains("--native-capture-terminal-failure-once") {
+                        try await host!.configureIsolatedCaptureTerminalFailureOnce()
+                    }
                     startupInventoryReadTestFailureOnce = arguments.contains("--native-startup-inventory-read-failure-once")
                     calendarEventTaskPredispatchTestHoldOnce = arguments.contains("--native-calendar-event-task-predispatch-hold-once")
                     calendarEventTaskDispatchTestState = ""
@@ -24565,6 +24612,17 @@ final class CoreModel: ObservableObject {
     }
 
     func closeTask() {
+        guard taskPresented else {
+            if taskRecoveryAvailable, let currentHost = host {
+                Task {
+                    _ = try? await currentHost.call("logLine", argumentsJSON: self.json([
+                        "Native iOS retained editor draft protected from late close",
+                        #"{"releaseCheck":"v1.3.5/ios-editor-retained-close","outcome":"ignored"}"#,
+                    ]))
+                }
+            }
+            return
+        }
         guard !busy, !retryNeeded, !taskReferenceOpening, !taskAttachmentOpening, !taskPersonCreateOwed, !taskSavePending, taskChecklistWriteKind == nil,
               !taskChecklistReadPending, !taskScheduleUpdating else { return }
         guard !taskDirty else { return }
@@ -24578,7 +24636,7 @@ final class CoreModel: ObservableObject {
     }
 
     private func discardCleanTaskSnapshotAndClose(refreshCaller: Bool = true) async {
-        guard !taskDirty else { return }
+        guard taskPresented, !taskDirty else { return }
         if taskHasActiveAttachmentOwner {
             await saveTask()
             return
@@ -27100,6 +27158,11 @@ final class CoreModel: ObservableObject {
     }
 
     func openCapture() async {
+        if let submitted = captureSubmission, host !== submitted.host {
+            captureSubmission = nil; capturePending = false; captureBusyOwner = nil
+            retryNeeded = false
+            retireCaptureEditNavigation()
+        }
         guard ready, !busy, !retryNeeded, !areaPickerPresented, !taskPresented,
               !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !projectRenameEditing,
@@ -27742,22 +27805,55 @@ final class CoreModel: ObservableObject {
         return try await query("captureView", [try json(input)])
     }
 
-    func saveCapture() async {
-        guard canSave else { return }
+    func saveCapture(openAfterSave: Bool = false) async {
+        guard canSave, let currentHost = host else { return }
+        let submission = CaptureSubmission(id: UUID(), host: currentHost, presentationID: capturePresentationID,
+            navigationID: captureNavigationID, captureID: captureID,
+            next: openAfterSave ? "open" : capture.object("options").flag("addAnother") ? "addAnother" : "close")
+        captureSubmission = submission
+        captureBusyOwner = submission.id
+        var dispatched = false
         busy = true
         invalidatePreview()
-        defer { finishOperation() }
+        defer {
+            if host === currentHost, captureBusyOwner == submission.id {
+                captureBusyOwner = nil
+                finishOperation()
+                #if DEBUG && targetEnvironment(simulator)
+                publishCaptureSaveEditFixtureState()
+                #endif
+            }
+        }
         do {
             let payload = try json(["text": draft, "options": capture.object("options"),
-                                    "captureId": captureID, "openAfterSave": false])
+                                    "captureId": submission.captureID, "openAfterSave": openAfterSave])
             capturePending = true
-            let result = try await query("captureSubmit", [payload])
-            capturePending = false
-            handleCaptureResult(result)
+            #if DEBUG && targetEnvironment(simulator)
+            if captureSaveEditFixtureEnabled { captureSaveEditTestSubmissions += 1; publishCaptureSaveEditFixtureState() }
+            #endif
+            let result = try await query("captureSubmit", [payload], beforeDispatch: {
+                guard self.captureSubmissionCurrent(submission), self.capturePresentationCurrent(submission),
+                      self.captureNavigationID == submission.navigationID, !self.appLock.concealed,
+                      UIApplication.shared.applicationState == .active else { return false }
+                dispatched = true
+                return true
+            })
+            #if DEBUG && targetEnvironment(simulator)
+            await holdCaptureSaveEditAcknowledgementIfNeeded(submission)
+            #endif
+            guard captureSubmissionCurrent(submission) else { return }
+            try acknowledgeCaptureResult(result, submission: submission)
+            #if DEBUG && targetEnvironment(simulator)
+            if captureSaveEditTestMode == "read-failure" {
+                captureSaveEditTestMode = ""
+                throw CocoaError(.fileReadUnknown)
+            }
+            #endif
             try await readSelectedSurface()
         } catch {
+            guard host === currentHost, captureBusyOwner == submission.id else { return }
             // The host owns the durable request. Freeze this exact draft until its outcome is known.
-            if isDefiniteRejection(error) { capturePending = false }
+            if !dispatched || isDefiniteRejection(error) { capturePending = false; captureSubmission = nil }
             retryNeeded = capturePending
             self.error = error.localizedDescription
         }
@@ -27916,6 +28012,8 @@ final class CoreModel: ObservableObject {
         guard !busy, !projectRenameEditing || projectRenameRequest != nil else { return }
         guard ready else { await start(); return }
         guard let retryHost = host else { return }
+        let captureRetry = capturePending ? captureSubmission : nil
+        guard !capturePending || captureRetry?.host === retryHost else { return }
         let eventRetry = calendarEventTaskPending
         guard eventRetry == nil || eventRetry?.host === retryHost else { return }
         let attachmentRetryRequest = projectAttachmentWriteRequest
@@ -27936,9 +28034,16 @@ final class CoreModel: ObservableObject {
         }
         guard attachmentRetryCurrent() else { return }
         busy = true
+        if let captureRetry { captureBusyOwner = captureRetry.id }
         var boardTaskOpened = false
         defer {
-            finishOperation()
+            if captureRetry == nil || (host === retryHost && captureBusyOwner == captureRetry?.id) {
+                if captureRetry != nil { captureBusyOwner = nil }
+                finishOperation()
+                #if DEBUG && targetEnvironment(simulator)
+                publishCaptureSaveEditFixtureState()
+                #endif
+            }
             if boardTaskOpened { Task { await readTaskView() } }
         }
         do {
@@ -29034,10 +29139,11 @@ final class CoreModel: ObservableObject {
                 acknowledgeReviewTaskWrite()
             }
             if capturePending {
-                guard let acknowledgment else { throw CocoaError(.coderValueNotFound) }
+                guard let acknowledgment, let captureRetry, captureSubmissionCurrent(captureRetry) else {
+                    throw CocoaError(.coderValueNotFound)
+                }
                 let result = try decode(acknowledgment)
-                capturePending = false
-                handleCaptureResult(result)
+                try acknowledgeCaptureResult(result, submission: captureRetry)
             }
             if taskSavePending {
                 guard acknowledgment != nil else { throw CocoaError(.coderValueNotFound) }
@@ -29062,6 +29168,7 @@ final class CoreModel: ObservableObject {
             if !calendarPreferencePending { calendarComposerNavigation = nil }
         } catch {
             guard host === retryHost else { return }
+            guard captureRetry == nil || captureBusyOwner == captureRetry?.id else { return }
             if let pending = eventRetry {
                 guard calendarEventTaskPending?.requestId == pending.requestId else { return }
                 if isDefiniteRejection(error) { calendarEventTaskPending = nil }
@@ -29353,6 +29460,7 @@ final class CoreModel: ObservableObject {
                 }
                 reviewTaskWritePending = false
                 capturePending = false
+                captureSubmission = nil
                 taskSavePending = false
                 boardActionRequest = nil
                 if taskActionUndoRequest != nil {
@@ -29440,6 +29548,68 @@ final class CoreModel: ObservableObject {
         }
     }
 
+    private func captureSubmissionCurrent(_ submission: CaptureSubmission) -> Bool {
+        host === submission.host && captureSubmission?.id == submission.id
+    }
+
+    private func capturePresentationCurrent(_ submission: CaptureSubmission) -> Bool {
+        capturePresented && capturePresentationID == submission.presentationID
+            && captureID.utf8.elementsEqual(submission.captureID.utf8)
+    }
+
+    func retireCaptureEditNavigation() {
+        captureNavigationID = UUID()
+        captureEditHandoff = nil
+    }
+
+    private func acknowledgeCaptureResult(_ result: CoreObject, submission: CaptureSubmission) throws {
+        guard captureSubmissionCurrent(submission), ["saved", "refused", "confirmLines"].contains(result.text("kind")) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        if result.text("kind") == "saved" {
+            guard result.text("taskId").utf8.elementsEqual(submission.captureID.lowercased().utf8),
+                  result.text("next") == submission.next else { throw CocoaError(.coderReadCorrupt) }
+        }
+        // Receipt settlement belongs to the submitted host; presentation belongs to this sheet episode.
+        capturePending = false
+        captureSubmission = nil
+        retryNeeded = false
+        guard capturePresentationCurrent(submission) else { return }
+        let open = result.text("kind") == "saved" && result.text("next") == "open"
+            && captureNavigationID == submission.navigationID && !appLock.concealed
+            && UIApplication.shared.applicationState == .active && !Task.isCancelled
+        handleCaptureResult(result)
+        if open {
+            captureEditHandoff = CaptureEditHandoff(host: submission.host, presentationID: capturePresentationID,
+                navigationID: captureNavigationID, taskID: result.text("taskId"))
+        }
+    }
+
+    private func presentAcknowledgedCaptureEdit() {
+        guard let handoff = captureEditHandoff else { return }
+        captureEditHandoff = nil
+        guard host === handoff.host, capturePresentationID == handoff.presentationID,
+              captureNavigationID == handoff.navigationID, ready, !busy, !retryNeeded,
+              !settingsSyncRestartRequired, !capturePresented, !taskPresented, !appLock.concealed,
+              UIApplication.shared.applicationState == .active, !Task.isCancelled else { return }
+        if taskRecoverySnapshot != nil || taskRecoveryCorrupt
+            || (taskAttachmentState != .none && taskAttachmentState != .discardedCleanup) {
+            taskRecoveryConflict = taskRecoverySnapshot?.taskID == handoff.taskID
+                ? nil : "A saved task draft needs a decision before another task can open."
+            taskRecoveryGateVisible = true
+            return
+        }
+        prepareTaskPresentation(handoff.taskID, initialTab: "task")
+        let session = taskRecoverySession
+        Task { [weak self] in
+            guard let self else { return }
+            await self.readTaskView(ownedGuard: {
+                self.host === handoff.host && self.taskPresented && self.viewedTaskID == handoff.taskID
+                    && self.taskRecoverySession == session && !self.appLock.concealed && !Task.isCancelled
+            })
+        }
+    }
+
     private func handleCaptureResult(_ result: CoreObject) {
         switch result.text("kind") {
         case "saved":
@@ -29463,6 +29633,73 @@ final class CoreModel: ObservableObject {
         default: notice = capture.object("failureNotices").object("save").text("message")
         }
     }
+
+    #if DEBUG && targetEnvironment(simulator)
+    private func publishCaptureSaveEditFixtureState() {
+        guard captureSaveEditFixtureEnabled else { return }
+        captureSaveEditTestState = (try? json(["submissions": captureSaveEditTestSubmissions,
+            "held": captureSaveEditTestWaiter != nil, "replaced": captureSaveEditTestReplaced,
+            "readHeld": captureSaveEditTestReadHeld, "retry": retryNeeded, "busy": busy])) ?? ""
+    }
+
+    private func holdCaptureSaveEditAcknowledgementIfNeeded(_ submission: CaptureSubmission) async {
+        guard captureSaveEditTestMode == "hold", !captureSaveEditTestHeldOnce,
+              captureSubmissionCurrent(submission) else { return }
+        captureSaveEditTestHeldOnce = true
+        await withCheckedContinuation { continuation in
+            captureSaveEditTestWaiter = continuation
+            publishCaptureSaveEditFixtureState()
+        }
+    }
+
+    func releaseCaptureSaveEditFixtureAcknowledgement() {
+        let waiter = captureSaveEditTestWaiter
+        captureSaveEditTestWaiter = nil
+        captureSaveEditTestReadHeld = false
+        waiter?.resume()
+        publishCaptureSaveEditFixtureState()
+    }
+
+    func replaceCaptureSaveEditFixtureSheet() {
+        guard captureSaveEditFixtureEnabled, captureSaveEditTestWaiter != nil else { return }
+        capturePresented = false
+        captureID = UUID().uuidString
+        draft = "Task497 newer draft"
+        capture["options"] = capture.object("options").merging(["note": ""]) { _, next in next }
+        noteDraft = ""
+        previewedText = "\u{0}"
+        capturePresented = true
+        publishCaptureSaveEditFixtureState()
+    }
+
+    func replaceCaptureSaveEditFixtureHost() {
+        guard captureSaveEditFixtureEnabled, captureSaveEditTestWaiter != nil, let originalHost = host,
+              let selection = try? NativeAppLaunch.selection.get(),
+              case let .isolated(_, directory, namespace, identifier) = selection,
+              let bundle = Bundle.main.url(forResource: "core-host", withExtension: "js") else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                await originalHost.close()
+                let replacement = CoreHost(databaseURL: directory.appendingPathComponent("capture-replacement.sqlite"),
+                    bundleURL: bundle, deviceStorage: (directory, namespace + ".capture-replacement"), isolatedTestID: identifier)
+                _ = try await replacement.start()
+                guard self.host === originalHost else { await replacement.close(); return }
+                self.host = replacement
+                self.startupSyncCompletedHost = replacement
+                self.completedStartupToken = UUID()
+                self.captureSubmission = nil; self.capturePending = false; self.captureBusyOwner = nil
+                self.capturePresented = false; self.capture = [:]; self.draft = ""; self.noteDraft = ""
+                self.busy = false; self.retryNeeded = false; self.ready = true
+                await self.openCapture()
+                self.draft = "Task497 replacement draft"
+                self.textChanged()
+                self.captureSaveEditTestReplaced = true
+                self.publishCaptureSaveEditFixtureState()
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+    #endif
 
     private func readInbox(foregroundSyncOwner ownerID: UUID? = nil) async throws {
         if let ownerID {
@@ -30493,6 +30730,15 @@ final class CoreModel: ObservableObject {
         guard beforeDispatch?() != false else { throw CancellationError() }
         let result = try await host.call(method, argumentsJSON: json(args))
         #if DEBUG && targetEnvironment(simulator)
+        if method == "areaFilter", captureSaveEditTestMode == "hold-read", !captureSaveEditTestHeldOnce,
+           !capturePresented, !capturePending, captureEditHandoff?.host === host {
+            captureSaveEditTestHeldOnce = true
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                captureSaveEditTestReadHeld = true
+                captureSaveEditTestWaiter = continuation
+                publishCaptureSaveEditFixtureState()
+            }
+        }
         if method == "taskView", entityLinkPreview != nil, !entityLinkTestHeldOnce,
            let encoded = args.first as? String, try decode(encoded).text("id") == "task454-a",
            let selection = try? NativeAppLaunch.selection.get(), case .isolated = selection {
@@ -30585,6 +30831,7 @@ final class CoreModel: ObservableObject {
         }
         if settingsSyncRestartRequired { refreshRequested = false; return }
         if resumeFeedbackConfigurationIfNeeded() { return }
+        presentAcknowledgedCaptureEdit()
         admitForegroundSync()
         if foregroundSyncOwner != nil { return }
         presentQueuedReferenceProjectNextAction()

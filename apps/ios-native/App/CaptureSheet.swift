@@ -131,24 +131,31 @@ struct CaptureSheet: View {
             }
             .padding(.top, 8)
 
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
-                Button {} label: {
-                    Text(copy.text("saveAndEdit")).rnFont(13, .bold)
-                        .frame(minWidth: 80, minHeight: 40).padding(.horizontal, 16)
-                        .overlay(Capsule().stroke(palette.border, lineWidth: 1))
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    saveButtons
                 }
-                .buttonStyle(.plain).disabled(true)
-                Button { Task { await model.saveCapture() } } label: {
-                    Text(copy.text("save")).rnFont(13, .bold)
-                        .foregroundStyle(palette.captureForeground)
-                        .frame(minWidth: 72, minHeight: 40).padding(.horizontal, 16)
-                        .background(palette.captureBackground, in: Capsule())
-                }
-                .buttonStyle(.plain).disabled(!model.canSave)
-                .accessibilityIdentifier("capture-save")
+                VStack(alignment: .trailing, spacing: 8) { saveButtons }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.top, 8)
+
+#if DEBUG && os(iOS) && targetEnvironment(simulator)
+            if model.captureSaveEditFixtureEnabled {
+                Text(model.captureSaveEditTestState).rnFont(10)
+                    .accessibilityIdentifier("capture-save-edit-fixture-state")
+                HStack {
+                    Button("Release") { model.releaseCaptureSaveEditFixtureAcknowledgement() }
+                        .accessibilityIdentifier("capture-save-edit-fixture-release")
+                    Button("New sheet") { model.replaceCaptureSaveEditFixtureSheet() }
+                        .accessibilityIdentifier("capture-save-edit-fixture-new-sheet")
+                    Button("New host") { model.replaceCaptureSaveEditFixtureHost() }
+                        .accessibilityIdentifier("capture-save-edit-fixture-host")
+                }
+                .rnFont(10).buttonStyle(.bordered).frame(minHeight: 44)
+            }
+#endif
         }
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 20)
         .background { CaptureCorners().fill(palette.card).ignoresSafeArea(edges: .bottom) }
@@ -161,6 +168,24 @@ struct CaptureSheet: View {
             Button(model.bulkConfirm.text("confirmLabel")) {}.disabled(true)
             Button(model.bulkConfirm.text("cancelLabel"), role: .cancel) { model.bulkConfirm = [:] }
         } message: { Text(model.bulkConfirm.text("message")) }
+    }
+
+    @ViewBuilder private var saveButtons: some View {
+        Button { Task { await model.saveCapture(openAfterSave: true) } } label: {
+            Text(copy.text("saveAndEdit")).rnFont(13, .bold)
+                .frame(minWidth: 80, minHeight: 44).padding(.horizontal, 16)
+                .overlay(Capsule().stroke(palette.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain).disabled(!model.canSave)
+        .accessibilityIdentifier("capture-save-edit")
+        Button { Task { await model.saveCapture() } } label: {
+            Text(copy.text("save")).rnFont(13, .bold)
+                .foregroundStyle(palette.captureForeground)
+                .frame(minWidth: 72, minHeight: 44).padding(.horizontal, 16)
+                .background(palette.captureBackground, in: Capsule())
+        }
+        .buttonStyle(.plain).disabled(!model.canSave)
+        .accessibilityIdentifier("capture-save")
     }
 
     @ViewBuilder private var captureControls: some View {
