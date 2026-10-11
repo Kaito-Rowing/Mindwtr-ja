@@ -30,7 +30,7 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.5 (add before tagging, trim in the release after)
 
-- `ios-pomodoro-alarm-plan` — `apps/android-native/bundle/host-entry.ts`: `Native Pomodoro alarm intent read` with `releaseCheck=v1.3.5/ios-pomodoro-alarm-plan` and `outcome=schedule|cancel|uninitialized` proves a saved-state alarm policy read completed against canonical settings. It does not prove OS scheduling or delivery. Rejected reads emit no marker. No session/task identifiers, content, deadlines or permission values are logged.
+- `ios-pomodoro-alarm-plan` — `apps/android-native/bundle/host-entry.ts`: `Native Pomodoro alarm intent read` with `releaseCheck=v1.3.5/ios-pomodoro-alarm-plan` and `outcome=schedule|cancel|uninitialized` proves a saved-state alarm policy read completed against canonical settings, with the accepted external SQLite baseline checked before and after the timer read. It does not prove OS scheduling or delivery. Rejected reads emit no marker. No session/task identifiers, content, deadlines or permission values are logged.
 
 - `ios-pomodoro-ui` — `apps/ios-native/App/CoreModel.swift`, through the restricted `logLine` boundary: with Diagnostics enabled, `Native iOS Pomodoro panel transition acknowledged` and `outcome=confirmed` prove the App accepted the transition acknowledgment and then read the admitted saved panel state before releasing its exact retry request. SQL-only proof with pending projection emits no marker. This does not prove alarm delivery. No task/session identifiers, content or timer values are logged.
 

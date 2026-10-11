@@ -3729,6 +3729,7 @@ export function splitSqlStatements(sql) { return [sql]; }
 export class NativeReceiptSqliteAdapter extends SqliteAdapter {
   async readPomodoroSession() {
     globalThis.events.push('pomodoro-read');
+    if (globalThis.pomodoroReadHold) await globalThis.pomodoroReadHold;
     if (globalThis.pomodoroReadError) throw new Error('Pomodoro session could not be read');
     return globalThis.pomodoroSession ? JSON.parse(JSON.stringify(globalThis.pomodoroSession)) : { raw: null, state: null };
   }
@@ -4402,6 +4403,33 @@ const poll = async (state, id) => {
     const planJSON = prepared.value.planJSON, plan = JSON.parse(planJSON);
     assert.deepEqual(plan.request, JSON.parse(request)); assert.equal(plan.sessionBefore, null);
     assert.equal(JSON.parse(plan.sessionAfter).session.timerState.isRunning, false);
+    // Saved panel/alarm reads must refuse an external commit, including one during the timer read.
+    for (const method of ['pomodoroAlarmRead', 'pomodoroPanelRead']) {
+        const args = method === 'pomodoroPanelRead' ? [JSON.stringify({ collapsed: false, lastEvent: null })] : [];
+        for (const during of [false, true]) {
+            const reader = await ready520();
+            reader.pomodoroSession = { raw: plan.sessionAfter, state: JSON.parse(plan.sessionAfter) };
+            reader.events.length = 0;
+            let release;
+            if (during) reader.pomodoroReadHold = new Promise(resolve => { release = resolve; });
+            else reader.rowBaselineNull = true;
+            const ticket = reader.MindwtrHost[method](...args);
+            if (during) {
+                await new Promise(resolve => setImmediate(resolve));
+                assert(reader.events.includes('pomodoro-read'));
+                reader.rowBaselineNull = true;
+                release();
+            }
+            const answer = await poll(reader, ticket);
+            assert.equal(answer.ok, false, method + ': stale external baseline must refuse');
+            assert.match(answer.error, /STALE_REVISION/);
+            assert.equal(reader.pomodoroInputs.length, 0);
+            assert.equal(reader.events.filter(event => event === 'baseline').length, during ? 2 : 1);
+        }
+        const current = await ready520();
+        current.pomodoroSession = { raw: plan.sessionAfter, state: JSON.parse(plan.sessionAfter) };
+        assert.equal((await poll(current, current.MindwtrHost[method](...args))).ok, true);
+    }
     const cold = makeState(0, [], 'ios');
     assert.equal((await poll(cold, cold.MindwtrHost.pomodoroTransitionValidate(planJSON))).ok, true);
     assert.equal(cold.events.length, 0, 'pure validation does not activate/read/write');

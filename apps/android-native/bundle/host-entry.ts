@@ -1272,7 +1272,13 @@ const readSavedNativePomodoro = async () => {
     };
     ready();
     const before = useTaskStore.getState();
+    const requireBaseline = async () => {
+        if (!await adapter.readRowBaseline())
+            throw new Error('STALE_REVISION: Pomodoro saved data changed; reload before reading');
+    };
+    await requireBaseline();
     const session = await adapter.readPomodoroSession();
+    await requireBaseline();
     ready();
     const current = useTaskStore.getState();
     if (pomodoroAdapter() !== adapter || current.tasks !== before.tasks || current.settings !== before.settings)

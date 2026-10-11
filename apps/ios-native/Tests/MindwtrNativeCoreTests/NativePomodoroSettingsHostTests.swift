@@ -66,6 +66,27 @@ final class NativePomodoroSettingsHostTests: XCTestCase {
         do { try await work(); XCTFail("Expected refusal", file: file, line: line) } catch { }
     }
 
+    func testAlarmAndPanelRefuseExternalSettingsCommitUntilReloaded() async throws {
+        try await seed(); let core = host(); _ = try await core.start()
+        let presentation = try json(["collapsed": false, "lastEvent": NSNull()])
+        let initial = try object(await core.readPomodoroAlarmIntent())
+        XCTAssertEqual(initial["kind"] as? String, "schedule")
+        try rows("UPDATE settings SET data=json_set(data, '$.gtd.pomodoro.completionAlert', json('false')) WHERE id=1")
+        let saved = try json(rows("SELECT data FROM settings WHERE id=1"))
+        let timer = try json(rows("SELECT * FROM native_pomodoro_session"))
+        await failure { _ = try await core.readPomodoroAlarmIntent() }
+        await failure { _ = try await core.readPomodoroPanel(presentationJSON: presentation) }
+        XCTAssertEqual(try json(rows("SELECT data FROM settings WHERE id=1")), saved)
+        XCTAssertEqual(try json(rows("SELECT * FROM native_pomodoro_session")), timer)
+        await core.close()
+        let reloaded = host(); _ = try await reloaded.start()
+        let alarm = try object(await reloaded.readPomodoroAlarmIntent())
+        XCTAssertEqual(alarm["kind"] as? String, "cancel")
+        XCTAssertEqual(alarm["reason"] as? String, "completion-alert-off")
+        let panel = try object(await reloaded.readPomodoroPanel(presentationJSON: presentation))
+        XCTAssertEqual(panel["completionAlert"] as? Bool, false)
+    }
+
     func testAlarmIntentReadsSavedPhaseWithoutCreditAndHonorsExplicitOff() async throws {
         try await seed(); let core = host(); _ = try await core.start()
         let before = try json(rows("SELECT * FROM native_pomodoro_session"))
