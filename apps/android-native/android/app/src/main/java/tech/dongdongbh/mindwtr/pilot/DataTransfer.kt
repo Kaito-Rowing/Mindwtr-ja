@@ -206,6 +206,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         if (busy) return
         action = mode
         saved["dataPick"] = mode
+        saved.remove<String>("dataPickMode")
         pickTypes = arrayOf(BACKUP_MIME)
         launch = "json"
     }
@@ -216,6 +217,8 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         val row = importRow(key) ?: return
         action = "import:$key"
         saved["dataPick"] = "import:$key"
+        // Kept with the pick: its answer can arrive after process death, before Settings › Data's model is read again.
+        saved["dataPickMode"] = row.getString("mode")
         pickTypes = row.getJSONArray("mimeTypes").let { types -> Array(types.length()) { types.getString(it) } }
         launch = "json"
     }
@@ -226,11 +229,11 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
      */
     fun backupPicked(uri: Uri?) {
         val mode = saved.get<String>("dataPick")
+        val importMode = saved.get<String>("dataPickMode")?.takeIf { mode?.startsWith("import:") == true }
         saved.remove<String>("dataPick")
-        if (uri == null || mode == null) { action = null; return }
+        saved.remove<String>("dataPickMode")
+        if (uri == null || mode == null || mode.startsWith("import:") && importMode == null) { action = null; return }
         action = mode
-        val importMode = mode.removePrefix("import:").takeIf { mode.startsWith("import:") }?.let { importRow(it)?.getString("mode") }
-        if (mode.startsWith("import:") && importMode == null) { action = null; return }
         // Core's operation for RN's failure title: Restore failed, Merge failed, or Import failed.
         val operation = importMode ?: if (mode == "merge") "merge" else "replace"
         whenHosted { runtime ->
