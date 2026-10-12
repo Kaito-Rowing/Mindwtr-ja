@@ -476,6 +476,26 @@ async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: Native
     }
 }
 
+const IMPORT_OPERATIONS = new Set(['csv', 'todoist', 'ticktick', 'dgt', 'omnifocus']);
+/**
+ * RN's failure toast for a restore, merge, snapshot restore or import that did not land ([operation]: core's backup document
+ * mode), from the failure's text ([error]: `CODE: message`, or `TOO_LARGE` when the host refused a file or a plan by size):
+ * RN's title (an import's "Import failed", "Merge failed", else "Restore failed"); an import's words through RN's
+ * formatThrownImportError, a backup's own words without their code (RN's formatThrownBackupError); a size refusal as core's
+ * limit text. A failure ends the operation, so its warning names ([liveWarnings]) go too.
+ */
+export function buildNativeBackupDocumentFailure(operation: string, error: string, t: ImportDiagnosticTranslator, limitMb: number) {
+    releaseNativeBackupDocumentWarnings();
+    const imported = IMPORT_OPERATIONS.has(operation);
+    const title = imported ? t('settings.backupMobile.importFailed')
+        : operation === 'merge' ? t('settings.mergeBackupFailed') : t('settings.backupMobile.restoreFailed');
+    const words = /^[A-Z_]+: /u.test(error) ? error.slice(error.indexOf(': ') + 2) : error;
+    if (error === 'TOO_LARGE' || error.startsWith('TOO_LARGE: ')) {
+        return { title, message: imported ? t('settings.importDiagnostics.limitExceeded') : t('settings.backupDiagnostics.tooLarge', { maxSizeMb: limitMb }) };
+    }
+    return { title, message: imported ? formatImportDiagnostic(createImportDiagnostic(words, 'error'), t) : words };
+}
+
 /** RN's result toast: its title and lines, Undo (none after a snapshot restore), and RN's duration (null: the toast's default). */
 export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply, t: ImportDiagnosticTranslator) {
     validateReply(reply);

@@ -13,7 +13,7 @@ import { formatI18nTemplate, getTranslator } from './i18n';
 import { consoleLogger, setLogger, type LogPayload } from './logger';
 import { applyImportSource, parseImportSource } from './import-runner';
 import {
-    buildNativeBackupDocumentResult, buildNativeBackupSnapshotRestoreConfirmation, commitNativeBackupDocument,
+    buildNativeBackupDocumentFailure, buildNativeBackupDocumentResult, buildNativeBackupSnapshotRestoreConfirmation, commitNativeBackupDocument,
     inspectNativeBackupDocument, nativeBackupDocumentWarningsHeld, prepareNativeBackupDocument, readNativeBackupDocumentOutcome,
     type NativeBackupDocumentPrepareInput, type NativeBackupOperationReference,
 } from './native-backup-document';
@@ -607,6 +607,33 @@ describe('an import\'s stored warnings hold codes and counts, never the file\'s 
         }
         await prepareNativeBackupDocument(env.adapter, todoistInput());
         await expect(prepareNativeBackupDocument(env.adapter, { ...todoistInput(), text: '' })).rejects.toThrow('INVALID_INPUT:');
+        expect(nativeBackupDocumentWarningsHeld()).toBe(false);
+    });
+});
+
+describe('RN\'s failure toast for a Data operation that did not land (D1b)', () => {
+    const de = (key: string, params?: Record<string, number | string>) => formatI18nTemplate(getTranslator('de')(key), params ?? {});
+    it('titles an import "Import failed" and words it through RN\'s formatThrownImportError, with no code prefix', () => {
+        const failure = buildNativeBackupDocumentFailure('todoist', 'INVALID_INPUT: Todoist source exceeds 16 MiB', de, 12);
+        expect(failure.title).toBe(de('settings.backupMobile.importFailed'));
+        expect(failure.message).toBe(formatImportDiagnostic(createImportDiagnostics(['Todoist source exceeds 16 MiB'], 'error')[0], de));
+        expect(failure.message).not.toMatch(/^(Error|INVALID_INPUT)/u);
+    });
+    it('gives a size refusal core\'s limit text: an import\'s, or a backup\'s with the host limit', () => {
+        expect(buildNativeBackupDocumentFailure('csv', 'TOO_LARGE: The imported library would be too large to undo', de, 12).message).toBe(de('settings.importDiagnostics.limitExceeded'));
+        expect(buildNativeBackupDocumentFailure('omnifocus', 'TOO_LARGE', de, 12).message).toBe(de('settings.importDiagnostics.limitExceeded'));
+        expect(buildNativeBackupDocumentFailure('merge', 'TOO_LARGE', de, 12)).toEqual({ title: de('settings.mergeBackupFailed'), message: de('settings.backupDiagnostics.tooLarge', { maxSizeMb: 12 }) });
+    });
+    it('keeps a backup\'s own words without their code, as D1a showed them', () => {
+        expect(buildNativeBackupDocumentFailure('replace', 'STALE_REVISION: Local data changed after backup preparation', de, 12))
+            .toEqual({ title: de('settings.backupMobile.restoreFailed'), message: 'Local data changed after backup preparation' });
+        expect(buildNativeBackupDocumentFailure('restore', 'unresolved', de, 12).message).toBe('unresolved');
+    });
+    it('lets the operation\'s warning names go', async () => {
+        const base = clone(original); base.projects = [{ ...createMockProject('existing-project', AT), title: 'Launch' }];
+        const env = await open(base); await prepareNativeBackupDocument(env.adapter, todoistInput());
+        expect(nativeBackupDocumentWarningsHeld()).toBe(true);
+        buildNativeBackupDocumentFailure('todoist', 'INVALID_INPUT: Backup operation files do not match', de, 12);
         expect(nativeBackupDocumentWarningsHeld()).toBe(false);
     });
 });
