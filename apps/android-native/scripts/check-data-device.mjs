@@ -16,7 +16,18 @@
 //      journal and the operation folder end empty, a commit replayed at start meets its document even with a task that became
 //      due meanwhile (E4a), and a result a death left unshown shows once;
 //   E2b a death in the middle of a folder write: the half file is gone at the next start;
-//   E5 while a merge waits (delay_before_ms), one row is busy and every other row is off.
+//   E5 while a merge waits (delay_before_ms), one row is busy and every other row is off (Getting Started's too).
+// Pass D1b (design D1b §9), after E2b:
+//   G1 Getting Started on a library without it: RN's toast with Open, 7 tasks and 2 Inbox samples, then a second tap adds nothing;
+//   I1 each importer (Todoist ZIP, TickTick ZIP, DGT JSON, OmniFocus CSV, Mindwtr CSV) through its picker: the rows equal core's
+//      own import of the fixture over the pulled library, then Undo leaves none;
+//   I2 a TickTick file on the DGT row: core's invalid-file warning, no staged copy; I3 a 13 MiB file: core's limit text;
+//   I4 process death before the journal (no row, no result) and after COMMIT (the rows once, the receipt, one replay line);
+//   I5 the 60 000-row Mindwtr CSV whose Undo could not be admitted: refused, nothing lands;
+//   I6 sentinels in a dropped rule, a renamed project and a skipped archive entry reach no result record, journal, receipt
+//      or log;
+//   G3 and G2 (each on a fresh install): a seed stopped before its send replays once; one stopped after its COMMIT is there
+//      once with its receipt under the journal's request UUID.
 // With D1_MEASURE=1 it measures the transfer limit instead (design §4.1): for each size it reinstalls, merges a backup of that
 // size, then restores the same file over it, sampling the app's native heap (QuickJS allocates there) and Java heap each second.
 // It clears every debug property it sets, puts rotation back, and leaves the phone on its home screen.
@@ -24,6 +35,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomInt, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { strToU8, zipSync } from 'fflate';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { box, check, connect, evidenced, fail, hasText, inboxCount, Stopped, tab, tagged, withDescription } from './device.mjs';
@@ -469,6 +481,8 @@ try {
     const rowTags = ['data-transfer-export', 'data-transfer-export-csv', 'data-transfer-export-tasknotes', 'data-transfer-restore', 'data-transfer-merge'];
     nodes = await waitFor('the merge to wait', (current) => rowTags.every((tag) => tagged(current, tag)?.enabled === 'false'), 30_000);
     check(true, '(E5) while the merge runs every data row is off (RN\'s isBackupBusy), the merge row with RN\'s spinner (screenshot)');
+    const starterWhileBusy = tagged(nodes, 'add-getting-started-content');
+    check(!starterWhileBusy || starterWhileBusy.enabled === 'false', '(E5) Getting Started is off too while the merge runs');
     writeFileSync(resolve(work, 'e5-busy.png'), adbRaw('exec-out', 'screencap', '-p'));
     await toastWith(en['settings.mergeBackup']);
     setProp('delay_before_ms', '');
@@ -570,6 +584,229 @@ try {
     await until('(E2b) the half file to go', () => exportsOnPhone().length === beforeKill.length, 30_000);
     check(allLogs().includes('v1.3.5/android-export-cleanup'), '(E2b) the start removed it and logged android-export-cleanup');
     setProp('export_tree', '');
+
+    // ---- Pass D1b: Getting Started and the five imports ----
+    const freshInstall = async () => {
+        if (sh(`pm list packages ${PKG}`).split('\n').some((line) => line.trim() === `package:${PKG}`)) sh(`pm uninstall ${PKG}`);
+        adbRaw('install', '-g', apk);
+        await launch();
+    };
+    const starterRows = (label) => {
+        const db = pullDb(label);
+        const projects = sqlite(db, 'SELECT id, title FROM projects WHERE deletedAt IS NULL').filter((row) => row.title === en['starter.projectTitle']);
+        const tasks = sqlite(db, 'SELECT title, projectId, status FROM tasks WHERE deletedAt IS NULL');
+        return {
+            projects: projects.length,
+            tasks: projects.length === 1 ? tasks.filter((row) => row.projectId === projects[0].id).length : 0,
+            samples: tasks.filter((row) => !row.projectId && row.status === 'inbox' && [en['starter.sampleBuyMilk'], en['starter.sampleReplySam']].includes(row.title)).length,
+        };
+    };
+    const seededLines = (outcome) => allLogs().split('\n').filter((line) => line.includes('v1.3.7/native-getting-started') && line.includes(`"outcome":"${outcome}"`)).length;
+    const gettingStartedRow = async () => {
+        let nodes = await openData();
+        for (let step = 0; step < 6 && !tagged(nodes, 'add-getting-started-content'); step += 1) nodes = await device.swipe(nodes, 'down');
+        return tagged(nodes, 'add-getting-started-content') ?? fail('no Getting Started row');
+    };
+
+    // G1: the row seeds once; RN's toast offers Open; a second tap adds nothing.
+    check(starterRows('g1-before').projects === 0, '(G1) the library has no Getting Started project before the tap');
+    const created = seededLines('created');
+    await tap(await gettingStartedRow());
+    nodes = await waitFor('RN\'s Getting Started toast', (current) => hasText(current, en['onboarding.toastReady']), 60_000);
+    const open = nodes.find((node) => node.text === en['common.open']);
+    check(Boolean(open), '(G1) the toast offers RN\'s Open');
+    await tap(open);
+    await waitFor('the Getting Started project', (current) => hasText(current, en['starter.projectTitle']), 30_000);
+    let seeded = starterRows('g1-after');
+    check(seeded.projects === 1 && seeded.tasks === 7 && seeded.samples === 2, `(G1) one project with 7 tasks and 2 Inbox samples: ${JSON.stringify(seeded)}`);
+    check(seededLines('created') === created + 1, '(G1) the log shows outcome=created once');
+    const unchanged = seededLines('unchanged');
+    await tap(await gettingStartedRow());
+    await waitFor('RN\'s Getting Started toast again', (current) => hasText(current, en['onboarding.toastReady']), 60_000);
+    seeded = starterRows('g1-again');
+    check(seeded.projects === 1 && seeded.tasks === 7 && seeded.samples === 2, `(G1) a second tap adds nothing: ${JSON.stringify(seeded)}`);
+    await until('(G1) the second seed\'s log line', () => seededLines('unchanged') === unchanged + 1, 15_000);
+    check(true, '(G1) the second tap logs outcome=unchanged');
+
+    // The import fixtures (titles d1…<run>; dates relative to now): written here, pushed to the test folder.
+    const binary = (name, bytes) => { writeFileSync(resolve(work, name), bytes); return { name, tasks: [] }; };
+    const csvLine = (cells) => cells.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',');
+    const tickTime = new Date().toISOString().replace(/\.\d{3}Z$/, '+0000');
+    const ticktickHeaders = ['Folder Name', 'List Name', 'Title', 'Kind', 'Tags', 'Content', 'Is Check list', 'Start Date', 'Due Date', 'Repeat', 'Priority', 'Status', 'Created Time', 'Completed Time', 'Timezone', 'Is All Day', 'taskId', 'parentId'];
+    const omniHeaders = ['Task ID', 'Type', 'Name', 'Status', 'Project', 'Context', 'Start Date', 'Planned Date', 'Due Date', 'Completion Date', 'Duration', 'Flagged', 'Notes', 'Tags'];
+    const imports = [
+        { key: 'todoist', file: binary(`d1-todoist-${run}.zip`, zipSync({ [`d1tdproj${run}.csv`]: strToU8(['TYPE,CONTENT,PRIORITY,INDENT,DATE,DESCRIPTION', `task,d1tda${run},1,1,,`, `task,d1tdb${run},4,1,,Second task`].join('\n')) })), title: en['settings.backupMobile.importTodoistData'] },
+        { key: 'ticktick', file: binary(`d1-ticktick-${run}.zip`, zipSync({ 'backup.csv': strToU8([csvLine(ticktickHeaders),
+            csvLine(['D1 folder', `d1ttlist${run}`, `d1tta${run}`, 'TEXT', '', 'Notes', 'N', '', '', '', '0', '0', tickTime, '', 'UTC', 'false', '1', '']),
+            csvLine(['D1 folder', `d1ttlist${run}`, `d1ttb${run}`, 'TEXT', '', '', 'N', '', '', '', '1', '0', tickTime, '', 'UTC', 'false', '2', ''])].join('\n')) })), title: en['settings.backupMobile.importTicktickData'] },
+        { key: 'dgt', file: binary(`d1-dgt-${run}.json`, strToU8(JSON.stringify({ version: 3, FOLDER: [{ ID: 1, TITLE: `d1dgtfolder${run}`, ORDINAL: 0 }],
+            TASK: [{ ID: 10, TYPE: 1, TITLE: `d1dgtproj${run}`, FOLDER: 1, ORDINAL: 0 }, { ID: 11, TYPE: 0, TITLE: `d1dga${run}`, PARENT: 10, STATUS: 0 }, { ID: 12, TYPE: 0, TITLE: `d1dgb${run}`, STATUS: 1 }] }))), title: en['settings.backupMobile.importDgtGtdData'] },
+        { key: 'omnifocus', file: binary(`d1-omnifocus-${run}.csv`, strToU8([csvLine(omniHeaders),
+            csvLine(['p1', 'Project', `d1ofproj${run}`, 'Active', '', '', '', '', '', '', '', '0', '', '']),
+            csvLine(['a1', 'Action', `d1ofa${run}`, 'Available', `d1ofproj${run}`, '', '', '', '', '', '', '0', '', '']),
+            csvLine(['a2', 'Action', `d1ofb${run}`, 'Available', '', '', '', '', '', '', '', '1', '', ''])].join('\n'))), title: en['settings.backupMobile.importOmnifocusData'] },
+        { key: 'mindwtr-csv', file: binary(`d1-mindwtr-${run}.csv`, strToU8(`Title,Project\nd1mca${run},d1mcproj${run}\nd1mcb${run},\n`)), title: en['settings.backupMobile.importMindwtrCsvData'] },
+    ];
+    for (const item of imports) push(item.file);
+    const openImports = async () => {
+        let nodes = await openData();
+        for (let step = 0; step < 8 && !tagged(nodes, 'import-disclosure'); step += 1) nodes = await device.swipe(nodes, 'down');
+        if (tagged(nodes, 'import-guide-link')) return nodes;
+        return tapExpecting(tagged(nodes, 'import-disclosure') ?? fail('no Import fold'), (current) => Boolean(tagged(current, 'import-guide-link')), 'the Import fold open');
+    };
+    const importRow = async (key) => {
+        let nodes = await openImports();
+        for (let step = 0; step < 6 && !tagged(nodes, `data-transfer-import-${key}`); step += 1) nodes = await device.swipe(nodes, 'down');
+        return tagged(nodes, `data-transfer-import-${key}`) ?? fail(`no ${key} import row`);
+    };
+    const importPick = async (key, file) => {
+        await tap(await importRow(key));
+        await pickDocument(file.name);
+        await until('the app back in front', () => !otherAppFront(), 15_000, 500);
+    };
+    const taggedRows = (db) => sqlite(db, `SELECT t.title AS title, t.status AS status, p.title AS project FROM tasks t LEFT JOIN projects p ON p.id = t.projectId WHERE t.deletedAt IS NULL AND t.title LIKE 'd1%${run}'`)
+        .sort((left, right) => left.title.localeCompare(right.title));
+    const staged = () => listing('no_backup/backup-import');
+    const committedLines = (operation) => allLogs().split('\n').filter((line) => line.includes('v1.3.4/native-backup-document') && line.includes(`"operation":"${operation}"`)).length;
+    const receiptCount = (label, operation) => sqlite(pullDb(label), `SELECT count(*) AS n FROM native_request_receipts WHERE method LIKE '["backupDocument","${operation}",%'`)[0].n;
+
+    // I1: each importer's rows are core's own import of the fixture over the library just before; Undo leaves none.
+    for (const item of imports) {
+        const before = pullDb(`i1-${item.key}-before`);
+        const beforeRows = JSON.stringify(taggedRows(before));
+        const expected = JSON.parse(execFileSync('bun', [resolve(app, 'scripts/data-import-expected.ts'), before, item.key, resolve(work, item.file.name), run], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }));
+        await importPick(item.key, item.file);
+        await confirmQuestion(item.title);
+        nodes = await toastWith(en['settings.backupMobile.importComplete']);
+        check(Boolean(undoButton(nodes)), `(I1 ${item.key}) the result shows RN's Undo`);
+        const after = taggedRows(pullDb(`i1-${item.key}-after`));
+        check(after.length > JSON.parse(beforeRows).length && JSON.stringify(after) === JSON.stringify(expected),
+            `(I1 ${item.key}) the imported rows are core's import of the fixture: ${JSON.stringify(after)}`);
+        await tap(undoButton(nodes));
+        await confirmQuestion(en['settings.undoImportConfirmTitle']);
+        await toastWith(en['settings.backupMobile.restoreComplete']);
+        check(JSON.stringify(taggedRows(pullDb(`i1-${item.key}-undo`))) === beforeRows, `(I1 ${item.key}) Undo gave the library back as it was`);
+        check(journal().length === 0 && operations().length === 0 && staged().length === 0, `(I1 ${item.key}) the journal, the operation folder and the staging folder are empty`);
+    }
+
+    // I2: a TickTick file on the DGT row: core's invalid-file warning; the staged copy goes.
+    await importPick('dgt', imports[1].file);
+    await waitFor('the invalid-file warning', (current) => hasText(current, en['settings.backupMobile.importFailed']), 60_000);
+    check(staged().length === 0 && !confirmButton(await screen()), '(I2) a TickTick file on the DGT row asks nothing and leaves no staged copy');
+
+    // I3: a 13 MiB file passes the transfer limit while it is copied: core's limit text, no copy left.
+    const big = binary(`d1-big-${run}.csv`, Buffer.alloc(13 * 1024 * 1024, 'x'));
+    push(big);
+    await importPick('mindwtr-csv', big);
+    await waitFor('the limit refusal', (current) => hasText(current, en['settings.backupMobile.importFailed']) && hasText(current, en['settings.importDiagnostics.limitExceeded']), 60_000);
+    check(staged().length === 0 && !confirmButton(await screen()), '(I3) a 13 MiB file is refused while copied, with core\'s limit text and no staged copy');
+    sh(`rm -f ${PHONE_DIR}/${big.name}`);
+
+    // I4: a Todoist import stopped before the journal lands nothing and leaves no result; stopped after its COMMIT, it is there
+    // exactly once with its receipt, the next start shows its result once, and only the replay line is logged (the stop comes
+    // before the commit's own line).
+    const importCrash = async (label, props, file) => {
+        push(file);
+        for (const [name, value] of Object.entries(props)) setProp(name, value);
+        await importPick('todoist', file);
+        await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 60_000)));
+        await until(`the process to end (I4 ${label})`, () => !pid(), 120_000, 500);
+        for (const name of Object.keys(props)) setProp(name, '');
+    };
+    const todoistCsv = (titles) => strToU8(['TYPE,CONTENT,PRIORITY,INDENT,DATE,DESCRIPTION', ...titles.map((title) => `task,${title},1,1,,`)].join('\n'));
+    for (const [label, stop] of [['after-snapshot', 'after-snapshot'], ['mid-plan', 'mid-plan']]) {
+        const titles = [`d1i4${label.replace('-', '')}${run}`];
+        const lines = committedLines('todoist');
+        const replays = replayLines().length;
+        await importCrash(label, { backup_stop: stop }, binary(`d1-i4-${label}-${run}.zip`, zipSync({ [`d1i4proj${run}.csv`]: todoistCsv(titles) })));
+        await launch();
+        await sleep(8_000);
+        check(!hasText(await screen(), en['settings.backupMobile.importComplete']) && !hasText(await screen(), en['settings.backupMobile.importFailed']), `(I4 ${label}) the next start shows no result`);
+        check(!taggedRows(pullDb(`i4-${label}`)).some((row) => titles.includes(row.title)), `(I4 ${label}) nothing landed`);
+        check(!listing('no_backup/backup-operations').includes('result.json') && journal().length === 0 && operations().length === 0, `(I4 ${label}) no result record, an empty journal and operation folder`);
+        check(committedLines('todoist') === lines && replayLines().length === replays, `(I4 ${label}) neither the commit line nor a replay line`);
+    }
+    {
+        const titles = [`d1i4aftercommit${run}`];
+        const lines = committedLines('todoist');
+        const replays = replayLines().length;
+        const receipts = receiptCount('i4-receipts-before', 'todoist');
+        await importCrash('after-commit', { commit_stop: 'backupDocumentCommit' }, binary(`d1-i4-after-commit-${run}.zip`, zipSync({ [`d1i4proj${run}.csv`]: todoistCsv(titles) })));
+        await launch();
+        await toastWith(en['settings.backupMobile.importComplete'], 60_000);
+        const landed = taggedRows(pullDb('i4-after-commit')).filter((row) => titles.includes(row.title));
+        check(landed.length === 1, `(I4 after-commit) the import landed exactly once: ${JSON.stringify(landed)}`);
+        check(receiptCount('i4-receipts-after', 'todoist') === receipts + 1, '(I4 after-commit) its receipt is in SQLite');
+        check(committedLines('todoist') === lines, '(I4 after-commit) no commit line: the stop came right after COMMIT');
+        const replayed = replayLines().slice(replays);
+        check(replayed.length === 1 && replayed[0].includes('"operation":"todoist"') && replayed[0].includes('"outcome":"committed"'), `(I4 after-commit) one replay line, todoist committed: ${replayed.join(' | ')}`);
+        await until('(I4 after-commit) the result record to go', () => !listing('no_backup/backup-operations').includes('result.json'), 30_000);
+        await relaunch();
+        await sleep(8_000);
+        check(!hasText(await screen(), en['settings.backupMobile.importComplete']), '(I4 after-commit) a second start shows the result no more');
+    }
+
+    // I5: Codex's 60 000-row Mindwtr CSV grows the library past what its Undo could admit: refused before COMMIT, nothing lands.
+    const expansion = binary(`d1-expansion-${run}.csv`, strToU8(`Title\n${Array.from({ length: 60_000 }, (_, index) => `d1x${index}x${run}`).join('\n')}\n`));
+    push(expansion);
+    const csvReceipts = receiptCount('i5-before', 'csv');
+    await importPick('mindwtr-csv', expansion);
+    await confirmQuestion(en['settings.backupMobile.importMindwtrCsvData']);
+    await waitFor('the Undo-size refusal', (current) => hasText(current, en['settings.backupMobile.importFailed']) && hasText(current, en['settings.importDiagnostics.limitExceeded']), 600_000);
+    check(!taggedRows(pullDb('i5')).some((row) => row.title.startsWith('d1x')), '(I5) the 60 000-row import landed nothing');
+    check(receiptCount('i5-after', 'csv') === csvReceipts, '(I5) and wrote no receipt');
+    await until('(I5) the journal and the operation folder to empty', () => journal().length === 0 && operations().length === 0, 60_000);
+    sh(`rm -f ${PHONE_DIR}/${expansion.name}`);
+
+    // I6: sentinels in a dropped repeat rule, a renamed project and a skipped archive entry's name stay out of every record.
+    const S1 = `TOKEN=d1sentinelone${run}`;
+    const S2 = `d1sentineltwo${run}`;
+    const S3 = `d1sentinelthree${run}`;
+    const named = binary(`d1-named-${run}.zip`, zipSync({ [`${S2}.csv`]: todoistCsv([`d1s2a${run}`]) }));
+    const renamed = binary(`d1-renamed-${run}.zip`, zipSync({ [`${S2}.csv`]: todoistCsv([`d1s2b${run}`]) }));
+    const rule = binary(`d1-rule-${run}.zip`, zipSync({ 'tasks.csv': strToU8(`Title,Recurrence\nd1s1a${run},${S1}\n`), [`${S3}.zip`]: zipSync({ 'inner.csv': strToU8('Title\nx') }) }));
+    for (const [key, file, title] of [['todoist', named, en['settings.backupMobile.importTodoistData']], ['todoist', renamed, en['settings.backupMobile.importTodoistData']],
+        ['mindwtr-csv', rule, en['settings.backupMobile.importMindwtrCsvData']]]) {
+        push(file);
+        await importPick(key, file);
+        await confirmQuestion(title);
+        await toastWith(en['settings.backupMobile.importComplete']);
+    }
+    const holders = (sentinel) => runAs(`sh -c 'grep -rl "${sentinel}" files no_backup databases 2>/dev/null || true'`).split(/\s+/).filter(Boolean);
+    check(holders(S1).length === 0 && holders(S3).length === 0, `(I6) the dropped rule and the skipped entry's name are nowhere on disk: ${[...holders(S1), ...holders(S3)].join(' ')}`);
+    check(holders(S2).every((path) => path.startsWith('files/SQLite/') || path.startsWith('files/snapshots/')), `(I6) the renamed project's name is only in the library and its snapshots: ${holders(S2).join(' ')}`);
+    check(!allLogs().includes(S1) && !allLogs().includes(S2) && !allLogs().includes(S3), '(I6) no log line names a sentinel');
+    const receiptReplies = JSON.stringify(sqlite(pullDb('i6'), 'SELECT reply FROM native_request_receipts'));
+    check(![S1, S2, S3].some((sentinel) => receiptReplies.includes(sentinel)), '(I6) no receipt reply holds a sentinel');
+
+    // G3: a seed stopped with its entry on disk, before core saw it: the next start replays it once.
+    await freshInstall();
+    const g3Created = seededLines('created');
+    setProp('journal_stop', 'before:gettingStarted');
+    await tap(await gettingStartedRow());
+    await until('the process to end (G3)', () => !pid(), 60_000, 500);
+    setProp('journal_stop', '');
+    await launch();
+    await until('(G3) the replay to seed', () => { seeded = starterRows('g3'); return seeded.tasks === 7; }, 60_000, 2_000).catch(() => undefined);
+    check(seeded.projects === 1 && seeded.tasks === 7 && seeded.samples === 2, `(G3) the replay seeded once: ${JSON.stringify(seeded)}`);
+    check(journal().length === 0 && seededLines('created') === g3Created + 1, '(G3) the journal is empty and the replay logged outcome=created once');
+
+    // G2: a seed stopped right after its COMMIT: the rows and the receipt are in one transaction, so the next start answers from
+    // the receipt (gettingStarted:<hash> under the journal's request UUID) and writes and logs nothing.
+    await freshInstall();
+    const g2Lines = seededLines('created') + seededLines('unchanged');
+    setProp('commit_stop', 'gettingStarted');
+    await tap(await gettingStartedRow());
+    await until('the process to end (G2)', () => !pid(), 60_000, 500);
+    setProp('commit_stop', '');
+    const requestId = /requestId\\*":\\*"([0-9a-f-]{36})/.exec(runAs("sh -c 'cat files/journal/*.json'"))?.[1] ?? fail('(G2) no journaled request UUID');
+    await launch();
+    await until('(G2) the journal to empty', () => journal().length === 0, 60_000);
+    seeded = starterRows('g2');
+    check(seeded.projects === 1 && seeded.tasks === 7 && seeded.samples === 2, `(G2) the seed is there once: ${JSON.stringify(seeded)}`);
+    const receipt = sqlite(pullDb('g2-receipt'), `SELECT method FROM native_request_receipts WHERE request_id = '${requestId}'`);
+    check(receipt.length === 1 && receipt[0].method.startsWith('gettingStarted:'), `(G2) its receipt is gettingStarted:<hash> under the journal's request UUID: ${JSON.stringify(receipt)}`);
+    check(seededLines('created') + seededLines('unchanged') === g2Lines, '(G2) no seed line: the stop came right after COMMIT and the replay answered from the receipt');
 
     console.log('Settings › Data device check passed');
     }
