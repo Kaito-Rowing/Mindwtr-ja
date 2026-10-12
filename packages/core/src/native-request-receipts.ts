@@ -275,7 +275,13 @@ export type NativeDocumentReceiptInput = {
     data: AppData;
     /** Non-null JSON, at most 64 KiB UTF-8. The caller validates its domain shape. */
     reply: unknown;
+    /**
+     * The library's SQLite bytes (pages) this write may leave, its receipt included: checked after the receipt insert and
+     * before COMMIT, so a refusal ([UNDO_LIMIT_EXCEEDED]) rolls back the data and the receipt together.
+     */
+    maxLibraryBytes?: number;
 };
+export const UNDO_LIMIT_EXCEEDED = 'Document library exceeds the undo limit';
 export type NativeDocumentReceiptResult = { reply: unknown; replayed: boolean };
 
 const isCanonicalRequestId = (value: unknown): value is string => typeof value === 'string'
@@ -420,7 +426,7 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
     private prerequisite: { requestId: string; fingerprint: string; originId: string; originFingerprint: string; reply: unknown } | null = null;
     private documentBusy = false;
     private ordinaryWrites = 0;
-    private documentReceipt: { requestId: string; payload: string; data: AppData; replyJson: string; savedAt: string } | null = null;
+    private documentReceipt: { requestId: string; payload: string; data: AppData; replyJson: string; savedAt: string; maxLibraryBytes?: number } | null = null;
 
     constructor(client: SqliteClient, options?: SqliteAdapterOptions) {
         let isDocumentWrite = () => false;
@@ -510,6 +516,10 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             throw new Error('Invalid document receipt identity');
         }
         const { requestId, payload } = input;
+        const { maxLibraryBytes } = input;
+        if (maxLibraryBytes !== undefined && !(Number.isSafeInteger(maxLibraryBytes) && maxLibraryBytes >= 0)) {
+            throw new Error('Invalid document receipt input');
+        }
         const owner = requestPayloads.get(requestId);
         if (owner !== undefined && owner !== payload) throw new Error('Document receipt identity belongs to another action');
         let expectedCurrent: AppData;
@@ -545,12 +555,13 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             const withoutKey = (document: AppData): AppData => ({ ...document, settings: stripSensitiveSettings(document.settings) });
             if (!taskEditValuesEqual(withoutKey(current), withoutKey(expectedCurrent))) throw new Error('Stale document receipt baseline');
             if (pendingReceipts.size > 0 || receiptedWritesRunning > 0 || hasPendingDocumentStoreWork()) throw new Error('Document receipt write is busy');
-            const context = { requestId, payload, data, replyJson, savedAt: new Date().toISOString() };
+            const context = { requestId, payload, data, replyJson, savedAt: new Date().toISOString(), maxLibraryBytes };
             this.documentReceipt = context;
             try { await super.saveData(data); }
             catch (error) {
                 if (error instanceof Error && error.message.startsWith('SQLITE_BUSY:'))
                     throw new Error('Stale document receipt baseline');
+                if (error instanceof Error && error.message === UNDO_LIMIT_EXCEEDED) throw error;
                 throw new Error('Document receipt persistence failed');
             }
             durableReceipts.set(requestId, { fingerprint: payload, reply: JSON.parse(replyJson) as unknown, savedAt: context.savedAt });
@@ -569,6 +580,13 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             this.documentBusy = false;
             if (!succeeded && owner === undefined && requestPayloads.get(requestId) === payload) requestPayloads.delete(requestId);
         }
+    }
+
+    /** The library's bytes as SQLite counts them (pages × page size); inside a write transaction, its new pages too. */
+    async libraryBytes(): Promise<number> {
+        const [pages] = await this.receiptClient.all<{ page_count: number }>('PRAGMA page_count');
+        const [size] = await this.receiptClient.all<{ page_size: number }>('PRAGMA page_size');
+        return Number(pages?.page_count ?? 0) * Number(size?.page_size ?? 0);
     }
 
     protected override buildSaveFailureContext(data: AppData, step: string): Record<string, unknown> {
@@ -592,6 +610,9 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
                 );
             } catch {
                 throw new Error('Document receipt insert failed');
+            }
+            if (context.maxLibraryBytes !== undefined && await this.libraryBytes() > context.maxLibraryBytes) {
+                throw new Error(UNDO_LIMIT_EXCEEDED);
             }
             return;
         }

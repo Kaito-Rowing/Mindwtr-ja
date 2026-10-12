@@ -10,7 +10,7 @@ import type { TodoistImportExecutionResult } from './todoist-import';
 import type { TickTickImportExecutionResult } from './ticktick-import';
 import type { DgtImportExecutionResult } from './dgt-import';
 import type { OmniFocusImportExecutionResult } from './omnifocus-import';
-import { MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES, type NativeReceiptSqliteAdapter } from './native-request-receipts';
+import { MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES, UNDO_LIMIT_EXCEEDED, type NativeReceiptSqliteAdapter } from './native-request-receipts';
 import { DATA_TRANSFER_TOAST_MS } from './data-settings-model';
 import {
     buildAreaImportResultMessage, buildBackupPreviewSummary, buildDgtPreviewSummary, buildMergeResultMessage, buildMindwtrCsvPreviewSummary,
@@ -51,13 +51,23 @@ type Operation = 'merge' | 'restore' | 'replace' | 'csv' | 'todoist' | 'ticktick
 export type NativeBackupDocumentPrepareInput = {
     requestId: string; mode: Operation; snapshotName: string;
     text: string; metadata: NativeBackupDocumentMetadata;
+    /**
+     * A host with a measured memory limit (Android): the picked file's bytes and that limit. The library's bytes are core's
+     * (SQLite pages), so the source and the library are refused together before any parse, and the plan freezes how large
+     * the library may grow while its Undo still fits (`maxLibraryBytes`).
+     */
+    admission?: { sourceBytes: number; maxTransferBytes: number };
 };
 type Plan = {
     version: 1; requestId: string; mode: Operation; preparedAt: string;
     expectedCurrent: AppData; data: AppData; reply: NativeBackupDocumentReply;
+    /** The library's SQLite bytes the commit may leave, its receipt included: the limit less the recovery snapshot's bytes. */
+    maxLibraryBytes?: number;
 };
 class BackupInputError extends Error {}
 function invalid(message = 'Invalid backup document input'): never { throw new BackupInputError(`INVALID_INPUT: ${message}`); }
+function tooLarge(message: string): never { throw new BackupInputError(`TOO_LARGE: ${message}`); }
+const UNDO_TOO_LARGE = 'TOO_LARGE: The imported library would be too large to undo';
 function saveFailed(): never { throw new Error('SAVE_FAILED: Backup document outcome could not be verified'); }
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const exact = (value: unknown, fields: string[]): value is Record<string, unknown> => record(value)
@@ -81,8 +91,10 @@ const metadataValid = (value: unknown): value is NativeBackupDocumentMetadata =>
 
 // Count without allocating a second encoded copy of a document up to 512 MiB.
 // Unpaired UTF-16 surrogates become the UTF-8 replacement character, as TextEncoder does.
-const withinUtf8Limit = (value: unknown, limit: number): value is string => {
-    if (typeof value !== 'string' || value.length > limit) return false;
+const withinUtf8Limit = (value: unknown, limit: number): value is string =>
+    typeof value === 'string' && value.length <= limit && utf8Bytes(value, limit) <= limit;
+/** [value]'s UTF-8 bytes, counting stops once past [limit]. */
+const utf8Bytes = (value: string, limit = Number.POSITIVE_INFINITY): number => {
     let bytes = 0;
     for (let index = 0; index < value.length; index += 1) {
         const code = value.charCodeAt(index);
@@ -92,9 +104,9 @@ const withinUtf8Limit = (value: unknown, limit: number): value is string => {
             && value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff) {
             bytes += 4; index += 1;
         } else bytes += 3;
-        if (bytes > limit) return false;
+        if (bytes > limit) return bytes;
     }
-    return true;
+    return bytes;
 };
 const parseSource = (text: unknown, metadata: unknown) => {
     if (!withinUtf8Limit(text, MAX_BACKUP_SOURCE_BYTES)) invalid('Backup source exceeds 128 MiB');
@@ -233,8 +245,14 @@ const completeDocument = (value: unknown): value is AppData => record(value)
 
 /** Freeze shared RN policy against a fresh durable base; this performs no document or file write. */
 export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, input: NativeBackupDocumentPrepareInput): Promise<{ planJSON: string; recoveryJSON: string | null }> {
-    if (!exact(input, ['requestId', 'mode', 'snapshotName', 'text', 'metadata'])
-        || !uuid(input.requestId) || !mode(input.mode) || !snapshot(input.snapshotName)) invalid();
+    const fields = ['requestId', 'mode', 'snapshotName', 'text', 'metadata'];
+    const admission: unknown = (input as { admission?: unknown }).admission;
+    const admitted = admission === undefined ? exact(input, fields) : exact(input, [...fields, 'admission'])
+        && exact(admission, ['sourceBytes', 'maxTransferBytes']) && count(admission.sourceBytes) && count(admission.maxTransferBytes);
+    if (!admitted || !uuid(input.requestId) || !mode(input.mode) || !snapshot(input.snapshotName)) invalid();
+    if (input.admission && input.admission.sourceBytes + await adapter.libraryBytes() > input.admission.maxTransferBytes) {
+        tooLarge('The selected file and the library exceed the transfer limit');
+    }
     // Parse owned bytes before admission; no untrusted thrown details escape.
     let parsed: ReturnType<typeof parseSource>['data'];
     let csv: ReturnType<typeof parseCsvSource>['parsedData'];
@@ -317,6 +335,10 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
                 if (!withinUtf8Limit(recoveryJSON, MAX_BACKUP_SOURCE_BYTES)) invalid('Recovery snapshot exceeds 128 MiB');
                 if (!parseSource(recoveryJSON, { fileName: snapshotName, lastModified: Date.now(), appVersion }).valid) invalid('Recovery snapshot is not a valid backup');
             }
+            if (input.admission && recoveryJSON !== null) {
+                plan.maxLibraryBytes = input.admission.maxTransferBytes - utf8Bytes(recoveryJSON);
+                if (plan.maxLibraryBytes < 0) tooLarge('The library is too large to undo an import');
+            }
             const planJSON = JSON.stringify(plan);
             if (!withinUtf8Limit(planJSON, MAX_NATIVE_BACKUP_PLAN_BYTES)) invalid('Prepared backup plan exceeds 512 MiB');
             return { planJSON, recoveryJSON };
@@ -351,7 +373,8 @@ const readPlan = (reference: NativeBackupOperationReference, planJSON: string, s
         || !snapshot(snapshotName) || !withinUtf8Limit(planJSON, MAX_NATIVE_BACKUP_PLAN_BYTES)) invalid();
     let value: unknown;
     try { value = JSON.parse(planJSON); } catch { return invalid(); }
-    if (!exact(value, ['version', 'requestId', 'mode', 'preparedAt', 'expectedCurrent', 'data', 'reply'])
+    const fields = ['version', 'requestId', 'mode', 'preparedAt', 'expectedCurrent', 'data', 'reply'];
+    if (!(exact(value, fields) || exact(value, [...fields, 'maxLibraryBytes']) && count(value.maxLibraryBytes))
         || value.version !== 1 || value.requestId !== reference.id || !mode(value.mode)
         || typeof value.preparedAt !== 'string' || !Number.isFinite(Date.parse(value.preparedAt))
         || new Date(value.preparedAt).toISOString() !== value.preparedAt
@@ -390,11 +413,13 @@ export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAda
             let result;
             try {
                 result = await adapter.saveDocumentWithReceipt({ requestId: ownedReference.id, payload: payload(ownedReference, plan),
-                    expectedCurrent: plan.expectedCurrent, data: plan.data, reply: plan.reply });
+                    expectedCurrent: plan.expectedCurrent, data: plan.data, reply: plan.reply,
+                    ...(plan.maxLibraryBytes === undefined ? {} : { maxLibraryBytes: plan.maxLibraryBytes }) });
             } catch (error) {
                 if (error instanceof Error && error.message === 'Stale document receipt baseline') {
                     throw new Error('STALE_REVISION: Local data changed after backup preparation');
                 }
+                if (error instanceof Error && error.message === UNDO_LIMIT_EXCEEDED) throw new Error(UNDO_TOO_LARGE);
                 return saveFailed();
             }
             const reply = matchedReply(result.reply, plan);
@@ -407,6 +432,7 @@ export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAda
         });
     } catch (error) {
         if (error instanceof Error && (error.message === 'STALE_REVISION: Local data changed after backup preparation'
+            || error.message === UNDO_TOO_LARGE
             || error.message === 'SAVE_FAILED: Backup document was saved but reload failed')) throw error;
         return saveFailed();
     }

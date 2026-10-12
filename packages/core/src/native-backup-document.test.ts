@@ -328,6 +328,61 @@ describe('native backup commit replayed after process death (pass D1a, gate G-B1
     });
 });
 
+describe('an import whose Undo could not be admitted is refused before COMMIT (D1b review P1)', () => {
+    const MIB = 1024 * 1024;
+    const pageBytes = async (client: SqliteClient) => {
+        const [count] = await client.all<{ page_count: number }>('PRAGMA page_count');
+        const [size] = await client.all<{ page_size: number }>('PRAGMA page_size');
+        return count.page_count * size.page_size;
+    };
+
+    it('refuses at prepare when the source and the library together pass the limit, before parsing anything', async () => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData');
+        await expect(prepareNativeBackupDocument(env.adapter, { ...csvInput(), admission: { sourceBytes: 10, maxTransferBytes: 4096 } })).rejects.toThrow('TOO_LARGE:');
+        expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+        await expect(prepareNativeBackupDocument(env.adapter, { ...csvInput(), admission: { sourceBytes: 10, maxTransferBytes: 12 * MIB } })).resolves.toMatchObject({ planJSON: expect.any(String) });
+    });
+
+    it('refuses the 60 000-row CSV whose library would pass 12 MiB, leaving SQLite and the receipts as they were', async () => {
+        const rows = Array.from({ length: 60_000 }, (_, index) => `Task ${index}`);
+        const text = `Title\n${rows.join('\n')}\n`;
+        expect(text.length).toBeLessThan(MIB);
+        const source = { ...csvInput(text), admission: { sourceBytes: text.length, maxTransferBytes: 12 * MIB } };
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, source);
+        expect(JSON.parse(prepared.planJSON).maxLibraryBytes).toBe(12 * MIB - strToU8(prepared.recoveryJSON!).length);
+        const before = await env.state();
+        await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('TOO_LARGE:');
+        expect(await env.state()).toEqual(before);
+        const roomy = await open(); const fits = await prepareNativeBackupDocument(roomy.adapter, { ...source, admission: { sourceBytes: text.length, maxTransferBytes: 512 * MIB } });
+        await expect(commitNativeBackupDocument(roomy.adapter, reference, fits.planJSON, NAME)).resolves.toMatchObject({ operation: 'csv' });
+        expect((await roomy.state()).tasks).toHaveLength(original.tasks.length + 60_000);
+    }, 120_000);
+
+    it('counts the receipt: data that fits and a receipt that crosses the limit are both rolled back', async () => {
+        const reply = { blob: 'r'.repeat(40_000) };
+        const payload = JSON.stringify(['backupDocument', 'merge', ID, 'a'.repeat(64)]);
+        const save = async (env: Awaited<ReturnType<typeof open>>, maxLibraryBytes: number) => {
+            const current = await env.adapter.getData();
+            return env.adapter.saveDocumentWithReceipt({ requestId: ID, payload, expectedCurrent: current,
+                data: { ...clone(current), tasks: [...clone(current).tasks, task('added')] }, reply, maxLibraryBytes });
+        };
+        // A dry run measures the library inside the open transaction: at the receipt insert, and at COMMIT.
+        const dry = await open(); let atInsert = 0; let atCommit = 0;
+        dry.hooks.run = async (statement) => {
+            if (statement.startsWith('INSERT INTO native_request_receipts')) atInsert = await pageBytes(dry.sql.client);
+            if (statement === 'COMMIT') atCommit = await pageBytes(dry.sql.client);
+        };
+        await save(dry, 512 * MIB);
+        expect(atCommit).toBeGreaterThan(atInsert);
+        const env = await open(); const before = await env.state();
+        await expect(save(env, atInsert)).rejects.toThrow('Document library exceeds the undo limit');
+        expect(await env.state()).toEqual(before);
+        const exact = await open();
+        await expect(save(exact, atCommit)).resolves.toMatchObject({ replayed: false });
+        expect(await exact.adapter.libraryBytes()).toBe(atCommit);
+    });
+});
+
 describe('a restore keeps this device\'s App Lock (D1a review 2, P1)', () => {
     const locked = (): AppData => ({ ...clone(original), settings: { ...clone(original).settings, security: { mobileAppLockEnabled: true } } });
     it.each([
