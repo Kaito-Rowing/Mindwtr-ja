@@ -595,6 +595,38 @@ describe('an import\'s stored warnings hold codes and counts, never the file\'s 
         expect(swept(JSON.stringify(lines))).toEqual([]);
     });
 
+    // Code review P2: a plan or a receipt written before the stored form holds sentences that can quote the file.
+    const LEGACY = [`Imported project "${S2}" was renamed to "${S2} (Todoist)" to avoid a title conflict.`, `Unsupported Recurrence rules: ${S1}.`];
+    const legacyPlan = async (env: Awaited<ReturnType<typeof open>>) => {
+        const plan = JSON.parse((await prepareNativeBackupDocument(env.adapter, todoistInput())).planJSON);
+        plan.reply.result.warnings = LEGACY;
+        return plan;
+    };
+    it('commits an older plan\'s sentences as codes and counts: the receipt and the reply name nothing', async () => {
+        setLogger((payload) => { lines.push(payload); });
+        const env = await open(); const plan = await legacyPlan(env);
+        const reply = await commitNativeBackupDocument(env.adapter, reference, JSON.stringify(plan), NAME);
+        expect((reply as { result: { warnings: string[] } }).result.warnings).toEqual(['renamed-container:1', 'unsupported-recurrence:1']);
+        expect(swept(JSON.stringify(reply))).toEqual([]);
+        expect(swept(JSON.stringify(await env.sql.client.all('SELECT reply FROM native_request_receipts')))).toEqual([]);
+        expect(swept(JSON.stringify(lines))).toEqual([]);
+    });
+    it('answers an older receipt\'s sentences as codes and counts, and formats a cold older reply without names', async () => {
+        const env = await open(); const plan = await legacyPlan(env);
+        const stored = { ...plan.reply, result: { ...plan.reply.result, warnings: LEGACY } };
+        await env.sql.client.run('INSERT INTO native_request_receipts (request_id, method, reply, saved_at) VALUES (?, ?, ?, ?)',
+            [ID, JSON.stringify(['backupDocument', 'todoist', ID, reference.sha256]), JSON.stringify(stored), new Date().toISOString()]);
+        const replayed = await commitNativeBackupDocument(env.adapter, reference, JSON.stringify(plan), NAME);
+        expect(swept(JSON.stringify(replayed))).toEqual([]);
+        const outcome = await readNativeBackupDocumentOutcome(env.adapter, reference, JSON.stringify(plan), NAME);
+        expect(swept(JSON.stringify(outcome))).toEqual([]);
+        // A result record written before the stored form, read after a restart (no names in memory).
+        expect(nativeBackupDocumentWarningsHeld()).toBe(false);
+        const cold = buildNativeBackupDocumentResult(stored, t);
+        expect(swept(cold.message)).toEqual([]);
+        expect(cold.message).toContain(t('settings.importDiagnostics.adjustedRecords', { count: 1 }));
+    });
+
     it('ten refused commits in a row leave no warning names behind, and neither does a failed prepare', async () => {
         const base = clone(original); base.projects = [{ ...createMockProject('existing-project', AT), title: 'Launch' }];
         const env = await open(base);

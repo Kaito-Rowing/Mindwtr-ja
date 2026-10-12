@@ -112,15 +112,20 @@ const utf8Bytes = (value: string, limit = Number.POSITIVE_INFINITY): number => {
  * An import's warnings as stored (plan, receipt, result record): `<code>:<count>` per warning, never the file's words. A warning
  * can quote the source (an unsupported rule, a renamed project's name); RN's toast shows only counts for all but the renamed
  * container, whose names stay in this process's memory ([liveWarnings]) until its toast is built or the operation fails. iOS
- * still reads a string list. A reply stored before this form (English sentences) reads as before.
+ * still reads a string list. A plan, receipt or reply written before this form (English sentences, which can quote the file) is
+ * read through [storedReply] at every boundary (plan, receipt, result), so its words are never stored or shown again.
  */
-const persistedWarnings = (warnings: readonly string[]): string[] => createImportDiagnostics(warnings, 'warning')
-    .map((diagnostic) => `${diagnostic.code}:${typeof diagnostic.params.count === 'number' ? diagnostic.params.count : 1}`);
+const WARNING_TOKEN = /^([a-z]+(?:-[a-z]+)*):(\d{1,9})$/u;
+const persistedWarnings = (warnings: readonly string[]): string[] => warnings.map((warning) => WARNING_TOKEN.test(warning) ? warning
+    : createImportDiagnostics([warning], 'warning').map((diagnostic) => `${diagnostic.code}:${typeof diagnostic.params.count === 'number' ? diagnostic.params.count : 1}`)[0]);
+/** [reply] with its warnings in the stored form (an older reply's sentences become codes and counts). */
+const storedReply = <R extends NativeBackupDocumentReply>(reply: R): R => 'result' in reply
+    ? { ...reply, result: { ...reply.result, warnings: persistedWarnings(reply.result.warnings) } } : reply;
 const COUNTED_WARNINGS = new Set<ImportDiagnosticCode>(['adjusted-records', 'duplicate-identity', 'empty-records', 'invalid-archive-entry',
     'missing-parent', 'skipped-archive-entry', 'skipped-existing-records', 'unmapped-date', 'unmapped-status', 'unsupported-recurrence']);
 const warningDiagnostic = (warning: string): ImportDiagnostic => {
-    const token = /^([a-z]+(?:-[a-z]+)*):(\d{1,9})$/u.exec(warning);
-    if (!token) return createImportDiagnostic(warning, 'warning');
+    const token = WARNING_TOKEN.exec(persistedWarnings([warning])[0]);
+    if (!token) return { code: 'adjusted-records', params: { count: 1 }, severity: 'warning' };
     const code = COUNTED_WARNINGS.has(token[1] as ImportDiagnosticCode) ? token[1] as ImportDiagnosticCode : 'adjusted-records';
     return { code, params: { count: Number(token[2]) }, severity: 'warning' };
 };
@@ -410,12 +415,13 @@ const readPlan = (reference: NativeBackupOperationReference, planJSON: string, s
     try { if (!completeDocument(value.expectedCurrent) || !completeDocument(value.data)) invalid(); }
     catch { return invalid(); }
     validateReply(value.reply, snapshotName, value.mode);
-    return value as Plan;
+    // An older plan's warnings (sentences) are committed, compared and answered as codes and counts.
+    return { ...(value as Plan), reply: storedReply((value as Plan).reply) };
 };
 const payload = (reference: NativeBackupOperationReference, plan: Plan) => JSON.stringify(['backupDocument', plan.mode, reference.id, reference.sha256]);
 const matchedReply = (reply: unknown, plan: Plan): NativeBackupDocumentReply => {
     try {
-        const validated = validateReply(reply, plan.reply.snapshotName, plan.mode);
+        const validated = storedReply(validateReply(reply, plan.reply.snapshotName, plan.mode));
         if (!taskEditValuesEqual(validated, plan.reply)) saveFailed();
         return validated;
     } catch { return saveFailed(); }
@@ -500,7 +506,7 @@ export function buildNativeBackupDocumentFailure(operation: string, error: strin
 export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply, t: ImportDiagnosticTranslator) {
     validateReply(reply);
     if ('result' in reply) {
-        const tokens = reply.result.warnings;
+        const tokens = persistedWarnings(reply.result.warnings);
         const live = liveWarnings && liveWarnings.snapshotName === reply.snapshotName && taskEditValuesEqual(liveWarnings.tokens, tokens)
             ? liveWarnings.diagnostics : null;
         releaseNativeBackupDocumentWarnings();
