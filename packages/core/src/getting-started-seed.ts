@@ -300,7 +300,7 @@ export const createSeedGettingStartedAction = (
     set: (partial: Partial<TaskStore> | ((state: TaskStore) => Partial<TaskStore> | TaskStore)) => void,
     debouncedSave: (data: AppData, onError?: (msg: string) => void) => void,
     flushPendingSave: () => Promise<void>
-): ((options?: { language?: string }) => Promise<StoreActionResult>) => async (options) => {
+): ((options?: { language?: string; awaitSave?: boolean }) => Promise<StoreActionResult>) => async (options) => {
     const changeAt = Date.now();
     const nowIso = new Date().toISOString();
     let projectId: string | undefined;
@@ -438,6 +438,8 @@ export const createSeedGettingStartedAction = (
         };
     });
 
-    await flushPendingSave();
+    // The native host's command (native-host-contract-settings.ts) passes awaitSave: false: its request receipt's own save
+    // then commits these rows and the receipt in one transaction.
+    if (options?.awaitSave !== false) await flushPendingSave();
     return { success: true, id: projectId };
 };
