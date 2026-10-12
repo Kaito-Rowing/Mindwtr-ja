@@ -9,3 +9,4 @@ Changes collected since the latest stable release.
 - Mobile: restoring a backup or a recovery snapshot no longer turns App Lock off. App Lock belongs to the phone: a restore keeps it on, whatever the backup file says.
 - Mobile: an import or backup preview and its result leave a blank line before the project list and before the warnings, as they always meant to; the lines ran together before.
 - Mobile: while Settings › Data › Getting Started is adding its tutorial project, the export, restore and import rows wait. Before, a restore started at that moment could replace the library under the new project.
+- Imports: a ZIP export whose recorded file sizes do not match its contents is refused as damaged. Before, such a file could import only part of a list, or count one file many times.
