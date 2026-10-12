@@ -28,6 +28,8 @@ class BackupOperations(
     private val maxPlanBytes: Long = Long.MAX_VALUE,
 ) {
     class Mismatch(message: String) : IllegalStateException(message)
+    /** A plan over the limit [plan] reads back: refused before anything is written, so no journal entry is ever set aside for its size. */
+    class PlanTooLarge : java.io.IOException("The prepared plan exceeds the transfer limit")
 
     companion object {
         const val METHOD = "backupDocumentCommit"
@@ -54,9 +56,11 @@ class BackupOperations(
      */
     fun publish(id: String, mode: String, planJson: String, snapshotName: String, recovery: String?, beforeManifest: () -> Unit = {}): String {
         require(UUID.matches(id)) { "Invalid backup operation id" }
+        val plan = planJson.toByteArray()
+        // An import can grow far past its file (100 000 short rows): a plan [plan] would refuse at its identity check is refused here.
+        if (plan.size > maxPlanBytes) throw PlanTooLarge()
         val dir = File(root, id)
         dir.mkdirs()
-        val plan = planJson.toByteArray()
         writeSynced(dir, PLAN, plan)
         beforeManifest()
         val manifest = JSONObject().put("version", 1).put("id", id).put("mode", mode)

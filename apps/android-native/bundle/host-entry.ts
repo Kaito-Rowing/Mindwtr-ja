@@ -32,6 +32,7 @@ import {
     buildFeedbackDiagnosticsSnapshot,
     buildImmediateNotificationDetails,
     buildShortcutsSnapshot,
+    buildNativeBackupDocumentFailure,
     buildNativeBackupDocumentResult,
     buildNativeBackupSnapshotRestoreConfirmation,
     commitNativeBackupDocument,
@@ -656,7 +657,9 @@ const projectAttachmentInput = (json: string, withAttachmentId = false): { proje
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
     | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
     | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting'
-    | 'syncPreference' | 'setAISetting' | 'notificationsSetting' | 'calendarSetting' | SyncScreenCommand | AIScreenCommand | CalendarScreenCommand | AttachmentCommand | ProjectDetailCommand;
+    | 'syncPreference' | 'setAISetting' | 'notificationsSetting' | 'calendarSetting' | SyncScreenCommand | AIScreenCommand | CalendarScreenCommand | AttachmentCommand | ProjectDetailCommand | DataCommand;
+/** Settings › Data's own write (DataTransfer.kt's DATA_COMMANDS): Getting Started's seed, journaled with its frozen language. */
+type DataCommand = 'gettingStarted';
 /** Settings › Sync's screen commands: never journaled (core's NATIVE_UNJOURNALED_COMMANDS), sent by CoreHost.syncCommand. */
 type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncBackend' | 'saveSyncBackend' | 'syncNow' | 'testSyncConnection'
     | 'pickSyncFolder' | 'connectDropbox' | 'disconnectDropbox' | 'runSyncEncryptionAction';
@@ -1260,6 +1263,7 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Reply | Promise<Reply
     somedayDelete: (input) => contract.deleteSomedaySection(input),
     // Settings › Data's Debug logging switch.
     dataSetting: (input) => contract.setDataSetting(input),
+    gettingStarted: (input) => contract.seedGettingStarted(input),
     // Settings › Notifications' controls (a synced setting, or the persistent capture switch on the device).
     notificationsSetting: (input) => contract.setNotificationsSetting(input),
     // Settings › Sync: a sync option (journaled), and the screen's commands (never journaled: CoreHost.syncCommand).
@@ -4172,6 +4176,17 @@ globalThis.MindwtrHost = {
     },
     backupDocumentResultModel(replyJSON: string): string {
         return submit(async () => buildNativeBackupDocumentResult(backupJson(replyJSON) as Parameters<typeof buildNativeBackupDocumentResult>[0], backupTranslate));
+    },
+    /**
+     * RN's failure toast (`{ title, message }`) for a Data operation that did not land: [operation] is core's backup document mode,
+     * [error] the failure's `CODE: message` (or `TOO_LARGE` for the host's own size refusal), [limitMb] the host's transfer limit.
+     */
+    backupDocumentFailureModel(operation: string, error: string, limitMb: number): string {
+        return submit(async () => buildNativeBackupDocumentFailure(String(operation), String(error), backupTranslate, Number(limitMb) || 0));
+    },
+    /** `{ bytes }`: the library's bytes as SQLite counts them (pages × page size): Settings › Data's transfer admission and Undo's. */
+    backupLibraryBytes(): string {
+        return submit(async () => ({ bytes: await backupAdapter().libraryBytes() }));
     },
     /** RN's question before a snapshot restore: `mode` "undo" (the default; a result's Undo) or "restore" (a Recovery snapshots row). */
     backupSnapshotRestoreModel(snapshotName: string, mode = 'undo'): string {

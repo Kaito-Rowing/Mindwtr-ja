@@ -339,16 +339,17 @@ private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(mode
 // ---- Data ----
 
 /**
- * RN's Data screen on core's getDataSettings: the Backup fold (SyncBackupSection: the three exports, Restore backup, Merge backup;
- * DataTransfer.kt runs each), then the Diagnostics card (SyncDiagnosticsCard): the Debug logging switch sends core's edit; while
- * logging is on, Share log and Clear log. RN's Import fold, Getting Started row, Archive retention, Pending remote deletes and
- * Sandbox rows come with their passes.
+ * RN's Data screen on core's getDataSettings: the Backup fold (SyncBackupSection: the three exports, Restore backup, Merge backup,
+ * Getting Started; DataTransfer.kt runs each), the Import fold (the guide link, then the five importers), then the Diagnostics
+ * card (SyncDiagnosticsCard): the Debug logging switch sends core's edit; while logging is on, Share log and Clear log. RN's
+ * Archive retention, Pending remote deletes and Sandbox rows come with their passes.
  */
 @Composable
 private fun DataSettings(model: InboxViewModel, view: JSONObject) = with(model.menu) {
     val theme = LocalTheme.current
     val c = theme.colors
     BackupCard(model, view.getJSONObject("backup"))
+    ImportCard(model, view.getJSONObject("importData"))
     val diagnostics = view.getJSONObject("diagnostics")
     SectionTitle(diagnostics.getString("title"), top = 24, color = c.text)
     Card {
@@ -391,7 +392,7 @@ private fun BackupCard(model: InboxViewModel, backup: JSONObject) = with(model.m
         // Debug builds only (check-data-device.mjs): `debug.mindwtr.native.export_tree` opens the folder picker in its test folder.
         if (wanted == "tree") runCatching { pickTree.launch(tech.dongdongbh.mindwtr.pilot.core.debugProperty("export_tree").ifEmpty { null }?.toUri()) }
             .onFailure { transfer.folderPicked(null) }
-        else runCatching { pickJson.launch(arrayOf("application/json")) }.onFailure { transfer.backupPicked(null) }
+        else runCatching { pickJson.launch(transfer.pickTypes) }.onFailure { transfer.backupPicked(null) }
     }
     LaunchedEffect(transfer.share) { if (transfer.share != null) activity?.let(transfer::openShare) }
     val open = local.optBoolean("backupOpen")
@@ -418,6 +419,45 @@ private fun BackupCard(model: InboxViewModel, backup: JSONObject) = with(model.m
             BackupRow(backup.getString("tasknotesLabel"), backup.getString("tasknotesDescription"), theme.exportAction, enabled, running == "export:tasknotes", "data-transfer-export-tasknotes") { transfer.export("tasknotes") }
             BackupRow(backup.getString("restoreFileLabel"), backup.getString("restoreFileDescription"), c.tint, enabled, running == "restore", "data-transfer-restore") { transfer.pickBackup("restore") }
             BackupRow(backup.getString("mergeLabel"), backup.getString("mergeDescription"), c.tint, enabled, running == "merge", "data-transfer-merge") { transfer.pickBackup("merge") }
+            // RN's Getting Started recovery row: off while any data action runs, its own spinner while it seeds.
+            val starter = backup.getJSONObject("gettingStarted")
+            BackupRow(starter.getString("label"), starter.getString("description"), c.tint, enabled, running == "gettingStarted", "add-getting-started-content") { transfer.gettingStarted() }
+        }
+    }
+}
+
+/**
+ * RN's Import card (SyncBackupSection's second fold): folded under its heading until opened; then RN's guide link in its own row
+ * and one row per importer in RN's order, each off while any data action runs (DataTransfer.pickImport runs it).
+ */
+@Composable
+private fun ImportCard(model: InboxViewModel, importData: JSONObject) = with(model.menu.settings) {
+    val c = LocalTheme.current.colors
+    val transfer = transfer
+    val open = local.optBoolean("importOpen")
+    val toggle = { editLocal { put("importOpen", !open) } }
+    val title = importData.getString("title")
+    val description = importData.getString("description")
+    Card(top = 16) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+            .clearAndSetSemantics { contentDescription = "$title, $description"; role = Role.Button; testTag = "import-disclosure"
+                onClick { toggle(); true }; if (open) collapse { toggle(); true } else expand { toggle(); true } }
+            .clickable(onClick = toggle).padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(end = 28.dp)) {
+                Text(title, style = rnText(16, 500, 21), color = c.text)
+                Text(description, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp))
+            }
+            Icon(if (open) SettingsIonicons.ChevronUp else SettingsIonicons.ChevronDown, null, tint = c.secondaryText, modifier = Modifier.size(18.dp))
+        }
+        if (open) {
+            Row(Modifier.fillMaxWidth().hairline(c.border, top = true).padding(16.dp)) { GuideLink(importData.getJSONObject("guide"), "import-guide-link", bottom = 0) }
+            val running = transfer.action
+            val rows = importData.getJSONArray("rows")
+            for (index in 0 until rows.length()) {
+                val row = rows.getJSONObject(index)
+                val key = row.getString("key")
+                BackupRow(row.getString("label"), row.getString("description"), c.tint, running == null, running == "import:$key", "data-transfer-import-$key") { transfer.pickImport(key) }
+            }
         }
     }
 }

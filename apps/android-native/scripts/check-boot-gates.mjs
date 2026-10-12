@@ -1280,7 +1280,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // Settings › Notifications' controls (pass R2): each the state it asks for, under its receipt.
         'setNotificationsSetting',
         // Settings › Calendar (pass C3): an edit the view gave (a receipt of its own), and a new subscription (never journaled).
-        'setCalendarSetting', 'addCalendarFeed'];
+        'setCalendarSetting', 'addCalendarFeed',
+        // Settings › Data's Getting Started (pass D1b): the seed and its receipt in one transaction, frozen language.
+        'seedGettingStarted'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -1506,7 +1508,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.equal(callAsyncFn.match(/\bcall\(call\.method, \*sent\)/g).length, 1, 'start() starts a call\'s operation, after begin() journaled it');
     assert.match(callAsyncFn, /val sent = try \{ sendArgs\(call\.method, call\.args\) \} catch \(mismatch: BackupOperations\.Mismatch\)/);
     // Pass D1a review: commit_stop (check-data-device E4c) is set as each journaled write is sent, debug builds only.
-    assert.match(callAsyncFn, /if \(entry != null\) \{\s+checkNotNull\(sqlite\)\.failCommits = debugFault\("fail_commit"\) == "1"\s+sqlite\?\.stopAfterCommit = debugFault\("commit_stop"\) == method\s+debugDelay\("delay_before_ms"\)\s+journalStop\(stop, "before", entry\)\s+\}/);
+    assert.match(callAsyncFn, /if \(entry != null\) \{\s+checkNotNull\(sqlite\)\.failCommits = debugFault\("fail_commit"\) == "1"\s+\/\/ [^\n]*\n\s+sqlite\?\.stopAfterCommit = debugFault\("commit_stop"\) == WriteJournal\.key\(method, args\.toList\(\)\)\s+debugDelay\("delay_before_ms"\)\s+journalStop\(stop, "before", entry\)\s+\}/);
     assert.equal(coreHost.match(/\banswer\(/g).length, 4, 'answer(): its definition, answerChecked (a backup commit\'s plan put in, callAsync and replayJournal), resumeActivation and the legacy preflight');
     assert.equal(coreHost.match(/\banswerChecked\(/g).length, 3, 'answerChecked(): its definition, callAsync and replayJournal');
     assert.equal(coreHost.match(/\bcall\(method, \*args\)/g).length, 2, 'answer() and callLong (an unjournaled command only) start host methods');
@@ -2189,8 +2191,11 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     const projectDetailKinds = [.../val PROJECT_DETAIL_KINDS = setOf\(([^)]*)\)/.exec(source('ProjectDetails.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
     // Settings › Calendar's new subscription (pass C3), sent by CalendarSettings.kt; its other writes are the Settings kind calendarSetting.
     const calendarKinds = [.../val CALENDAR_COMMANDS = setOf\(([^)]*)\)/.exec(source('CalendarSettings.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
-    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds, ...calendarKinds, ...attachmentKinds, ...projectDetailKinds].sort(), 'every menu command kind is one host command, logged as its operation');
-    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand \\| CalendarScreenCommand \\| AttachmentCommand \\| ProjectDetailCommand;`));
+    // Settings › Data's own (pass D1b): Getting Started's seed, sent by DataTransfer.kt.
+    const dataKinds = [.../val DATA_COMMANDS = setOf\(([^)]*)\)/.exec(source('DataTransfer.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
+    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds, ...calendarKinds, ...attachmentKinds, ...projectDetailKinds, ...dataKinds].sort(), 'every menu command kind is one host command, logged as its operation');
+    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand \\| CalendarScreenCommand \\| AttachmentCommand \\| ProjectDetailCommand \\| DataCommand;`));
+    assert.match(hostEntry, new RegExp(`type DataCommand = ${dataKinds.map((kind) => `'${kind}'`).join(' \\| ')};`));
     assert.match(hostEntry, new RegExp(`type ProjectDetailCommand = ${projectDetailKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
     assert.doesNotMatch(menuModel, new RegExp(`"(${projectDetailKinds.join('|')})"`), 'the Menu tab never sends a Project details command itself');
     // A Project details edit is the user's intent, journaled at once before anything else (CoreHost.journalAhead), then sent
@@ -3860,6 +3865,10 @@ export function buildNativeBackupDocumentResult(reply, t) {
   globalThis.backupInputs.push(JSON.stringify(['result', reply]));
   return { title: t('settings.mergeBackup'), message: t('settings.mergeBackupSummary', { addedCount: reply.added, updatedCount: reply.updated }),
     undoLabel: t('settings.undoImport'), doneLabel: t('common.done') };
+}
+export function buildNativeBackupDocumentFailure(operation, error, t, limitMb) {
+  globalThis.backupInputs.push(JSON.stringify(['failure', operation, error, limitMb]));
+  return { title: t('settings.backupMobile.restoreFailed'), message: error };
 }
 export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName, t) {
   globalThis.backupInputs.push(JSON.stringify(['restoreModel', snapshotName]));

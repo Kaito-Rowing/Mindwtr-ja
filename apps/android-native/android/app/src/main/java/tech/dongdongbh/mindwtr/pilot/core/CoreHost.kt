@@ -710,8 +710,14 @@ class CoreHost(
     /** Settings › Data's Share log: core's diagnostics log file, made when missing; `path` is null when it cannot be made. */
     fun logShare(): JSONObject = callAsync("logShare")
 
-    /** The library's bytes on disk (the database and its write-ahead log): Settings › Data's transfer admission. */
-    fun databaseBytes(): Long = databaseFile.length() + File(databaseFile.path + "-wal").length()
+    /**
+     * The library's bytes as SQLite counts them (pages × page size, never the write-ahead log's copies): Settings › Data's transfer
+     * admission, and the measure core's import commit keeps within its Undo's admission (D1b §0 fix 2).
+     */
+    fun databaseBytes(): Long = callAsync("backupLibraryBytes").getLong("bytes")
+
+    /** Core's failure toast (`{ title, message }`) for a Data operation in [operation] mode that did not land with [error]. */
+    fun backupFailureModel(operation: String, error: String, limitMb: Long): JSONObject = callAsync("backupDocumentFailureModel", operation, error, limitMb)
 
     /** Settings › Data: core's preview of a picked file ([format] "json", "json-restore", or an importer's), which writes nothing. */
     fun backupInspect(text: String, metadataJson: String, format: String): JSONObject =
@@ -920,7 +926,8 @@ class CoreHost(
         val stop = if (entry != null) debugFault("journal_stop") else ""
         if (entry != null) {
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
-            sqlite?.stopAfterCommit = debugFault("commit_stop") == method
+            // A Menu command's own name (`gettingStarted`), never `menuCommand`.
+            sqlite?.stopAfterCommit = debugFault("commit_stop") == WriteJournal.key(method, args.toList())
             debugDelay("delay_before_ms")
             journalStop(stop, "before", entry)
         }

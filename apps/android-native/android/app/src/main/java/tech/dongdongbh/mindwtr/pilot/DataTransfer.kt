@@ -32,11 +32,12 @@ import java.util.Date
 import java.util.UUID
 
 /*
- * Settings › Data's Backup fold and Sync › Recovery snapshots (RN's use-sync-settings-backup-actions.ts and lib/data-transfer.ts)
- * on core's native backup document (native-backup-document.ts): export a JSON, CSV or TaskNotes file, Restore backup, Merge backup,
- * and a snapshot restore (a Recovery snapshots row, or a result's Undo). Kotlin keeps RN's screen state (which action runs, the
+ * Settings › Data's Backup and Import folds and Sync › Recovery snapshots (RN's use-sync-settings-backup-actions.ts and
+ * lib/data-transfer.ts) on core's native backup document (native-backup-document.ts): export a JSON, CSV or TaskNotes file,
+ * Restore backup, Merge backup, the five imports (Todoist, TickTick, DGT GTD, OmniFocus, Mindwtr CSV), Getting Started, and a
+ * snapshot restore (a Recovery snapshots row, or a result's Undo). Kotlin keeps RN's screen state (which action runs, the
  * open question) and the platform's files: the system pickers, the staged copy, the recovery snapshot, the operation's plan
- * (BackupOperations) and the export's folder document. Every word, check and data change is core's. Design: pass D1 design.md.
+ * (BackupOperations) and the export's folder document. Every word, check and data change is core's. Design: pass D1 design.md; imports and Getting Started: pass D1b design.md.
  */
 
 /** The measured transfer limit (design §4.1): a picked file and the library together, before anything is decoded or parsed. */
@@ -54,6 +55,9 @@ object DataTransferLimits {
     /** A frozen plan holds the library twice (the current document and the result), plus its reply. */
     val MAX_PLAN_BYTES: Long get() = 2 * MAX_DATA_TRANSFER_BYTES + 1024 * 1024
 }
+
+/** Settings › Data's own Menu commands (check-boot-gates.mjs: each is one host command): Getting Started's seed. */
+internal val DATA_COMMANDS = setOf("gettingStarted")
 
 /** RN's MIME type for a picked backup (pickBackupDocument). */
 private const val BACKUP_MIME = "application/json"
@@ -74,12 +78,17 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     } catch (_: java.io.FileNotFoundException) { false } catch (_: Exception) { null }
     val operations get() = BackupOperations(File(app.noBackupFilesDir, "backup-operations"), snapshots, maxPlanBytes = DataTransferLimits.MAX_PLAN_BYTES)
 
-    /** RN's backupAction: the running action ("export", "export:csv", "export:tasknotes", "restore", "merge", "snapshot:<name>"). */
+    /**
+     * RN's backupAction: the running action ("export", "export:csv", "export:tasknotes", "restore", "merge", "import:<importer>",
+     * "snapshot:<name>"), or "gettingStarted" (RN's own busy flag for that row; every Data row is off while it runs).
+     */
     var action by mutableStateOf<String?>(null); private set
     /** The open question (RN's Alert): `{ kind: "confirm", model, mode, stage }` or `{ kind: "snapshot", model, name, undo }`. */
     var question by mutableStateOf<JSONObject?>(null); private set
     /** A system picker the Data screen opens next ("json", "tree"); the screen launches it and clears it. */
     var launch by mutableStateOf<String?>(null); private set
+    /** The document picker's types: RN's backup type, or the importer's list from core's Data model. */
+    var pickTypes: Array<String> = arrayOf(BACKUP_MIME); private set
     /** A made export file waiting for the Data screen to open the share sheet. */
     var share by mutableStateOf<Pair<File, String>?>(null); private set
     /** The export made at press time (RN reads its snapshot before the folder picker), held for the picker's answer. */
@@ -89,7 +98,12 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 
     fun launched() { launch = null }
 
-    private fun words() = menu.settings.page?.takeIf { it.screen == "data" }?.view?.optJSONObject("backup")
+    private fun view() = menu.settings.page?.takeIf { it.screen == "data" }?.view
+    private fun words() = view()?.optJSONObject("backup")
+    /** Core's Import fold row for [key] (its mode and picker types). */
+    private fun importRow(key: String): JSONObject? = view()?.optJSONObject("importData")?.optJSONArray("rows")?.let { rows ->
+        (0 until rows.length()).map(rows::getJSONObject).firstOrNull { it.getString("key") == key }
+    }
 
     // ---- Export ----
 
@@ -192,29 +206,45 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         if (busy) return
         action = mode
         saved["dataPick"] = mode
+        pickTypes = arrayOf(BACKUP_MIME)
         launch = "json"
     }
 
-    /** The backup picker's answer: the file staged, then core's preview (RN's Alert) or RN's invalid-file warning. */
+    /** An Import fold row (RN's handleImport…): the system picker with the importer's types from core's model. */
+    fun pickImport(key: String) {
+        if (busy) return
+        val row = importRow(key) ?: return
+        action = "import:$key"
+        saved["dataPick"] = "import:$key"
+        pickTypes = row.getJSONArray("mimeTypes").let { types -> Array(types.length()) { types.getString(it) } }
+        launch = "json"
+    }
+
+    /**
+     * The document picker's answer (Restore backup, Merge backup, or an import): the file staged, then core's preview (RN's
+     * Alert) or RN's invalid-file warning. An import's file goes to core as base64 bytes, a backup's as strict UTF-8 text.
+     */
     fun backupPicked(uri: Uri?) {
         val mode = saved.get<String>("dataPick")
         saved.remove<String>("dataPick")
         if (uri == null || mode == null) { action = null; return }
         action = mode
-        // RN's failure titles for a pick that cannot be read: Restore failed, or Merge failed.
-        val failedTitle = words()?.optString(if (mode == "merge") "mergeFailed" else "restoreFailed")
+        val importMode = mode.removePrefix("import:").takeIf { mode.startsWith("import:") }?.let { importRow(it)?.getString("mode") }
+        if (mode.startsWith("import:") && importMode == null) { action = null; return }
+        // Core's operation for RN's failure title: Restore failed, Merge failed, or Import failed.
+        val operation = importMode ?: if (mode == "merge") "merge" else "replace"
         whenHosted { runtime ->
             val stage = try { stage(uri) } catch (failure: Throwable) {
                 Log.w(CoreHost.TAG, "Backup stage failed ${failureForLog(failure)}")
-                shell.ui { finish(); warn(runtime, failedTitle, failure) }
+                fail(runtime, operation, failure)
                 return@whenHosted
             }
-            val kind = if (mode == "restore") "json-restore" else "json"
+            val kind = importMode ?: if (mode == "restore") "json-restore" else "json"
             val (text, preview) = try {
-                previewStaged(stage.file, runtime.databaseBytes()) { runtime.backupInspect(it, stage.metadata.toString(), kind) }
+                previewStaged(stage.file, runtime.databaseBytes(), base64 = importMode != null) { runtime.backupInspect(it, stage.metadata.toString(), kind) }
             } catch (failure: Throwable) {
                 Log.w(CoreHost.TAG, "Backup preview failed ${failureForLog(failure)}")
-                shell.ui { finish(); warn(runtime, failedTitle, failure) }
+                fail(runtime, operation, failure)
                 return@whenHosted
             }
             shell.ui {
@@ -224,7 +254,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                     shell.showToast(preview.getString("errorTitle"), preview.getString("errorMessage"), "warning", durationMs = 4_200)
                 } else {
                     question = JSONObject().put("kind", "confirm").put("model", preview).put("mode", mode)
-                        .put("stage", stage.file.name).put("metadata", stage.metadata)
+                        .put("stage", stage.file.name).put("metadata", stage.metadata).apply { importMode?.let { put("importMode", it) } }
                 }
             }
         }
@@ -244,8 +274,11 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         when (open.getString("kind")) {
             "confirm" -> {
                 val file = File(staging, open.getString("stage"))
-                val mode = if (open.getString("mode") == "restore") "replace" else "merge"
-                run(open.getString("mode"), mode, null, open.getJSONObject("metadata"), file.length(), staged = file) { utf8(file) }
+                val importMode = open.optString("importMode").takeIf { it.isNotEmpty() }
+                val mode = importMode ?: if (open.getString("mode") == "restore") "replace" else "merge"
+                run(open.getString("mode"), mode, null, open.getJSONObject("metadata"), file.length(), staged = file) {
+                    if (importMode != null) base64(file) else utf8(file)
+                }
             }
             "snapshot" -> {
                 val name = open.getString("name")
@@ -280,16 +313,17 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
      */
     private fun run(running: String, mode: String, snapshot: String?, metadata: JSONObject, sourceBytes: Long, staged: File? = null, text: () -> String?) {
         action = running
-        val words = words()
-        val failedTitle = when (running) { "merge" -> words?.optString("mergeFailed"); else -> words?.optString("restoreFailed") }
         whenHosted { runtime ->
             val ops = operations
             val requestId = UUID.randomUUID().toString()
             try {
                 val source = admittedText(sourceBytes, runtime.databaseBytes(), staged, text)
                 val name = snapshot ?: RecoverySnapshots.nextName(snapshots, Date())
+                // Core admits the source with the library's SQLite bytes again and freezes how far the library may grow while
+                // its Undo still fits (D1b §0 fix 2).
                 val prepared = runtime.backupPrepare(JSONObject().put("requestId", requestId).put("mode", mode).put("snapshotName", name)
-                    .put("text", source).put("metadata", metadata).toString())
+                    .put("text", source).put("metadata", metadata)
+                    .put("admission", JSONObject().put("sourceBytes", sourceBytes).put("maxTransferBytes", DataTransferLimits.MAX_DATA_TRANSFER_BYTES)).toString())
                 val recovery = prepared.opt("recoveryJSON") as? String
                 if (recovery != null) writeOperationSnapshot(snapshots, name, recovery)
                 stop("after-snapshot")
@@ -301,7 +335,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
             } catch (failure: Throwable) {
                 staged?.let(StagedCopies::release)
                 Log.w(CoreHost.TAG, "Backup operation failed mode=$mode ${failureForLog(failure)}")
-                shell.ui { finish(); warn(runtime, failedTitle, failure) }
+                fail(runtime, mode, failure)
             }
         }
     }
@@ -326,9 +360,9 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
             when (leftover) {
                 is Leftover.Result -> shell.ui { showResult(leftover.model, leftover.undo, shown) }
                 is Leftover.Failure -> {
-                    val title = runCatching { runtime.strings(listOf(leftover.titleKey)).getJSONObject("strings").getString(leftover.titleKey) }.getOrDefault("")
+                    val model = failureModel(runtime, leftover.operation, leftover.error)
                     shell.ui {
-                        shell.showToast(title, leftover.message, "error", durationMs = 5_200)
+                        shell.showToast(model.first, model.second, "error", durationMs = 5_200)
                         Thread { runCatching(shown) }.start()
                     }
                 }
@@ -375,18 +409,21 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     }
 
     /**
-     * RN's failure toast (showSettingsErrorToast, 5.2 s) under [title]: core's too-large text when the file or the library was
-     * over the limit (RN's formatThrownBackupError), else the failure's words.
+     * RN's failure toast (showSettingsErrorToast, 5.2 s) for [operation] (core's mode) that did not land: core's title and words
+     * (backupDocumentFailureModel: RN's formatThrownImportError or formatThrownBackupError, core's limit text for a size refusal).
+     * On the calling worker; the toast shows on the main thread and the row's spinner stops.
      */
-    private fun warn(runtime: CoreHost, title: String?, failure: Throwable) {
-        val words = words() ?: return
-        val message = if (failure is TransferTooLarge) {
-            val mb = DataTransferLimits.MAX_DATA_TRANSFER_BYTES / (1024 * 1024)
-            runCatching { runtime.strings(listOf("settings.backupDiagnostics.tooLarge")).getJSONObject("strings").getString("settings.backupDiagnostics.tooLarge") }
-                .getOrDefault("").replace("{{maxSizeMb}}", "$mb")
-        } else (failure.message ?: "").substringAfter(": ")
-        shell.showToast(title ?: words.optString("restoreFailed"), message, "error", durationMs = 5_200)
+    private fun fail(runtime: CoreHost, operation: String, failure: Throwable) {
+        val error = if (failure is TransferTooLarge || failure is BackupOperations.PlanTooLarge) "TOO_LARGE" else failure.message ?: ""
+        val model = failureModel(runtime, operation, error)
+        shell.ui { finish(); shell.showToast(model.first, model.second, "error", durationMs = 5_200) }
     }
+
+    /** Core's failure toast for [operation] and [error]; a failure to build it shows the error's own words (never crashes). */
+    private fun failureModel(runtime: CoreHost, operation: String, error: String): Pair<String, String> = runCatching {
+        val model = runtime.backupFailureModel(operation, error, DataTransferLimits.MAX_DATA_TRANSFER_BYTES / (1024 * 1024))
+        model.getString("title") to model.getString("message")
+    }.getOrElse { (words()?.optString("restoreFailed") ?: "") to error.substringAfter(": ") }
 
     private fun stop(at: String) {
         if (debugProperty("backup_stop") != at) return
@@ -401,8 +438,36 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         val runtime = shell.coreHost() ?: run { shell.ui { whenHosted(work) }; return }
         Thread({ runCatching { work(runtime) }.onFailure { failure ->
             Log.w(CoreHost.TAG, "Data transfer failed ${failureForLog(failure)}")
-            shell.ui { finish(); warn(runtime, null, failure) }
+            shell.ui { finish(); shell.showToast(words()?.optString("restoreFailed"), (failure.message ?: "").substringAfter(": "), "error", durationMs = 5_200) }
         } }, "mindwtr-data-transfer").start()
+    }
+
+    // ---- Getting Started ----
+
+    /**
+     * RN's Getting Started row (addGettingStartedContent): core's seed under a request UUID made now and the app language core's
+     * model gave the row, both journaled with the write; core commits the seed's rows and its receipt together (D1b §6). RN's
+     * toasts: ready with Open (the project), not created, or failed.
+     */
+    fun gettingStarted() {
+        if (busy) return
+        val row = words()?.optJSONObject("gettingStarted") ?: return
+        action = "gettingStarted"
+        val input = JSONObject().put("requestId", UUID.randomUUID().toString()).put("language", row.getString("language")).toString()
+        whenHosted { runtime ->
+            val projectId = try {
+                runtime.menuCommand("gettingStarted", input).optString("projectId").takeIf { it.isNotEmpty() && it != "null" }
+            } catch (failure: Exception) {
+                Log.w(CoreHost.TAG, "Getting Started failed ${failureForLog(failure)}")
+                shell.ui { finish(); shell.showToast(null, row.getString("failed"), "error") }
+                return@whenHosted
+            }
+            shell.ui {
+                finish()
+                if (projectId == null) shell.showToast(null, row.getString("notCreated"), "info")
+                else shell.showToast(null, row.getString("ready"), "success", row.getString("open")) { menu.openProjects(projectId) }
+            }
+        }
     }
 }
 
@@ -497,11 +562,17 @@ internal fun admitTransfer(sourceBytes: Long, libraryBytes: Long) {
     if (sourceBytes + libraryBytes > DataTransferLimits.MAX_DATA_TRANSFER_BYTES) throw TransferTooLarge()
 }
 
-/** A staged copy's text once admitted with the library ([admitTransfer] first: an oversized copy is never decoded); null: not UTF-8. */
-internal fun readStaged(file: File, libraryBytes: Long): String? {
+/**
+ * A staged copy's text once admitted with the library ([admitTransfer] first: an oversized copy is never decoded): strict UTF-8
+ * (null: not UTF-8), or an import's bytes as base64 ([base64]).
+ */
+internal fun readStaged(file: File, libraryBytes: Long, base64: Boolean = false): String? {
     admitTransfer(file.length(), libraryBytes)
-    return utf8(file)
+    return if (base64) base64(file) else utf8(file)
 }
+
+/** An import's staged bytes for core's binary transport (native-backup-document.ts decodes and bounds them). */
+internal fun base64(file: File): String = Base64.getEncoder().encodeToString(file.readBytes())
 
 /** The staged copy's own bound: the transfer limit, and core's source limit for a JSON backup. */
 internal fun stageLimit(): Long = minOf(DataTransferLimits.MAX_DATA_TRANSFER_BYTES, DataTransferLimits.MAX_BACKUP_SOURCE_BYTES)
@@ -528,10 +599,10 @@ internal object StagedCopies {
     }
 }
 
-/** A start's leftover result: a committed one's toast model and Undo snapshot, or one that did not commit (RN's failure title, a core key, and core's reason). */
+/** A start's leftover result: a committed one's toast model and Undo snapshot, or one that did not commit (core's operation and its error, for core's failure toast). */
 internal sealed class Leftover {
     class Result(val model: JSONObject, val undo: String?) : Leftover()
-    class Failure(val titleKey: String, val message: String) : Leftover()
+    class Failure(val operation: String, val error: String) : Leftover()
 }
 
 /**
@@ -544,9 +615,7 @@ internal fun takeLeftover(ops: BackupOperations, snapshots: File, resultModel: (
     val shown = { ops.clearResult(requestId) }
     val reply = record.optJSONObject("reply")
     if (record.optString("outcome") != "committed" || reply == null) {
-        val titleKey = if (record.optString("operation") == "merge") "settings.mergeBackupFailed" else "settings.backupMobile.restoreFailed"
-        val error = record.optString("error")
-        present(Leftover.Failure(titleKey, error.substringAfter(": ").ifEmpty { error.ifEmpty { record.optString("outcome") } }), shown)
+        present(Leftover.Failure(record.optString("operation"), record.optString("error").ifEmpty { record.optString("outcome") }), shown)
         return
     }
     val model = runCatching { resultModel(reply.toString()) }.getOrNull() ?: return shown()
@@ -561,9 +630,9 @@ internal fun writeOperationSnapshot(dir: File, name: String, recovery: String, s
  * A staged pick to its question: admitted with the library first (an oversized copy is never decoded), strict UTF-8, then core's
  * preview ([inspect]). The copy stays only for a valid preview; a refusal, an invalid file or a failure releases it.
  */
-internal fun previewStaged(file: File, libraryBytes: Long, inspect: (String) -> JSONObject): Pair<String?, JSONObject> {
+internal fun previewStaged(file: File, libraryBytes: Long, base64: Boolean = false, inspect: (String) -> JSONObject): Pair<String?, JSONObject> {
     try {
-        val text = readStaged(file, libraryBytes)
+        val text = readStaged(file, libraryBytes, base64)
         val preview = inspect(text ?: "")
         if (!preview.optBoolean("valid") || text == null) StagedCopies.release(file)
         return text to preview

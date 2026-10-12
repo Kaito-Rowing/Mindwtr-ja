@@ -49,6 +49,21 @@ class DataFilesTest {
         StagedCopies.release(asked)
     }
 
+    // D1b: an import's pick goes to core as base64 bytes (core decodes and bounds them), admitted with the library first.
+    @Test fun anImportPickIsAdmittedFirstAndSentAsBase64() {
+        var inspected = 0
+        val oversized = stagedCopy(ByteArray((DataTransferLimits.LIMIT_BYTES - library + 1).toInt()))
+        assertTrue(runCatching { previewStaged(oversized, library, base64 = true) { inspected += 1; JSONObject().put("valid", true) } }.exceptionOrNull() is TransferTooLarge)
+        assertEquals(0, inspected)
+        assertFalse(oversized.exists())
+        val bytes = byteArrayOf(0x50, 0x4b, 0x03, 0x04, 0xff.toByte(), 0x00)
+        val zip = stagedCopy(bytes)
+        var sent = ""
+        assertEquals(java.util.Base64.getEncoder().encodeToString(bytes), previewStaged(zip, library, base64 = true) { sent = it; JSONObject().put("valid", true) }.first)
+        assertEquals(java.util.Base64.getEncoder().encodeToString(bytes), sent)
+        StagedCopies.release(zip)
+    }
+
     // D1a review P2-9: an operation's production path (run's admittedText) admits before it reads, and the copy goes either way.
     @Test fun anOperationAdmitsItsSourceBeforeReadingIt() {
         var read = 0
@@ -90,19 +105,24 @@ class DataFilesTest {
         val snapshots = File(folder.root, "snapshots").apply { mkdirs() }
         val ops = tech.dongdongbh.mindwtr.pilot.core.BackupOperations(File(folder.root, "ops"), snapshots, syncDirectory = {})
         val a = "11111111-1111-4111-8111-111111111111"
-        for ((record, title, message) in listOf(
+        // Each failure goes to core's failure toast (backupDocumentFailureModel) with its operation and its error, an import's too
+        // (D1b: RN's "Import failed"); a record with no error passes its outcome.
+        for ((record, operation, error) in listOf(
             Triple(JSONObject().put("operation", "merge").put("outcome", "stale").put("error", "STALE_REVISION: Local data changed after backup preparation"),
-                "settings.mergeBackupFailed", "Local data changed after backup preparation"),
+                "merge", "STALE_REVISION: Local data changed after backup preparation"),
             Triple(JSONObject().put("operation", "replace").put("outcome", "refused").put("error", "INVALID_INPUT: Backup operation files do not match"),
-                "settings.backupMobile.restoreFailed", "Backup operation files do not match"),
+                "replace", "INVALID_INPUT: Backup operation files do not match"),
+            Triple(JSONObject().put("operation", "todoist").put("outcome", "refused").put("error", "TOO_LARGE: The imported library would be too large to undo"),
+                "todoist", "TOO_LARGE: The imported library would be too large to undo"),
+            Triple(JSONObject().put("operation", "csv").put("outcome", "unresolved").put("error", ""), "csv", "unresolved"),
         )) {
             ops.writeResult(record.put("requestId", a).put("reply", JSONObject.NULL).put("undoSnapshot", ""))
             var presented: Leftover? = null
             var shown: (() -> Unit)? = null
             takeLeftover(ops, snapshots, { error("not committed") }) { leftover, done -> presented = leftover; shown = done }
             val failure = presented as Leftover.Failure
-            assertEquals(title, failure.titleKey)
-            assertEquals(message, failure.message)
+            assertEquals(operation, failure.operation)
+            assertEquals(error, failure.error)
             assertEquals(a, ops.result()?.getString("requestId"))
             shown!!()
             assertNull(ops.result())

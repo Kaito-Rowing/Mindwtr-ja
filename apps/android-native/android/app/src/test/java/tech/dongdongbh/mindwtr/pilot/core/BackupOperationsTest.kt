@@ -31,6 +31,17 @@ class BackupOperationsTest {
         assertTrue(JSONObject(ref).getInt("byteCount") <= 8192)
     }
 
+    // D1b: an import's plan can grow far past its file; one over the read-back limit is refused before anything is written, so the
+    // journal never gets an entry its identity check would set aside, and an import's mode publishes like a merge's.
+    @Test fun aPlanOverTheLimitIsRefusedBeforeAnyFile() {
+        snapshot()
+        val failure = runCatching { ops(maxPlanBytes = 8).publish(a, "todoist", "{\"plan\":\"too long\"}", name, recovery = TASKS) }.exceptionOrNull()
+        assertTrue(failure is BackupOperations.PlanTooLarge)
+        assertFalse(File(folder.root, "ops/$a").exists())
+        val ref = ops(maxPlanBytes = 64).publish(a, "todoist", "{\"plan\":1}", name, recovery = TASKS)
+        assertEquals("todoist", ops().mode(ref))
+    }
+
     @Test fun swappedManifestsOrPlansAreRefused() {
         snapshot()
         val refA = ops().publish(a, "merge", "{\"plan\":\"a\"}", name, recovery = TASKS)
