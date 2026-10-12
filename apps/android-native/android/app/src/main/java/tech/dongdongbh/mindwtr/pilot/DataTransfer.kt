@@ -363,7 +363,9 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     fun leftover() = whenHosted { runtime ->
         runCatching { cleanupInterruptedExport(runtime) }.onFailure { Log.w(CoreHost.TAG, "Interrupted export cleanup failed ${failureForLog(it)}") }
         runCatching { StagedCopies.sweep(staging) }.onFailure { Log.w(CoreHost.TAG, "Staged copy sweep failed ${failureForLog(it)}") }
+        var found = "none"
         takeLeftover(operations, snapshots, { runtime.backupResultModel(it) }) { leftover, shown ->
+            found = if (leftover is Leftover.Result) "result" else "failure"
             when (leftover) {
                 is Leftover.Result -> shell.ui { showResult(leftover.model, leftover.undo, shown) }
                 is Leftover.Failure -> {
@@ -375,6 +377,9 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 }
             }
         }
+        // Debug builds only (check-data-device.mjs watches each start until this line): the start's leftover step is over, its
+        // toast (if any) already handed to the main thread.
+        if (BuildConfig.DEBUG) Log.i(CoreHost.TAG, "Native Android data leftover done result=$found")
     }
 
     /** At start, before any export: a folder document whose write never finished is deleted (the persisted grant allows it). */

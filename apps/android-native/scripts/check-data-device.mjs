@@ -715,16 +715,25 @@ try {
     };
     const hasResult = () => listing('no_backup/backup-operations').includes('result.json');
     const resultToast = (nodes) => hasText(nodes, en['settings.backupMobile.importComplete']) || hasText(nodes, en['settings.backupMobile.importFailed']);
-    /** Starts the app and reads every screen until it is on the Inbox and [settled] holds; whether any showed a result toast. */
+    /**
+     * Starts the app and reads every screen until the app logs that its start's leftover step is over (a debug build's
+     * `Native Android data leftover done result=…`) and [settled] holds; then, when that step handed a toast over, until the
+     * toast is seen. Answers the step's result (`none`, `result`, `failure`) and whether any dump showed a result toast.
+     */
+    const leftoverDone = () => allLogs().split('\n').filter((line) => line.includes('Native Android data leftover done result='));
     const watchStart = async (settled) => {
+        const before = leftoverDone().length;
         device.launch(ACTIVITY);
         let toast = false;
-        const deadline = Date.now() + 90_000;
+        let found = null;
+        const deadline = Date.now() + 120_000;
         for (;;) {
             const nodes = await screen().catch(() => []);
             if (resultToast(nodes)) toast = true;
-            if (onInbox(nodes) && settled()) return toast;
-            if (Date.now() > deadline) fail('timed out watching the start');
+            const done = leftoverDone();
+            if (found === null && done.length > before) found = /result=(\w+)/.exec(done.at(-1))[1];
+            if (found !== null && onInbox(nodes) && settled() && (found === 'none' || toast)) return { found, toast };
+            if (Date.now() > deadline) fail(`timed out watching the start (leftover step ${found ?? 'not done'}, toast ${toast})`);
             await sleep(300);
         }
     };
@@ -738,8 +747,8 @@ try {
         check(journal().length === 0 && !hasResult(), `(I4 ${label}) while stopped: no journal entry and no result record`);
         check(stop === 'mid-plan' ? operations().length === 1 : operations().length === 0, `(I4 ${label}) while stopped: ${stop === 'mid-plan' ? 'one unpublished operation folder' : 'no operation folder'}`);
         check(!taggedRows(pullDb(`i4-${label}`)).some((row) => titles.includes(row.title)), `(I4 ${label}) nothing landed`);
-        const toast = await watchStart(() => operations().length === 0 && journal().length === 0);
-        check(!toast, `(I4 ${label}) the start showed no result toast`);
+        const start = await watchStart(() => operations().length === 0 && journal().length === 0);
+        check(start.found === 'none' && !start.toast, `(I4 ${label}) the start's leftover step found no result and showed no toast: ${JSON.stringify(start)}`);
         check(!hasResult() && committedLines('todoist') === lines && replayLines().length === replays, `(I4 ${label}) no result record, no commit line and no replay line`);
     }
     {
@@ -754,14 +763,15 @@ try {
         check(landed.length === 1, `(I4 after-commit) while stopped: the import landed exactly once: ${JSON.stringify(landed)}`);
         check(receiptCount('i4-receipts-after', 'todoist') === receipts + 1, '(I4 after-commit) while stopped: its receipt is in SQLite');
         check(committedLines('todoist') === lines, '(I4 after-commit) no commit line: the stop came right after COMMIT');
-        const toast = await watchStart(() => journal().length === 0 && operations().length === 0 && !hasResult());
-        check(toast, '(I4 after-commit) the start showed the leftover result');
+        const start = await watchStart(() => journal().length === 0 && operations().length === 0 && !hasResult());
+        check(start.found === 'result' && start.toast, `(I4 after-commit) the start showed the leftover result: ${JSON.stringify(start)}`);
         check(taggedRows(pullDb('i4-after-replay')).filter((row) => titles.includes(row.title)).length === 1, '(I4 after-commit) still exactly once after the replay');
         const replayed = replayLines().slice(replays);
         check(replayed.length === 1 && replayed[0].includes('"operation":"todoist"') && replayed[0].includes('"outcome":"committed"'), `(I4 after-commit) one replay line, todoist committed: ${replayed.join(' | ')}`);
         await device.stopApp();
         check(!hasResult() && journal().length === 0, '(I4 after-commit) stopped again: no result record is left to show');
-        check(!(await watchStart(() => true)), '(I4 after-commit) a second start shows the result no more');
+        const again = await watchStart(() => true);
+        check(again.found === 'none' && !again.toast, `(I4 after-commit) a second start's leftover step found nothing to show: ${JSON.stringify(again)}`);
     }
 
     // I5: Codex's 60 000-row Mindwtr CSV grows the library past what its Undo could admit: refused before COMMIT, nothing lands.
@@ -805,7 +815,7 @@ try {
     check(renameRecord.includes('renamed-container:1') && !renameRecord.includes(S2), `(I6 rename) while stopped: the result record holds the rename's code, not the name: ${renameRecord.slice(renameRecord.indexOf('"warnings"'), renameRecord.indexOf('"warnings"') + 80)}`);
     check(!receiptReplies('i6-rename-receipts').includes(S2), '(I6 rename) while stopped: no receipt reply names the project');
     check(holders(S2).every((path) => path.startsWith('files/SQLite/') || path.startsWith('files/snapshots/')), `(I6 rename) while stopped: the name is only in the library and its snapshots: ${holders(S2).join(' ')}`);
-    check(await watchStart(() => !hasResult()), '(I6 rename) the start showed its result once');
+    check((await watchStart(() => !hasResult())).found === 'result', '(I6 rename) the start showed its result once');
     // The dropped rule and the skipped entry, stopped right after the commit's reply: the journal entry, the plan, the manifest
     // and the receipt are all on disk.
     const rule = binary(`d1-rule-${run}.zip`, zipSync({ 'tasks.csv': strToU8(`Title,Recurrence\nd1s1a${run},${S1}\n`), [`${S3}.zip`]: zipSync({ 'inner.csv': strToU8('Title\nx') }) }));
@@ -818,7 +828,7 @@ try {
     check(journal().length === 1 && operations().length === 1, '(I6 rule) while stopped: the journal entry and its plan are on disk');
     check(receiptReplies('i6-rule-receipts').includes('unsupported-recurrence:1'), '(I6 rule) while stopped: the receipt holds the dropped rule\'s code');
     check(holders(S1).length === 0 && holders(S3).length === 0, `(I6 rule) while stopped: the dropped rule and the skipped entry's name are nowhere on disk: ${[...holders(S1), ...holders(S3)].join(' ')}`);
-    check(await watchStart(() => journal().length === 0 && operations().length === 0 && !hasResult()), '(I6 rule) the start replayed and showed the result');
+    check((await watchStart(() => journal().length === 0 && operations().length === 0 && !hasResult())).found === 'result', '(I6 rule) the start replayed and showed the result');
     check(holders(S1).length === 0 && holders(S3).length === 0, '(I6 rule) after the replay too');
     check(![S1, S2, S3].some((sentinel) => allLogs().includes(sentinel)), '(I6) no log line names a sentinel');
 
