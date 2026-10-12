@@ -10,10 +10,11 @@ import { MAX_BACKUP_SOURCE_BYTES, serializeBackupData, validateBackupJson } from
 import { runSerializedSyncDocumentWriteOperation } from './data-transfer-transaction';
 import { createMockArea, createMockProject, createMockSection } from './sync-test-utils';
 import { formatI18nTemplate, getTranslator } from './i18n';
+import { consoleLogger, setLogger, type LogPayload } from './logger';
 import { applyImportSource, parseImportSource } from './import-runner';
 import {
     buildNativeBackupDocumentResult, buildNativeBackupSnapshotRestoreConfirmation, commitNativeBackupDocument,
-    inspectNativeBackupDocument, prepareNativeBackupDocument, readNativeBackupDocumentOutcome,
+    inspectNativeBackupDocument, nativeBackupDocumentWarningsHeld, prepareNativeBackupDocument, readNativeBackupDocumentOutcome,
     type NativeBackupDocumentPrepareInput, type NativeBackupOperationReference,
 } from './native-backup-document';
 import { loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts } from './native-request-receipts';
@@ -28,6 +29,10 @@ const NAME = 'data.2026-10-04T12-00-00.000.snapshot.json';
 const metadata = { fileName: 'owned.json', lastModified: Date.parse(AT), appVersion: '1.3.4' };
 const reference: NativeBackupOperationReference = { id: ID, sha256: 'a'.repeat(64), byteCount: 420 };
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+/** An import's warnings as its reply stores them: `<code>:<count>`, never the file's words (D1b review P2). */
+const stored = (warnings: readonly string[]) => createImportDiagnostics(warnings, 'warning')
+    .map((diagnostic) => `${diagnostic.code}:${typeof diagnostic.params.count === 'number' ? diagnostic.params.count : 1}`);
+const small = (reply: unknown) => { const json = JSON.stringify(reply); expect(json.length).toBeLessThan(4096); expect(json).not.toContain('AAAA'); };
 const task = (id: string, extra: Partial<Task> = {}): Task => ({ id, title: id, status: 'next', contexts: [], tags: [],
     createdAt: AT, updatedAt: AT, rev: 1, ...extra });
 const original: AppData = { tasks: [task('visible'), task('history', { status: 'done', completedAt: AT }),
@@ -497,10 +502,10 @@ describe('native immutable Mindwtr CSV and ZIP import', () => {
         const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'csv');
         for (const diagnostic of createImportDiagnostics(parsed.preview!.warnings, 'warning')) expect(preview.summary).toContain(formatImportDiagnostic(diagnostic, t));
         const prepared = await prepareNativeBackupDocument(env.adapter, source); const reply = JSON.parse(prepared.planJSON).reply;
-        expect(reply.result.warnings).toEqual(parsed.parsedData!.warnings);
+        expect(reply.result.warnings).toEqual(stored(parsed.parsedData!.warnings));
         const model = buildNativeBackupDocumentResult(reply, t); expect(model.title).toBe(t('settings.backupMobile.importComplete')); expect(model.undoLabel).toBe(t('settings.undoImport'));
         expect(model.message).toContain(t('settings.backupMobile.checklistItemsPreserved', { checklistItemCount: 1 })); expect(model.message).toContain(NAME);
-        for (const diagnostic of createImportDiagnostics(reply.result.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
+        for (const diagnostic of createImportDiagnostics(parsed.parsedData!.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
     });
     it.each(['VGl0bGUs\n', 'VGl0bGUs_', 'TR==', 'TWF=', 'TQ=', '====', 'VGl0=bGU'])('rejects noncanonical binary transport %s before any adapter read/write', async (text) => {
         const env = await open(); const read = vi.spyOn(env.adapter, 'getData');
@@ -517,11 +522,11 @@ describe('native immutable Mindwtr CSV and ZIP import', () => {
         const preview = inspectNativeBackupDocument(exactLimit, csvInput().metadata, t, 'csv'); expect(preview.valid).toBe(false); expect(preview.errorMessage).toBe(formatImportDiagnostic(parseImportSource('mindwtr-csv', { bytes: new Uint8Array(16 * 1024 * 1024), fileName: 'owned.csv' }).diagnostics.find((item) => item.severity === 'error')!, t));
         expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
     }, 15_000);
-    it('refuses complete over-64KiB warnings before returning a plan, with no discarded warnings or document writes', async () => {
-        const env = await open(); const read = vi.spyOn(env.adapter, 'getData');
+    it('stores a warning that once passed 64 KiB as its code: the reply stays small and the rule\'s text is gone', async () => {
+        const env = await open();
         const source = csvInput(csvFile(['Title','Recurrence'], [['Large warning', 'invalid rule ' + '私'.repeat(23_000)]]));
-        await expect(prepareNativeBackupDocument(env.adapter, source)).rejects.toThrow('CSV import result exceeds 64 KiB');
-        expect(read).toHaveBeenCalledTimes(1); expect(env.writes).toEqual([]);
+        const reply = JSON.parse((await prepareNativeBackupDocument(env.adapter, source)).planJSON).reply;
+        expect(reply.result.warnings).toContain('unsupported-recurrence:1'); expect(JSON.stringify(reply)).not.toContain('私'); expect(env.writes).toEqual([]);
     });
     it.each(['data','negative','fraction','extra','warning','overflow'] as const)('rejects malformed frozen CSV result %s before receipt operations', async (fault) => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, csvInput()); const plan = JSON.parse(prepared.planJSON);
@@ -543,6 +548,68 @@ describe('native immutable Mindwtr CSV and ZIP import', () => {
     it('refuses unsupported source format', () => expect(() => inspectNativeBackupDocument('', metadata, t, 'other' as 'csv')).toThrow('INVALID_INPUT:'));
 });
 
+
+describe('an import\'s stored warnings hold codes and counts, never the file\'s words (D1b review P2)', () => {
+    const S1 = 'TOKEN=sentinel-one-4be1'; const S2 = 'Sentinel Two 9c0d'; const S3 = 'sentinel-three-77aa'; const S4 = 'sentinel-four-d5e2';
+    const lines: LogPayload[] = [];
+    afterEach(() => { setLogger(consoleLogger); lines.length = 0; });
+    const swept = (text: string) => [S1, S2, S3, S4].filter((sentinel) => text.includes(sentinel));
+
+    it('an unsupported rule, a renamed project and archive entry names reach no plan reply, receipt or log line', async () => {
+        setLogger((payload) => { lines.push(payload); });
+        const base = clone(original); base.projects = [{ ...createMockProject('existing-project', AT), title: S2 }];
+        const env = await open(base);
+        const csv = csvFile(['Title', 'Project', 'Recurrence'], [['Rule task', S2, S1]]);
+        const archive = zipSync({ 'tasks.csv': strToU8(csv), [`${S3}.zip`]: zipSync({ 'inner.csv': strToU8('Title\nx') }) });
+        const source = { ...csvInput(), text: bytesToBase64(archive), metadata: { ...metadata, fileName: 'export.zip' } };
+        const prepared = await prepareNativeBackupDocument(env.adapter, source);
+        const reply = JSON.parse(prepared.planJSON).reply;
+        expect(reply.result.warnings.every((warning: string) => /^[a-z-]+:\d+$/u.test(warning))).toBe(true);
+        expect(reply.result.warnings).toContain('unsupported-recurrence:1');
+        expect(swept(JSON.stringify(reply))).toEqual([]);
+        await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        const receipts = await env.sql.client.all<{ reply: string; method: string }>('SELECT reply, method FROM native_request_receipts');
+        expect(swept(JSON.stringify(receipts))).toEqual([]);
+        // The rule was dropped and the nested archive skipped: neither reaches the library either.
+        const library = JSON.stringify(await env.sql.client.all('SELECT * FROM tasks')) + JSON.stringify(await env.sql.client.all('SELECT * FROM projects'));
+        expect(swept(library)).toEqual([S2]);
+        // The live toast still names the renamed project (RN's text); building it lets the names go.
+        const live = buildNativeBackupDocumentResult(reply, t);
+        expect(live.message).toContain(S2);
+        expect(nativeBackupDocumentWarningsHeld()).toBe(false);
+        // After a death the same reply reads as counts.
+        expect(swept(buildNativeBackupDocumentResult(reply, t).message)).toEqual([]);
+        expect(swept(JSON.stringify(lines))).toEqual([]);
+    });
+
+    it('an oversized archive entry is refused without its name in the preview, the parse result, the refusal or a log line', async () => {
+        setLogger((payload) => { lines.push(payload); });
+        const env = await open();
+        const archive = zipSync({ [`${S4}.csv`]: new Uint8Array(9 * 1024 * 1024).fill(65) }, { level: 9 });
+        const source = { ...csvInput(), text: bytesToBase64(archive), metadata: { ...metadata, fileName: 'export.zip' } };
+        const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'csv');
+        expect(preview.valid).toBe(false);
+        expect(swept(JSON.stringify(preview))).toEqual([]);
+        expect(swept(JSON.stringify(parseImportSource('mindwtr-csv', { bytes: archive, fileName: 'export.zip' })))).toEqual([]);
+        await expect(prepareNativeBackupDocument(env.adapter, source)).rejects.toThrow(expect.objectContaining({ message: expect.not.stringContaining(S4) }));
+        expect(swept(JSON.stringify(lines))).toEqual([]);
+    });
+
+    it('ten refused commits in a row leave no warning names behind, and neither does a failed prepare', async () => {
+        const base = clone(original); base.projects = [{ ...createMockProject('existing-project', AT), title: 'Launch' }];
+        const env = await open(base);
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+            const prepared = await prepareNativeBackupDocument(env.adapter, todoistInput());
+            expect(nativeBackupDocumentWarningsHeld()).toBe(true);
+            const later = await env.adapter.getData(); later.tasks[0].title = `Edit ${attempt}`; later.tasks[0].rev! += 1; await env.adapter.saveData(later);
+            await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:');
+            expect(nativeBackupDocumentWarningsHeld()).toBe(false);
+        }
+        await prepareNativeBackupDocument(env.adapter, todoistInput());
+        await expect(prepareNativeBackupDocument(env.adapter, { ...todoistInput(), text: '' })).rejects.toThrow('INVALID_INPUT:');
+        expect(nativeBackupDocumentWarningsHeld()).toBe(false);
+    });
+});
 
 describe('native selected JSON backup replacement', () => {
     it('previews immutable JSON with RN replacement effect, counts, warnings and destructive-action words; cancellation writes nothing', async () => {
@@ -670,10 +737,10 @@ describe('native Todoist CSV and ZIP prepared import', () => {
     it('localizes every actual execution warning and RN counts/checklist/snapshot/Undo result', async () => {
         const base = clone(original); base.projects = [{ ...createMockProject('existing-project', AT), title: 'Launch' }]; const env = await open(base);
         const prepared = await prepareNativeBackupDocument(env.adapter, todoistInput()); const reply = JSON.parse(prepared.planJSON).reply;
-        expect(reply.result.warnings).toHaveLength(1); expect(reply.result.warnings[0]).toContain('was renamed');
+        expect(reply.result.warnings).toEqual(['renamed-container:1']);
         const model = buildNativeBackupDocumentResult(reply, t); expect(model.title).toBe(t('settings.backupMobile.importComplete')); expect(model.undoLabel).toBe(t('settings.undoImport'));
         expect(model.message).toContain(t('settings.backupMobile.importedTodoistTasksIntoProjects', { taskCount: 2, projectCount: 1 })); expect(model.message).toContain(t('settings.backupMobile.subtasksBecameChecklistItems', { subtaskCount: 1 })); expect(model.message).toContain(NAME);
-        for (const diagnostic of createImportDiagnostics(reply.result.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
+        expect(model.message).toContain(t('settings.importDiagnostics.renamedContainer', { from: 'Launch', to: 'Launch (Todoist)' }));
     });
     it('Todoist Undo restores the exact pre-import snapshot and tombstones later local edits without another recovery', async () => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, todoistInput()); await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
@@ -698,11 +765,11 @@ describe('native Todoist CSV and ZIP prepared import', () => {
         const largeZip = bytesToBase64(zipSync({ 'large.csv': new Uint8Array(8 * 1024 * 1024 + 1) })); expect(inspectNativeBackupDocument(largeZip, todoistInput().metadata, t, 'todoist').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded'));
         expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
     }, 15_000);
-    it('refuses oversized complete Todoist execution warnings before returning a plan or journal', async () => {
+    it('stores 40 renamed Todoist projects as codes: no name reaches the reply, which stays small', async () => {
         const base = clone(original); const files: Record<string, Uint8Array> = {};
         for (let index = 0; index < 40; index += 1) { const name = `Project${index}-${'A'.repeat(1000)}`; base.projects.push({ ...createMockProject(`existing-${index}`, AT), title: name }); files[`${name}.csv`] = strToU8('TYPE,CONTENT\ntask,Imported'); }
         const env = await open(base); const source = { ...todoistInput(), text: bytesToBase64(zipSync(files)), metadata: { ...metadata, fileName: 'Todoist.zip' } };
-        await expect(prepareNativeBackupDocument(env.adapter, source)).rejects.toThrow('Todoist import result exceeds 64 KiB'); expect(env.writes).toEqual([]);
+        small(JSON.parse((await prepareNativeBackupDocument(env.adapter, source)).planJSON).reply); expect(env.writes).toEqual([]);
     });
     it.each(['extra','data','csv-count','negative','fraction','missing','warning','overflow'] as const)('rejects malformed Todoist result %s at every reply boundary before adapter writes', async (fault) => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, todoistInput()); const plan = JSON.parse(prepared.planJSON);
@@ -786,10 +853,10 @@ describe('native TickTick CSV and ZIP prepared import', () => {
     });
     it('uses shared execution warnings and RN task/project/area/checklist/snapshot/Undo result', async () => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, ticktickInput()); const reply = JSON.parse(prepared.planJSON).reply;
-        const parsed = parseImportSource('ticktick', { bytes: strToU8(ticktickCsv), fileName: ticktickInput().metadata.fileName }); expect(reply.result.warnings).toEqual(parsed.parsedData!.warnings);
+        const parsed = parseImportSource('ticktick', { bytes: strToU8(ticktickCsv), fileName: ticktickInput().metadata.fileName }); expect(reply.result.warnings).toEqual(stored(parsed.parsedData!.warnings));
         const model = buildNativeBackupDocumentResult(reply, t); expect(model.title).toBe(t('settings.backupMobile.importComplete')); expect(model.undoLabel).toBe(t('settings.undoImport'));
         expect(model.message).toContain(t('settings.backupMobile.importedTaskProjectAreaCounts', { taskCount: 2, projectCount: 1, areaCount: 1 })); expect(model.message).toContain(t('settings.backupMobile.checklistItemsPreserved', { checklistItemCount: 3 })); expect(model.message).toContain(NAME);
-        for (const diagnostic of createImportDiagnostics(reply.result.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
+        for (const diagnostic of createImportDiagnostics(parsed.parsedData!.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
     });
     it('TickTick Undo restores exact pre-import snapshot and tombstones later edits with no second recovery', async () => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, ticktickInput()); await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
@@ -809,10 +876,10 @@ describe('native TickTick CSV and ZIP prepared import', () => {
         const exact = 'A'.repeat(4 * Math.ceil(16 * 1024 * 1024 / 3) - 2) + '=='; await expect(prepareNativeBackupDocument(env.adapter, { ...ticktickInput(), text: exact })).rejects.toThrow('INVALID_INPUT: Invalid backup document input'); expect(inspectNativeBackupDocument(exact, ticktickInput().metadata, t, 'ticktick').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded'));
         const zip = bytesToBase64(zipSync({ 'too-large.csv': new Uint8Array(8 * 1024 * 1024 + 1) })); expect(inspectNativeBackupDocument(zip, ticktickInput().metadata, t, 'ticktick').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded')); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
     }, 15_000);
-    it('refuses complete over64KiB TickTick execution warnings before returning a plan', async () => {
+    it('stores 40 renamed TickTick projects as codes: no name reaches the reply, which stays small', async () => {
         const base = clone(original); const rows: string[][] = [];
         for (let index = 0; index < 40; index += 1) { const name = `Project${index}-${'A'.repeat(1000)}`; base.projects.push({ ...createMockProject(`existing-${index}`, AT), title: name }); rows.push(['',name,'Imported',...new Array(13).fill(''),String(index),'']); }
-        const env = await open(base); await expect(prepareNativeBackupDocument(env.adapter, ticktickInput(csvFile(ticktickHeaders, rows)))).rejects.toThrow('TickTick import result exceeds 64 KiB'); expect(env.writes).toEqual([]);
+        const env = await open(base); small(JSON.parse((await prepareNativeBackupDocument(env.adapter, ticktickInput(csvFile(ticktickHeaders, rows)))).planJSON).reply); expect(env.writes).toEqual([]);
     });
     it.each(['extra','data','standalone','missing-area','negative','fraction','unsafe','warning','overflow'] as const)('refuses malformed TickTick result %s at every boundary before writes', async (fault) => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, ticktickInput()); const plan = JSON.parse(prepared.planJSON);
@@ -888,7 +955,7 @@ describe('native DGT JSON and ZIP prepared import', () => {
         for (const title of ['Legacy active','Unsupported status','Orphan child']) expect(plan.data.tasks.find((item: Task) => item.title === title).status).toBe('inbox'); expect(plan.data.tasks.find((item: Task) => item.title === 'Legacy active').description).toContain('Original DGT repeat: Last day of every month');
         expect(plan.data.people).toEqual(plan.expectedCurrent.people); for (const id of ['reference','hidden','history']) expect(plan.data.tasks.find((item: Task) => item.id === id).status).toBe(base.tasks.find((item) => item.id === id)!.status);
         const parsed = parseImportSource('dgt', { bytes: strToU8(dgtJson), fileName: source.metadata.fileName }); const oracle = applyImportSource('dgt', plan.expectedCurrent, parsed.parsedData!);
-        expect(plan.data.tasks.map((item: Task) => item.id)).toEqual(oracle.data.tasks.map((item) => item.id)); expect(plan.reply.result.warnings).toEqual(oracle.result.warnings);
+        expect(plan.data.tasks.map((item: Task) => item.id)).toEqual(oracle.data.tasks.map((item) => item.id)); expect(plan.reply.result.warnings).toEqual(stored(oracle.result.warnings));
         const first = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME); const packing = plan.data.tasks.find((item: Task) => item.title === 'Packing list'); expect((await env.adapter.getData()).tasks.find((item) => item.id === packing.id)?.checklist).toEqual(packing.checklist);
         const later = await env.adapter.getData(); const changed = later.tasks.find((item) => item.id === imported.id)!; changed.title = 'Later DGT edit'; changed.rev! += 1; await env.adapter.saveData(later); const committed = await env.state();
         resetNativeRequestReceipts(); await loadNativeRequestReceipts(env.sql.client, { durableCommands: ['backupDocument'] }); const cold = new NativeReceiptSqliteAdapter(env.client, { rejectConcurrentWrites: true }); await cold.ensureSchema(); setStorageAdapter(cold); env.writes.length = 0;
@@ -910,9 +977,9 @@ describe('native DGT JSON and ZIP prepared import', () => {
     });
     it('retains complete shared warnings and RN result counts/snapshot/Undo', async () => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, dgtInput()); const reply = JSON.parse(prepared.planJSON).reply;
-        const parsed = parseImportSource('dgt', { bytes: strToU8(dgtJson), fileName: dgtInput().metadata.fileName }); expect(reply.result.warnings).toEqual(parsed.parsedData!.warnings);
+        const parsed = parseImportSource('dgt', { bytes: strToU8(dgtJson), fileName: dgtInput().metadata.fileName }); expect(reply.result.warnings).toEqual(stored(parsed.parsedData!.warnings));
         const model = buildNativeBackupDocumentResult(reply, t); expect(model.title).toBe(t('settings.backupMobile.importComplete')); expect(model.undoLabel).toBe(t('settings.undoImport')); expect(model.message).toContain(t('settings.backupMobile.importedTaskProjectAreaCounts', { taskCount: 8, projectCount: 2, areaCount: 2 })); expect(model.message).toContain(t('settings.backupMobile.checklistItemsPreserved', { checklistItemCount: 2 })); expect(model.message).toContain(NAME);
-        for (const diagnostic of createImportDiagnostics(reply.result.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
+        for (const diagnostic of createImportDiagnostics(parsed.parsedData!.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
     });
     it('DGT Undo restores exact pre-import snapshot and tombstones later edits without a second recovery', async () => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, dgtInput()); await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
@@ -926,7 +993,7 @@ describe('native DGT JSON and ZIP prepared import', () => {
     });
     it('ZIP uses first valid shared DGT JSON, retaining skipped-entry warnings', async () => {
         const env = await open(); const zip = zipSync({ 'bad.json': strToU8('{bad'), 'first.json': strToU8(dgtJson), 'second.json': strToU8(JSON.stringify({ TASK: [{ ID: 999, TITLE: 'Must not import' }] })), 'readme.txt': strToU8('ignored') });
-        const prepared = await prepareNativeBackupDocument(env.adapter, { ...dgtInput(), text: bytesToBase64(zip), metadata: { ...metadata, fileName: 'DGT.zip' } }); const plan = JSON.parse(prepared.planJSON); expect(plan.data.tasks.some((item: Task) => item.title === 'Must not import')).toBe(false); expect(plan.reply.result.warnings).toContain('1 DGT JSON file could not be parsed and was skipped.'); expect(plan.reply.result.warnings).toContain('1 non-JSON file inside the DGT archive was skipped.'); expect(env.writes).toEqual([]);
+        const prepared = await prepareNativeBackupDocument(env.adapter, { ...dgtInput(), text: bytesToBase64(zip), metadata: { ...metadata, fileName: 'DGT.zip' } }); const plan = JSON.parse(prepared.planJSON); expect(plan.data.tasks.some((item: Task) => item.title === 'Must not import')).toBe(false); expect(plan.reply.result.warnings).toEqual(expect.arrayContaining(stored(['1 DGT JSON file could not be parsed and was skipped.', '1 non-JSON file inside the DGT archive was skipped.']))); expect(env.writes).toEqual([]);
     });
     it.each(['TR==','TWF=','TQ=','====','eyJUQVNL\n','eyJUQVNL_'])('DGT rejects noncanonical binary transport %s before adapter access', async (text) => {
         const env = await open(); const read = vi.spyOn(env.adapter, 'getData'); await expect(prepareNativeBackupDocument(env.adapter, { ...dgtInput(), text })).rejects.toThrow('INVALID_INPUT:'); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
@@ -936,10 +1003,10 @@ describe('native DGT JSON and ZIP prepared import', () => {
         const exact = 'A'.repeat(4 * Math.ceil(16 * 1024 * 1024 / 3) - 2) + '=='; await expect(prepareNativeBackupDocument(env.adapter, { ...dgtInput(), text: exact })).rejects.toThrow('INVALID_INPUT: Invalid backup document input'); expect(inspectNativeBackupDocument(exact, dgtInput().metadata, t, 'dgt').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded'));
         const zip = bytesToBase64(zipSync({ 'too-large.json': new Uint8Array(8 * 1024 * 1024 + 1) })); expect(inspectNativeBackupDocument(zip, dgtInput().metadata, t, 'dgt').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded')); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
     }, 15_000);
-    it('refuses actual complete over64KiB DGT execution warnings before returning a plan', async () => {
+    it('stores 40 renamed DGT projects as codes: no name reaches the reply, which stays small', async () => {
         const base = clone(original); const TASK = [];
         for (let index = 1; index <= 40; index += 1) { const name = `Project${index}-${'A'.repeat(1000)}`; base.projects.push({ ...createMockProject(`existing-${index}`, AT), title: name }); TASK.push({ ID: index, TITLE: name, TYPE: 1 }); }
-        const env = await open(base); await expect(prepareNativeBackupDocument(env.adapter, dgtInput(JSON.stringify({ TASK })))).rejects.toThrow('DGT import result exceeds 64 KiB'); expect(env.writes).toEqual([]);
+        const env = await open(base); small(JSON.parse((await prepareNativeBackupDocument(env.adapter, dgtInput(JSON.stringify({ TASK })))).planJSON).reply); expect(env.writes).toEqual([]);
     });
     it.each(['extra','data','standalone','missing-area','negative','fraction','unsafe','warning','overflow','mode'] as const)('refuses malformed DGT result %s at every boundary before writes', async (fault) => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, dgtInput()); const plan = JSON.parse(prepared.planJSON);
@@ -1014,7 +1081,7 @@ describe('native OmniFocus CSV/JSON/ZIP prepared import', () => {
         inspectNativeBackupDocument(source.text, source.metadata, t, 'omnifocus'); const latest = await env.adapter.getData(); latest.tasks.push(task('latest-omni')); await env.adapter.saveData(latest); env.writes.length = 0; const before = await env.state();
         const prepared = await prepareNativeBackupDocument(env.adapter, source); const plan = JSON.parse(prepared.planJSON); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before); expect(plan.expectedCurrent.tasks.some((item: Task) => item.id === 'latest-omni')).toBe(true); expect(validateBackupJson(prepared.recoveryJSON!).valid).toBe(true);
         const parsed = parseImportSource('omnifocus', { bytes, fileName: source.metadata.fileName }); const counts = parsed.preview!; const oracle = applyImportSource('omnifocus', plan.expectedCurrent, parsed.parsedData!);
-        expect(plan.reply.result).toMatchObject({ importedAreaCount: counts.areaCount, importedChecklistItemCount: counts.checklistItemCount, importedProjectCount: counts.projectCount, importedSectionCount: 0, importedStandaloneTaskCount: counts.standaloneTaskCount, importedTaskCount: counts.taskCount, warnings: oracle.result.warnings }); expect(Object.keys(plan.reply)).toHaveLength(4); expect(Object.keys(plan.reply.result)).toHaveLength(7); expect(plan.reply.result).not.toHaveProperty('data');
+        expect(plan.reply.result).toMatchObject({ importedAreaCount: counts.areaCount, importedChecklistItemCount: counts.checklistItemCount, importedProjectCount: counts.projectCount, importedSectionCount: 0, importedStandaloneTaskCount: counts.standaloneTaskCount, importedTaskCount: counts.taskCount, warnings: stored(oracle.result.warnings) }); expect(Object.keys(plan.reply)).toHaveLength(4); expect(Object.keys(plan.reply.result)).toHaveLength(7); expect(plan.reply.result).not.toHaveProperty('data');
         const imported = plan.data.tasks.find((item: Task) => item.title === 'Plan sprint'); expect(imported).toMatchObject({ status: 'inbox', priority: 'high', tags: ['#ops'], startTime: '2026-06-17', dueDate: '2026-06-19' }); expect(imported.description).toContain('Plan details'); expect(imported.description).toContain('Planned date in OmniFocus: 2026-06-18'); expect(imported.projectId).toBeTruthy();
         const project = plan.data.projects.find((item: { title: string }) => item.title === 'Test project'); expect(project).toMatchObject({ status: 'someday', startDate: '2026-06-10', dueDate: '2026-06-20' });
         if (kind === 'csv') { expect(imported.contexts).toEqual(['@Errands']); expect(imported.description).toContain('Estimated duration in OmniFocus: 45m'); expect(project.supportNotes).toContain('Project support 日本語 🦉'); expect(project.tagIds).toEqual(['#work']); expect(plan.data.projects.find((item: { title: string }) => item.title === 'Archived project').status).toBe('archived'); expect(plan.data.tasks.find((item: Task) => item.title === 'Someday').status).toBe('someday'); }
@@ -1041,7 +1108,8 @@ describe('native OmniFocus CSV/JSON/ZIP prepared import', () => {
         const env = await open(); const { source } = omniSource(kind); const reply = JSON.parse((await prepareNativeBackupDocument(env.adapter, source)).planJSON).reply; const result = reply.result;
         const model = buildNativeBackupDocumentResult(reply, t); expect(model.title).toBe(t('settings.backupMobile.importComplete')); expect(model.undoLabel).toBe(t('settings.undoImport')); expect(model.message).toContain(t('settings.backupMobile.importedTaskProjectCounts', { taskCount: result.importedTaskCount, projectCount: result.importedProjectCount }));
         if (result.importedAreaCount) expect(model.message).toContain(t('settings.backupMobile.omnifocusAreasCreated', { areaCount: result.importedAreaCount })); if (result.importedChecklistItemCount) expect(model.message).toContain(t('settings.backupMobile.nestedTasksBecameChecklistItems', { taskCount: result.importedChecklistItemCount })); expect(model.message).toContain(t('settings.backupMobile.tasksStayedOutsideProjects', { taskCount: result.importedStandaloneTaskCount })); expect(model.message).toContain(NAME);
-        for (const diagnostic of createImportDiagnostics(result.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
+        // Stored codes read back as RN's count lines.
+        for (const token of result.warnings as string[]) { const [code, count] = token.split(':'); expect(model.message).toContain(formatImportDiagnostic({ code: code as 'adjusted-records', params: { count: Number(count) }, severity: 'warning' }, t)); }
     });
     it('accepts shared UTF16LE CSV bytes through unchanged binary transport', async () => {
         const bytes = new Uint8Array(2 + omniCsv.length * 2); bytes[0] = 0xff; bytes[1] = 0xfe; for (let index = 0; index < omniCsv.length; index += 1) { bytes[2 + index * 2] = omniCsv.charCodeAt(index) & 0xff; bytes[3 + index * 2] = omniCsv.charCodeAt(index) >> 8; }
@@ -1064,9 +1132,9 @@ describe('native OmniFocus CSV/JSON/ZIP prepared import', () => {
         const exact = 'A'.repeat(4 * Math.ceil(16 * 1024 * 1024 / 3) - 2) + '=='; await expect(prepareNativeBackupDocument(env.adapter, { ...omniInput(), text: exact })).rejects.toThrow('INVALID_INPUT: Invalid backup document input'); expect(inspectNativeBackupDocument(exact, omniInput().metadata, t, 'omnifocus').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded'));
         const zip = bytesToBase64(zipSync({ 'too-large.json': new Uint8Array(8 * 1024 * 1024 + 1) })); expect(inspectNativeBackupDocument(zip, omniInput().metadata, t, 'omnifocus').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded')); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
     }, 15_000);
-    it('refuses actual complete over64KiB OmniFocus execution warnings before returning a plan', async () => {
+    it('stores 40 renamed OmniFocus projects as codes: no name reaches the reply, which stays small', async () => {
         const base = clone(original); const rows: string[][] = []; for (let index = 0; index < 40; index += 1) { const name = `Project${index}-${'A'.repeat(1000)}`; base.projects.push({ ...createMockProject(`existing-${index}`, AT), title: name }); rows.push(['Project', name]); }
-        const env = await open(base); await expect(prepareNativeBackupDocument(env.adapter, omniInput(csvFile(['Type','Name'], rows)))).rejects.toThrow('OmniFocus import result exceeds 64 KiB'); expect(env.writes).toEqual([]);
+        const env = await open(base); small(JSON.parse((await prepareNativeBackupDocument(env.adapter, omniInput(csvFile(['Type','Name'], rows)))).planJSON).reply); expect(env.writes).toEqual([]);
     });
     it.each(['extra','data','missing-standalone','negative','fraction','unsafe','warning','overflow','mode'] as const)('refuses malformed OmniFocus result %s at every boundary before writes', async (fault) => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, omniInput()); const plan = JSON.parse(prepared.planJSON);

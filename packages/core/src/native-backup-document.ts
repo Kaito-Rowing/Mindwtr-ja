@@ -1,7 +1,7 @@
 import { MAX_BACKUP_SOURCE_BYTES, serializeBackupData } from './backup-transfer';
 import { base64ToBytes } from './base64-bytes';
 import { runSerializedSyncDocumentWriteOperation } from './data-transfer-transaction';
-import { formatImportDiagnostic, type ImportDiagnosticTranslator } from './import-diagnostics';
+import { createImportDiagnostic, createImportDiagnostics, formatImportDiagnostic, type ImportDiagnostic, type ImportDiagnosticCode, type ImportDiagnosticTranslator } from './import-diagnostics';
 import { DEFAULT_IMPORT_SOURCE_LIMITS } from './import-source-reader';
 import { applyImportSource, parseImportSource, summarizeBackupMerge } from './import-runner';
 import { taskEditValuesEqual } from './json-value-equality';
@@ -108,6 +108,28 @@ const utf8Bytes = (value: string, limit = Number.POSITIVE_INFINITY): number => {
     }
     return bytes;
 };
+/**
+ * An import's warnings as stored (plan, receipt, result record): `<code>:<count>` per warning, never the file's words. A warning
+ * can quote the source (an unsupported rule, a renamed project's name); RN's toast shows only counts for all but the renamed
+ * container, whose names stay in this process's memory ([liveWarnings]) until its toast is built or the operation fails. iOS
+ * still reads a string list. A reply stored before this form (English sentences) reads as before.
+ */
+const persistedWarnings = (warnings: readonly string[]): string[] => createImportDiagnostics(warnings, 'warning')
+    .map((diagnostic) => `${diagnostic.code}:${typeof diagnostic.params.count === 'number' ? diagnostic.params.count : 1}`);
+const COUNTED_WARNINGS = new Set<ImportDiagnosticCode>(['adjusted-records', 'duplicate-identity', 'empty-records', 'invalid-archive-entry',
+    'missing-parent', 'skipped-archive-entry', 'skipped-existing-records', 'unmapped-date', 'unmapped-status', 'unsupported-recurrence']);
+const warningDiagnostic = (warning: string): ImportDiagnostic => {
+    const token = /^([a-z]+(?:-[a-z]+)*):(\d{1,9})$/u.exec(warning);
+    if (!token) return createImportDiagnostic(warning, 'warning');
+    const code = COUNTED_WARNINGS.has(token[1] as ImportDiagnosticCode) ? token[1] as ImportDiagnosticCode : 'adjusted-records';
+    return { code, params: { count: Number(token[2]) }, severity: 'warning' };
+};
+/** The last prepared import's full warnings, only when one names a renamed container; one operation at a time. */
+let liveWarnings: { snapshotName: string; tokens: string[]; diagnostics: ImportDiagnostic[] } | null = null;
+/** Drops the names an import's toast would show: on every failure and refusal, and once the toast is built. */
+export const releaseNativeBackupDocumentWarnings = (): void => { liveWarnings = null; };
+/** Tests: whether any import's warning names are still held. */
+export const nativeBackupDocumentWarningsHeld = (): boolean => liveWarnings !== null;
 const parseSource = (text: unknown, metadata: unknown) => {
     if (!withinUtf8Limit(text, MAX_BACKUP_SOURCE_BYTES)) invalid('Backup source exceeds 128 MiB');
     if (!metadataValid(metadata)) invalid();
@@ -245,6 +267,7 @@ const completeDocument = (value: unknown): value is AppData => record(value)
 
 /** Freeze shared RN policy against a fresh durable base; this performs no document or file write. */
 export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, input: NativeBackupDocumentPrepareInput): Promise<{ planJSON: string; recoveryJSON: string | null }> {
+    releaseNativeBackupDocumentWarnings();
     const fields = ['requestId', 'mode', 'snapshotName', 'text', 'metadata'];
     const admission: unknown = (input as { admission?: unknown }).admission;
     const admitted = admission === undefined ? exact(input, fields) : exact(input, [...fields, 'admission'])
@@ -296,37 +319,38 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
                 reply = { version: 1, operation: 'omnifocus', snapshotName, result: {
                     importedAreaCount: result.importedAreaCount, importedChecklistItemCount: result.importedChecklistItemCount,
                     importedProjectCount: result.importedProjectCount, importedSectionCount: result.importedSectionCount,
-                    importedStandaloneTaskCount: result.importedStandaloneTaskCount, importedTaskCount: result.importedTaskCount, warnings: result.warnings,
+                    importedStandaloneTaskCount: result.importedStandaloneTaskCount, importedTaskCount: result.importedTaskCount, warnings: persistedWarnings(result.warnings),
                 } };
             } else if (dgtApplied) {
                 const result = dgtApplied.result;
                 reply = { version: 1, operation: 'dgt', snapshotName, result: {
                     importedAreaCount: result.importedAreaCount, importedChecklistItemCount: result.importedChecklistItemCount,
                     importedProjectCount: result.importedProjectCount, importedSectionCount: result.importedSectionCount,
-                    importedTaskCount: result.importedTaskCount, warnings: result.warnings,
+                    importedTaskCount: result.importedTaskCount, warnings: persistedWarnings(result.warnings),
                 } };
             } else if (ticktickApplied) {
                 const result = ticktickApplied.result;
                 reply = { version: 1, operation: 'ticktick', snapshotName, result: {
                     importedAreaCount: result.importedAreaCount, importedChecklistItemCount: result.importedChecklistItemCount,
                     importedProjectCount: result.importedProjectCount, importedSectionCount: result.importedSectionCount,
-                    importedTaskCount: result.importedTaskCount, warnings: result.warnings,
+                    importedTaskCount: result.importedTaskCount, warnings: persistedWarnings(result.warnings),
                 } };
             } else if (todoistApplied) {
                 const result = todoistApplied.result;
                 reply = { version: 1, operation: 'todoist', snapshotName, result: {
                     importedChecklistItemCount: result.importedChecklistItemCount, importedProjectCount: result.importedProjectCount,
-                    importedSectionCount: result.importedSectionCount, importedTaskCount: result.importedTaskCount, warnings: result.warnings,
+                    importedSectionCount: result.importedSectionCount, importedTaskCount: result.importedTaskCount, warnings: persistedWarnings(result.warnings),
                 } };
             } else if (csvApplied) {
                 const result = csvApplied.result;
                 reply = { version: 1, operation: 'csv', snapshotName, result: {
                     importedAreaCount: result.importedAreaCount, importedChecklistItemCount: result.importedChecklistItemCount,
                     importedProjectCount: result.importedProjectCount, importedSectionCount: result.importedSectionCount,
-                    importedStandaloneTaskCount: result.importedStandaloneTaskCount, importedTaskCount: result.importedTaskCount, warnings: result.warnings,
+                    importedStandaloneTaskCount: result.importedStandaloneTaskCount, importedTaskCount: result.importedTaskCount, warnings: persistedWarnings(result.warnings),
                 } };
             } else reply = { version: 1, operation: operation as 'merge' | 'restore' | 'replace', snapshotName, ...counts };
             validateReply(reply);
+            const rawWarnings = (omnifocusApplied ?? dgtApplied ?? ticktickApplied ?? todoistApplied ?? csvApplied)?.result.warnings ?? [];
             const plan: Plan = { version: 1, requestId, mode: operation, preparedAt: new Date().toISOString(),
                 expectedCurrent, data, reply };
             if (!completeDocument(data)) invalid();
@@ -341,6 +365,10 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
             }
             const planJSON = JSON.stringify(plan);
             if (!withinUtf8Limit(planJSON, MAX_NATIVE_BACKUP_PLAN_BYTES)) invalid('Prepared backup plan exceeds 512 MiB');
+            const diagnostics = createImportDiagnostics(rawWarnings, 'warning');
+            if (diagnostics.some((diagnostic) => diagnostic.code === 'renamed-container')) {
+                liveWarnings = { snapshotName, tokens: [...(reply as { result: { warnings: string[] } }).result.warnings], diagnostics };
+            }
             return { planJSON, recoveryJSON };
         });
     } catch (error) {
@@ -405,6 +433,16 @@ export async function readNativeBackupDocumentOutcome(adapter: NativeReceiptSqli
 
 /** Commit only the frozen plan, or reload after an exact durable replay. */
 export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, reference: NativeBackupOperationReference, planJSON: string, snapshotName: string): Promise<NativeBackupDocumentReply> {
+    try {
+        return await commitPlan(adapter, reference, planJSON, snapshotName);
+    } catch (error) {
+        // A stale, refused or failed commit shows its failure, never this operation's result: its names go now.
+        releaseNativeBackupDocumentWarnings();
+        throw error;
+    }
+}
+
+async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: NativeBackupOperationReference, planJSON: string, snapshotName: string): Promise<NativeBackupDocumentReply> {
     const plan = readPlan(reference, planJSON, snapshotName);
     const ownedReference = { ...reference };
     try {
@@ -441,6 +479,19 @@ export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAda
 /** RN's result toast: its title and lines, Undo (none after a snapshot restore), and RN's duration (null: the toast's default). */
 export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply, t: ImportDiagnosticTranslator) {
     validateReply(reply);
+    if ('result' in reply) {
+        const tokens = reply.result.warnings;
+        const live = liveWarnings && liveWarnings.snapshotName === reply.snapshotName && taskEditValuesEqual(liveWarnings.tokens, tokens)
+            ? liveWarnings.diagnostics : null;
+        releaseNativeBackupDocumentWarnings();
+        return importResult({ ...reply, result: { ...reply.result, warnings: live ?? tokens.map(warningDiagnostic) } } as ImportReplyWithDiagnostics, t);
+    }
+    return importResult(reply as ImportReplyWithDiagnostics, t);
+}
+type ImportReplyWithDiagnostics = NativeBackupDocumentReply extends infer R
+    ? R extends { result: infer Result } ? Omit<R, 'result'> & { result: Omit<Result, 'warnings'> & { warnings: ImportDiagnostic[] } } : R
+    : never;
+function importResult(reply: ImportReplyWithDiagnostics, t: ImportDiagnosticTranslator) {
     const durationMs = reply.operation === 'restore' ? null : DATA_TRANSFER_TOAST_MS[reply.operation];
     const imported = (message: string) => ({ title: t('settings.backupMobile.importComplete'), message,
         undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs });
