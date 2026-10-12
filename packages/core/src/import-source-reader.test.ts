@@ -340,6 +340,13 @@ describe('import-source-reader', () => {
             expect(() => readImportSource({ fileName: 'short.zip', bytes: archive }, undefined, ZIP_LIMITS)).toThrow();
         });
 
+        it('refuses a DEFLATE entry whose compressed bytes were cut short', () => {
+            const compressed = deflateSync(csv);
+            const cut = compressed.subarray(0, Math.floor(compressed.length / 2));
+            const archive = craftZip([{ name: 'a.csv', data: cut, method: 8, size: csv.length }]);
+            expect(() => readImportSource({ fileName: 'cut.zip', bytes: archive }, undefined, ZIP_LIMITS)).toThrow();
+        });
+
         it('refuses a STORE entry whose compressed and uncompressed sizes differ', () => {
             const rows = strToU8('title\nthe first task\nthe second tas\n');
             expect(rows.length).toBe(36);
