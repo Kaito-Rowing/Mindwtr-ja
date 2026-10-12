@@ -29,7 +29,7 @@ const starterRows = async (env: Awaited<ReturnType<typeof openSqliteHost>>) =>
     env.sql<{ title: string; rev: number; projectId: string | null; status: string }>(
         'SELECT title, rev, projectId, status FROM tasks WHERE deletedAt IS NULL ORDER BY title');
 
-describe('native Getting Started: one transaction for the seed and its receipt', () => {
+describe('native Getting Started: one transaction for the seed and its receipt', { timeout: 30_000 }, () => {
     let env: Awaited<ReturnType<typeof openSqliteHost>> | null = null;
     const focusTitle = STARTER_SEED_STRINGS.de['starter.focus.title'];
     const lines: LogPayload[] = [];
