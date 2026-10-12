@@ -146,6 +146,10 @@ import { prepareNativePomodoroTransition, validatePreparedNativePomodoroTransiti
     MAX_NATIVE_POMODORO_PLAN_BYTES, type NativePomodoroRequest } from '../../../packages/core/src/native-pomodoro-session';
 import { NativePomodoroTransitionRefusal } from '../../../packages/core/src/native-request-receipts';
 import { buildNativePomodoroAlarmIntent } from '../../../packages/core/src/native-pomodoro-alarm';
+import { planNativePomodoroAlarmEffects, prepareNativePomodoroAlarmDispatch } from '../../../packages/core/src/native-pomodoro-alarm-effects';
+import { buildNativeAISettingsProjection } from '../../../packages/core/src/native-ai-settings-projection';
+import { createNativeAIRequestTimeoutMethods } from '../../../packages/core/src/native-ai-request-timeout';
+import { readNativeAIProviderDeviceState } from '../../../packages/core/src/native-ai-provider-device-state';
 import { createPreparedProjectAvailabilityMethods, createProjectAvailabilityMethods } from '../../../packages/core/src/native-host-contract-project-availability';
 import { SYNC_ENCRYPTION_STATE_KEY } from '../../../packages/core/src/sync-storage-keys';
 import { createNativeReminders } from './host-reminders';
@@ -1211,7 +1215,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -1246,6 +1250,25 @@ const backupAdapter = (newWork = false) => {
 const backupJson = (json: string): unknown => {
     try { return JSON.parse(json) as unknown; }
     catch { throw new Error('INVALID_INPUT: Invalid backup document input'); }
+};
+
+const aiRequestTimeoutMethods = createNativeAIRequestTimeoutMethods({
+    readiness: () => {
+        if (globalThis.__mindwtrHostPlatform !== 'ios' || !bootAdapter || getStorageAdapter() !== bootAdapter
+            || !bootAdapter.concurrentWritesGuarded || isSandboxMode() || isWorkspaceTransitionActive())
+            return { ok: false, error: { code: 'NOT_READY', message: 'AI timeout requires current personal storage' } };
+        return { ok: true, value: null };
+    },
+    save: async () => {
+        try { await flushPendingSave(); requireSaved(); return { ok: true, value: null }; }
+        catch { return { ok: false, error: { code: 'SAVE_FAILED', message: 'AI timeout save could not be confirmed' } }; }
+    },
+});
+const aiRequestTimeoutOwner = (owner: () => unknown, signal: AbortSignal) => {
+    if (typeof owner !== 'function') throw new Error('INVALID_INPUT: AI timeout needs private owner authority');
+    return () => {
+        if (signal.aborted || owner() !== '') throw new Error('STALE_REVISION: AI timeout owner is unavailable');
+    };
 };
 
 // One private preparation belongs to native's first journal publication. Cold
@@ -1284,6 +1307,14 @@ const readSavedNativePomodoro = async () => {
     if (pomodoroAdapter() !== adapter || current.tasks !== before.tasks || current.settings !== before.settings)
         throw new Error('STALE_REVISION: Pomodoro presentation changed; read again');
     return { raw: session.raw, current };
+};
+// The native latch owns effects; this token binds every callback to the same saved JS state.
+let iosPomodoroAlarmTurn: { token: string; current: () => Promise<void> } | null = null;
+const requirePomodoroAlarmTurn = async (token: string) => {
+    const turn = iosPomodoroAlarmTurn;
+    if (!turn || turn.token !== token) throw new Error('NOT_READY: Pomodoro alarm turn is unavailable');
+    await turn.current();
+    if (iosPomodoroAlarmTurn !== turn) throw new Error('NOT_READY: Pomodoro alarm turn changed');
 };
 let appleReminderWarmAdmission: { planJSON: string; assertCurrent: () => void } | null = null;
 const appleReminderAdapter = () => {
@@ -5153,6 +5184,85 @@ globalThis.MindwtrHost = {
     iosReminderObserve(): string { return JSON.stringify(iosReminderEffects.observe()); },
     iosReminderObservation(): string { return JSON.stringify(iosReminderEffects.observation()); },
     iosReminderDisposeObservation(): string { return JSON.stringify(iosReminderEffects.disposeObservation()); },
+    iosPomodoroAlarmBegin(token: string): string {
+        return submit(async (signal) => {
+            requireReminderSignal(signal);
+            if (iosPomodoroAlarmTurn || typeof token !== 'string' || !token || token.length > 128)
+                throw new Error('NOT_READY: Pomodoro alarm turn is unavailable');
+            const adapter = pomodoroAdapter(), before = useTaskStore.getState();
+            const generation = getPersistenceStatus().generation;
+            const ready = () => {
+                requireReminderSignal(signal);
+                requireSaved(); unwrap(contract.getDataSettings());
+                const status = getPersistenceStatus(), state = useTaskStore.getState();
+                if (pomodoroAdapter() !== adapter || state.tasks !== before.tasks || state.settings !== before.settings
+                    || status.generation !== generation || status.failed || status.queued || status.inFlight
+                    || status.immediate || status.retrying)
+                    throw new Error('NOT_READY: Pomodoro alarm saved data changed');
+            };
+            const current = async () => {
+                ready();
+                if (!await adapter.readRowBaseline())
+                    throw new Error('STALE_REVISION: Pomodoro alarm saved data changed');
+                ready();
+            };
+            await current();
+            if (iosPomodoroAlarmTurn) throw new Error('NOT_READY: Pomodoro alarm turn is unavailable');
+            iosPomodoroAlarmTurn = { token, current };
+            return true;
+        });
+    },
+    iosPomodoroAlarmCurrent(token: string): string {
+        return submit(async (signal) => {
+            requireReminderSignal(signal); await requirePomodoroAlarmTurn(token); requireReminderSignal(signal); return true;
+        });
+    },
+    iosPomodoroAlarmPrepare(token: string, granted: boolean, raw: string | null, scope: string,
+        pendingJSON: string, deliveredJSON: string): string {
+        return submit(async (signal) => {
+            requireReminderSignal(signal); await requirePomodoroAlarmTurn(token);
+            if (typeof granted !== 'boolean') throw new Error('INVALID_INPUT: Invalid Pomodoro permission');
+            const settings = useTaskStore.getState().settings;
+            // Denial and explicit off must work even when the saved timer cannot be decoded.
+            const session = !granted || settings.gtd?.pomodoro?.completionAlert === false
+                ? null : (await pomodoroAdapter().readPomodoroSession()).raw;
+            await requirePomodoroAlarmTurn(token); requireReminderSignal(signal);
+            const nowMs = Date.now();
+            const intent = buildNativePomodoroAlarmIntent({ raw: session, settings, nowMs,
+                t: (key) => unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key });
+            return planNativePomodoroAlarmEffects({ intent, granted, raw, scope, nowMs,
+                pending: pomodoroJSON(pendingJSON, 4 * 1024 * 1024),
+                delivered: pomodoroJSON(deliveredJSON, 4 * 1024 * 1024) });
+        });
+    },
+    iosPomodoroAlarmDispatchPrepare(token: string, intentJSON: string, raw: string | null, scope: string): string {
+        return submit(async (signal) => {
+            requireReminderSignal(signal); await requirePomodoroAlarmTurn(token);
+            const settings = useTaskStore.getState().settings;
+            const session = settings.gtd?.pomodoro?.completionAlert === false
+                ? null : (await pomodoroAdapter().readPomodoroSession()).raw;
+            await requirePomodoroAlarmTurn(token); requireReminderSignal(signal);
+            const intent = buildNativePomodoroAlarmIntent({ raw: session, settings, nowMs: Date.now(),
+                t: (key) => unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key });
+            return prepareNativePomodoroAlarmDispatch({ intent, raw, scope, attempt: pomodoroJSON(intentJSON, 16 * 1024) });
+        });
+    },
+    iosPomodoroAlarmAcknowledged(token: string, outcome: string): string {
+        return submit(async (signal) => {
+            requireReminderSignal(signal); await requirePomodoroAlarmTurn(token);
+            if (!['scheduled', 'retained', 'cancelled', 'uncertain', 'uninitialized'].includes(outcome))
+                throw new Error('INVALID_INPUT: Invalid Pomodoro alarm outcome');
+            try {
+                await diagnosticsLog.append({ ts: new Date().toISOString(), level: 'info', scope: 'native-ios',
+                    message: 'Native iOS Pomodoro alarm reconciliation saved',
+                    context: { releaseCheck: 'v1.3.5/ios-pomodoro-alarm-effects', outcome } }, { force: true });
+            } catch { /* Diagnostics cannot roll back an already durable alarm receipt. */ }
+            return {};
+        });
+    },
+    iosPomodoroAlarmEnd(token: string): string {
+        return submit(async () => { if (iosPomodoroAlarmTurn?.token === token) iosPomodoroAlarmTurn = null; return {}; });
+    },
     iosReminderBegin(token: string): string {
         return submit(async (signal) => { requireReminderSignal(signal); return iosReminderEffects.begin(token); });
     },
@@ -5409,6 +5519,135 @@ globalThis.MindwtrHost = {
             logInfo('Native iOS calendar read delivered', { scope: 'native-ios', force: input.op !== 'testSettings',
                 context: { releaseCheck: 'v1.3.5/ios-calendar-read', outcome: input.op } });
             return value;
+        });
+    },
+    iosAIRequestTimeoutOptions(json: string, owner: () => unknown): string {
+        return submit(async signal => unwrap(await aiRequestTimeoutMethods.options(completionJson(json, 256), aiRequestTimeoutOwner(owner, signal))));
+    },
+    iosAIRequestTimeoutPrepare(json: string, owner: () => unknown): string {
+        return submit(async signal => unwrap(await aiRequestTimeoutMethods.prepare(completionJson(json, 2048), aiRequestTimeoutOwner(owner, signal))));
+    },
+    iosAIRequestTimeoutValidate(json: string): string {
+        return submit(async () => unwrap(aiRequestTimeoutMethods.validate(completionJson(json, 8192))));
+    },
+    iosAIRequestTimeoutCommit(json: string, owner: () => unknown): string {
+        return submit(async signal => unwrap(await aiRequestTimeoutMethods.commit(completionJson(json, 8192), aiRequestTimeoutOwner(owner, signal))));
+    },
+    iosAIRequestTimeoutRetryOutcome(json: string): string {
+        return submit(async () => unwrap(aiRequestTimeoutMethods.outcome(completionJson(json, 2048))));
+    },
+    iosAIRequestTimeoutAcknowledged(): string {
+        return submit(async () => {
+            if (globalThis.__mindwtrHostPlatform !== 'ios') return null;
+            try {
+                logInfo('Native iOS AI request timeout saved', { scope: 'native-ios', force: true,
+                    context: { releaseCheck: 'v1.3.5/ios-ai-request-timeout', outcome: 'saved' } });
+                await diagnosticsLog.serialize(async () => undefined);
+            } catch { /* Diagnostics cannot change a verified durable reply. */ }
+            return null;
+        });
+    },
+    /** Native DEBUG fixture only; pure observation, never flush/retry/ack. */
+    iosAISummaryCheckpointSettled(owner: () => unknown): string {
+        if (typeof owner !== 'function' || owner() !== '') throw new Error('NOT_READY: AI summary checkpoint needs private fixture authority');
+        const { status } = settledAttachmentDiscardState();
+        return String(status.generation);
+    },
+    /** Private saved controls; native supplies current unjournaled read authority. */
+    iosAISettingsProjection(json: string, owner: () => unknown): string {
+        return submit(async (signal) => {
+            const input = completionJson(json, 256);
+            if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 0
+                || typeof owner !== 'function') throw new Error('INVALID_INPUT: AI projection needs private read authority');
+            const adapter = bootAdapter;
+            const ready = () => {
+                if (signal.aborted || globalThis.__mindwtrHostPlatform !== 'ios' || !adapter || bootAdapter !== adapter
+                    || getStorageAdapter() !== adapter || !adapter.concurrentWritesGuarded
+                    || isSandboxMode() || isWorkspaceTransitionActive()) throw new Error('NOT_READY: AI projection is unavailable');
+                if (owner() !== '') throw new Error('NOT_READY: AI projection owner is unavailable');
+                requireSaved();
+                if (!contract.getDataSettings().ok) throw new Error('NOT_READY: AI projection is unavailable');
+                const status = getPersistenceStatus(), state = useTaskStore.getState();
+                if (status.failed || status.queued || status.inFlight || status.immediate || status.retrying
+                    || state.isLoading || state.editLockCount > 0) throw new Error('NOT_READY: AI projection waits for saved data');
+                return status;
+            };
+            const status = ready(), settings = useTaskStore.getState().settings;
+            const frozen = JSON.parse(JSON.stringify(settings)) as unknown;
+            const current = () => {
+                if (ready().generation !== status.generation || useTaskStore.getState().settings !== settings
+                    || !taskEditValuesEqual(settings, frozen)) throw new Error('STALE_REVISION: AI projection changed; read again');
+            };
+            const baseline = async () => {
+                current();
+                const saved = await adapter!.readRowBaseline();
+                current();
+                if (!saved || !taskEditValuesEqual(stripSensitiveSettings(saved.settings), settings))
+                    throw new Error('STALE_REVISION: AI saved settings changed; reload before reading');
+                return saved.settings;
+            };
+            const projection = buildNativeAISettingsProjection(await baseline());
+            await baseline(); current();
+            try {
+                logInfo('Native iOS AI saved configuration projected', { scope: 'native-ios', force: true,
+                    context: { releaseCheck: 'v1.3.5/ios-ai-settings-projection', outcome: 'read' } });
+                await diagnosticsLog.serialize(async () => undefined);
+            } catch { /* Diagnostics cannot change an admitted read. */ }
+            return projection;
+        });
+    },
+    /** Private display metadata; native owns the fixed inspection and every readmission. */
+    iosAIProviderDeviceState(json: string, owner: () => unknown,
+        inspect: (provider: string, account: string, legacy: string) => unknown): string {
+        return submit(async (signal) => {
+            const input = completionJson(json, 256);
+            if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 0
+                || typeof owner !== 'function' || typeof inspect !== 'function') {
+                throw new Error('INVALID_INPUT: AI provider device metadata needs private read authority');
+            }
+            const adapter = bootAdapter;
+            const ready = () => {
+                if (signal.aborted || globalThis.__mindwtrHostPlatform !== 'ios' || !adapter || bootAdapter !== adapter
+                    || getStorageAdapter() !== adapter || !adapter.concurrentWritesGuarded
+                    || isSandboxMode() || isWorkspaceTransitionActive()) throw new Error('NOT_READY: AI provider device metadata is unavailable');
+                if (owner() !== '') throw new Error('NOT_READY: AI provider device metadata owner is unavailable');
+                requireSaved();
+                if (!contract.getDataSettings().ok) throw new Error('NOT_READY: AI provider device metadata is unavailable');
+                const status = getPersistenceStatus(), state = useTaskStore.getState();
+                if (status.failed || status.queued || status.inFlight || status.immediate || status.retrying
+                    || state.isLoading || state.editLockCount > 0) throw new Error('NOT_READY: AI provider device metadata waits for saved data');
+                return status;
+            };
+            const status = ready(), settings = useTaskStore.getState().settings;
+            const frozen = JSON.parse(JSON.stringify(settings)) as unknown;
+            const current = () => {
+                if (ready().generation !== status.generation || useTaskStore.getState().settings !== settings
+                    || !taskEditValuesEqual(settings, frozen)) throw new Error('STALE_REVISION: AI provider device metadata changed; read again');
+            };
+            const baseline = async () => {
+                current();
+                const saved = await adapter!.readRowBaseline();
+                current();
+                if (!saved || !taskEditValuesEqual(stripSensitiveSettings(saved.settings), settings)) {
+                    throw new Error('STALE_REVISION: AI saved settings changed; reload before reading');
+                }
+                return saved.settings;
+            };
+            const result = await readNativeAIProviderDeviceState(await baseline(), async (provider, account, legacy) => {
+                current();
+                const raw = checked(await inspect(provider, account, legacy));
+                current();
+                if (typeof raw !== 'string') throw new Error('INVALID_INPUT: AI provider device metadata is malformed');
+                return completionJson(raw, 1024);
+            });
+            await baseline(); current();
+            try {
+                logInfo('Native iOS AI provider device metadata inspected', { scope: 'native-ios', force: true,
+                    context: { releaseCheck: 'v1.3.5/ios-ai-device-state' } });
+                await diagnosticsLog.serialize(async () => undefined);
+            } catch { /* Diagnostics cannot change an admitted metadata checkpoint. */ }
+            await baseline(); current();
+            return result;
         });
     },
     iosAboutUpdateState(): string {

@@ -1,7 +1,191 @@
 import Foundation
+import CryptoKit
 import JavaScriptCore
 import Security
 import Darwin
+
+#if DEBUG
+// Private fixture primitives only. Production cannot construct or invoke this evidence seam.
+enum NativeAISummaryEvidence {
+    // Darwin exposes the descriptor operations but omits the class-C constant from its public headers.
+    static let protectionClassC: Int32 = 3
+    static let processSession = UUID().uuidString.lowercased()
+    struct File: Equatable, Sendable {
+        let bytes: Data
+        let device: UInt64
+        let inode: UInt64
+        let size: Int64
+        let modifiedSeconds: Int64
+        let modifiedNanoseconds: Int64
+        let changedSeconds: Int64
+        let changedNanoseconds: Int64
+    }
+    struct Defaults: Equatable, Sendable {
+        let durable: File?
+        let typedDomain: Data
+    }
+    struct Directory: Equatable, Sendable { let device: UInt64; let inode: UInt64 }
+    struct Publication: Sendable {
+        let directory: URL
+        let directories: [String: Directory]
+        let capture: File
+        let phase: String
+        let suite: String
+        let preferencesURL: URL
+        let defaults: Defaults
+    }
+    static func directoryIdentity(_ url: URL) throws -> Directory {
+        let path = try NativeAttachmentFiles.filePath(url.absoluteString)
+        let fd = Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+        guard fd >= 0 else { throw unavailable }; defer { Darwin.close(fd) }
+        var descriptor = stat(), named = stat()
+        guard fstat(fd, &descriptor) == 0, lstat(path, &named) == 0,
+              descriptor.st_mode & S_IFMT == S_IFDIR, named.st_mode & S_IFMT == S_IFDIR,
+              descriptor.st_dev == named.st_dev, descriptor.st_ino == named.st_ino else { throw unavailable }
+        return .init(device: UInt64(descriptor.st_dev), inode: UInt64(descriptor.st_ino))
+    }
+    // Called synchronously on MainActor by the facade after native capture and its await.
+    // The private artifact binds acceptance to that exact capture; capture.json alone is provisional.
+    static func accept(_ publication: Publication, readmission: () throws -> Bool) throws {
+        guard try readmission() else { throw unavailable }
+        for (path, identity) in publication.directories {
+            guard try directoryIdentity(URL(fileURLWithPath: path, isDirectory: true)) == identity else { throw unavailable }
+        }
+        guard try readFile(publication.directory.appendingPathComponent("capture.json"), limit: 1024 * 1024) == publication.capture,
+              try readFile(publication.directory.appendingPathComponent("accepted.json"), limit: 1024) == nil,
+              try observeDefaults(suite: publication.suite, preferencesURL: publication.preferencesURL,
+                                  expectedDomain: publication.defaults.typedDomain) == publication.defaults else { throw unavailable }
+        let marker = try JSONSerialization.data(withJSONObject: ["version": 1, "phase": publication.phase,
+            "captureSHA256": SHA256.hash(data: publication.capture.bytes).map { String(format: "%02x", $0) }.joined()], options: [.sortedKeys])
+        guard try readmission() else { throw unavailable }
+        try writeExclusive(marker, to: publication.directory.appendingPathComponent("accepted.json"))
+        try DurableFile.sync(publication.directory, directory: true)
+    }
+    static var unavailable: HostFailure { HostFailure("AI summary checkpoint is unavailable") }
+    static func readFile(_ url: URL, limit: Int) throws -> File? {
+        let path = try NativeAttachmentFiles.filePath(url.absoluteString)
+        let parent = URL(fileURLWithPath: path).deletingLastPathComponent(), name = url.lastPathComponent
+        let directory = Darwin.open(parent.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+        guard directory >= 0 else { throw unavailable }
+        defer { Darwin.close(directory) }
+        var parentBefore = stat()
+        guard fstat(directory, &parentBefore) == 0 else { throw unavailable }
+        func requireParent() throws {
+            var descriptor = stat(), named = stat()
+            guard fstat(directory, &descriptor) == 0, lstat(parent.path, &named) == 0,
+                  descriptor.st_dev == parentBefore.st_dev, descriptor.st_ino == parentBefore.st_ino,
+                  named.st_dev == parentBefore.st_dev, named.st_ino == parentBefore.st_ino else { throw unavailable }
+        }
+        let fd = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if fd < 0 {
+            guard errno == ENOENT else { throw unavailable }
+            var named = stat()
+            guard fstatat(directory, name, &named, AT_SYMLINK_NOFOLLOW) != 0, errno == ENOENT else { throw unavailable }
+            try requireParent(); return nil
+        }
+        defer { Darwin.close(fd) }
+        var before = stat()
+        guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG, before.st_nlink == 1,
+              before.st_size >= 0, before.st_size <= Int64(limit) else { throw unavailable }
+        var data = Data(), buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress!, $0.count) }
+            if count < 0 && errno == EINTR { continue }
+            guard count >= 0, count <= Int(before.st_size) - data.count else { throw unavailable }
+            if count == 0 { break }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        var after = stat(), named = stat(), parentAfter = stat(), parentNamed = stat()
+        guard fstat(fd, &after) == 0, fstatat(directory, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
+              fstat(directory, &parentAfter) == 0, lstat(parent.path, &parentNamed) == 0,
+              parentBefore.st_dev == parentAfter.st_dev, parentBefore.st_ino == parentAfter.st_ino,
+              parentBefore.st_dev == parentNamed.st_dev, parentBefore.st_ino == parentNamed.st_ino,
+              data.count == Int(before.st_size) else { throw unavailable }
+        func observation(_ value: stat) -> File {
+            File(bytes: data, device: UInt64(value.st_dev), inode: UInt64(value.st_ino), size: value.st_size,
+                modifiedSeconds: Int64(value.st_mtimespec.tv_sec), modifiedNanoseconds: Int64(value.st_mtimespec.tv_nsec),
+                changedSeconds: Int64(value.st_ctimespec.tv_sec), changedNanoseconds: Int64(value.st_ctimespec.tv_nsec))
+        }
+        let result = observation(before)
+        guard result == observation(after), result == observation(named) else { throw unavailable }
+        return result
+    }
+    // Matching uses exact scalar types and bytes; NSObject bool/number equality is insufficient.
+    static func typedDomain(_ domain: [String: Any]?) throws -> Data {
+        var budget = 1024 * 1024
+        func value(_ input: Any, depth: Int) throws -> Any {
+            guard depth <= 64, budget >= 256 else { throw unavailable }; budget -= 256
+            func bytes(_ data: Data) throws -> String {
+                guard data.count <= max(0, budget - 64) / 2 else { throw unavailable }; budget -= data.count * 2 + 64
+                return data.base64EncodedString()
+            }
+            if let dictionary = input as? NSDictionary {
+                guard dictionary.count <= budget / 256 else { throw unavailable }
+                var entries: [(Data, Any)] = [], keyBudget = budget
+                for (key, item) in dictionary {
+                    guard let key = key as? String, key.utf8.count <= keyBudget else { throw unavailable }
+                    keyBudget -= key.utf8.count
+                    entries.append((Data(key.utf8), item))
+                }
+                entries.sort { $0.0.lexicographicallyPrecedes($1.0) }
+                return ["type": "dictionary", "entries": try entries.map { entry in
+                    ["name": try bytes(entry.0), "value": try value(entry.1, depth: depth + 1)] as [String: Any]
+                }] as [String: Any]
+            }
+            if let array = input as? [Any] { guard array.count <= budget / 256 else { throw unavailable }; return ["type": "array", "values": try array.map { try value($0, depth: depth + 1) }] }
+            if let string = input as? String { guard string.utf8.count <= max(0, budget - 64) / 2 else { throw unavailable }; return ["type": "string", "bytes": try bytes(Data(string.utf8))] }
+            if let data = input as? Data { return ["type": "data", "bytes": try bytes(data)] }
+            if let date = input as? Date { return ["type": "date", "bits": String(date.timeIntervalSinceReferenceDate.bitPattern)] }
+            if let number = input as? NSNumber {
+                if CFGetTypeID(number) == CFBooleanGetTypeID() { return ["type": "boolean", "value": number.boolValue] }
+                let floating = ["f", "d"].contains(String(cString: number.objCType))
+                return ["type": floating ? "real" : "integer", "value": floating ? String(number.doubleValue.bitPattern) : number.stringValue]
+            }
+            throw unavailable
+        }
+        let result = try JSONSerialization.data(withJSONObject: ["present": domain != nil, "domain": value(domain ?? [:], depth: 0)] as [String: Any], options: [.sortedKeys])
+        guard result.count <= 1024 * 1024 else { throw unavailable }
+        return result
+    }
+    static func observeDefaults(suite: String, preferencesURL: URL, expectedDomain: Data) throws -> Defaults {
+        let prefix = "nativeUITests.", identifier = String(suite.dropFirst(prefix.count))
+        guard suite.hasPrefix(prefix), let id = UUID(uuidString: identifier), id.uuidString.lowercased() == identifier,
+              preferencesURL.lastPathComponent == suite + ".plist", preferencesURL.deletingLastPathComponent().lastPathComponent == "Preferences",
+              expectedDomain.count <= 1024 * 1024 else { throw unavailable }
+        let durable = try readFile(preferencesURL, limit: 1024 * 1024)
+        let saved: [String: Any]?
+        if let durable {
+            guard let object = try PropertyListSerialization.propertyList(from: durable.bytes, options: [], format: nil) as? [String: Any] else { throw unavailable }
+            saved = object
+        } else { saved = nil }
+        guard try typedDomain(saved) == expectedDomain,
+              try readFile(preferencesURL, limit: 1024 * 1024) == durable else { throw unavailable }
+        return Defaults(durable: durable, typedDomain: expectedDomain)
+    }
+    static func writeExclusive(_ data: Data, to url: URL) throws {
+        let path = try NativeAttachmentFiles.filePath(url.absoluteString)
+        let fd = Darwin.open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW_ANY | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw unavailable }
+        defer { Darwin.close(fd) }
+        #if os(iOS)
+        guard fcntl(fd, F_SETPROTECTIONCLASS, NativeAISummaryEvidence.protectionClassC) == 0 else { throw unavailable }
+        #endif
+        try data.withUnsafeBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                let count = Darwin.write(fd, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+                if count < 0 && errno == EINTR { continue }
+                guard count > 0 else { throw unavailable }; offset += count
+            }
+        }
+        guard fsync(fd) == 0, fcntl(fd, F_FULLFSYNC) == 0 else { throw unavailable }
+    }
+}
+#endif
+
+#if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+public enum NativeAISummaryCheckpointPhase: String, Sendable, Hashable { case baseline, final }
+#endif
 
 /// Core refused a command before writing, and its pending journal is now clear.
 /// Other errors, even with the same core code, may still require exact retry.
@@ -91,6 +275,131 @@ private struct NativeCalendarFileCaptureAdmission: Sendable {
     let jobs: NativeAttachmentFileJobs
 }
 
+/// Private prerequisite only; these saved switches do not promise native AI capability.
+public struct NativeAISettingsProjection: Decodable, Sendable, Equatable {
+    public enum Provider: String, Decodable, Sendable { case openai, gemini, anthropic }
+    enum Effort: String, Decodable, Sendable { case minimal, low, medium, high }
+    enum SpeechProvider: String, Decodable, Sendable { case openai, gemini, whisper }
+    enum SpeechMode: String, Decodable, Sendable { case smart_parse, transcribe_only }
+    enum FieldStrategy: String, Decodable, Sendable { case smart, title_only, description_only }
+    let version: Int
+    public let aiProvider: Provider
+    public let aiEnabled: Bool
+    let staticAiModelOptions: [String]
+    let aiReasoningEffort: Effort
+    let aiThinkingBudget: Int
+    let staticAiCopilotOptions: [String]
+    public let aiRequestTimeoutSeconds: Int
+    let anthropicThinkingEnabled: Bool
+    let speechEnabled: Bool
+    let speechProvider: SpeechProvider
+    let speechMode: SpeechMode
+    let speechFieldStrategy: FieldStrategy
+    let staticSpeechModelOptions: [String]
+
+    static func validated(_ raw: String) throws -> Self {
+        let failure = HostFailure("INVALID_INPUT: AI configuration projection is malformed")
+        guard raw.utf8.count <= 8192, try NativeJSON.hasUniqueObjectKeys(raw),
+              let object = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              Set(object.keys) == Set(["version", "aiProvider", "aiEnabled", "staticAiModelOptions", "aiReasoningEffort",
+                  "aiThinkingBudget", "staticAiCopilotOptions", "aiRequestTimeoutSeconds", "anthropicThinkingEnabled",
+                  "speechEnabled", "speechProvider", "speechMode", "speechFieldStrategy", "staticSpeechModelOptions"]),
+              let result = try? JSONDecoder().decode(Self.self, from: Data(raw.utf8)), result.version == 1,
+              (0...32768).contains(result.aiThinkingBudget), [30, 60, 120, 300].contains(result.aiRequestTimeoutSeconds),
+              result.anthropicThinkingEnabled == (result.aiProvider == .anthropic && result.aiThinkingBudget > 0) else { throw failure }
+        // The shared helper owns static catalog provenance; Swift checks transport shape only.
+        guard [result.staticAiModelOptions, result.staticAiCopilotOptions, result.staticSpeechModelOptions].allSatisfy({ values in
+            !values.isEmpty && values.count <= 16 && Set(values).count == values.count && values.allSatisfy {
+                $0.utf8.count <= 64 && $0.range(of: "^[a-z0-9][a-z0-9.-]*$", options: .regularExpression) != nil
+            }
+        }) else { throw failure }
+        return result
+    }
+}
+
+struct NativeAIRequestTimeoutWitness: Decodable, Sendable, Equatable {
+    let aiPresent: Bool
+    let timeoutPresent: Bool
+    let timeout: Int?
+    let providerPresent: Bool
+    let provider: String?
+    let stampPresent: Bool
+    let stamp: String?
+    var object: [String: Any] { ["aiPresent": aiPresent, "timeoutPresent": timeoutPresent, "timeout": timeout.map { $0 as Any } ?? NSNull(),
+        "providerPresent": providerPresent, "provider": provider.map { $0 as Any } ?? NSNull(),
+        "stampPresent": stampPresent, "stamp": stamp.map { $0 as Any } ?? NSNull()] }
+    static func validated(_ input: Any?) throws -> Self {
+        guard let object = input as? [String: Any], Set(object.keys) == Set(["aiPresent", "timeoutPresent", "timeout", "providerPresent", "provider", "stampPresent", "stamp"]),
+              let value = try? JSONDecoder().decode(Self.self, from: JSONSerialization.data(withJSONObject: object)),
+              value.aiPresent || (!value.timeoutPresent && !value.providerPresent),
+              value.timeoutPresent ? value.timeout.map({ [30, 60, 120, 300].contains($0) }) == true : value.timeout == nil,
+              value.providerPresent ? value.provider.map({ ["openai", "gemini", "anthropic"].contains($0) }) == true : value.provider == nil,
+              value.stampPresent ? value.stamp != nil : value.stamp == nil else { throw HostFailure("INVALID_INPUT: AI timeout witness is malformed") }
+        if let stamp = value.stamp {
+            let format = ISO8601DateFormatter(); format.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            guard stamp.utf8.count <= 40, let date = format.date(from: stamp), format.string(from: date) == stamp else {
+                throw HostFailure("INVALID_INPUT: AI timeout stamp is malformed")
+            }
+        }
+        return value
+    }
+}
+struct NativeAIRequestTimeoutRequest: Sendable, Equatable {
+    let requestId: String
+    let value: Int
+    let expected: NativeAIRequestTimeoutWitness
+    func json() throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: ["requestId": requestId, "value": value, "expected": expected.object], options: [.sortedKeys]), as: UTF8.self)
+    }
+}
+struct NativeAIRequestTimeoutOptions: Sendable, Equatable {
+    let value: Int
+    let expected: NativeAIRequestTimeoutWitness
+    static func validated(_ raw: String) throws -> Self {
+        guard raw.utf8.count <= 2048, try NativeJSON.hasUniqueObjectKeys(raw),
+              let object = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any], Set(object.keys) == Set(["value", "expected"]),
+              let number = object["value"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.rounded() == number.doubleValue, let value = object["value"] as? Int, [30, 60, 120, 300].contains(value) else {
+            throw HostFailure("INVALID_INPUT: AI timeout options are malformed")
+        }
+        let expected = try NativeAIRequestTimeoutWitness.validated(object["expected"])
+        guard value == (expected.timeout ?? 30) else { throw HostFailure("INVALID_INPUT: AI timeout options disagree with saved controls") }
+        return .init(value: value, expected: expected)
+    }
+}
+struct NativeAIRequestTimeoutResult: Decodable, Sendable, Equatable {
+    let value: Int
+    let changed: Bool
+    static func validated(_ raw: String) throws -> Self {
+        guard raw.utf8.count <= 1024, try NativeJSON.hasUniqueObjectKeys(raw),
+              let object = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any], Set(object.keys) == Set(["value", "changed"]),
+              let result = try? JSONDecoder().decode(Self.self, from: Data(raw.utf8)), [30, 60, 120, 300].contains(result.value) else {
+            throw HostFailure("INVALID_INPUT: AI timeout reply is malformed")
+        }
+        return result
+    }
+}
+
+/// Private display-only selected-provider metadata, never credential usability or request authority.
+struct NativeAIProviderDeviceState: Decodable, Sendable, Equatable {
+    enum SecureItem: String, Decodable, Sendable { case present, absent, unavailable }
+    let version: Int
+    let provider: NativeAISettingsProjection.Provider
+    let consentRecorded: Bool
+    let secureItem: SecureItem
+    let legacyItemPresent: Bool
+
+    static func validated(_ raw: String) throws -> Self {
+        guard raw.utf8.count <= 1024, try NativeJSON.hasUniqueObjectKeys(raw),
+              let object = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              Set(object.keys) == Set(["version", "provider", "consentRecorded", "secureItem", "legacyItemPresent"]),
+              let result = try? JSONDecoder().decode(Self.self, from: Data(raw.utf8)), result.version == 1 else {
+            throw HostFailure("INVALID_INPUT: AI provider device metadata is malformed")
+        }
+        return result
+    }
+}
+
 /// One off-main owner for the core runtime, database and pending command journal.
 /// Every result is the JSON-encoded core value, with host/core failures thrown.
 public final class CoreHost: @unchecked Sendable {
@@ -133,6 +442,53 @@ public final class CoreHost: @unchecked Sendable {
 
     public func start(retainingReminderResponseIDs: [String]? = nil) async throws -> String {
         try await perform { try $0.start(retainingReminderResponseIDs: retainingReminderResponseIDs) }
+    }
+
+    public func readAISettingsProjection() async throws -> NativeAISettingsProjection {
+        try await perform { try $0.readAISettingsProjection() }
+    }
+
+    func readAIRequestTimeoutOptions() async throws -> NativeAIRequestTimeoutOptions {
+        try await perform { try NativeAIRequestTimeoutOptions.validated($0.readAIRequestTimeoutOptions()) }
+    }
+    func probeAIRequestTimeoutOutcome(_ request: NativeAIRequestTimeoutRequest) async throws -> NativeAIRequestTimeoutResult {
+        let raw = try request.json()
+        return try await perform { try NativeAIRequestTimeoutResult.validated($0.probeAIRequestTimeoutOutcome(requestJSON: raw)) }
+    }
+    func setAIRequestTimeout(_ request: NativeAIRequestTimeoutRequest,
+        readmission: @escaping @Sendable () async -> Bool) async throws -> NativeAIRequestTimeoutResult {
+        let id = try notificationAuthorization.begin(), cancellation = NativeAttachmentCancellation(), raw = try request.json()
+        localAttachmentRequests.register(cancellation, id: id)
+        defer { localAttachmentRequests.remove(id); notificationAuthorization.finish(id) }
+        if Task.isCancelled { cancellation.cancel() }
+        return try await withTaskCancellationHandler {
+            let result: Result<String, Error>
+            var retry = false
+            do {
+                let admission = try await perform { try $0.beginAIRequestTimeout(id, requestJSON: raw, cancellation: cancellation) }
+                retry = admission.retry
+                if let replay = admission.replay { result = .success(replay) }
+                else {
+                    guard !cancellation.isCancelled, await notificationAuthorization.readmit(id, check: readmission), !cancellation.isCancelled else {
+                        if retry { throw HostFailure("AI timeout save still requires exact retry") }
+                        throw CoreHostRejection(message: "STALE_REVISION: AI timeout edit is no longer current")
+                    }
+                    result = .success(try await perform { try $0.commitAIRequestTimeout(id) })
+                }
+            } catch { result = .failure(error) }
+            _ = try? await perform(reminderOwned: true) { $0.finishAIRequestTimeout(id) }
+            return try NativeAIRequestTimeoutResult.validated(result.get())
+        } onCancel: { cancellation.cancel(); self.notificationAuthorization.cancelReadmission(id) }
+    }
+
+    func readAIProviderDeviceState() async throws -> NativeAIProviderDeviceState {
+        let cancellation = NativeAttachmentCancellation(), request = UUID()
+        localAttachmentRequests.register(cancellation, id: request)
+        defer { localAttachmentRequests.remove(request) }
+        if Task.isCancelled { cancellation.cancel() }
+        return try await withTaskCancellationHandler(operation: {
+            try await perform { try $0.readAIProviderDeviceState(cancellation: cancellation) }
+        }, onCancel: { cancellation.cancel() })
     }
 
     public func chooseAppleRemindersLists(readmission: @escaping @Sendable () async -> Bool) async throws -> String {
@@ -452,6 +808,7 @@ public final class CoreHost: @unchecked Sendable {
     }
 
     public func call(_ method: String, argumentsJSON: String = "[]") async throws -> String {
+        guard method != "iosAISummaryCheckpointSettled" else { throw CoreHostRejection(message: "INVALID_INPUT: AI summary checkpoint requires fixture authority") }
         guard !Engine.pomodoroFacadeMethods.contains(method) else { throw CoreHostRejection(message: "INVALID_INPUT: Pomodoro requires its explicit facade") }
         guard method != "iosPruneReceipts" else {
             throw CoreHostRejection(message: "INVALID_INPUT: Receipt retention requires startup ownership")
@@ -463,6 +820,7 @@ public final class CoreHost: @unchecked Sendable {
             throw CoreHostRejection(message: "INVALID_INPUT: Reminder completion requires its explicit facade")
         }
         guard !Engine.reminderMethods.contains(method) else { throw NativeReminderEffects.unavailable }
+        guard !Engine.aiRequestTimeoutMethods.contains(method) else { throw CoreHostRejection(message: "INVALID_INPUT: AI timeout requires its private facade") }
         guard !Engine.notificationSettingMethods.contains(method) else { throw CoreHostRejection(message: "INVALID_INPUT: Notification Settings require their explicit facade") }
         guard !Engine.deviceCalendarSettingMethods.contains(method) else { throw CoreHostRejection(message: "INVALID_INPUT: Device Calendar Settings require their explicit facade") }
         guard !Engine.calendarSubscriptionSettingMethods.contains(method) else { throw CoreHostRejection(message: "INVALID_INPUT: Calendar subscription settings require their explicit facade") }
@@ -1087,6 +1445,217 @@ public final class CoreHost: @unchecked Sendable {
         return try await perform(reminderOwned: true) { try $0.commitReminderReconciliation(owner, collapsed: confirmedCollapsed) }
     }
 
+    public func reconcilePomodoroAlarms() async throws -> String {
+        let cancellation = NativeAttachmentCancellation(), request = UUID()
+        localAttachmentRequests.register(cancellation, id: request)
+        defer { localAttachmentRequests.remove(request) }
+        if Task.isCancelled { cancellation.cancel() }
+        let owner: UUID
+        do { try cancellation.check(); owner = try reminderEffects.begin(cancellation: cancellation) }
+        catch { if cancellation.isCancelled { throw CancellationError() }; throw NativePomodoroAlarmEffects.unavailable }
+        defer { reminderEffects.finish(owner) }
+        return try await withTaskCancellationHandler {
+            do {
+                let result = try await runPomodoroAlarmReconciliation(owner: owner, cancellation: cancellation)
+                _ = try await perform(reminderOwned: true) { $0.finishPomodoroAlarmReconciliation(owner) }
+                return result
+            } catch {
+                _ = try? await perform(reminderOwned: true) { $0.finishPomodoroAlarmReconciliation(owner) }
+                if cancellation.isCancelled || Task.isCancelled { throw CancellationError() }
+                throw NativePomodoroAlarmEffects.unavailable
+            }
+        } onCancel: { cancellation.cancel() }
+    }
+
+    #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    @MainActor private var aiSummaryCheckpointFixtureID: UUID?
+    @MainActor public func configureIsolatedAISummaryCheckpoint() async throws {
+        guard aiSummaryCheckpointFixtureID == nil else { throw NativeAISummaryEvidence.unavailable }
+        let identifier = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UUID, Error>) in
+            queue.async { [engine] in
+                do { continuation.resume(returning: try engine.configureIsolatedAISummaryCheckpoint()) }
+                catch { continuation.resume(throwing: NativeAISummaryEvidence.unavailable) }
+            }
+        }
+        aiSummaryCheckpointFixtureID = identifier
+    }
+    @MainActor public func captureIsolatedAISummaryCheckpoint(_ phase: NativeAISummaryCheckpointPhase, startupToken: UUID,
+        readmission: @escaping @MainActor @Sendable () -> Bool) async throws {
+        guard let identifier = aiSummaryCheckpointFixtureID,
+              let defaults = UserDefaults(suiteName: "nativeUITests." + identifier.uuidString.lowercased()) else { throw NativeAISummaryEvidence.unavailable }
+        let suite = "nativeUITests." + identifier.uuidString.lowercased()
+        let domain = try NativeAISummaryEvidence.typedDomain(defaults.persistentDomain(forName: suite))
+        let cancellation = NativeAttachmentCancellation(), request = UUID()
+        localAttachmentRequests.register(cancellation, id: request)
+        defer { localAttachmentRequests.remove(request) }
+        try await withTaskCancellationHandler {
+            guard !Task.isCancelled, readmission(), !Task.isCancelled,
+                  await reminderEffects.reserveOrdinary(cancellation: cancellation) else { throw NativeAISummaryEvidence.unavailable }
+            defer { reminderEffects.finishOrdinary() }
+            let draft = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UUID, Error>) in
+                queue.async { [engine] in
+                    do { try cancellation.check(); try engine.requireNoAppleRemindersAccess()
+                        continuation.resume(returning: try engine.prepareAISummaryCheckpoint(phase, startupToken: startupToken, domain: domain, cancellation: cancellation)) }
+                    catch { continuation.resume(throwing: NativeAISummaryEvidence.unavailable) }
+                }
+            }
+            guard !Task.isCancelled, readmission(), !Task.isCancelled,
+                  try NativeAISummaryEvidence.typedDomain(defaults.persistentDomain(forName: suite)) == domain else { throw NativeAISummaryEvidence.unavailable }
+            let publication = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<NativeAISummaryEvidence.Publication, Error>) in
+                queue.async { [engine] in
+                    do { try cancellation.check(); try engine.requireNoAppleRemindersAccess()
+                        continuation.resume(returning: try engine.publishAISummaryCheckpoint(draft)) }
+                    catch { continuation.resume(throwing: NativeAISummaryEvidence.unavailable) }
+                }
+            }
+            try NativeAISummaryEvidence.accept(publication) {
+                guard !Task.isCancelled, readmission() else { return false }
+                return try NativeAISummaryEvidence.typedDomain(defaults.persistentDomain(forName: suite)) == domain
+            }
+        } onCancel: { cancellation.cancel() }
+    }
+
+    #endif
+
+    #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    public func configureIsolatedPomodoroAlarmFixture(holdFirstAdd: Bool = false, denied: Bool = false, seedOwned: Bool = false) async throws {
+        try await perform { try $0.configureIsolatedPomodoroAlarmFixture(holdFirstAdd: holdFirstAdd, denied: denied, seedOwned: seedOwned) }
+    }
+    public func readIsolatedPomodoroAlarmFixture() async throws -> String {
+        let port = try await perform(reminderOwned: true) { try $0.isolatedPomodoroAlarmFixture() }
+        return try await port.snapshot()
+    }
+    public func releaseIsolatedPomodoroAlarmFixture() async throws {
+        let port = try await perform(reminderOwned: true) { try $0.isolatedPomodoroAlarmFixture() }
+        await port.release()
+    }
+    #endif
+
+    private func runPomodoroAlarmReconciliation(owner: UUID, cancellation: NativeAttachmentCancellation) async throws -> String {
+        let admission = try await perform(reminderOwned: true) { try $0.beginPomodoroAlarmReconciliation(owner, cancellation: cancellation) }
+        let port = admission.port, namespace = admission.namespace
+        func current() async throws {
+            try cancellation.check()
+            _ = try await perform(reminderOwned: true) { try $0.checkPomodoroAlarmReconciliation(owner) }
+        }
+        #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+        if let fixture = port as? NativeSimulatorPomodoroAlarmPort {
+            try await fixture.bind(namespace: namespace, libraryID: admission.libraryID); try await current()
+        }
+        #endif
+        try await current()
+        var permission = try await port.permission(); try await current()
+        let pending = try await port.pending(namespace: namespace); try await current()
+        let delivered = try await port.delivered(namespace: namespace); try await current()
+        let initialGrant = permission.granted || permission.canAskAgain
+        var plan = try await perform(reminderOwned: true) {
+            try $0.preparePomodoroAlarmReconciliation(owner, granted: initialGrant,
+                pending: pending, delivered: delivered)
+        }
+        if permission.canAskAgain, plan.schedule != nil {
+            let authorization = try notificationAuthorization.begin()
+            do {
+                try await current()
+                try await admission.request(); try await current()
+                permission = try await port.permission(); try await current()
+                notificationAuthorization.finish(authorization)
+            } catch { notificationAuthorization.finish(authorization); throw error }
+            let grant = permission.granted
+            let freshPending = try await port.pending(namespace: namespace); try await current()
+            let freshDelivered = try await port.delivered(namespace: namespace); try await current()
+            plan = try await perform(reminderOwned: true) {
+                try $0.preparePomodoroAlarmReconciliation(owner, granted: grant, pending: freshPending, delivered: freshDelivered)
+            }
+        }
+        let acceptedPermission = permission.granted
+        func beforeEffect() async throws {
+            try await current()
+            let actual = try await port.permission(); try await current()
+            guard actual.granted == acceptedPermission else { throw NativePomodoroAlarmEffects.unavailable }
+        }
+        var schedulingInventory = pending
+        if plan.schedule != nil {
+            let freshPending = try await port.pending(namespace: namespace); try await current()
+            let freshDelivered = try await port.delivered(namespace: namespace); try await current()
+            try await beforeEffect()
+            plan = try await perform(reminderOwned: true) {
+                try $0.preparePomodoroAlarmReconciliation(owner, granted: acceptedPermission, pending: freshPending, delivered: freshDelivered)
+            }
+            schedulingInventory = freshPending
+        }
+        if let schedule = plan.schedule {
+            try NativePomodoroAlarmEffects.checkCapacity(schedulingInventory, schedule: schedule)
+            guard acceptedPermission else { throw NativePomodoroAlarmEffects.unavailable }
+            let ahead = plan.writeAhead
+            // The durable attempt is the last publication before accepting the SDK add callback.
+            _ = try await perform(reminderOwned: true) { try $0.publishPomodoroAlarmState(owner, next: ahead) }
+            let dispatch = try await perform(reminderOwned: true) { try $0.refreshPomodoroAlarmDispatch(owner, schedule: schedule) }
+            // No awaited baseline follows the final shared clock; a changed immediate fence is already durable.
+            try cancellation.check()
+            do { try await port.add(dispatch.schedule.json, namespace: namespace, libraryID: admission.libraryID) }
+            catch {
+                try await current()
+                return try await perform(reminderOwned: true) { try $0.acknowledgePomodoroAlarmReconciliation(owner, outcome: "uncertain") }
+            }
+            try await current()
+            let published = dispatch.published
+            _ = try await perform(reminderOwned: true) { try $0.publishPomodoroAlarmState(owner, next: published) }
+        } else {
+            let ahead = plan.writeAhead, published = plan.published
+            _ = try await perform(reminderOwned: true) { try $0.publishPomodoroAlarmState(owner, next: ahead) }
+            _ = try await perform(reminderOwned: true) { try $0.publishPomodoroAlarmState(owner, next: published) }
+        }
+        var knownTargets = Array(Dictionary((plan.cancelPending + plan.cancelDelivered).map { ($0.identifier, $0) },
+            uniquingKeysWith: { first, _ in first }).values)
+        var removed = 0
+        func cancellationSnapshot() async throws -> (NativePomodoroAlarmEffects.Plan, [NativePomodoroAlarmObservation], [NativePomodoroAlarmObservation]) {
+            let pending = try await port.pending(namespace: namespace); try await current()
+            let delivered = try await port.delivered(namespace: namespace); try await current()
+            _ = try NativePomodoroAlarmEffects.targets(pending, expected: knownTargets)
+            _ = try NativePomodoroAlarmEffects.targets(delivered, expected: knownTargets)
+            // Permission is the last awaited SDK observation; shared policy then evaluates the fresh clock.
+            try await beforeEffect()
+            let refreshed = try await perform(reminderOwned: true) {
+                try $0.preparePomodoroAlarmReconciliation(owner, granted: acceptedPermission, pending: pending, delivered: delivered)
+            }
+            guard refreshed.schedule == nil else { throw NativePomodoroAlarmEffects.unavailable }
+            knownTargets = Array(Dictionary((knownTargets + refreshed.cancelPending + refreshed.cancelDelivered).map { ($0.identifier, $0) },
+                uniquingKeysWith: { first, _ in first }).values)
+            return (refreshed, pending, delivered)
+        }
+        // Replanning follows channel movement and preserves a phase that became due during a callback.
+        let (freshPlan, _, _) = try await cancellationSnapshot()
+        let freshAhead = freshPlan.writeAhead, freshPublished = freshPlan.published
+        _ = try await perform(reminderOwned: true) { try $0.publishPomodoroAlarmState(owner, next: freshAhead) }
+        _ = try await perform(reminderOwned: true) { try $0.publishPomodoroAlarmState(owner, next: freshPublished) }
+        if !knownTargets.isEmpty {
+            let (trayPlan, _, delivered) = try await cancellationSnapshot()
+            let trayUnion = Array(Dictionary((trayPlan.cancelPending + trayPlan.cancelDelivered).map { ($0.identifier, $0) },
+                uniquingKeysWith: { first, _ in first }).values)
+            let trayTargets = try NativePomodoroAlarmEffects.targets(delivered, expected: trayUnion)
+            if !trayTargets.isEmpty { try await port.removeDelivered(trayTargets); try await current(); removed += trayTargets.count }
+            let (pendingPlan, pending, deliveredAfterTray) = try await cancellationSnapshot()
+            let pendingUnion = Array(Dictionary((pendingPlan.cancelPending + pendingPlan.cancelDelivered).map { ($0.identifier, $0) },
+                uniquingKeysWith: { first, _ in first }).values)
+            // A second channel transition owes a successor turn, never a false cleanup acknowledgment.
+            guard try NativePomodoroAlarmEffects.targets(deliveredAfterTray, expected: pendingUnion).isEmpty else {
+                throw NativePomodoroAlarmEffects.unavailable
+            }
+            let pendingTargets = try NativePomodoroAlarmEffects.targets(pending, expected: pendingUnion)
+            if !pendingTargets.isEmpty { try await port.removePending(pendingTargets); try await current(); removed += pendingTargets.count }
+        }
+        let (finalPlan, finalPending, finalDelivered) = try await cancellationSnapshot()
+        guard finalPlan.cancelPending.isEmpty, finalPlan.cancelDelivered.isEmpty else { throw NativePomodoroAlarmEffects.unavailable }
+        let remaining = Set((finalPending + finalDelivered).map(\.identifier))
+        let cancelled = removed > 0 || plan.outcome == "cancelled" && !knownTargets.isEmpty && knownTargets.allSatisfy { !remaining.contains($0.identifier) }
+        let after = finalPlan.after
+        let outcome = ["scheduled", "uninitialized"].contains(plan.outcome) ? plan.outcome : cancelled ? "cancelled" : finalPlan.outcome
+        return try await perform(reminderOwned: true) {
+            try $0.publishPomodoroAlarmState(owner, next: after)
+            return try $0.acknowledgePomodoroAlarmReconciliation(owner, outcome: outcome)
+        }
+    }
+
     public func close() async {
         // This primitive flag reaches a running local invoke immediately; an
         // ordinary durable command remains governed by its existing journal.
@@ -1578,6 +2147,27 @@ private final class Engine: @unchecked Sendable {
         }
     }
     private var reminderEffectsTurn: ReminderEffectsTurn?
+    private final class PomodoroAlarmTurn {
+        var id: UUID
+        let runtime: JSContext
+        let storage: NativeDeviceKV
+        let generation: UInt64
+        let dataVersion: Int64
+        let namespace: String
+        let libraryID: String
+        let scope: String
+        let session: String
+        var cancellation: NativeAttachmentCancellation
+        var expected: String?
+        var mutation: (before: String?, after: String)?
+        init(id: UUID, runtime: JSContext, storage: NativeDeviceKV, generation: UInt64, dataVersion: Int64,
+             namespace: String, libraryID: String, scope: String, expected: String?, cancellation: NativeAttachmentCancellation) {
+            self.id = id; self.runtime = runtime; self.storage = storage; self.generation = generation
+            self.dataVersion = dataVersion; self.namespace = namespace; self.libraryID = libraryID; self.scope = scope
+            self.expected = expected; self.cancellation = cancellation; session = id.uuidString.lowercased()
+        }
+    }
+    private var pomodoroAlarmTurn: PomodoroAlarmTurn?
     private final class NotificationSettingTurn {
         let id: UUID
         let runtime: JSContext
@@ -1593,6 +2183,27 @@ private final class Engine: @unchecked Sendable {
     }
     private var notificationSettingTurn: NotificationSettingTurn?
     private var notificationSettingOwnerAccess = false
+    private final class AIRequestTimeoutTurn {
+        let id: UUID
+        let runtime: JSContext
+        let connection: SQLiteBridge
+        let library: OwnedDiscardIdentity
+        let generation: UInt64
+        let epoch: Int64
+        let cancellation: NativeAttachmentCancellation
+        let requestJSON: String?
+        let retry: Bool
+        init(id: UUID, runtime: JSContext, connection: SQLiteBridge, library: OwnedDiscardIdentity, generation: UInt64,
+             epoch: Int64, cancellation: NativeAttachmentCancellation, requestJSON: String?, retry: Bool) {
+            self.id = id; self.runtime = runtime; self.connection = connection; self.library = library
+            self.generation = generation; self.epoch = epoch; self.cancellation = cancellation; self.requestJSON = requestJSON; self.retry = retry
+        }
+    }
+    private var aiRequestTimeoutTurn: AIRequestTimeoutTurn?
+    private var aiRequestTimeoutOwnerAccess = false
+    private var aiRequestTimeoutRetired = false
+    fileprivate static let aiRequestTimeoutMethods: Set<String> = ["iosAIRequestTimeout", "iosAIRequestTimeoutOptions",
+        "iosAIRequestTimeoutPrepare", "iosAIRequestTimeoutValidate", "iosAIRequestTimeoutCommit", "iosAIRequestTimeoutRetryOutcome", "iosAIRequestTimeoutAcknowledged"]
     private final class DeviceCalendarSettingTurn {
         let runtime: JSContext
         let storage: NativeDeviceKV
@@ -1750,7 +2361,8 @@ private final class Engine: @unchecked Sendable {
     private var searchObserver: SearchObserver?
     private static let reminderMapNames = ["mindwtr:local:alarms:v1", "mindwtr:native:reminders:v1"]
     fileprivate static let reminderMethods = Set(["iosReminderBegin", "iosReminderCurrent", "iosReminderPrepare", "iosReminderAcknowledged", "iosReminderEnd",
-        "iosReminderObserve", "iosReminderObservation", "iosReminderDisposeObservation"])
+        "iosReminderObserve", "iosReminderObservation", "iosReminderDisposeObservation",
+        "iosPomodoroAlarmBegin", "iosPomodoroAlarmCurrent", "iosPomodoroAlarmPrepare", "iosPomodoroAlarmDispatchPrepare", "iosPomodoroAlarmAcknowledged", "iosPomodoroAlarmEnd"])
     private struct ProviderCopyTurn {
         var receipt: NativeAttachmentFiles.ProviderCacheCopyReceipt?
         var photoCaptureID: UUID? = nil
@@ -1804,6 +2416,32 @@ private final class Engine: @unchecked Sendable {
     }
     private var taskDownloadTurn: TaskDownloadTurn?
     private var attachmentIdlePump: DispatchWorkItem?
+    #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    private struct AISummaryCheckpointDraft {
+        let id: UUID
+        let phase: NativeAISummaryCheckpointPhase
+        let token: UUID
+        let directory: URL
+        let epoch: Int64
+        let generation: String
+        let defaults: NativeAISummaryEvidence.Defaults
+        let kv: [String: Data]
+        let owned: [String: NativeAISummaryEvidence.File?]
+        let manifest: Data
+        let directories: [String: OwnedDiscardIdentity]
+        let payloads: [String: NativeAISummaryEvidence.File?]
+        let attachmentGeneration: UInt64
+        let runtime: JSContext
+        let connection: SQLiteBridge
+        let library: OwnedDiscardIdentity
+        let cancellation: NativeAttachmentCancellation
+    }
+    private var aiSummaryCheckpointConfigured = false
+    private let aiSummaryCheckpointGeneration = UUID().uuidString.lowercased()
+    private var aiSummaryCheckpointToken: UUID?
+    private var aiSummaryCheckpointPhases: Set<NativeAISummaryCheckpointPhase> = []
+    private var aiSummaryCheckpointDraft: AISummaryCheckpointDraft?
+    #endif
     private var invoking = false
     private var foregroundCleanupCancellation: NativeAttachmentCancellation?
     private var foregroundCleanupActive = false
@@ -1931,6 +2569,7 @@ private final class Engine: @unchecked Sendable {
     private var startupBackupDocumentResult: String?
     private var startupDataSettingResult: String?
     private var startupGeneralPreferenceResult: String?
+    private var startupAIRequestTimeoutResult: String?
     private var startupNotificationSettingResult: String?
     private var startupDeviceCalendarSettingResult: String?
     private var startupCalendarSubscriptionSettingResult: String?
@@ -1994,7 +2633,7 @@ private final class Engine: @unchecked Sendable {
         "projectSectionOrderOptions": 1, "projectSectionOrder": 1, "projectSectionOrderRetryOutcome": 1,
         "appLockOptions": 1, "appLock": 1, "appLockRetryOutcome": 1,
         "gtdWorkflowOptions": 1, "gtdPomodoroOptions": 1, "gtdArchiveOptions": 1, "gtdReviewOptions": 1, "gtdInboxOptions": 1, "gtdCaptureAreaOptions": 1, "gtdCaptureParseOptions": 1, "gtdTaskEditorOpenOptions": 1, "gtdTaskEditorPresetOptions": 1, "gtdTaskEditorFieldOptions": 1, "gtdWorkflowDraft": 1, "gtdWorkflow": 1, "gtdWorkflowRetryOutcome": 1,
-        "iosEntityOpen": 1, "iosSearchSnapshot": 0, "iosSearchObservation": 0, "iosSearchOpen": 1, "iosNotificationOpen": 1, "notificationSetting": 1, "reminderCompletionCommit": 1, "reminderSnoozeCommit": 4,
+        "iosEntityOpen": 1, "iosSearchSnapshot": 0, "iosSearchObservation": 0, "iosSearchOpen": 1, "iosNotificationOpen": 1, "iosAIRequestTimeout": 1, "notificationSetting": 1, "reminderCompletionCommit": 1, "reminderSnoozeCommit": 4,
         "generalPreferenceOptions": 1, "generalPreference": 1, "generalPreferenceRetryOutcome": 1, "deviceCalendarSetting": 1, "calendarSubscriptionSetting": 1, "calendarSubscriptionAdd": 1,
         "manageTaxonomyOptions": 1, "manageTaxonomy": 1, "manageTaxonomyRetryOutcome": 1,
         "managePersonEditOptions": 1, "managePersonEdit": 1, "managePersonEditRetryOutcome": 1,
@@ -2062,7 +2701,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["pomodoroTransitionWrite", "calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "referenceTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "captureLinesSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["iosAIRequestTimeout", "pomodoroTransitionWrite", "calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "referenceTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "captureLinesSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -2317,7 +2956,7 @@ private final class Engine: @unchecked Sendable {
             retentionJSON = String(decoding: try JSONSerialization.data(withJSONObject: ids), as: UTF8.self)
         } else { retentionJSON = "null" }
         guard !closed else { throw HostFailure("Core host is closed") }
-        guard reminderEffectsTurn == nil else { throw NativeReminderEffects.unavailable }
+        guard reminderEffectsTurn == nil, pomodoroAlarmTurn == nil else { throw NativeReminderEffects.unavailable }
         do {
             if started {
                 try denyCleanupOwner()
@@ -2437,6 +3076,9 @@ private final class Engine: @unchecked Sendable {
             if !cleanupRecovery && !recoveringCaptureLines && !recoveringTrashItemsPurge && !recoveringPomodoro && !recoveringAppleReminder { try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id })) }
             guard let runtime = JSContext() else { throw HostFailure("Cannot create JavaScriptCore runtime") }
             context = runtime
+            #if DEBUG
+            faults?.configureRuntimeLifetime?(self, runtime, runtime.virtualMachine)
+            #endif
             installBridge(runtime)
             runtime.evaluateScript(source, withSourceURL: bundleURL)
             try checkException()
@@ -2623,6 +3265,10 @@ private final class Engine: @unchecked Sendable {
             if let command = pending, command.method == "notificationSettingCommit" {
                 _ = try invoke("notificationSettingValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validateNotificationSettingAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "iosAIRequestTimeoutCommit" {
+                _ = try invoke("iosAIRequestTimeoutValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateAIRequestTimeoutAcknowledgment(command, value: value) }
             }
             if let command = pending, let operation = CalendarSubscriptionOperation(commitMethod: command.method) {
                 _ = try invoke(operation.rawValue + "Validate", arguments: journalArguments(command))
@@ -2931,6 +3577,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringGtdWorkflow = pending?.method == "gtdWorkflowCommit"
         let recoveringDataSetting = pending?.method == "dataSetting"
         let recoveringGeneralPreference = pending?.method == "generalPreferenceCommit"
+        let recoveringAIRequestTimeout = pending?.method == "iosAIRequestTimeoutCommit"
         let recoveringNotificationSetting = pending?.method == "notificationSettingCommit"
         let recoveringDeviceCalendarSetting = pending?.method == "deviceCalendarSettingCommit"
         let recoveringCalendarSubscriptionSetting = pending?.method == "calendarSubscriptionSettingCommit"
@@ -3049,6 +3696,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringGtdWorkflow, let terminal, case .success(let value) = terminal { startupGtdWorkflowResult = value }
         if recoveringDataSetting, let terminal, case .success(let value) = terminal { startupDataSettingResult = value }
         if recoveringGeneralPreference, let terminal, case .success(let value) = terminal { startupGeneralPreferenceResult = value }
+        if recoveringAIRequestTimeout, let terminal, case .success(let value) = terminal { startupAIRequestTimeoutResult = value }
         if recoveringNotificationSetting, let terminal, case .success(let value) = terminal { startupNotificationSettingResult = value }
         if recoveringDeviceCalendarSetting, let terminal, case .success(let value) = terminal { startupDeviceCalendarSettingResult = value }
         if recoveringCalendarSubscriptionSetting, let terminal, case .success(let value) = terminal { startupCalendarSubscriptionSettingResult = value }
@@ -3109,7 +3757,7 @@ private final class Engine: @unchecked Sendable {
             ?? startupSomedaySectionDeleteResult ?? startupSomedaySectionOrderResult
             ?? startupSomedaySectionTaskResult
         let recoveredSettings = startupBackupDocumentResult ?? startupDataSettingResult ?? startupGtdWorkflowResult
-            ?? startupAppLockResult ?? startupGeneralPreferenceResult ?? startupNotificationSettingResult ?? startupDeviceCalendarSettingResult ?? startupCalendarSubscriptionSettingResult ?? startupCalendarSubscriptionAddResult
+            ?? startupAppLockResult ?? startupGeneralPreferenceResult ?? startupAIRequestTimeoutResult ?? startupNotificationSettingResult ?? startupDeviceCalendarSettingResult ?? startupCalendarSubscriptionSettingResult ?? startupCalendarSubscriptionAddResult
         let recoveredManage = recoveredSettings ?? startupUnassignedAreaColorResult ?? startupPersonCreateResult
             ?? startupPersonDeleteResult ?? startupPersonEditResult ?? startupTaxonomyResult
         let recoveredDoneRows = startupDoneTaskCompletedAtResult ?? startupDoneTaskStatusResult
@@ -3197,6 +3845,7 @@ private final class Engine: @unchecked Sendable {
                 : startupBackupDocumentResult != nil ? "backupDocumentCommit"
                 : startupDataSettingResult != nil ? "dataSetting"
                 : startupGeneralPreferenceResult != nil ? "generalPreferenceCommit"
+                : startupAIRequestTimeoutResult != nil ? "iosAIRequestTimeoutCommit"
                 : startupNotificationSettingResult != nil ? "notificationSettingCommit"
                 : startupDeviceCalendarSettingResult != nil ? "deviceCalendarSettingCommit"
                 : startupCalendarSubscriptionSettingResult != nil ? "calendarSubscriptionSettingCommit"
@@ -3309,6 +3958,7 @@ private final class Engine: @unchecked Sendable {
         startupBackupDocumentResult = nil
         startupDataSettingResult = nil
         startupGeneralPreferenceResult = nil
+        startupAIRequestTimeoutResult = nil
         startupNotificationSettingResult = nil
         startupDeviceCalendarSettingResult = nil
         startupCalendarSubscriptionSettingResult = nil
@@ -4088,6 +4738,211 @@ private final class Engine: @unchecked Sendable {
         scheduleAttachmentIdle(immediate: true)
     }
 
+    private func requirePomodoroAlarmAuthority(_ turn: PomodoroAlarmTurn) throws {
+        guard started, !closed, context === turn.runtime, deviceStorage === turn.storage,
+              attachmentGeneration == turn.generation, lockFD >= 0,
+              deviceStorageLocation?.bundleIdentifier == turn.namespace,
+              Self.ownedEqual(try calendarPushLibraryID(), turn.libraryID) else { throw NativePomodoroAlarmEffects.unavailable }
+    }
+    #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    func configureIsolatedPomodoroAlarmFixture(holdFirstAdd: Bool, denied: Bool, seedOwned: Bool) throws {
+        let directory = databaseURL.deletingLastPathComponent(), identifier = directory.lastPathComponent
+        guard !started, !closed, !invoking, pending == nil, let faults, faults.pomodoroAlarmPort == nil,
+              databaseURL.lastPathComponent == "mindwtr.sqlite", directory.deletingLastPathComponent().lastPathComponent == "NativeUITests",
+              Self.ownedDiscardUUID(identifier) == identifier,
+              deviceStorageLocation?.bundleIdentifier == "tech.dongdongbh.mindwtr.native-ui." + identifier,
+              faults.secretService == "mindwtr.native-keychain.fixture." + identifier,
+              try mixedSaveFileBinding(journalURL, maximumBytes: Self.ownedSaveMaximumBytes) == nil else {
+            throw HostFailure("Isolated Pomodoro alarm fixture is unavailable")
+        }
+        faults.pomodoroAlarmPort = NativeSimulatorPomodoroAlarmPort(holdFirstAdd: holdFirstAdd, denied: denied, seedOwned: seedOwned)
+    }
+    func isolatedPomodoroAlarmFixture() throws -> NativeSimulatorPomodoroAlarmPort {
+        guard let fixture = faults?.pomodoroAlarmPort as? NativeSimulatorPomodoroAlarmPort else {
+            throw HostFailure("Isolated Pomodoro alarm fixture is unavailable")
+        }
+        return fixture
+    }
+    #endif
+    func beginPomodoroAlarmReconciliation(_ id: UUID, cancellation: NativeAttachmentCancellation) throws -> NativePomodoroAlarmEffects.Admission {
+        dispatchPrecondition(condition: .onQueue(queue))
+        try cancellation.check()
+        guard reminderEffectsTurn == nil else { throw NativePomodoroAlarmEffects.unavailable }
+        if let retained = pomodoroAlarmTurn {
+            guard let mutation = retained.mutation, retained.storage.hasPendingPomodoroAlarmMutation else {
+                throw NativePomodoroAlarmEffects.unavailable
+            }
+            try requirePomodoroAlarmAuthority(retained)
+            retained.id = id; retained.cancellation = cancellation
+            try retained.storage.compareAndSetPomodoroAlarmState(expected: mutation.before, next: mutation.after)
+            retained.expected = mutation.after; retained.mutation = nil
+            if try reminderDataVersion() != retained.dataVersion { reminderSourceStale = true }
+            // A successor settles only the accepted CAS, then discards the old OS plan.
+            throw NativePomodoroAlarmEffects.unavailable
+        }
+        let storage = try requireDeviceStorageAdmission()
+        guard !reminderSourceStale, let runtime = context, let namespace = deviceStorageLocation?.bundleIdentifier else {
+            throw NativePomodoroAlarmEffects.unavailable
+        }
+        let libraryID = try calendarPushLibraryID()
+        guard let scope = NativePomodoroRequest.scope(namespace: namespace, libraryID: libraryID) else {
+            throw NativePomodoroAlarmEffects.unavailable
+        }
+        let expected = try storage.readPomodoroAlarmState()
+        try NativePomodoroAlarmEffects.checkState(expected)
+        let turn = PomodoroAlarmTurn(id: id, runtime: runtime, storage: storage, generation: attachmentGeneration,
+            dataVersion: try reminderDataVersion(), namespace: namespace, libraryID: libraryID, scope: scope,
+            expected: expected, cancellation: cancellation)
+        pomodoroAlarmTurn = turn
+        guard try reminderInvoke("iosPomodoroAlarmBegin", [turn.session], cancellation: cancellation) == "true" else {
+            throw NativePomodoroAlarmEffects.unavailable
+        }
+        try checkPomodoroAlarmReconciliation(id)
+        var request: NativeNotificationAuthorization.Requester = { try await NativeNotificationAuthorization.request() }
+        let port: any NativePomodoroAlarmPort
+        #if DEBUG
+        port = faults?.pomodoroAlarmPort ?? NativeSystemPomodoroAlarmPort()
+        if let injected = faults?.notificationAuthorizationRequest { request = injected }
+        #else
+        port = NativeSystemPomodoroAlarmPort()
+        #endif
+        return .init(namespace: namespace, libraryID: libraryID, port: port, request: request)
+    }
+    private func checkPomodoroAlarmNativeAuthority(_ id: UUID) throws -> PomodoroAlarmTurn {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard let turn = pomodoroAlarmTurn, turn.id == id, !recoveryActivationPending,
+              pending == nil, retainedOrdinaryTurn == nil, projectFileAddTurn == nil, projectDownloadTurn == nil,
+              taskDownloadTurn == nil, projectAvailabilityTurn == nil, encryptionUnlockTurn == nil,
+              notificationSettingTurn == nil, calendarAccessTurn == nil, providerCopy == nil,
+              deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil,
+              !cleanupOwed, !foregroundCleanupActive, !attachmentDraftEvidence else { throw NativePomodoroAlarmEffects.unavailable }
+        try turn.cancellation.check()
+        try requirePomodoroAlarmAuthority(turn)
+        guard try reminderDataVersion() == turn.dataVersion else {
+            reminderSourceStale = true; throw NativePomodoroAlarmEffects.unavailable
+        }
+        guard Self.taskDownloadOptionalEqual(try turn.storage.readPomodoroAlarmState(), turn.expected) else {
+            throw NativePomodoroAlarmEffects.unavailable
+        }
+        return turn
+    }
+    func checkPomodoroAlarmReconciliation(_ id: UUID) throws {
+        let turn = try checkPomodoroAlarmNativeAuthority(id)
+        guard try reminderInvoke("iosPomodoroAlarmCurrent", [turn.session], cancellation: turn.cancellation) == "true" else {
+            throw NativePomodoroAlarmEffects.unavailable
+        }
+        _ = try checkPomodoroAlarmNativeAuthority(id)
+    }
+    func preparePomodoroAlarmReconciliation(_ id: UUID, granted: Bool,
+        pending inventory: [NativePomodoroAlarmObservation], delivered: [NativePomodoroAlarmObservation]) throws -> NativePomodoroAlarmEffects.Plan {
+        try checkPomodoroAlarmReconciliation(id)
+        try NativePomodoroAlarmEffects.checkInventory(inventory); try NativePomodoroAlarmEffects.checkInventory(delivered)
+        guard let turn = pomodoroAlarmTurn else { throw NativePomodoroAlarmEffects.unavailable }
+        let pendingJSON = try Self.ownedJSON(inventory.compactMap(\.ownedJSON))
+        let deliveredJSON = try Self.ownedJSON(delivered.compactMap(\.ownedJSON))
+        guard pendingJSON.utf8.count <= 4 * 1024 * 1024, deliveredJSON.utf8.count <= 4 * 1024 * 1024 else {
+            throw NativePomodoroAlarmEffects.unavailable
+        }
+        let raw = try reminderInvoke("iosPomodoroAlarmPrepare", [turn.session, granted, turn.expected.map { $0 as Any } ?? NSNull(),
+            turn.scope, pendingJSON, deliveredJSON], cancellation: turn.cancellation)
+        _ = try checkPomodoroAlarmNativeAuthority(id)
+        guard raw.utf8.count <= 8 * 1024 * 1024,
+              let plan = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any], try NativeJSON.hasUniqueObjectKeys(raw),
+              Set(plan.keys) == Set(["writeAhead", "published", "after", "schedule", "cancelPending", "cancelDelivered", "outcome"]),
+              let outcome = plan["outcome"] as? String,
+              ["scheduled", "retained", "cancelled", "uncertain", "uninitialized"].contains(outcome) else {
+            throw NativePomodoroAlarmEffects.unavailable
+        }
+        func state(_ value: Any?) throws -> String? {
+            if value is NSNull { return nil }
+            guard let raw = value as? String else { throw NativePomodoroAlarmEffects.unavailable }
+            try NativePomodoroAlarmEffects.checkState(raw); return raw
+        }
+        func targets(_ value: Any?, observations: [NativePomodoroAlarmObservation]) throws -> [NativePomodoroAlarmObservation] {
+            guard let values = value as? [[String: Any]], values.count <= NativePomodoroAlarmEffects.inventoryLimit else {
+                throw NativePomodoroAlarmEffects.unavailable
+            }
+            let observed = Dictionary(uniqueKeysWithValues: observations.filter { $0.identity != nil }.map { ($0.identifier, $0) })
+            let result = try values.map { item -> NativePomodoroAlarmObservation in
+                guard Set(item.keys) == Set(["identifier", "scope", "sessionID", "phase", "fireAtMs"]),
+                      let identifier = item["identifier"] as? String, let expected = observed[identifier],
+                      Self.equalJSON(item, expected.ownedJSON) else { throw NativePomodoroAlarmEffects.unavailable }
+                return expected
+            }
+            try NativePomodoroAlarmEffects.checkInventory(result); return result
+        }
+        let writeAhead = try state(plan["writeAhead"]), published = try state(plan["published"]), after = try state(plan["after"])
+        let cancelPending = try targets(plan["cancelPending"], observations: inventory)
+        let cancelDelivered = try targets(plan["cancelDelivered"], observations: delivered)
+        let schedule: NativePomodoroAlarmEffects.Schedule?
+        if plan["schedule"] is NSNull { schedule = nil }
+        else {
+            guard let intent = plan["schedule"] as? [String: Any] else { throw NativePomodoroAlarmEffects.unavailable }
+            let json = try Self.ownedJSON(intent)
+            guard json.utf8.count <= NativePomodoroAlarmEffects.intentLimit, writeAhead != nil, published != nil else {
+                throw NativePomodoroAlarmEffects.unavailable
+            }
+            let request = try NativePomodoroRequest.make(intent: intent, namespace: turn.namespace, libraryID: turn.libraryID)
+            let observation = NativePomodoroAlarmObservation.read(request, namespace: turn.namespace)
+            guard observation.identity != nil,
+                  !(inventory + delivered).contains(where: { $0.identifier == observation.identifier && $0 != observation }),
+                  !(cancelPending + cancelDelivered).contains(where: { $0.identifier == observation.identifier }) else {
+                throw NativePomodoroAlarmEffects.unavailable
+            }
+            schedule = .init(json: json, observation: observation)
+        }
+        return .init(writeAhead: writeAhead, published: published, after: after, schedule: schedule,
+            cancelPending: cancelPending, cancelDelivered: cancelDelivered, outcome: outcome)
+    }
+    func publishPomodoroAlarmState(_ id: UUID, next: String?) throws {
+        try checkPomodoroAlarmReconciliation(id)
+        guard let turn = pomodoroAlarmTurn else { throw NativePomodoroAlarmEffects.unavailable }
+        try writePomodoroAlarmState(turn, next: next)
+        try checkPomodoroAlarmReconciliation(id)
+    }
+    private func writePomodoroAlarmState(_ turn: PomodoroAlarmTurn, next: String?) throws {
+        guard let next, !Self.taskDownloadOptionalEqual(turn.expected, next) else { return }
+        try NativePomodoroAlarmEffects.checkState(next)
+        turn.mutation = (turn.expected, next)
+        try turn.storage.compareAndSetPomodoroAlarmState(expected: turn.expected, next: next)
+        turn.expected = next; turn.mutation = nil
+    }
+    func refreshPomodoroAlarmDispatch(_ id: UUID, schedule: NativePomodoroAlarmEffects.Schedule) throws -> NativePomodoroAlarmEffects.Dispatch {
+        try checkPomodoroAlarmReconciliation(id)
+        guard let turn = pomodoroAlarmTurn else { throw NativePomodoroAlarmEffects.unavailable }
+        let raw = try reminderInvoke("iosPomodoroAlarmDispatchPrepare", [turn.session, schedule.json,
+            turn.expected.map { $0 as Any } ?? NSNull(), turn.scope], cancellation: turn.cancellation)
+        guard raw.utf8.count <= 2 * NativePomodoroAlarmEffects.stateLimit + NativePomodoroAlarmEffects.intentLimit + 1024,
+              let value = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any], try NativeJSON.hasUniqueObjectKeys(raw),
+              Set(value.keys) == Set(["schedule", "writeAhead", "published"]),
+              let intent = value["schedule"] as? [String: Any], let ahead = value["writeAhead"] as? String,
+              let published = value["published"] as? String else { throw NativePomodoroAlarmEffects.unavailable }
+        let json = try Self.ownedJSON(intent)
+        guard json.utf8.count <= NativePomodoroAlarmEffects.intentLimit else { throw NativePomodoroAlarmEffects.unavailable }
+        let request = try NativePomodoroRequest.make(intent: intent, namespace: turn.namespace, libraryID: turn.libraryID)
+        let observation = NativePomodoroAlarmObservation.read(request, namespace: turn.namespace)
+        guard observation == schedule.observation else { throw NativePomodoroAlarmEffects.unavailable }
+        try NativePomodoroAlarmEffects.checkState(published)
+        _ = try checkPomodoroAlarmNativeAuthority(id)
+        try writePomodoroAlarmState(turn, next: ahead)
+        _ = try checkPomodoroAlarmNativeAuthority(id)
+        return .init(schedule: .init(json: json, observation: observation), published: published)
+    }
+    func acknowledgePomodoroAlarmReconciliation(_ id: UUID, outcome: String) throws -> String {
+        try checkPomodoroAlarmReconciliation(id)
+        guard let turn = pomodoroAlarmTurn else { throw NativePomodoroAlarmEffects.unavailable }
+        _ = try reminderInvoke("iosPomodoroAlarmAcknowledged", [turn.session, outcome], cancellation: turn.cancellation)
+        try checkPomodoroAlarmReconciliation(id)
+        return try Self.ownedJSON(["outcome": outcome])
+    }
+    func finishPomodoroAlarmReconciliation(_ id: UUID) {
+        guard let turn = pomodoroAlarmTurn, turn.id == id else { return }
+        if turn.storage.hasPendingPomodoroAlarmMutation { return }
+        pomodoroAlarmTurn = nil
+        _ = try? reminderInvoke("iosPomodoroAlarmEnd", [turn.session])
+        scheduleAttachmentIdle(immediate: true)
+    }
+
     func readReminderPlan(permission: NativeNotificationPermission, generation: UInt64,
                           cancellation: NativeAttachmentCancellation) throws -> String {
         try cancellation.check()
@@ -4416,7 +5271,7 @@ private final class Engine: @unchecked Sendable {
             guard let turn = calendarAccessTurn, turn.id == id, context === turn.runtime, deviceStorage === turn.storage,
                   attachmentGeneration == turn.generation, started, !closed, !localRequests.isClosing,
                   !turn.cancellation.isCancelled, !recoveryActivationPending, pending == nil, lockFD >= 0,
-                  deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil, notificationSettingTurn == nil, reminderEffectsTurn == nil,
+                  deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil, notificationSettingTurn == nil, reminderEffectsTurn == nil, pomodoroAlarmTurn == nil,
                   retainedOrdinaryTurn == nil, projectFileAddTurn == nil, projectDownloadTurn == nil,
                   taskDownloadTurn == nil, projectAvailabilityTurn == nil, encryptionUnlockTurn == nil,
                   providerCopy == nil, !cleanupOwed, !foregroundCleanupActive, !attachmentDraftEvidence else {
@@ -4500,7 +5355,7 @@ private final class Engine: @unchecked Sendable {
               !recoveryActivationPending || pending?.method == "deviceCalendarSettingCommit",
               retainedOrdinaryTurn == nil, projectFileAddTurn == nil, projectDownloadTurn == nil,
               projectDownloadAcknowledgedTurn == nil, taskDownloadTurn == nil, projectAvailabilityTurn == nil,
-              encryptionUnlockTurn == nil, providerCopy == nil, reminderEffectsTurn == nil, notificationSettingTurn == nil,
+              encryptionUnlockTurn == nil, providerCopy == nil, reminderEffectsTurn == nil, pomodoroAlarmTurn == nil, notificationSettingTurn == nil,
               !cleanupOwed, !foregroundCleanupActive, ordinaryMutationDepth == 0,
               let runtime = context, let storage = deviceStorage else { throw Self.deviceStorageUnavailable }
         try requireNoAttachmentDraft(); try denyCleanupOwner()
@@ -4514,7 +5369,7 @@ private final class Engine: @unchecked Sendable {
               !recoveryActivationPending || pending?.method == "deviceCalendarSettingCommit",
               retainedOrdinaryTurn == nil, projectFileAddTurn == nil, projectDownloadTurn == nil,
               taskDownloadTurn == nil, projectAvailabilityTurn == nil, encryptionUnlockTurn == nil,
-              providerCopy == nil, reminderEffectsTurn == nil, notificationSettingTurn == nil,
+              providerCopy == nil, reminderEffectsTurn == nil, pomodoroAlarmTurn == nil, notificationSettingTurn == nil,
               !cleanupOwed, !foregroundCleanupActive, !attachmentDraftEvidence else { throw Self.deviceStorageUnavailable }
         if let pending {
             guard pending.method == "deviceCalendarSettingCommit", let raw = try journalArguments(pending).first as? String,
@@ -4699,7 +5554,7 @@ private final class Engine: @unchecked Sendable {
               !recoveryActivationPending || pending?.method == operation.commitMethod,
               retainedOrdinaryTurn == nil, projectFileAddTurn == nil, projectDownloadTurn == nil,
               projectDownloadAcknowledgedTurn == nil, taskDownloadTurn == nil, projectAvailabilityTurn == nil,
-              encryptionUnlockTurn == nil, providerCopy == nil, reminderEffectsTurn == nil, notificationSettingTurn == nil,
+              encryptionUnlockTurn == nil, providerCopy == nil, reminderEffectsTurn == nil, pomodoroAlarmTurn == nil, notificationSettingTurn == nil,
               !cleanupOwed, !foregroundCleanupActive, ordinaryMutationDepth == 0, let runtime = context else {
             throw HostFailure("NOT_READY: Calendar subscription settings require their current owner")
         }
@@ -4730,7 +5585,7 @@ private final class Engine: @unchecked Sendable {
               !recoveryActivationPending || pending?.method == turn.operation.commitMethod,
               retainedOrdinaryTurn == nil, projectFileAddTurn == nil, projectDownloadTurn == nil,
               projectDownloadAcknowledgedTurn == nil, taskDownloadTurn == nil, projectAvailabilityTurn == nil,
-              encryptionUnlockTurn == nil, providerCopy == nil, reminderEffectsTurn == nil, notificationSettingTurn == nil,
+              encryptionUnlockTurn == nil, providerCopy == nil, reminderEffectsTurn == nil, pomodoroAlarmTurn == nil, notificationSettingTurn == nil,
               deviceCalendarSettingTurn == nil, calendarAccessTurn == nil, !cleanupOwed, !foregroundCleanupActive,
               !attachmentDraftEvidence,
               try readJournalBytes(maximumBytes: Self.calendarSubscriptionSettingJournalLimit,
@@ -5074,6 +5929,246 @@ private final class Engine: @unchecked Sendable {
         return String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
     }
 
+    private static func aiRequestTimeoutRequest(_ raw: String) throws -> [String: Any] {
+        guard raw.utf8.count <= 2048, try NativeJSON.hasUniqueObjectKeys(raw),
+              let request = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              Set(request.keys) == Set(["requestId", "value", "expected"]), let id = request["requestId"] as? String,
+              let uuid = UUID(uuidString: id), uuid.uuidString.lowercased() == id,
+              isInteger(request["value"]), let value = request["value"] as? Int, [30, 60, 120, 300].contains(value) else {
+            throw HostFailure("INVALID_INPUT: A bounded AI timeout request is required")
+        }
+        _ = try NativeAIRequestTimeoutWitness.validated(request["expected"])
+        return request
+    }
+    private func makeAIRequestTimeoutTurn(_ id: UUID, requestJSON: String?, cancellation: NativeAttachmentCancellation, retry: Bool) throws {
+        guard !aiRequestTimeoutRetired, aiRequestTimeoutTurn == nil, started, !closed, !recoveryActivationPending, lockFD >= 0,
+              let runtime = context, let connection = database, let library = calendarPushDatabaseBinding,
+              try Self.bindingIdentity(databaseURL) == library else {
+            throw CoreHostRejection(message: "STALE_REVISION: AI timeout owner is unavailable; reload before editing")
+        }
+        try requireNoAttachmentDraft(); try denyCleanupOwner()
+        guard calendarAccessTurn == nil, calendarPushTurn == nil, notificationSettingTurn == nil, reminderEffectsTurn == nil,
+              deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil, encryptionUnlockTurn == nil,
+              providerCopy == nil, retainedOrdinaryTurn == nil, projectFileAddTurn == nil, projectDownloadTurn == nil,
+              projectDownloadAcknowledgedTurn == nil, taskDownloadTurn == nil, projectAvailabilityTurn == nil,
+              !cleanupOwed, !foregroundCleanupActive, ordinaryMutationDepth == 0 else {
+            throw CoreHostRejection(message: "NOT_READY: AI timeout edit is unavailable")
+        }
+        aiRequestTimeoutTurn = .init(id: id, runtime: runtime, connection: connection, library: library, generation: attachmentGeneration,
+            epoch: try captureLinesDataVersion(), cancellation: cancellation, requestJSON: requestJSON, retry: retry)
+    }
+    private func requireAIRequestTimeoutTurn(checkCancellation: Bool = true) throws {
+        guard let turn = aiRequestTimeoutTurn, !aiRequestTimeoutRetired, started, !closed, lockFD >= 0,
+              context === turn.runtime, database === turn.connection, attachmentGeneration == turn.generation,
+              try Self.bindingIdentity(databaseURL) == turn.library, try captureLinesDataVersion() == turn.epoch else {
+            aiRequestTimeoutRetired = true
+            throw HostFailure("STALE_REVISION: AI timeout owner changed; reload before editing")
+        }
+        if checkCancellation && turn.cancellation.isCancelled {
+            throw HostFailure("CANCELLED: AI timeout edit is no longer current")
+        }
+    }
+    private func invokeAIRequestTimeoutRead(_ method: String, arguments: [Any]) throws -> String {
+        try requireAIRequestTimeoutTurn()
+        guard let runtime = aiRequestTimeoutTurn?.runtime else { throw HostFailure("NOT_READY: AI timeout owner is unavailable") }
+        let owner: @convention(block) () -> String = { [unowned self] in
+            self.guarded { try self.requireAIRequestTimeoutTurn(); return "" } ?? "!MindwtrNativeError:AI timeout owner is unavailable"
+        }
+        do {
+            runtime.exception = nil
+            guard let ownerValue = JSValue(object: owner, in: runtime), runtime.exception == nil else {
+                throw HostFailure("NOT_READY: AI timeout owner callback is unavailable")
+            }
+            let value = try invoke(method, arguments: arguments + [ownerValue], localCancellation: aiRequestTimeoutTurn?.cancellation)
+            // A published commit's validated terminal result wins caller cancellation.
+            try requireAIRequestTimeoutTurn(checkCancellation: method != "iosAIRequestTimeoutCommit")
+            return value
+        } catch {
+            // JS may have advanced the adapter epoch before refusal; do not reuse this native admission.
+            let message = (error as? HostFailure)?.message
+            let uncertainSave = message?.hasPrefix("SAVE_FAILED:") == true || error is CancellationError
+                || message?.hasPrefix("CANCELLED:") == true
+            if method != "iosAIRequestTimeoutCommit" || !uncertainSave {
+                aiRequestTimeoutRetired = true
+            }
+            throw error
+        }
+    }
+    func readAIRequestTimeoutOptions() throws -> String {
+        try requireCalendarAdmission()
+        let id = UUID()
+        try makeAIRequestTimeoutTurn(id, requestJSON: nil, cancellation: NativeAttachmentCancellation(), retry: false)
+        defer { finishAIRequestTimeout(id) }
+        aiRequestTimeoutOwnerAccess = true; defer { aiRequestTimeoutOwnerAccess = false }
+        let raw = try invokeAIRequestTimeoutRead("iosAIRequestTimeoutOptions", arguments: ["{}"])
+        _ = try NativeAIRequestTimeoutOptions.validated(raw); return raw
+    }
+    func probeAIRequestTimeoutOutcome(requestJSON: String) throws -> String {
+        try requireCalendarAdmission()
+        let request = try Self.aiRequestTimeoutRequest(requestJSON)
+        do {
+            let value = try invoke("iosAIRequestTimeoutRetryOutcome", arguments: [requestJSON])
+            try validateAIRequestTimeoutResult(value, request: request, changed: true); return value
+        } catch let error as HostFailure where error.message.hasPrefix("STALE_REVISION:") || error.message.hasPrefix("INVALID_INPUT:") {
+            throw CoreHostRejection(message: error.message)
+        }
+    }
+    func beginAIRequestTimeout(_ id: UUID, requestJSON: String, cancellation: NativeAttachmentCancellation) throws -> (replay: String?, retry: Bool) {
+        guard aiRequestTimeoutTurn == nil, started, !closed, !recoveryActivationPending, lockFD >= 0 else {
+            throw CoreHostRejection(message: "NOT_READY: AI timeout edit is unavailable")
+        }
+        try requireNoAttachmentDraft(); try denyCleanupOwner()
+        let request = try Self.aiRequestTimeoutRequest(requestJSON)
+        if let command = pending {
+            guard command.method == "iosAIRequestTimeoutCommit", let raw = try journalArguments(command).first as? String,
+                  let envelope = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any], Self.equalJSON(envelope["request"], request) else {
+                throw HostFailure("Previous changes require their exact retry")
+            }
+        } else {
+            try requireCalendarAdmission()
+            do {
+                let replay = try invoke("iosAIRequestTimeoutRetryOutcome", arguments: [requestJSON])
+                try validateAIRequestTimeoutResult(replay, request: request, changed: true); return (replay, false)
+            } catch let error as HostFailure where error.message.hasPrefix("STALE_REVISION:") { }
+            catch let error as HostFailure where error.message.hasPrefix("INVALID_INPUT:") { throw CoreHostRejection(message: error.message) }
+        }
+        if cancellation.isCancelled {
+            if pending != nil { throw HostFailure("AI timeout save still requires exact retry") }
+            throw CoreHostRejection(message: "STALE_REVISION: AI timeout edit is no longer current")
+        }
+        try makeAIRequestTimeoutTurn(id, requestJSON: requestJSON, cancellation: cancellation, retry: pending != nil)
+        return (nil, pending != nil)
+    }
+    func commitAIRequestTimeout(_ id: UUID) throws -> String {
+        guard let turn = aiRequestTimeoutTurn, turn.id == id else { throw HostFailure("AI timeout owner is unavailable") }
+        aiRequestTimeoutOwnerAccess = true; defer { aiRequestTimeoutOwnerAccess = false }
+        do { try requireAIRequestTimeoutTurn() }
+        catch { if turn.retry { throw HostFailure("AI timeout save still requires exact retry") }; throw CoreHostRejection(message: error.localizedDescription) }
+        if turn.retry {
+            guard let terminal = try resolvePending() else { throw HostFailure("AI timeout save still requires exact retry") }
+            return try terminal.value()
+        }
+        guard let request = turn.requestJSON else { throw HostFailure("AI timeout request is unavailable") }
+        return try call("iosAIRequestTimeout", argumentsJSON: Self.ownedJSON([request]))
+    }
+    func finishAIRequestTimeout(_ id: UUID) { if aiRequestTimeoutTurn?.id == id { aiRequestTimeoutTurn = nil } }
+    private func validateAIRequestTimeoutResult(_ value: String, request: [String: Any], changed: Bool) throws {
+        let result = try NativeAIRequestTimeoutResult.validated(value)
+        let witness = try NativeAIRequestTimeoutWitness.validated(request["expected"])
+        guard result.value == request["value"] as? Int, result.changed == changed,
+              changed || (witness.timeoutPresent && witness.timeout == result.value) else { throw HostFailure("Malformed AI timeout acknowledgment") }
+    }
+    private func aiRequestTimeoutJournalRequest(_ command: PendingCommand) throws -> String {
+        guard let raw = try journalArguments(command).first as? String,
+              let envelope = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any] else { throw HostFailure("Malformed AI timeout journal") }
+        return try Self.ownedJSON(request)
+    }
+    private func validateAIRequestTimeoutAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let request = try Self.aiRequestTimeoutRequest(aiRequestTimeoutJournalRequest(command))
+        try validateAIRequestTimeoutResult(value, request: request, changed: true)
+    }
+    private func invokeAIRequestTimeoutCommit(_ command: PendingCommand) throws -> String {
+        try invokeAIRequestTimeoutRead("iosAIRequestTimeoutCommit", arguments: journalArguments(command))
+    }
+
+    func readAISettingsProjection() throws -> NativeAISettingsProjection {
+        try requireCalendarAdmission()
+        guard let runtime = context, let connection = database, let library = calendarPushDatabaseBinding,
+              try Self.bindingIdentity(databaseURL) == library else { throw HostFailure("NOT_READY: AI projection is unavailable") }
+        let generation = attachmentGeneration, epoch = try captureLinesDataVersion()
+        func current() throws {
+            try requireCalendarAdmission()
+            guard context === runtime, database === connection, attachmentGeneration == generation,
+                  try Self.bindingIdentity(databaseURL) == library, try captureLinesDataVersion() == epoch else {
+                throw HostFailure("STALE_REVISION: AI projection owner changed")
+            }
+        }
+        let owner: @convention(block) () -> String = { [unowned self] in
+            self.guarded { try current(); return "" } ?? "!MindwtrNativeError:AI projection owner is unavailable"
+        }
+        try current()
+        runtime.exception = nil
+        guard let ownerValue = JSValue(object: owner, in: runtime), runtime.exception == nil else {
+            throw HostFailure("NOT_READY: AI projection owner callback is unavailable")
+        }
+        let raw = try invoke("iosAISettingsProjection", arguments: ["{}", ownerValue])
+        try current()
+        return try NativeAISettingsProjection.validated(raw)
+    }
+
+    func readAIProviderDeviceState(cancellation: NativeAttachmentCancellation) throws -> NativeAIProviderDeviceState {
+        try requireCalendarAdmission()
+        let storage = try requireDeviceStorageAdmission()
+        guard let runtime = context, let connection = database, let library = calendarPushDatabaseBinding,
+              let jobs = secretJobs, try Self.bindingIdentity(databaseURL) == library else {
+            throw HostFailure("NOT_READY: AI provider device metadata is unavailable")
+        }
+        let generation = attachmentGeneration, epoch = try captureLinesDataVersion()
+        var inspected: NativeAIProviderDeviceState?
+        let current: () throws -> Void = { [weak self, weak runtime, weak connection, weak jobs, weak storage] in
+            try cancellation.check()
+            guard let self, let runtime, let connection, let jobs, let storage else {
+                throw HostFailure("NOT_READY: AI provider device metadata is unavailable")
+            }
+            try self.requireCalendarAdmission()
+            guard self.context === runtime, self.database === connection, self.secretJobs === jobs,
+                  try self.requireDeviceStorageAdmission() === storage, self.attachmentGeneration == generation,
+                  try Self.bindingIdentity(self.databaseURL) == library, try self.captureLinesDataVersion() == epoch else {
+                throw HostFailure("STALE_REVISION: AI provider device metadata owner changed")
+            }
+            try storage.validateAIProviderDeviceMetadataRead()
+            try cancellation.check()
+        }
+        let owner: @convention(block) () -> String = { [weak self] in
+            guard let self else { return "!MindwtrNativeError:AI provider device metadata owner is unavailable" }
+            return self.guarded { try current(); return "" } ?? "!MindwtrNativeError:AI provider device metadata owner is unavailable"
+        }
+        let inspect: @convention(block) (String, String, String) -> String = { [weak self, weak jobs, weak storage] provider, account, legacy in
+            guard let self, let jobs, let storage else { return "!MindwtrNativeError:AI provider device metadata is unavailable" }
+            return self.guarded {
+                guard inspected == nil, let selected = NativeAISettingsProjection.Provider(rawValue: provider),
+                      account == "mindwtr-ai-key_" + provider, legacy == "mindwtr-ai-key:" + provider else {
+                    throw HostFailure("INVALID_INPUT: AI provider device metadata request is invalid")
+                }
+                try current()
+                let secure = try jobs.inspectAIProviderItem(account: account, cancellation: cancellation)
+                try current()
+                let metadata = try storage.readAIProviderDeviceMetadata(provider: selected)
+                try current()
+                guard let secureItem = NativeAIProviderDeviceState.SecureItem(rawValue: secure) else {
+                    throw HostFailure("INVALID_INPUT: AI provider device metadata is malformed")
+                }
+                inspected = NativeAIProviderDeviceState(version: 1, provider: selected,
+                    consentRecorded: metadata.consentRecorded, secureItem: secureItem, legacyItemPresent: metadata.legacyItemPresent)
+                return try Self.ownedJSON(["consentRecorded": metadata.consentRecorded, "secureItem": secure,
+                                          "legacyItemPresent": metadata.legacyItemPresent])
+            } ?? "!MindwtrNativeError:AI provider device metadata is unavailable"
+        }
+        try current()
+        runtime.exception = nil
+        guard let ownerValue = JSValue(object: owner, in: runtime),
+              let inspectValue = JSValue(object: inspect, in: runtime), runtime.exception == nil else {
+            throw HostFailure("NOT_READY: AI provider device metadata callbacks are unavailable")
+        }
+        #if DEBUG
+        faults?.configureAIProviderDeviceStateCallbacks?(ownerValue, inspectValue, { [queue] in
+            dispatchPrecondition(condition: .notOnQueue(queue))
+            queue.sync {}
+        })
+        #endif
+        let raw = try invoke("iosAIProviderDeviceState", arguments: ["{}", ownerValue, inspectValue], localCancellation: cancellation)
+        try current()
+        let result = try NativeAIProviderDeviceState.validated(raw)
+        guard result == inspected else { throw HostFailure("STALE_REVISION: AI provider device metadata selection changed") }
+        try current()
+        if let diagnostic = try? Self.ownedJSON(["releaseCheck": "v1.3.5/ios-ai-read-callback-lifetime"]) {
+            _ = try? invoke("logLine", arguments: ["Native iOS AI read callback ownership checked", diagnostic])
+        }
+        try current()
+        return result
+    }
+
     func readAboutUpdateState() throws -> String {
         _ = try requireDeviceStorageAdmission()
         return try invoke("iosAboutUpdateState", arguments: [])
@@ -5107,8 +6202,9 @@ private final class Engine: @unchecked Sendable {
     }
     private func requireNoAttachmentDraft() throws {
         guard calendarAccessTurn == nil else { throw CoreHostRejection(message: "NOT_READY: Calendar access is still awaiting its owner") }
+        guard aiRequestTimeoutTurn == nil || aiRequestTimeoutOwnerAccess else { throw HostFailure("AI timeout edit is still awaiting its owner") }
         guard notificationSettingTurn == nil || notificationSettingOwnerAccess else { throw HostFailure("Notification edit is still awaiting its owner") }
-        guard reminderEffectsTurn == nil || reminderOwnerAccess else { throw NativeReminderEffects.unavailable }
+        guard (reminderEffectsTurn == nil && pomodoroAlarmTurn == nil) || reminderOwnerAccess else { throw NativeReminderEffects.unavailable }
         try requireEncryptionUnlockTurn()
         guard taskDownloadTurn == nil, projectAvailabilityTurn == nil, projectDownloadTurn == nil else { throw Self.taskDownloadFailure }
         try denyCleanupOwner()
@@ -9168,6 +10264,14 @@ private final class Engine: @unchecked Sendable {
     private func call(_ method: String, argumentsJSON: String, editorAttempt: EditorDraftAttempt?,
         reminderCompletionOwned: Bool = false, pomodoroOwned: Bool = false) throws -> String {
         dispatchPrecondition(condition: .onQueue(queue))
+        guard method != "iosAISummaryCheckpointSettled" else { throw CoreHostRejection(message: "INVALID_INPUT: AI summary checkpoint requires fixture authority") }
+        guard method != "iosAISettingsProjection" else {
+            throw CoreHostRejection(message: "INVALID_INPUT: AI projection requires its private read facade")
+        }
+        guard !Self.aiRequestTimeoutMethods.contains(method) || (method == "iosAIRequestTimeout" && aiRequestTimeoutOwnerAccess) else { throw CoreHostRejection(message: "INVALID_INPUT: AI timeout requires its private facade") }
+        guard method != "iosAIProviderDeviceState" else {
+            throw CoreHostRejection(message: "INVALID_INPUT: AI provider device metadata requires its private read facade")
+        }
         guard !Self.pomodoroFacadeMethods.contains(method) || pomodoroOwned else { throw CoreHostRejection(message: "INVALID_INPUT: Pomodoro requires its explicit facade") }
         guard calendarPushTurn == nil, !Self.calendarPushMethods.contains(method) else {
             throw CoreHostRejection(message: "NOT_READY: Calendar push requires its current explicit owner")
@@ -9184,7 +10288,7 @@ private final class Engine: @unchecked Sendable {
         guard !Self.reminderCompletionMethods.contains(method) || method == "reminderCompletionCommit" && reminderCompletionOwned else {
             throw CoreHostRejection(message: "INVALID_INPUT: Reminder completion requires its explicit facade")
         }
-        guard reminderEffectsTurn == nil, !Self.reminderMethods.contains(method) else { throw NativeReminderEffects.unavailable }
+        guard reminderEffectsTurn == nil, pomodoroAlarmTurn == nil, !Self.reminderMethods.contains(method) else { throw NativeReminderEffects.unavailable }
         guard (calendarSubscriptionSettingTurn == nil || method == calendarSubscriptionSettingTurn?.operation.rawValue),
               !Self.calendarSubscriptionSettingMethods.contains(method) || method == calendarSubscriptionSettingTurn?.operation.rawValue else {
             throw CoreHostRejection(message: "NOT_READY: Calendar subscription settings require their current explicit owner")
@@ -10760,6 +11864,37 @@ private final class Engine: @unchecked Sendable {
                 command = PendingCommand(version: 2, method: "notificationSettingCommit", argumentsJSON: encoded)
                 _ = try invoke("notificationSettingValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "iosAIRequestTimeout" {
+            do {
+                let value = try invokeAIRequestTimeoutRead("iosAIRequestTimeoutPrepare", arguments: args)
+                guard aiRequestTimeoutTurn?.cancellation.isCancelled == false else {
+                    throw CoreHostRejection(message: "STALE_REVISION: AI timeout edit is no longer current")
+                }
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed AI timeout write preparation")
+                }
+                if kind == "noop" {
+                    guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any] else {
+                        throw HostFailure("Malformed no-write AI timeout result")
+                    }
+                    try validateAIRequestTimeoutResult(Self.ownedJSON(result), request: submitted, changed: false)
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any], Self.equalJSON(request, submitted) else {
+                    throw HostFailure("Malformed prepared AI timeout write")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 8_192 else { throw HostFailure("INVALID_INPUT: Prepared AI timeout write is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 18_192 else { throw HostFailure("INVALID_INPUT: Prepared AI timeout write journal is too large") }
+                command = PendingCommand(version: 2, method: "iosAIRequestTimeoutCommit", argumentsJSON: encoded)
+                _ = try invoke("iosAIRequestTimeoutValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if let operation = CalendarSubscriptionOperation(rawValue: method) {
             do {
                 let raw = try invoke(operation.rawValue + "Prepare", arguments: args)
@@ -11791,6 +12926,10 @@ private final class Engine: @unchecked Sendable {
                 throw CoreHostRejection(message: "STALE_REVISION: Notification edit is no longer current")
             }
         }
+        if method == "iosAIRequestTimeout" {
+            guard aiRequestTimeoutOwnerAccess else { throw HostFailure("AI timeout owner is unavailable") }
+            try requireAIRequestTimeoutTurn()
+        }
         if command.method == "backupDocumentCommit" {
             try requireBackupDocumentMutationAllowed(command, arguments: backupDocumentArguments(command))
         }
@@ -11806,7 +12945,8 @@ private final class Engine: @unchecked Sendable {
             else if command.method == "captureLinesCommit" { replay = try captureLinesArguments(command) }
             else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
             else { replay = try journalArguments(command) }
-            if CalendarSubscriptionOperation(commitMethod: command.method) != nil { terminal = .success(try invokeCalendarSubscriptionSettingCommit(command)) }
+            if command.method == "iosAIRequestTimeoutCommit" { terminal = .success(try invokeAIRequestTimeoutCommit(command)) }
+            else if CalendarSubscriptionOperation(commitMethod: command.method) != nil { terminal = .success(try invokeCalendarSubscriptionSettingCommit(command)) }
             else { terminal = .success(try command.method == "deviceCalendarSettingCommit"
                 ? invokeDeviceCalendarSettingCommit(command) : invoke(command.method, arguments: replay)) }
         } catch {
@@ -11829,6 +12969,9 @@ private final class Engine: @unchecked Sendable {
 
     func retryPending() throws -> String? {
         dispatchPrecondition(condition: .onQueue(queue))
+        guard aiRequestTimeoutTurn == nil, pending?.method != "iosAIRequestTimeoutCommit" else {
+            throw CoreHostRejection(message: "NOT_READY: AI timeout save requires its exact typed retry")
+        }
         guard calendarAccessTurn == nil else { throw CoreHostRejection(message: "NOT_READY: Calendar access is still awaiting its owner") }
         guard notificationSettingTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw CoreHostRejection(message: "NOT_READY: Settings edit is still awaiting its owner") }
         let command = pending
@@ -12031,6 +13174,18 @@ private final class Engine: @unchecked Sendable {
             }
             return try finish(command, with: terminal)
         }
+        if command.method == "iosAIRequestTimeoutCommit", recoveryActivationPending {
+            let terminal: TerminalResult
+            do {
+                let value = try invoke("iosAIRequestTimeoutRetryOutcome", arguments: [aiRequestTimeoutJournalRequest(command)])
+                try validateAIRequestTimeoutAcknowledgment(command, value: value)
+                terminal = .success(value)
+            } catch let failure as HostFailure where failure.message.hasPrefix("STALE_REVISION:") {
+                // A cold intent without a receipt has no surviving permission or write authority.
+                terminal = .rejected(failure.message)
+            }
+            return try finish(command, with: terminal)
+        }
         if let terminal = command.terminal {
             if command.method == "referenceTasksMoveCommit", case .success(let value) = terminal {
                 let probed = try invoke("referenceTasksMoveOutcome", arguments: referenceTasksMoveJournalArguments(command))
@@ -12119,8 +13274,9 @@ private final class Engine: @unchecked Sendable {
             else if command.method == "captureLinesCommit" { replay = try captureLinesArguments(command) }
             else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
             else { replay = try journalArguments(command) }
-            value = try command.method == "backupDocumentCommit"
-                ? invokeBackupDocumentReplay(command, arguments: replay) : invoke(command.method, arguments: replay)
+            if command.method == "iosAIRequestTimeoutCommit" { value = try invokeAIRequestTimeoutCommit(command) }
+            else { value = try command.method == "backupDocumentCommit"
+                ? invokeBackupDocumentReplay(command, arguments: replay) : invoke(command.method, arguments: replay) }
         }
         catch let failure as HostFailure {
             if command.method == "appLockCommit", recoveryActivationPending, failure.message.hasPrefix("STALE_REVISION:") {
@@ -12332,6 +13488,18 @@ private final class Engine: @unchecked Sendable {
                 guard Self.equalJSON(try NativeJSON.jsonObject(with: Data(proven.utf8)),
                                      try NativeJSON.jsonObject(with: Data(value.utf8))) else {
                     throw HostFailure("SAVE_FAILED: Notification setting outcome cannot be verified")
+                }
+            }
+        }
+        if command.method == "iosAIRequestTimeoutCommit" {
+            _ = try invoke("iosAIRequestTimeoutValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal {
+                let proven = try invoke("iosAIRequestTimeoutRetryOutcome", arguments: [aiRequestTimeoutJournalRequest(command)])
+                try validateAIRequestTimeoutAcknowledgment(command, value: proven)
+                try validateAIRequestTimeoutAcknowledgment(command, value: value)
+                guard Self.equalJSON(try NativeJSON.jsonObject(with: Data(proven.utf8)),
+                                     try NativeJSON.jsonObject(with: Data(value.utf8))) else {
+                    throw HostFailure("SAVE_FAILED: AI timeout outcome cannot be verified")
                 }
             }
         }
@@ -12934,6 +14102,9 @@ private final class Engine: @unchecked Sendable {
             else if reviewing { NSLog("Native iOS GTD Review saved releaseCheck=v1.3.4/ios-gtd-review outcome=confirmed") }
             else { NSLog("Native iOS GTD workflow saved releaseCheck=v1.3.4/ios-gtd-workflow outcome=confirmed") }
         }
+        if command.method == "iosAIRequestTimeoutCommit", case .success = terminal {
+            _ = try? invoke("iosAIRequestTimeoutAcknowledged", arguments: [])
+        }
         if command.method == "notificationSettingCommit", case .success = terminal {
             _ = try? invoke("notificationSettingAcknowledged", arguments: [])
         }
@@ -13228,7 +14399,7 @@ private final class Engine: @unchecked Sendable {
             || (["reminderCompletionCommit", "reminderSnoozeCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["doneTaskStatusCommit", "doneTaskCompletedAtCommit", "archiveTaskCompletedAtCommit", "referenceTaskBackdateCommit", "referenceTaskDestinationCommit", "referenceProjectNextActionCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["referenceTasksRemoveTagCommit", "referenceTasksAddTagCommit", "referenceTasksMoveCommit", "archivedTaskRestoreCommit", "archivedTasksRestoreCommit", "trashItemsRestoreCommit", "trashItemsPurgeCommit", "archivedTasksDeleteCommit", "archivedTasksDeleteUndoCommit", "taskCompletionCommit", "taskCompletionUndoCommit", "taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit", "projectDuplicateCommit", "projectLifecycleCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
-            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "calendarEventTaskCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "notificationSettingCommit", "deviceCalendarSettingCommit", "calendarSubscriptionSettingCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectFileRemoveWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "calendarEventTaskCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "notificationSettingCommit", "iosAIRequestTimeoutCommit", "deviceCalendarSettingCommit", "calendarSubscriptionSettingCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectFileRemoveWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionOrderWrite", "backupDocumentCommit", "captureLinesCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
@@ -17400,6 +18571,23 @@ private final class Engine: @unchecked Sendable {
             _ = try arguments("notificationSetting", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
             return args
         }
+        if command.method == "iosAIRequestTimeoutCommit" {
+            guard !retainedOrdinary else { throw Self.retainedOrdinaryFailure }
+            guard command.argumentsJSON.utf8.count <= 49_152, try NativeJSON.hasUniqueObjectKeys(command.argumentsJSON),
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 8_192, try NativeJSON.hasUniqueObjectKeys(args[0]),
+                  let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Set(prepared.keys) == Set(["version", "request"]), Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any], Self.equalJSON(request, original) else {
+                throw HostFailure("Malformed prepared AI timeout journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("iosAIRequestTimeout", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
         if command.method == "generalPreferenceCommit" {
             guard !retainedOrdinary else { throw Self.retainedOrdinaryFailure }
             guard command.argumentsJSON.utf8.count <= 49_152,
@@ -18490,6 +19678,8 @@ private final class Engine: @unchecked Sendable {
         #endif
         case "Native iOS launch selection admitted":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-launch-selection", "outcome": "confirmed"])
+        case "Native iOS AI settings summary published":
+            valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-ai-settings-summary", "outcome": "confirmed"])
         case "Native iOS Pomodoro panel transition acknowledged":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-pomodoro-ui", "outcome": "confirmed"])
         case "Native iOS bulk operation acknowledged":
@@ -19712,6 +20902,10 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Device Calendar setting requires one bounded request")
             }
             _ = try Self.deviceCalendarSettingRequest(raw)
+        }
+        if method == "iosAIRequestTimeout" {
+            guard let raw = args.first as? String else { throw HostFailure("INVALID_INPUT: AI timeout requires one request") }
+            _ = try Self.aiRequestTimeoutRequest(raw)
         }
         if method == "notificationSetting" {
             guard let encoded = args.first as? String else { throw HostFailure("INVALID_INPUT: Notification setting requires one request") }
@@ -21543,6 +22737,223 @@ private final class Engine: @unchecked Sendable {
         }
         projectFileDownloadHooks = hooks
     }
+    #endif
+
+    #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    private func requireIsolatedAISummaryCheckpoint() throws -> UUID {
+        let arguments = ProcessInfo.processInfo.arguments
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+        let selection = try NativeLaunchSelection.resolve(arguments: arguments, bundleIdentifier: Bundle.main.bundleIdentifier,
+            supportURL: support, homeURL: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true), mode: .deviceTest)
+        guard Bundle.main.bundleIdentifier == "tech.dongdongbh.mindwtr.native.dev",
+              arguments.filter({ $0 == "--native-ai-summary-proof" }).count == 1,
+              case let .isolated(selectedDatabase, selectedContainer, namespace, identifier) = selection,
+              selectedDatabase.resolvingSymlinksInPath() == databaseURL.resolvingSymlinksInPath(),
+              selectedContainer.resolvingSymlinksInPath() == databaseURL.deletingLastPathComponent().resolvingSymlinksInPath(),
+              databaseURL.lastPathComponent == "mindwtr.sqlite",
+              selectedContainer.lastPathComponent == identifier.uuidString.lowercased(),
+              selectedContainer.deletingLastPathComponent().lastPathComponent == "NativeUITests",
+              deviceStorageLocation?.bundleIdentifier == namespace,
+              faults?.secretService == "mindwtr.native-keychain.fixture." + identifier.uuidString.lowercased() else {
+            throw NativeAISummaryEvidence.unavailable
+        }
+        _ = try aiSummaryDirectoryIdentity(selectedContainer)
+        return identifier
+    }
+    func configureIsolatedAISummaryCheckpoint() throws -> UUID {
+        let identifier = try requireIsolatedAISummaryCheckpoint()
+        guard !started, !closed, !invoking, !aiSummaryCheckpointConfigured, pending == nil else { throw NativeAISummaryEvidence.unavailable }
+        aiSummaryCheckpointConfigured = true; return identifier
+    }
+    private func aiSummaryCheckpointSettled(cancellation: NativeAttachmentCancellation) throws -> String {
+        _ = try requireIsolatedAISummaryCheckpoint()
+        try requireCalendarAdmission(); _ = try requireDeviceStorageAdmission()
+        guard aiSummaryCheckpointConfigured, !invoking, aiRequestTimeoutTurn == nil, calendarPushTurn == nil,
+              try Self.bindingIdentity(databaseURL) == calendarPushDatabaseBinding,
+              let context, let host = context.objectForKeyedSubscript("MindwtrHost") else { throw NativeAISummaryEvidence.unavailable }
+        guard let connection = database, let library = calendarPushDatabaseBinding else { throw NativeAISummaryEvidence.unavailable }
+        let nativeGeneration = attachmentGeneration
+        let owner: @convention(block) () -> String = { [unowned self] in
+            self.guarded { _ = try self.requireIsolatedAISummaryCheckpoint(); try cancellation.check()
+                guard self.aiSummaryCheckpointConfigured, !self.closed, self.started,
+                      self.context === context, self.database === connection, self.attachmentGeneration == nativeGeneration,
+                      try Self.bindingIdentity(self.databaseURL) == library else { throw NativeAISummaryEvidence.unavailable }
+                return "" } ?? "!MindwtrNativeError:AI summary checkpoint is unavailable"
+        }
+        context.exception = nil
+        guard let ownerValue = JSValue(object: owner, in: context), context.exception == nil else { throw NativeAISummaryEvidence.unavailable }
+        guard let result = host.invokeMethod("iosAISummaryCheckpointSettled", withArguments: [ownerValue]), context.exception == nil,
+              result.isString, let generation = result.toString(), let number = UInt64(generation), String(number) == generation else {
+            context.exception = nil; throw NativeAISummaryEvidence.unavailable
+        }
+        return generation
+    }
+    private func aiSummaryDefaults(domain: Data) throws -> NativeAISummaryEvidence.Defaults {
+        let identifier = try requireIsolatedAISummaryCheckpoint(), suite = "nativeUITests." + identifier.uuidString.lowercased()
+        let url = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent("Library/Preferences/" + suite + ".plist")
+        return try NativeAISummaryEvidence.observeDefaults(suite: suite, preferencesURL: url, expectedDomain: domain)
+    }
+    private func aiSummaryOwnedFiles() throws -> [String: NativeAISummaryEvidence.File?] {
+        let urls = [journalURL, databaseURL.appendingPathExtension("prewrite"), editorDrafts.url]
+        var remaining = 8 * 1024 * 1024, values: [(String, NativeAISummaryEvidence.File?)] = []
+        for url in urls {
+            let value = try NativeAISummaryEvidence.readFile(url, limit: remaining)
+            remaining -= value?.bytes.count ?? 0; values.append((url.lastPathComponent, value))
+        }
+        return Dictionary(uniqueKeysWithValues: values)
+    }
+    private func aiSummaryDirectoryIdentity(_ url: URL) throws -> OwnedDiscardIdentity {
+        let path = try NativeAttachmentFiles.filePath(url.absoluteString)
+        let fd = Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+        guard fd >= 0 else { throw NativeAISummaryEvidence.unavailable }; defer { Darwin.close(fd) }
+        var descriptor = stat(), named = stat()
+        guard fstat(fd, &descriptor) == 0, lstat(path, &named) == 0,
+              descriptor.st_mode & S_IFMT == S_IFDIR, named.st_mode & S_IFMT == S_IFDIR,
+              descriptor.st_dev == named.st_dev, descriptor.st_ino == named.st_ino else { throw NativeAISummaryEvidence.unavailable }
+        return .init(device: descriptor.st_dev, inode: descriptor.st_ino)
+    }
+    private func validateAISummaryPayloads(_ draft: AISummaryCheckpointDraft) throws {
+        for (path, identity) in draft.directories {
+            guard try aiSummaryDirectoryIdentity(URL(fileURLWithPath: path, isDirectory: true)) == identity else { throw NativeAISummaryEvidence.unavailable }
+        }
+        let path = try NativeAttachmentFiles.filePath(draft.directory.absoluteString)
+        let fd = Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+        guard fd >= 0 else { throw NativeAISummaryEvidence.unavailable }
+        guard let stream = fdopendir(fd) else { Darwin.close(fd); throw NativeAISummaryEvidence.unavailable }
+        defer { closedir(stream) }
+        var names = Set<String>()
+        while true {
+            errno = 0
+            guard let entry = readdir(stream) else { guard errno == 0 else { throw NativeAISummaryEvidence.unavailable }; break }
+            let length = Int(entry.pointee.d_namlen)
+            guard length > 0, length <= 4096 else { throw NativeAISummaryEvidence.unavailable }
+            let decoded = withUnsafePointer(to: &entry.pointee.d_name) { pointer in
+                pointer.withMemoryRebound(to: UInt8.self, capacity: length) {
+                    String(bytes: UnsafeBufferPointer(start: $0, count: length), encoding: .utf8)
+                }
+            }
+            guard let name = decoded else { throw NativeAISummaryEvidence.unavailable }
+            if name == "." || name == ".." { continue }
+            guard names.count < 4096, names.insert(name).inserted else { throw NativeAISummaryEvidence.unavailable }
+        }
+        let expected = draft.payloads.compactMap { $0.value == nil ? nil : $0.key }
+        guard names == Set(expected) else { throw NativeAISummaryEvidence.unavailable }
+        for (name, value) in draft.payloads {
+            guard try NativeAISummaryEvidence.readFile(draft.directory.appendingPathComponent(name), limit: 64 * 1024 * 1024) == value else { throw NativeAISummaryEvidence.unavailable }
+        }
+    }
+    private func aiSummaryEvidenceDirectory(_ parent: URL, name: String, exclusive: Bool) throws -> URL {
+        let path = try NativeAttachmentFiles.filePath(parent.absoluteString)
+        let owner = Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+        guard owner >= 0 else { throw NativeAISummaryEvidence.unavailable }; defer { Darwin.close(owner) }
+        let created = mkdirat(owner, name, 0o700) == 0
+        guard created || (!exclusive && errno == EEXIST) else { throw NativeAISummaryEvidence.unavailable }
+        let fd = openat(owner, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { throw NativeAISummaryEvidence.unavailable }; defer { Darwin.close(fd) }
+        guard fcntl(fd, F_SETPROTECTIONCLASS, NativeAISummaryEvidence.protectionClassC) == 0, fsync(owner) == 0 else { throw NativeAISummaryEvidence.unavailable }
+        var url = URL(fileURLWithPath: path, isDirectory: true).appendingPathComponent(name, isDirectory: true)
+        var values = URLResourceValues(); values.isExcludedFromBackup = true; try url.setResourceValues(values)
+        return url
+    }
+    func prepareAISummaryCheckpoint(_ phase: NativeAISummaryCheckpointPhase, startupToken: UUID, domain: Data, cancellation: NativeAttachmentCancellation) throws -> UUID {
+        let identifier = try requireIsolatedAISummaryCheckpoint()
+        let generation = try aiSummaryCheckpointSettled(cancellation: cancellation), epoch = try captureLinesDataVersion()
+        guard aiSummaryCheckpointDraft == nil, !aiSummaryCheckpointPhases.contains(phase),
+              phase == .baseline ? aiSummaryCheckpointToken == nil && aiSummaryCheckpointPhases.isEmpty
+                : aiSummaryCheckpointToken == startupToken && aiSummaryCheckpointPhases == [.baseline] else { throw NativeAISummaryEvidence.unavailable }
+        guard let runtime = context, let connection = database, let library = calendarPushDatabaseBinding else { throw NativeAISummaryEvidence.unavailable }
+        let nativeGeneration = attachmentGeneration
+        let defaults = try aiSummaryDefaults(domain: domain), storage = try requireDeviceStorageAdmission()
+        let kv = try storage.captureAISummaryEvidence(), owned = try aiSummaryOwnedFiles()
+        guard kv.count + owned.count + 8 <= 4096 else { throw NativeAISummaryEvidence.unavailable }
+        // JSON escaping costs at most six bytes per UTF-8 input byte. Reserve fixed metadata,
+        // per-entry artifact/hash objects, and reject before constructing or serializing them.
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        var manifestBudget = 1024 * 1024 - 8192
+        for name in Array(kv.keys) + Array(owned.keys) + [build] {
+            guard name.utf8.count <= manifestBudget / 6 else { throw NativeAISummaryEvidence.unavailable }
+            manifestBudget -= name.utf8.count * 6
+        }
+        guard kv.count + owned.count + 8 <= manifestBudget / 512 else { throw NativeAISummaryEvidence.unavailable }
+        let root = try aiSummaryEvidenceDirectory(databaseURL.deletingLastPathComponent(), name: ".ai-summary-proof", exclusive: false)
+        let process = try aiSummaryEvidenceDirectory(root, name: NativeAISummaryEvidence.processSession, exclusive: false)
+        let host = try aiSummaryEvidenceDirectory(process, name: aiSummaryCheckpointGeneration, exclusive: false)
+        let directory = try aiSummaryEvidenceDirectory(host, name: phase.rawValue, exclusive: true)
+        aiSummaryCheckpointPhases.insert(phase); if phase == .baseline { aiSummaryCheckpointToken = startupToken }
+        try requireDatabase().captureAISummaryEvidence(at: directory.appendingPathComponent("mindwtr.sqlite"))
+        var files: [String: Any] = [:], bytes = 0
+        func record(_ data: Data, name: String) throws {
+            guard data.count <= 96 * 1024 * 1024 - bytes else { throw NativeAISummaryEvidence.unavailable }; bytes += data.count
+            files[name] = ["bytes": data.count, "sha256": SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()]
+        }
+        func write(_ data: Data, name: String) throws {
+            try record(data, name: name); try NativeAISummaryEvidence.writeExclusive(data, to: directory.appendingPathComponent(name))
+        }
+        for name in ["mindwtr.sqlite", "mindwtr.sqlite-wal", "mindwtr.sqlite-shm"] {
+            if let value = try NativeAISummaryEvidence.readFile(directory.appendingPathComponent(name), limit: 64 * 1024 * 1024) { try record(value.bytes, name: name) }
+            else { files[name] = NSNull() }
+        }
+        var inventory: [String: Any] = [:]
+        for (index, name) in kv.keys.sorted().enumerated() {
+            let artifact = "kv-\(index).bin"; try write(kv[name]!, name: artifact); inventory[name] = artifact
+        }
+        var ownedInventory: [String: Any] = [:]
+        for (index, name) in owned.keys.sorted().enumerated() {
+            if let value = owned[name] ?? nil {
+                let artifact = "owned-\(index).bin"; try write(value.bytes, name: artifact); ownedInventory[name] = artifact
+            } else { ownedInventory[name] = NSNull() }
+        }
+        try write(defaults.typedDomain, name: "defaults-domain.json")
+        if let value = defaults.durable { try write(value.bytes, name: "defaults.plist") } else { files["defaults.plist"] = NSNull() }
+        guard attachmentGeneration == nativeGeneration, context === runtime, database === connection,
+              try Self.bindingIdentity(databaseURL) == library,
+              try aiSummaryCheckpointSettled(cancellation: cancellation) == generation, try captureLinesDataVersion() == epoch,
+              try aiSummaryDefaults(domain: domain) == defaults, try storage.captureAISummaryEvidence() == kv,
+              try aiSummaryOwnedFiles() == owned else { throw NativeAISummaryEvidence.unavailable }
+        let bundle = try NativeAISummaryEvidence.readFile(bundleURL, limit: 64 * 1024 * 1024)
+        guard let bundle else { throw NativeAISummaryEvidence.unavailable }
+        let manifest = try JSONSerialization.data(withJSONObject: ["version": 1, "phase": phase.rawValue,
+            "fixture": identifier.uuidString.lowercased(), "process": NativeAISummaryEvidence.processSession,
+            "host": aiSummaryCheckpointGeneration, "startup": startupToken.uuidString.lowercased(),
+            "bundleIdentifier": Bundle.main.bundleIdentifier!, "build": build,
+            "coreBundleSHA256": SHA256.hash(data: bundle.bytes).map { String(format: "%02x", $0) }.joined(),
+            "generation": generation, "dataVersion": epoch, "files": files, "kv": inventory, "owned": ownedInventory], options: [.sortedKeys])
+        guard manifest.count <= 1024 * 1024, bytes + manifest.count <= 96 * 1024 * 1024 else { throw NativeAISummaryEvidence.unavailable }
+        var directories: [String: OwnedDiscardIdentity] = [:]
+        for url in [databaseURL.deletingLastPathComponent(), root, process, host, directory] { directories[url.path] = try aiSummaryDirectoryIdentity(url) }
+        let payloads = try Dictionary(uniqueKeysWithValues: files.keys.map { name in
+            (name, try NativeAISummaryEvidence.readFile(directory.appendingPathComponent(name), limit: 64 * 1024 * 1024))
+        })
+        let id = UUID()
+        aiSummaryCheckpointDraft = .init(id: id, phase: phase, token: startupToken, directory: directory, epoch: epoch,
+            generation: generation, defaults: defaults, kv: kv, owned: owned, manifest: manifest,
+            directories: directories, payloads: payloads, attachmentGeneration: nativeGeneration,
+            runtime: runtime, connection: connection, library: library, cancellation: cancellation)
+        return id
+    }
+    func publishAISummaryCheckpoint(_ id: UUID) throws -> NativeAISummaryEvidence.Publication {
+        guard let draft = aiSummaryCheckpointDraft, draft.id == id, aiSummaryCheckpointToken == draft.token,
+              attachmentGeneration == draft.attachmentGeneration, context === draft.runtime, database === draft.connection,
+              try Self.bindingIdentity(databaseURL) == draft.library,
+              try aiSummaryCheckpointSettled(cancellation: draft.cancellation) == draft.generation, try captureLinesDataVersion() == draft.epoch,
+              try aiSummaryDefaults(domain: draft.defaults.typedDomain) == draft.defaults,
+              try requireDeviceStorageAdmission().captureAISummaryEvidence() == draft.kv,
+              try aiSummaryOwnedFiles() == draft.owned else { throw NativeAISummaryEvidence.unavailable }
+        try validateAISummaryPayloads(draft)
+        let captureURL = draft.directory.appendingPathComponent("capture.json")
+        try NativeAISummaryEvidence.writeExclusive(draft.manifest, to: captureURL)
+        try DurableFile.sync(draft.directory, directory: true)
+        guard let capture = try NativeAISummaryEvidence.readFile(captureURL, limit: 1024 * 1024) else { throw NativeAISummaryEvidence.unavailable }
+        let identifier = try requireIsolatedAISummaryCheckpoint(), suite = "nativeUITests." + identifier.uuidString.lowercased()
+        let publication = NativeAISummaryEvidence.Publication(directory: draft.directory,
+            directories: draft.directories.mapValues { .init(device: UInt64($0.device), inode: UInt64($0.inode)) },
+            capture: capture, phase: draft.phase.rawValue, suite: suite,
+            preferencesURL: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent("Library/Preferences/" + suite + ".plist"),
+            defaults: draft.defaults)
+        aiSummaryCheckpointDraft = nil
+        return publication
+    }
+
     #endif
 
     #if DEBUG && os(iOS) && targetEnvironment(simulator)
@@ -23414,7 +24825,7 @@ private final class Engine: @unchecked Sendable {
         guard calendarAccessTurn == nil || method == "deviceCalendarAccessAcknowledged" else {
             throw CoreHostRejection(message: "NOT_READY: Calendar access is still awaiting its owner")
         }
-        guard reminderEffectsTurn == nil || reminderOwnerAccess && Self.reminderMethods.contains(method) else { throw NativeReminderEffects.unavailable }
+        guard (reminderEffectsTurn == nil && pomodoroAlarmTurn == nil) || reminderOwnerAccess && Self.reminderMethods.contains(method) else { throw NativeReminderEffects.unavailable }
         try denyCleanupOwner()
         try requireRetainedOrdinaryTurn(requirePreparation: true)
         try requireProjectFileAddTurn()
@@ -23542,7 +24953,7 @@ private final class Engine: @unchecked Sendable {
 
     private func scheduleAttachmentIdle(immediate: Bool = false) {
         guard started, !closed, !localRequests.isClosing, !invoking, !recoveryActivationPending, pending == nil,
-              !cleanupOwed, reminderEffectsTurn == nil, taskDownloadTurn == nil, projectAvailabilityTurn == nil, projectDownloadTurn == nil, encryptionUnlockTurn == nil,
+              !cleanupOwed, reminderEffectsTurn == nil, pomodoroAlarmTurn == nil, taskDownloadTurn == nil, projectAvailabilityTurn == nil, projectDownloadTurn == nil, encryptionUnlockTurn == nil,
               attachmentJobs != nil || httpJobs != nil || secretJobs != nil || cryptoJobs != nil || calendarJobs != nil, let context else { return }
         let delay = immediate ? 0 : context.objectForKeyedSubscript("__nextTimerDelay")?.call(withArguments: [])?.toDouble() ?? -1
         guard delay.isFinite, delay >= 0 else { return }
@@ -23560,7 +24971,7 @@ private final class Engine: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         guard generation == attachmentGeneration else { return }
         attachmentIdlePump = nil
-        guard started, !closed, !localRequests.isClosing, !invoking, !recoveryActivationPending, pending == nil, !cleanupOwed, reminderEffectsTurn == nil, taskDownloadTurn == nil, projectAvailabilityTurn == nil, projectDownloadTurn == nil, encryptionUnlockTurn == nil, let context else { return }
+        guard started, !closed, !localRequests.isClosing, !invoking, !recoveryActivationPending, pending == nil, !cleanupOwed, reminderEffectsTurn == nil, pomodoroAlarmTurn == nil, taskDownloadTurn == nil, projectAvailabilityTurn == nil, projectDownloadTurn == nil, encryptionUnlockTurn == nil, let context else { return }
         _ = context.objectForKeyedSubscript("__pumpTimers")?.call(withArguments: [])
         // No arbitrary JS exception content enters diagnostics.
         if context.exception != nil { context.exception = nil }
@@ -23579,7 +24990,14 @@ private final class Engine: @unchecked Sendable {
     private func ordinaryGuardedSQL(_ sql: String, parameters: String? = nil) throws -> String {
         guard calendarPushTurn == nil else { throw NativeCalendarWriteError.unavailable }
         try requireCalendarSubscriptionSettingTurn(publication: calendarSubscriptionSQLPublication(sql))
-        guard reminderEffectsTurn == nil else { throw NativeReminderEffects.unavailable }
+        if let turn = pomodoroAlarmTurn {
+            guard reminderOwnerAccess, reminderEffectsTurn == nil else { throw NativePomodoroAlarmEffects.unavailable }
+            _ = try checkPomodoroAlarmNativeAuthority(turn.id)
+            let result = try requireDatabase().execute(sql, parametersJSON: parameters ?? "[]", readOnly: true)
+            _ = try checkPomodoroAlarmNativeAuthority(turn.id)
+            return result
+        }
+        guard reminderEffectsTurn == nil, pomodoroAlarmTurn == nil else { throw NativeReminderEffects.unavailable }
         try requireEncryptionUnlockTurn()
         try denyCleanupOwner()
         guard taskDownloadTurn == nil else { throw Self.taskDownloadFailure }
@@ -23604,7 +25022,7 @@ private final class Engine: @unchecked Sendable {
     private static let deviceStorageFrameLimit = 12 * 1024 * 1024
 
     private func requireDeviceStorageAdmission() throws -> NativeDeviceKV {
-        guard deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
+        guard aiRequestTimeoutTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
         try requireEncryptionUnlockTurn()
         dispatchPrecondition(condition: .onQueue(queue))
         guard taskDownloadTurn == nil, projectAvailabilityTurn == nil else { throw Self.deviceStorageUnavailable }
@@ -23686,7 +25104,7 @@ private final class Engine: @unchecked Sendable {
         do {
             let result = try work()
             try requireEncryptionUnlockTurn()
-            if taskDownloadTurn != nil || projectAvailabilityTurn != nil || projectDownloadTurn != nil || encryptionUnlockTurn != nil || reminderEffectsTurn != nil || deviceCalendarSettingTurn != nil || calendarSubscriptionSettingTurn != nil { return result }
+            if taskDownloadTurn != nil || projectAvailabilityTurn != nil || projectDownloadTurn != nil || encryptionUnlockTurn != nil || reminderEffectsTurn != nil || pomodoroAlarmTurn != nil || deviceCalendarSettingTurn != nil || calendarSubscriptionSettingTurn != nil { return result }
             let retiredSecret = legacySecretRemoval()
             guard let runtime = context else { throw Self.deviceStorageUnavailable }
             let generation = attachmentGeneration
@@ -23715,7 +25133,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func requireHTTPAdmission(_ input: String) throws {
-        guard deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
+        guard aiRequestTimeoutTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
         try requireEncryptionUnlockTurn()
         dispatchPrecondition(condition: .onQueue(queue))
         guard projectAvailabilityTurn == nil else { throw Self.foregroundSyncFailure }
@@ -23744,7 +25162,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func requireSecretAdmission(_ input: String) throws {
-        guard deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
+        guard aiRequestTimeoutTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
         try requireEncryptionUnlockTurn()
         dispatchPrecondition(condition: .onQueue(queue))
         guard projectAvailabilityTurn == nil else { throw Self.foregroundSyncFailure }
@@ -23781,7 +25199,7 @@ private final class Engine: @unchecked Sendable {
         guard started, !closed, !localRequests.isClosing, !recoveryActivationPending, pending == nil, lockFD >= 0,
               retainedOrdinaryTurn == nil, projectFileAddTurn == nil, projectDownloadTurn == nil,
               projectDownloadAcknowledgedTurn == nil, taskDownloadTurn == nil, projectAvailabilityTurn == nil,
-              encryptionUnlockTurn == nil, providerCopy == nil, reminderEffectsTurn == nil,
+              encryptionUnlockTurn == nil, providerCopy == nil, reminderEffectsTurn == nil, pomodoroAlarmTurn == nil,
               notificationSettingTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil, !cleanupOwed, !foregroundCleanupActive, ordinaryMutationDepth == 0 else {
             throw HostFailure("Calendar bridge is unavailable")
         }
@@ -23789,7 +25207,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func requireCryptoAdmission(_ input: String) throws {
-        guard deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
+        guard aiRequestTimeoutTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
         try requireEncryptionUnlockTurn()
         dispatchPrecondition(condition: .onQueue(queue))
         guard projectAvailabilityTurn == nil else { throw Self.foregroundSyncFailure }
@@ -24211,7 +25629,7 @@ private final class Engine: @unchecked Sendable {
             let get: @convention(block) (JSValue) -> String = { [weak self] key in
                 guard let self else { return "!MindwtrNativeError:Device settings storage is unavailable" }
                 return self.deviceStorageResult {
-                    guard self.reminderEffectsTurn == nil else { throw Self.deviceStorageUnavailable }
+                    guard self.reminderEffectsTurn == nil, self.pomodoroAlarmTurn == nil else { throw Self.deviceStorageUnavailable }
                     let key = try Self.deviceStorageText(key)
                     let value: String?
                     if self.calendarPushTurn != nil {
@@ -24234,7 +25652,7 @@ private final class Engine: @unchecked Sendable {
             let set: @convention(block) (JSValue, JSValue) -> String? = { [weak self] key, value in
                 guard let self else { return "!MindwtrNativeError:Device settings storage is unavailable" }
                 return self.deviceStorageResult {
-                    guard self.reminderEffectsTurn == nil else { throw Self.deviceStorageUnavailable }
+                    guard self.reminderEffectsTurn == nil, self.pomodoroAlarmTurn == nil else { throw Self.deviceStorageUnavailable }
                     let key = try Self.deviceStorageText(key), value = try Self.deviceStorageText(value)
                     try self.requireDeviceStorageAdmission().set(key, value); return nil
                 }
@@ -24243,7 +25661,7 @@ private final class Engine: @unchecked Sendable {
                 guard let self else { return "!MindwtrNativeError:Device settings storage is unavailable" }
                 var retiredSecret = false
                 return self.deviceStorageResult(legacySecretRemoval: { retiredSecret }) {
-                    guard self.reminderEffectsTurn == nil else { throw Self.deviceStorageUnavailable }
+                    guard self.reminderEffectsTurn == nil, self.pomodoroAlarmTurn == nil else { throw Self.deviceStorageUnavailable }
                     let key = try Self.deviceStorageText(key)
                     try self.requireDeviceStorageAdmission().remove(key)
                     retiredSecret = NativeDeviceKV.isLegacySecretRemoval([key]); return nil
@@ -24253,6 +25671,7 @@ private final class Engine: @unchecked Sendable {
                 guard let self else { return "!MindwtrNativeError:Device settings storage is unavailable" }
                 return self.deviceStorageResult {
                     let keys = try Self.deviceStorageKeys(keys)
+                    guard self.pomodoroAlarmTurn == nil else { throw Self.deviceStorageUnavailable }
                     let pairs: [(String, String?)]
                     if self.calendarPushTurn != nil {
                         let turn = try self.requireCalendarPushTurn()
@@ -24278,7 +25697,7 @@ private final class Engine: @unchecked Sendable {
             let multiSet: @convention(block) (JSValue) -> String? = { [weak self] pairs in
                 guard let self else { return "!MindwtrNativeError:Device settings storage is unavailable" }
                 return self.deviceStorageResult {
-                    guard self.reminderEffectsTurn == nil else { throw Self.deviceStorageUnavailable }
+                    guard self.reminderEffectsTurn == nil, self.pomodoroAlarmTurn == nil else { throw Self.deviceStorageUnavailable }
                     let pairs = try Self.deviceStoragePairs(pairs)
                     try self.requireDeviceStorageAdmission().multiSet(pairs); return nil
                 }
@@ -24287,7 +25706,7 @@ private final class Engine: @unchecked Sendable {
                 guard let self else { return "!MindwtrNativeError:Device settings storage is unavailable" }
                 var retiredSecret = false
                 return self.deviceStorageResult(legacySecretRemoval: { retiredSecret }) {
-                    guard self.reminderEffectsTurn == nil else { throw Self.deviceStorageUnavailable }
+                    guard self.reminderEffectsTurn == nil, self.pomodoroAlarmTurn == nil else { throw Self.deviceStorageUnavailable }
                     let keys = try Self.deviceStorageKeys(keys)
                     try self.requireDeviceStorageAdmission().multiRemove(keys)
                     retiredSecret = NativeDeviceKV.isLegacySecretRemoval(keys); return nil
@@ -24360,6 +25779,8 @@ private final class Engine: @unchecked Sendable {
         searchObserver = nil
         reminderAdmissions.clearOrdinaryReadyWake()
         reminderEffectsTurn = nil
+        pomodoroAlarmTurn = nil
+        aiRequestTimeoutTurn = nil; aiRequestTimeoutOwnerAccess = false; aiRequestTimeoutRetired = false
         notificationSettingTurn = nil; notificationSettingOwnerAccess = false
         deviceCalendarSettingTurn = nil
         calendarSubscriptionSettingTurn = nil

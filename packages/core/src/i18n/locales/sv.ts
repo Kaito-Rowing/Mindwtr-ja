@@ -1462,6 +1462,7 @@ export const svOverrides: Record<string, string> = {
         'settings.advanced': 'Avancerat',
         'settings.aiDesc': 'Valfri hjälp för att förtydliga och dela upp uppgifter.',
         'settings.aiEnable': 'Aktivera AI-assistent',
+        'settings.aiSummaryReadOnly': "Här visas bara sparade inställningar. Du kan inte ändra dem här, och AI-förfrågningar är ännu inte tillgängliga i den här appen.",
         "ai.appleClarification.stale": "Objektet eller dess tillgängliga kopplingar har ändrats. Be om ett nytt förslag.",
         "ai.appleClarification.suggestionTitle": "Förslag på enheten",
         "settings.appleClarification.title": "Förtydliga inkorgen",

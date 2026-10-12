@@ -1443,6 +1443,7 @@ export const esOverrides: Record<string, string> = {
 'settings.advanced': "Avanzado",
 'settings.aiDesc': "Ayuda opcional para clarificar y desglosar tareas.",
 'settings.aiEnable': "Habilitar asistente de IA",
+'settings.aiSummaryReadOnly': "Solo se muestran los ajustes guardados. No puedes cambiarlos aquí y las solicitudes de IA aún no están disponibles en esta aplicación.",
 "ai.appleClarification.stale": "El elemento o sus asociaciones disponibles han cambiado. Solicita una nueva sugerencia.",
 "ai.appleClarification.suggestionTitle": "Sugerencia en el dispositivo",
 "settings.appleClarification.title": "Aclaración de la bandeja de entrada",

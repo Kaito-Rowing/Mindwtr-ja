@@ -11,16 +11,30 @@ enum NativePomodoroRequest {
         let sessionID: String
         let phase: String
         let fireAtMs: Int64
+        var scope: String { namespace + ":" + libraryDigest }
     }
 
     private static let invalid = "Native Pomodoro schedule intent is invalid"
 
     static func ownedIdentity(identifier: String, metadata: Any?, namespace: String, libraryID: String) -> Identity? {
-        guard NativeReminderRequest.validNamespace(namespace), let digest = libraryDigest(libraryID),
+        guard let digest = libraryDigest(libraryID),
+              let identity = ownedIdentity(identifier: identifier, metadata: metadata, namespace: namespace),
+              identity.libraryDigest == digest else { return nil }
+        return identity
+    }
+
+    static func scope(namespace: String, libraryID: String) -> String? {
+        guard NativeReminderRequest.validNamespace(namespace), let digest = libraryDigest(libraryID) else { return nil }
+        return namespace + ":" + digest
+    }
+
+    static func ownedIdentity(identifier: String, metadata: Any?, namespace: String) -> Identity? {
+        guard NativeReminderRequest.validNamespace(namespace),
               let value = metadata as? [String: Any],
               Set(value.keys) == Set(["version", "namespace", "libraryDigest", "sessionID", "phase", "fireAtMs"]),
               milliseconds(value["version"]) == 1, value["namespace"] as? String == namespace,
-              value["libraryDigest"] as? String == digest,
+              let digest = value["libraryDigest"] as? String,
+              digest.range(of: #"\A[0-9a-f]{64}\z"#, options: .regularExpression) != nil,
               let sessionID = value["sessionID"] as? String, validSessionID(sessionID),
               let phase = value["phase"] as? String, phase == "focus" || phase == "break",
               let fireAtMs = milliseconds(value["fireAtMs"]),

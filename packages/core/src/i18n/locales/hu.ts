@@ -1443,6 +1443,7 @@ export const huOverrides: Record<string, string> = {
     'settings.advanced': 'Speciális',
     'settings.aiDesc': 'Opcionális segítség a feladatok tisztázásához és lebontásához.',
     'settings.aiEnable': 'AI asszisztens engedélyezése',
+    'settings.aiSummaryReadOnly': "Csak a mentett beállítások láthatók. Itt nem módosíthatók, és az alkalmazásban még nem érhetők el a mesterséges intelligenciának küldött kérések.",
     "ai.appleClarification.stale": "Az elem vagy az elérhető kapcsolatai megváltoztak. Kérj új javaslatot.",
     "ai.appleClarification.suggestionTitle": "Javaslat az eszközön",
     "settings.appleClarification.title": "Beérkező elemek tisztázása",

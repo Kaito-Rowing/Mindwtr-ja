@@ -43,6 +43,47 @@ final class NativeDeviceKVTests: XCTestCase {
         }
         additionalRoots.removeAll()
     }
+    func testAISummaryEvidenceIncludesUnknownOrphansWithoutMutationAndRefusesSymlinkOrOversize() throws {
+        #if DEBUG
+        try seed("{\"unknown\":\"private fixture\"}")
+        let orphan = namespace.appendingPathComponent("unreferenced-private-cell")
+        try Data([0, 255, 42]).write(to: orphan)
+        let ownerOrphan = namespace.deletingLastPathComponent().appendingPathComponent("owner-private-orphan")
+        try Data([42, 0]).write(to: ownerOrphan)
+        let store = try open(), original = try bytes()
+        let evidence = try store.captureAISummaryEvidence()
+        XCTAssertEqual(evidence["RCTAsyncLocalStorage_V1/unreferenced-private-cell"], Data([0, 255, 42]))
+        XCTAssertEqual(evidence["owner-private-orphan"], Data([42, 0]))
+        XCTAssertEqual(evidence["RCTAsyncLocalStorage_V1/manifest.json"], try Data(contentsOf: manifest))
+        XCTAssertEqual(try bytes(), original)
+        try FileManager.default.createSymbolicLink(at: namespace.appendingPathComponent("foreign-link"), withDestinationURL: orphan)
+        XCTAssertThrowsError(try store.captureAISummaryEvidence())
+        try FileManager.default.removeItem(at: namespace.appendingPathComponent("foreign-link"))
+        // Refuse malformed UTF-8 rather than lossy replacement-name aliases or duplicate-key traps.
+        let directoryFD = Darwin.open(namespace.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(directoryFD, 0)
+        defer { Darwin.close(directoryFD) }
+        var invalid: [CChar] = [CChar(bitPattern: 0xff), 0]
+        let invalidFD = invalid.withUnsafeMutableBufferPointer { openat(directoryFD, $0.baseAddress!, O_CREAT | O_EXCL | O_WRONLY, 0o600) }
+        let invalidErrno = errno
+        if invalidFD >= 0 {
+            Darwin.close(invalidFD)
+            XCTAssertThrowsError(try store.captureAISummaryEvidence())
+            XCTAssertEqual(invalid.withUnsafeMutableBufferPointer { unlinkat(directoryFD, $0.baseAddress!, 0) }, 0)
+        } else {
+            // APFS refuses malformed UTF-8 before a directory entry can exist.
+            XCTAssertEqual(invalidErrno, EILSEQ, "Unexpected malformed filename errno: \(invalidErrno)")
+            XCTAssertEqual(try store.captureAISummaryEvidence(), evidence)
+            XCTAssertEqual(try bytes(), original)
+        }
+        let oversized = namespace.appendingPathComponent("oversized")
+        FileManager.default.createFile(atPath: oversized.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: oversized)
+        try handle.truncate(atOffset: 16 * 1024 * 1024 + 1); try handle.close()
+        XCTAssertThrowsError(try store.captureAISummaryEvidence())
+        #endif
+    }
+
     private func open() throws -> NativeDeviceKV {
         let store = try NativeDeviceKV(containerURL: container, bundleIdentifier: bundle)
         current = store

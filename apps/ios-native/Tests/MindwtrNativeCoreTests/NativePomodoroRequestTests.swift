@@ -89,6 +89,24 @@ final class NativePomodoroRequestTests: XCTestCase {
         XCTAssertEqual(request.identifier, "mindwtr-native-pomodoro:" + identifierDigest)
     }
 
+    func testNamespaceObservationRecognizesRetiredLibraryWithoutGrantingCurrentLibraryOwnership() throws {
+        let request = try make(libraryID: libraryID + "/retired")
+        let metadata = request.content.userInfo["mindwtrNativePomodoro"]
+        let observed = try XCTUnwrap(NativePomodoroRequest.ownedIdentity(identifier: request.identifier,
+            metadata: metadata, namespace: namespace))
+        XCTAssertNil(owned(request))
+        XCTAssertEqual(observed.scope, NativePomodoroRequest.scope(namespace: namespace, libraryID: libraryID + "/retired"))
+        XCTAssertNotEqual(observed.scope, NativePomodoroRequest.scope(namespace: namespace, libraryID: libraryID))
+        XCTAssertNotEqual(NativePomodoroRequest.scope(namespace: namespace, libraryID: "café"),
+                          NativePomodoroRequest.scope(namespace: namespace, libraryID: "cafe\u{301}"))
+        XCTAssertNil(NativePomodoroRequest.scope(namespace: "bad:namespace", libraryID: libraryID))
+        XCTAssertNil(NativePomodoroRequest.scope(namespace: namespace, libraryID: ""))
+        for digest in [String(repeating: "a", count: 63), String(repeating: "A", count: 64), "0" + String(repeating: "a", count: 63) + "\n"] {
+            var invalid = try XCTUnwrap(metadata as? [String: Any]); invalid["libraryDigest"] = digest
+            XCTAssertNil(NativePomodoroRequest.ownedIdentity(identifier: request.identifier, metadata: invalid, namespace: namespace))
+        }
+    }
+
     func testOwnershipRequiresEveryExactMetadataFieldAndWholeIdentifier() throws {
         let request = try make(), metadata = try XCTUnwrap(request.content.userInfo["mindwtrNativePomodoro"] as? [String: Any])
         for field in metadata.keys { var missing = metadata; missing[field] = nil; XCTAssertNil(owned(request, metadata: missing), field) }

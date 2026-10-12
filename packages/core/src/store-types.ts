@@ -804,6 +804,10 @@ export interface TaskStore {
     commitPreparedNotificationSetting: (request: import('./native-host-contract-notification-settings').NotificationSettingRequest,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     retryPreparedNotificationSettingSnapshot: (authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Private synced AI request timeout against raw saved authority; never migrates secrets. */
+    commitPreparedAIRequestTimeout: (request: import('./native-ai-request-timeout').AIRequestTimeoutRequest,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    retryPreparedAIRequestTimeoutSnapshot: (authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Existing subscription metadata, saved only in canonical synced SQL settings. */
     commitPreparedCalendarSubscriptionSetting: (prepared: import('./native-host-contract-calendar-subscription-settings').PreparedCalendarSubscriptionSetting,
         authority: PreparedAreaAuthority, legacyRaw: string | null) => Promise<PreparedTaskEditResult>;

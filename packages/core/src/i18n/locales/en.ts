@@ -1487,6 +1487,7 @@ export const en: Record<string, string> = {
         'settings.advanced': 'Advanced',
         'settings.aiDesc': 'Optional help for clarifying and breaking down tasks.',
         'settings.aiEnable': 'Enable AI assistant',
+        'settings.aiSummaryReadOnly': "Saved settings only. You cannot change them here, and AI requests are not available in this app yet.",
         'ai.appleClarification.stale': 'The item or its available associations changed. Ask for a fresh suggestion.',
         'ai.appleClarification.suggestionTitle': 'On-device suggestion',
         'settings.appleClarification.title': 'Inbox clarification',

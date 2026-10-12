@@ -496,6 +496,25 @@ private struct AppLockRoot: View {
             }
         }
         .preferredColorScheme(model.theme.text("scheme").isEmpty ? nil : palette.dark ? .dark : .light)
+        #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+        .overlay(alignment: .topTrailing) {
+            if model.pomodoroAlarmTestEnabled {
+                VStack(spacing: 4) {
+                    Text(model.pomodoroAlarmTestState).lineLimit(1)
+                        .accessibilityLabel(model.pomodoroAlarmTestState)
+                        .accessibilityIdentifier("pomodoro-alarm-fixture-state")
+                    HStack {
+                        Button("Read alarm fixture") { Task { await model.refreshPomodoroAlarmTestState() } }
+                            .accessibilityIdentifier("pomodoro-alarm-fixture-refresh")
+                        Button("Release alarm fixture") { Task { await model.releasePomodoroAlarmTestAdd() } }
+                            .accessibilityIdentifier("pomodoro-alarm-fixture-release")
+                        Button("Retire alarm fixture") { model.retirePomodoroAlarmTestHost() }
+                            .accessibilityIdentifier("pomodoro-alarm-fixture-retire")
+                    }
+                }.font(.caption2).padding(4).background(palette.card).frame(maxWidth: 300)
+            }
+        }
+        #endif
         .onAppear {
             lock.sceneChanged(phase)
             if applicationActive { model.appleRemindersDidBecomeActive(); model.notificationSettingsDidBecomeActive(); model.calendarSettingsDidBecomeActive(); model.calendarFeedDidBecomeActive() }

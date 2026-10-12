@@ -580,7 +580,7 @@ assert.match(hostEntry, /createNativeSync\(nativeSyncBindings\)/);
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -3681,6 +3681,20 @@ export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName, t) {
   return { title: t('settings.undoImportConfirmTitle'), message: t('settings.undoImportConfirm', { snapshotName }),
     confirmLabel: t('markdown.referenceRestore'), cancelLabel: t('common.cancel') };
 }
+export function createNativeAIRequestTimeoutMethods(deps) {
+  const read = (kind, input, current) => {
+    current(); const ready = deps.readiness(); if (!ready.ok) return ready;
+    globalThis.aiTimeoutInputs.push([kind, JSON.stringify(input)]);
+    return globalThis.aiTimeoutReplies[kind];
+  };
+  return {
+    options: async (input, current) => read('options', input, current),
+    prepare: async (input, current) => read('prepare', input, current),
+    commit: async (input, current) => read('commit', input, current),
+    validate: input => { globalThis.aiTimeoutInputs.push(['validate', JSON.stringify(input)]); return globalThis.aiTimeoutReplies.validate; },
+    outcome: input => { const ready = deps.readiness(); if (!ready.ok) return ready; globalThis.aiTimeoutInputs.push(['outcome', JSON.stringify(input)]); return globalThis.aiTimeoutReplies.outcome; },
+  };
+}
 export function setLogger(logger) { globalThis.coreLogger = logger; setRealLogger(logger); }
 export function consoleLogger() {}
 export class SqliteAdapter {
@@ -4148,6 +4162,7 @@ const built = await build({
     entryPoints: [resolve(app, 'bundle/host-entry.ts')], bundle: true, write: false, format: 'iife',
     plugins: [{ name: 'fake-core', setup(plugin) {
         plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-request-timeout$/ }, () => ({ path: 'core', namespace: 'test' }));
         plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
     } }],
 });
@@ -4230,6 +4245,7 @@ const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined, c
             kvSet(key, value) { state.fileCalls.push(`kvSet ${key} ${value}`); state.kv[key] = value; return null; },
         },
     };
+    state.aiTimeoutInputs = []; state.aiTimeoutReplies = {};
     configure(state);
     vm.runInNewContext(source, state);
     assert.equal(state.contractBindings.reminderPlatform, hostPlatform === 'ios' ? 'ios' : 'android');
@@ -4239,6 +4255,245 @@ const poll = async (state, id) => {
     await new Promise((resolveTick) => setImmediate(resolveTick));
     return JSON.parse(state.MindwtrHost.poll(id));
 };
+// Task587: production host dispatch and the real shared projection. Storage is
+// a stand-in here; NativeAISettingsProjectionTests owns actual JSC/SQLite proof.
+{
+    const read = (state, input = '{}', owner = () => '') => poll(state, state.MindwtrHost.iosAISettingsProjection(input, owner));
+    const ready = async (settings = {}) => {
+        const state = makeState(0, [], 'ios', state => { state.fakeData.settings = settings; });
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        state.settings = state.fakeData.settings;
+        state.events.length = 0; state.fileCalls.length = 0;
+        return state;
+    };
+    const marker = 'v1.3.5/ios-ai-settings-projection';
+    const refused = async (state, input = '{}', owner = () => '') => {
+        const before = state.logText, data = JSON.stringify(state.fakeData), kv = JSON.stringify(state.kv);
+        assert.equal((await read(state, input, owner)).ok, false);
+        assert.equal(state.logText, before, 'refusal emits no projection marker');
+        assert.equal(JSON.stringify(state.fakeData), data); assert.equal(JSON.stringify(state.kv), kv);
+        assert(!state.events.includes('save')); assert.equal(state.aiInputs.length, 0);
+    };
+    const sentinel = 'PRIVATE587-SENTINEL';
+    const state = await ready({ ai: { provider: 'anthropic', enabled: true, reasoningEffort: 'high', thinkingBudget: 4096,
+        requestTimeoutSeconds: 300, model: sentinel, copilotModel: sentinel, baseUrl: 'https://' + sentinel,
+        openAIExtraBodyParams: { secret: sentinel }, speechToText: { enabled: true, provider: 'parakeet',
+            model: sentinel, language: sentinel, baseUrl: sentinel, offlineModelPath: sentinel,
+            mode: 'transcribe_only', fieldStrategy: 'description_only' } } });
+    const before = JSON.stringify(state.fakeData), kv = JSON.stringify(state.kv);
+    const first = await read(state), second = await read(state);
+    assert.equal(first.ok, true); assert.deepEqual(second, first);
+    assert.equal(first.value.version, 1); assert.equal(first.value.aiProvider, 'anthropic');
+    assert.equal(first.value.aiThinkingBudget, 4096); assert.equal(first.value.speechProvider, 'whisper');
+    assert.equal(first.value.anthropicThinkingEnabled, true); assert.equal(first.value.speechMode, 'transcribe_only');
+    assert(!JSON.stringify(first).includes(sentinel)); assert(!state.logText.includes(sentinel));
+    assert.equal(JSON.stringify(state.fakeData), before); assert.equal(JSON.stringify(state.kv), kv);
+    assert.deepEqual(state.events, ['baseline', 'baseline', 'baseline', 'baseline']);
+    assert.equal(state.fileCalls.length, 0); assert.equal(state.aiInputs.length, 0);
+    assert.equal(state.contractBindings.ai, undefined, 'the read never activates the AI factory');
+    const lines = state.logText.split('\n').filter(line => line.includes(marker));
+    assert.equal(lines.length, 2);
+    assert.deepEqual(JSON.parse(lines[0]).context, { releaseCheck: marker, outcome: 'read' });
+    for (const input of ['null', '[]', '{', '{"extra":true}', ' '.repeat(257) + '{}']) await refused(state, input);
+    await refused(state, '{}', null); await refused(state, '{}', () => 'retired-owner');
+    for (const field of ['failed', 'queued', 'inFlight', 'immediate', 'retrying']) {
+        state.persistenceStatus = { [field]: true }; await refused(state); state.persistenceStatus = null;
+    }
+    for (const field of ['sandbox', 'workspaceTransition', 'storeLoading', 'storeEditLocks', 'linesUnguarded']) {
+        state[field] = true; await refused(state); state[field] = false;
+    }
+    state.rowBaselineNull = true; await refused(state); state.rowBaselineNull = false;
+    state.rowBaseline = { settings: { ai: { provider: 'gemini' } } }; await refused(state); state.rowBaseline = null;
+    state.adapter = {}; await refused(state);
+    await refused(makeState(0, [], 'ios'));
+    const android = makeState(0, [], 'android');
+    assert.equal((await poll(android, android.MindwtrHost.boot())).ok, true);
+    await refused(android);
+    for (const mutation of ['baseline', 'settings', 'generation', 'owner']) {
+        const changed = await ready(), original = changed.adapter.readRowBaseline.bind(changed.adapter);
+        let reads = 0, currentOwner = true;
+        changed.adapter.readRowBaseline = async () => {
+            const saved = await original();
+            if (++reads === 1) {
+                if (mutation === 'baseline') changed.rowBaselineNull = true;
+                if (mutation === 'settings') changed.settings = {};
+                if (mutation === 'generation') changed.persistenceStatus = { generation: 1 };
+                if (mutation === 'owner') currentOwner = false;
+            }
+            return saved;
+        };
+        await refused(changed, '{}', () => currentOwner ? '' : 'retired');
+    }
+    const invalid = await ready({ ai: { provider: sentinel } });
+    await refused(invalid);
+    assert(!(await read(invalid)).error.includes(sentinel));
+    for (const dispatch of ['menuRead', 'menuCommand']) {
+        const fresh = await ready();
+        assert.equal((await poll(fresh, fresh.MindwtrHost[dispatch]('iosAISettingsProjection', '{}'))).ok, false);
+        assert(!(fresh.logText ?? '').includes(marker));
+    }
+    const swift = readFileSync(resolve(app, '../ios-native/Sources/MindwtrNativeCore/CoreHost.swift'), 'utf8');
+    assert.match(swift, /guard method != "iosAISettingsProjection"/);
+    assert.match(swift, /\n    public func readAISettingsProjection\(\) async throws -> NativeAISettingsProjection/);
+    console.log('Task587: private AI projection routing, bounds, saved baseline, authority, secret omission and no-write gates passed; Apple execution pending');
+}
+// Task590: invoke the production private routes. Core write/SQLite semantics have
+// their own actual-module tests; these stand-ins prove dispatch and argument wiring.
+{
+    const state = makeState(0, [], 'ios');
+    assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+    assert(state.receiptScope.includes('aiRequestTimeout'), 'private timeout receipts must survive native restart');
+    const expected = { aiPresent: false, timeoutPresent: false, timeout: null, providerPresent: false, provider: null, stampPresent: false, stamp: null };
+    const request = { requestId: '00000000-0000-4000-8000-000000000590', value: 60, expected };
+    const prepared = { version: 1, request }, envelope = { request, prepared }, reply = { value: 60, changed: true };
+    state.aiTimeoutReplies = {
+        options: { ok: true, value: { value: 30, expected } }, prepare: { ok: true, value: { kind: 'prepared', prepared } },
+        validate: { ok: true, value: reply }, commit: { ok: true, value: reply }, outcome: { ok: true, value: reply },
+    };
+    const invoke = async (route, value, owner = () => '') => poll(state, state.MindwtrHost[route](JSON.stringify(value), owner));
+    for (const [route, kind, input] of [['iosAIRequestTimeoutOptions', 'options', {}], ['iosAIRequestTimeoutPrepare', 'prepare', request],
+        ['iosAIRequestTimeoutValidate', 'validate', envelope], ['iosAIRequestTimeoutCommit', 'commit', envelope],
+        ['iosAIRequestTimeoutRetryOutcome', 'outcome', request]]) {
+        assert.equal(typeof state.MindwtrHost[route], 'function', 'actual private timeout route missing: ' + route);
+        const before = state.aiTimeoutInputs.length;
+        assert.deepEqual(await invoke(route, input), state.aiTimeoutReplies[kind]);
+        assert.deepEqual(JSON.parse(JSON.stringify(state.aiTimeoutInputs.at(-1))), [kind, JSON.stringify(input)]);
+        assert.equal(state.aiTimeoutInputs.length, before + 1);
+    }
+    for (const route of ['iosAIRequestTimeoutOptions', 'iosAIRequestTimeoutPrepare', 'iosAIRequestTimeoutCommit']) {
+        const before = state.aiTimeoutInputs.length;
+        assert.equal((await invoke(route, {}, null)).ok, false);
+        assert.equal((await invoke(route, {}, () => 'retired')).ok, false);
+        assert.equal(state.aiTimeoutInputs.length, before, 'invalid owner reaches no contract method');
+    }
+    const marker = 'v1.3.5/ios-ai-request-timeout';
+    assert(!(state.logText ?? '').includes(marker), 'prepare/commit dispatch alone cannot claim native durable acknowledgment');
+    assert.equal((await poll(state, state.MindwtrHost.iosAIRequestTimeoutAcknowledged())).ok, true);
+    const lines = state.logText.split('\n').filter(line => line.includes(marker));
+    assert.equal(lines.length, 1); assert.deepEqual(JSON.parse(lines[0]).context, { releaseCheck: marker, outcome: 'saved' });
+    for (const dispatch of ['menuRead', 'menuCommand']) {
+        for (const route of ['iosAIRequestTimeout', 'iosAIRequestTimeoutOptions', 'iosAIRequestTimeoutPrepare', 'iosAIRequestTimeoutCommit'])
+            assert.equal((await poll(state, state.MindwtrHost[dispatch](route, '{}'))).ok, false);
+    }
+    const swift = readFileSync(resolve(app, '../ios-native/Sources/MindwtrNativeCore/CoreHost.swift'), 'utf8');
+    assert.match(swift, /guard !Engine\.aiRequestTimeoutMethods\.contains\(method\)/);
+    assert.match(swift, /func setAIRequestTimeout\(_ request: NativeAIRequestTimeoutRequest,/);
+    assert.doesNotMatch(swift, /public func (?:setAIRequestTimeout|readAIRequestTimeoutOptions)/);
+    console.log('Task590: production private timeout invocation, exact arguments, owner refusal and receipt registration passed; Apple execution pending');
+}
+// Task592: actual private route and real selected-provider helper; device metadata
+// is a native stand-in here. Apple tests own actual Keychain/KV/SQLite evidence.
+{
+    const marker = 'v1.3.5/ios-ai-device-state', sentinel = 'PRIVATE592-SENTINEL';
+    const ready = async (settings = {}) => {
+        const state = makeState(0, [], 'ios', state => { state.fakeData.settings = settings; });
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        state.settings = settings.ai?.apiKey ? { ...settings, ai: { ...settings.ai, apiKey: undefined } } : settings;
+        state.events.length = 0; state.fileCalls.length = 0;
+        return state;
+    };
+    const calls = [];
+    const metadata = async (...input) => {
+        calls.push(input); return JSON.stringify({ consentRecorded: true, secureItem: 'present', legacyItemPresent: true });
+    };
+    const read = (state, input = '{}', owner = () => '', inspect = metadata) =>
+        poll(state, state.MindwtrHost.iosAIProviderDeviceState(input, owner, inspect));
+    const refused = async (state, input = '{}', owner = () => '', inspect = metadata) => {
+        const before = state.logText, data = JSON.stringify(state.fakeData), kv = JSON.stringify(state.kv);
+        assert.equal((await read(state, input, owner, inspect)).ok, false);
+        assert.equal(state.logText, before); assert.equal(JSON.stringify(state.fakeData), data);
+        assert.equal(JSON.stringify(state.kv), kv); assert(!state.events.includes('save'));
+        assert.equal(state.aiInputs.length, 0);
+    };
+    for (const provider of [undefined, 'openai', 'gemini', 'anthropic']) {
+        const state = await ready({ ai: { ...(provider ? { provider } : {}), apiKey: sentinel, baseUrl: sentinel } });
+        const before = JSON.stringify(state.fakeData), selected = provider ?? 'openai';
+        calls.length = 0;
+        const result = await read(state);
+        assert.equal(result.ok, true, JSON.stringify(result));
+        assert.deepEqual(result.value, { version: 1, provider: selected, consentRecorded: true, secureItem: 'present', legacyItemPresent: true });
+        assert.deepEqual(calls, [[selected, 'mindwtr-ai-key_' + selected, 'mindwtr-ai-key:' + selected]]);
+        assert.equal(JSON.stringify(state.fakeData), before); assert.equal(state.fileCalls.length, 0);
+        assert.equal(state.contractBindings.ai, undefined); assert.equal(state.aiInputs.length, 0);
+        assert(!JSON.stringify(result).includes(sentinel)); assert(!state.logText.includes(sentinel));
+        const lines = state.logText.split('\n').filter(line => line.includes(marker));
+        assert.equal(lines.length, 1); assert.deepEqual(JSON.parse(lines[0]).context, { releaseCheck: marker });
+    }
+    const state = await ready();
+    for (const input of ['null', '[]', '{', '{"provider":"gemini"}', '{"account":"' + sentinel + '"}', ' '.repeat(257) + '{}']) {
+        calls.length = 0; await refused(state, input); assert.equal(calls.length, 0);
+    }
+    calls.length = 0; await refused(state, '{}', null); await refused(state, '{}', () => 'retired');
+    await refused(state, '{}', () => '', null); assert.equal(calls.length, 0);
+    for (const field of ['failed', 'queued', 'inFlight', 'immediate', 'retrying']) {
+        state.persistenceStatus = { [field]: true }; await refused(state); state.persistenceStatus = null;
+    }
+    for (const field of ['sandbox', 'workspaceTransition', 'storeLoading', 'storeEditLocks', 'linesUnguarded']) {
+        state[field] = true; await refused(state); state[field] = false;
+    }
+    for (const secureItem of ['present', 'absent', 'unavailable']) {
+        const result = await read(state, '{}', () => '', () => JSON.stringify({ consentRecorded: false, secureItem, legacyItemPresent: false }));
+        assert.equal(result.ok, true); assert.equal(result.value.secureItem, secureItem);
+    }
+    for (const raw of ['null', '[]', '{}', JSON.stringify({ consentRecorded: 1, secureItem: 'present', legacyItemPresent: false }),
+        JSON.stringify({ consentRecorded: false, secureItem: 'absent', legacyItemPresent: false, value: sentinel }),
+        '!MindwtrNativeError:Device metadata is unavailable']) await refused(state, '{}', () => '', () => raw);
+    state.rowBaselineNull = true; await refused(state); state.rowBaselineNull = false;
+    state.rowBaseline = { settings: { ai: { provider: 'gemini' } } }; await refused(state); state.rowBaseline = null;
+    await refused(await ready({ ai: { provider: sentinel } }));
+    for (const mutation of ['settings', 'provider', 'generation', 'owner', 'baseline', 'adapter']) {
+        const changed = await ready(); let live = true;
+        await refused(changed, '{}', () => live ? '' : 'retired', async () => {
+            if (mutation === 'settings') changed.settings = {};
+            if (mutation === 'provider') changed.settings = { ai: { provider: 'gemini' } };
+            if (mutation === 'generation') changed.persistenceStatus = { generation: 1 };
+            if (mutation === 'owner') live = false;
+            if (mutation === 'baseline') changed.rowBaselineNull = true;
+            if (mutation === 'adapter') changed.adapter = {};
+            return JSON.stringify({ consentRecorded: false, secureItem: 'absent', legacyItemPresent: false });
+        });
+    }
+    // A value-free checkpoint can land before a concurrent retirement; final delivery must still refuse.
+    const late = await ready(), originalLog = late.__mindwtrNative.logFile;
+    let retired = false;
+    late.__mindwtrNative.logFile = (operation, text) => {
+        const result = originalLog(operation, text);
+        if (operation === 'append' && text.includes(marker)) retired = true;
+        return result;
+    };
+    assert.equal((await read(late, '{}', () => retired ? 'retired' : '')).ok, false);
+    assert(retired); assert(late.logText.includes(marker));
+    await refused(makeState(0, [], 'ios'));
+    const android = makeState(0, [], 'android');
+    assert.equal((await poll(android, android.MindwtrHost.boot())).ok, true); await refused(android);
+    for (const dispatch of ['menuRead', 'menuCommand']) {
+        const fresh = await ready();
+        assert.equal((await poll(fresh, fresh.MindwtrHost[dispatch]('iosAIProviderDeviceState', '{}'))).ok, false);
+        assert(!(fresh.logText ?? '').includes(marker));
+    }
+    const swift = readFileSync(resolve(app, '../ios-native/Sources/MindwtrNativeCore/CoreHost.swift'), 'utf8');
+    assert.match(swift, /guard method != "iosAIProviderDeviceState"/);
+    assert.match(swift, /\n    func readAIProviderDeviceState\(\) async throws -> NativeAIProviderDeviceState/);
+    assert.doesNotMatch(swift, /public func readAIProviderDeviceState/);
+    const secrets = readFileSync(resolve(app, '../ios-native/Sources/MindwtrNativeCore/NativeSecretJobs.swift'), 'utf8');
+    const query = secrets.slice(secrets.indexOf('    private func inspectAIProviderItem(_ job:'), secrets.indexOf('    private func write('));
+    assert.match(query, /kSecReturnAttributes as String\] = true/);
+    assert.match(query, /kSecMatchLimit as String\] = kSecMatchLimitOne/);
+    assert.match(secrets, /kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail/);
+    assert.doesNotMatch(query, /kSecReturnData|kSecReturnRef|kSecReturnPersistentRef|kSecValueData|SecItemAdd|SecItemUpdate|SecItemDelete/);
+    assert.match(query, /if result == errSecItemNotFound \{ continue \}/);
+    assert.match(query, /result == errSecSuccess \? "present" : "unavailable"/);
+    assert.match(query, /worker\.sync \{\}/);
+    assert.match(secrets, /let operation = input\["op"\] as\? String, \["get", "set", "delete"\]\.contains\(operation\)/);
+    const kv = readFileSync(resolve(app, '../ios-native/Sources/MindwtrNativeCore/NativeDeviceKV.swift'), 'utf8');
+    const selected = kv.slice(kv.indexOf('    func readAIProviderDeviceMetadata('), kv.indexOf('    func readSearchConsent('));
+    assert.match(selected, /pending == nil/); assert.match(selected, /try checkedRead\(\)/);
+    assert.match(selected, /current\.values\.keys\.contains/);
+    assert.match(selected, /CFGetTypeID\(value\) == CFBooleanGetTypeID\(\) && value\.boolValue/);
+    assert.match(selected, /Self\.strictAIConsentJSON\(raw\)/);
+    assert.doesNotMatch(selected, /mutate\(|multiGet\(|get\(|current\.values\[Data\("mindwtr-ai-key/);
+    console.log('Task592: actual private metadata route, exact DTO/input/mappings, saved identity/refusal and value-free checkpoint gates passed; Apple execution pending');
+}
 // Task502: the production facades forward the original request/envelope and
 // shared full selection once. This VM uses a core stand-in; actual JSC/SQLite
 // native journal/replay proof belongs to NativeTrashBulkRestoreHostTests.
@@ -4430,6 +4685,73 @@ const poll = async (state, id) => {
         current.pomodoroSession = { raw: plan.sessionAfter, state: JSON.parse(plan.sessionAfter) };
         assert.equal((await poll(current, current.MindwtrHost[method](...args))).ok, true);
     }
+    // Task586: production private facade, pure repeated probes and saved-state authority.
+    const scope586 = 'tech.test.native:' + 'a'.repeat(64);
+    const prepare586 = (owner, granted = true) => poll(owner,
+        owner.MindwtrHost.iosPomodoroAlarmPrepare('alarm586', granted, null, scope586, '[]', '[]'));
+    const alarm586 = await ready520();
+    alarm586.pomodoroSession = { raw: plan.sessionAfter, state: JSON.parse(plan.sessionAfter) };
+    assert.equal((await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).value, true);
+    assert.equal((await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmBegin('second'))).ok, false);
+    const probe586 = await prepare586(alarm586);
+    assert.equal(probe586.ok, true); assert.equal(probe586.value.schedule, null);
+    assert.deepEqual((await prepare586(alarm586)).value, probe586.value, 'repeated preparation has no effects');
+    assert.equal(alarm586.pomodoroInputs.length, 0);
+    assert.equal((await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmCurrent('wrong'))).ok, false);
+    await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmEnd('wrong'));
+    assert.equal((await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmCurrent('alarm586'))).value, true);
+    await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmEnd('alarm586'));
+    assert.equal((await prepare586(alarm586)).ok, false);
+    for (const denial of [false, true]) {
+        const cancel586 = await ready520();
+        if (!denial) cancel586.settings = { gtd: { pomodoro: { completionAlert: false } } };
+        cancel586.pomodoroReadError = true;
+        assert.equal((await poll(cancel586, cancel586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).value, true);
+        cancel586.events.length = 0;
+        assert.equal((await prepare586(cancel586, !denial)).ok, true, 'off/denied bypass corrupt timer decode');
+        assert(!cancel586.events.includes('pomodoro-read'));
+        cancel586.rowBaselineNull = true;
+        assert.equal((await prepare586(cancel586, !denial)).ok, false, 'off/denied still require accepted saved settings');
+    }
+    for (const mutation of ['generation', 'settings', 'baseline', 'queued', 'sandbox']) {
+        const stale586 = await ready520();
+        assert.equal((await poll(stale586, stale586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).value, true);
+        if (mutation === 'generation') stale586.persistenceStatus = { generation: 2 };
+        if (mutation === 'settings') stale586.settings = { ...stale586.settings };
+        if (mutation === 'baseline') stale586.rowBaselineNull = true;
+        if (mutation === 'queued') stale586.persistenceStatus = { queued: true };
+        if (mutation === 'sandbox') stale586.sandbox = true;
+        assert.equal((await prepare586(stale586)).ok, false, mutation + ' invalidates private alarm turn');
+    }
+    const held586 = await ready520();
+    held586.pomodoroSession = { raw: plan.sessionAfter, state: JSON.parse(plan.sessionAfter) };
+    assert.equal((await poll(held586, held586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).value, true);
+    let release586; held586.pomodoroReadHold = new Promise(resolve => { release586 = resolve; });
+    const heldTicket586 = held586.MindwtrHost.iosPomodoroAlarmPrepare('alarm586', true, null, scope586, '[]', '[]');
+    await new Promise(resolve => setImmediate(resolve));
+    assert(held586.events.includes('pomodoro-read'));
+    held586.rowBaselineNull = true; release586();
+    assert.match((await poll(held586, heldTicket586)).error, /STALE_REVISION/);
+    const dispatch586 = await ready520(), fire586 = Date.now() + 60_000;
+    const running586 = JSON.parse(plan.sessionAfter);
+    running586.session.timerState.isRunning = true;
+    running586.session.phaseEndsAt = new Date(fire586).toISOString();
+    dispatch586.pomodoroSession = { raw: JSON.stringify(running586), state: running586 };
+    assert.equal((await poll(dispatch586, dispatch586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).value, true);
+    const future586 = await prepare586(dispatch586);
+    assert.equal(future586.value.schedule.immediate, false);
+    vm.runInNewContext(`globalThis.Date = class extends Date { static now() { return ${fire586}; } };`, dispatch586);
+    const immediate586 = await poll(dispatch586, dispatch586.MindwtrHost.iosPomodoroAlarmDispatchPrepare(
+        'alarm586', JSON.stringify(future586.value.schedule), future586.value.writeAhead, scope586));
+    assert.equal(immediate586.ok, true);
+    assert.equal(immediate586.value.schedule.immediate, true, 'dispatch refresh happens after durable-publication delay');
+    assert.equal(JSON.parse(immediate586.value.writeAhead).libraries[0].alarm.immediate, true);
+    assert.equal(JSON.parse(immediate586.value.writeAhead).libraries[0].alarm.status, 'attempted');
+    assert.equal((await poll(dispatch586, dispatch586.MindwtrHost.iosPomodoroAlarmDispatchPrepare(
+        'alarm586', JSON.stringify(future586.value.schedule), immediate586.value.published, scope586))).ok, false,
+        'confirmed receipts never authorize a second dispatch');
+    const android586 = await ready520('android');
+    assert.equal((await poll(android586, android586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).ok, false);
     const cold = makeState(0, [], 'ios');
     assert.equal((await poll(cold, cold.MindwtrHost.pomodoroTransitionValidate(planJSON))).ok, true);
     assert.equal(cold.events.length, 0, 'pure validation does not activate/read/write');
@@ -4901,6 +5223,7 @@ export function createNativeSync() {
             plugin.onResolve({ filter: /^\.\/host-sync$/ }, () => ({ path: 'sync', namespace: 'download-test' }));
             plugin.onLoad({ filter: /.*/, namespace: 'download-test' }, () => ({ contents: syncFixture, loader: 'js' }));
             plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-request-timeout$/ }, () => ({ path: 'core', namespace: 'test' }));
             plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
         } }],
     });
@@ -7365,7 +7688,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'aiRequestTimeout', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);

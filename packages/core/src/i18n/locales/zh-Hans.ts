@@ -1421,6 +1421,7 @@ export const zhHans: Record<string, string> = {
         'settings.advanced': '高级',
         'settings.aiDesc': '帮助澄清与拆解任务（可选）。',
         'settings.aiEnable': '启用 AI 助手',
+        'settings.aiSummaryReadOnly': "这里只显示已保存的设置，暂时无法修改。此应用尚不支持 AI 请求。",
         "ai.appleClarification.stale": "条目或可用的关联项已更改，请重新获取建议。",
         "ai.appleClarification.suggestionTitle": "设备端建议",
         "settings.appleClarification.title": "收集箱厘清",

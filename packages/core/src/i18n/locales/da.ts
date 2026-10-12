@@ -1529,6 +1529,7 @@ export const daOverrides: Record<string, string> = {
     'settings.advanced': 'Avanceret',
     'settings.aiDesc': 'Valgfri hjælp til afklaring og nedbrydning af opgaver.',
     'settings.aiEnable': 'Aktiver AI-assistent',
+    'settings.aiSummaryReadOnly': "Her vises kun gemte indstillinger. Du kan ikke ændre dem her, og AI-forespørgsler er endnu ikke tilgængelige i denne app.",
     'ai.appleClarification.stale': 'Varen eller dens tilgængelige tilknytninger er ændret. Bed om et nyt forslag.',
     'ai.appleClarification.suggestionTitle': 'Forslag på enheden',
     'settings.appleClarification.title': 'Indbakke afklaring',

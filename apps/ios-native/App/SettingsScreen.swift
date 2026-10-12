@@ -47,6 +47,7 @@ struct SettingsScreen: View {
                     else if model.settingsFeedbackPresented { model.closeFeedbackSettings() }
                     else if model.settingsAboutPresented { model.closeAboutSettings() }
                     else if model.settingsNotificationsPresented { model.closeNotificationSettings() }
+                    else if model.settingsAIPresented { model.retireAISettingsPage() }
                     else if model.settingsCalendarPresented { calendarSubscriptionField = nil; model.closeCalendarSettings() }
                     else if model.settingsGeneralPresented { model.closeGeneralSettings() }
                     else if model.settingsManagePresented { model.closeManageSettings() }
@@ -65,7 +66,7 @@ struct SettingsScreen: View {
                           || model.notificationSettingActive || (model.calendarSettingActive && !model.settingsCalendarCanCancel) || (model.settingsGtdPresented ? model.gtdWorkflowPending : model.generalPreferenceActive) || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
                           || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)))
                 .accessibilityLabel(model.label("common.back"))
-                .accessibilityIdentifier(model.settingsRemindersPresented ? "apple-reminders-back" : model.settingsSyncPresented ? "sync-back" : model.settingsDataPresented ? "diagnostics-back" : model.settingsGtdPomodoroPresented ? "gtd-pomodoro-back" : model.settingsGtdArchivePresented ? "gtd-archive-back" : model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsFeedbackPresented ? "feedback-back" : model.settingsAboutPresented ? "about-back" : model.settingsNotificationsPresented ? "notifications-back" : model.settingsCalendarPresented ? "calendar-settings-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : model.settingsAdvancedPresented ? "advanced-back" : "settings-back")
+                .accessibilityIdentifier(model.settingsRemindersPresented ? "apple-reminders-back" : model.settingsSyncPresented ? "sync-back" : model.settingsDataPresented ? "diagnostics-back" : model.settingsGtdPomodoroPresented ? "gtd-pomodoro-back" : model.settingsGtdArchivePresented ? "gtd-archive-back" : model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsFeedbackPresented ? "feedback-back" : model.settingsAboutPresented ? "about-back" : model.settingsNotificationsPresented ? "notifications-back" : model.settingsAIPresented ? "ai-summary-back" : model.settingsCalendarPresented ? "calendar-settings-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : model.settingsAdvancedPresented ? "advanced-back" : "settings-back")
                 if model.settingsRemindersPresented {
                     Text(model.label("settings.appleRemindersImport.appleReminders")).rnFont(20, .bold).foregroundStyle(palette.text)
                         .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
@@ -90,6 +91,11 @@ struct SettingsScreen: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
                         .accessibilityIdentifier("calendar-settings-title")
+                } else if model.settingsAIPresented {
+                    Text(model.label("settings.ai")).rnFont(20, .bold).foregroundStyle(palette.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier("ai-summary-title")
                 } else if model.settingsAdvancedPresented {
                     Text(model.settingsMenu.object("advanced").text("title").isEmpty ? model.label("settings.advanced") : model.settingsMenu.object("advanced").text("title"))
                         .rnFont(20, .bold).foregroundStyle(palette.text)
@@ -119,6 +125,7 @@ struct SettingsScreen: View {
             else if model.settingsGtdPresented { gtdContent }
             else if model.settingsAboutPresented { AboutSettingsCard(model: model, palette: palette) }
             else if model.settingsNotificationsPresented { notificationsContent }
+            else if model.settingsAIPresented { aiSummaryContent }
             else if model.settingsCalendarPresented { calendarSettingsContent }
             else if model.settingsGeneralPresented { generalContent }
             else if model.settingsManagePresented { manageContent }
@@ -130,6 +137,9 @@ struct SettingsScreen: View {
 
     var body: some View {
         settingsBody
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            model.retireAISettingsPage()
+        }
         .alert(model.calendarPushDeleteConfirmation.text("title"), isPresented: $calendarPushDeletePresented) {
             Button(model.calendarPushDeleteConfirmation.text("cancel"), role: .cancel) { model.cancelCalendarPushDelete() }
                 .accessibilityIdentifier("calendar-push-delete-cancel")
@@ -1934,6 +1944,15 @@ struct SettingsScreen: View {
     private var advancedContent: some View {
         ScrollView {
             VStack(spacing: 16) {
+                #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                if model.settingsAIProofEnabled {
+                    Text(model.settingsAIProofState).accessibilityIdentifier("ai-summary-proof-state")
+                    Button("Capture baseline") { model.captureAISettingsSummaryFixture(.baseline) }
+                        .frame(minHeight: 44).accessibilityIdentifier("ai-summary-proof-baseline")
+                    Button("Capture final") { model.captureAISettingsSummaryFixture(.final) }
+                        .frame(minHeight: 44).accessibilityIdentifier("ai-summary-proof-final")
+                }
+                #endif
                 let rows = model.settingsMenu.object("advanced").objects("rows")
                 VStack(spacing: 0) {
                     ForEach(rows.indices, id: \.self) { index in
@@ -1952,14 +1971,59 @@ struct SettingsScreen: View {
         .accessibilityIdentifier("advanced-scroll")
     }
 
+    private var aiSummaryContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(model.label("settings.aiSummaryReadOnly")).rnFont(14).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("ai-summary-note")
+                if let projection = model.settingsAIProjection {
+                    aiSummaryRow("settings.aiEnable", value: model.label(projection.aiEnabled ? "settings.on" : "settings.off"), id: "enabled")
+                    aiSummaryRow("settings.aiProvider", value: model.label(projection.aiProvider == .openai ? "settings.aiProviderOpenAI"
+                        : projection.aiProvider == .gemini ? "settings.aiProviderGemini" : "settings.aiProviderAnthropic"), id: "provider")
+                    aiSummaryRow("settings.aiRequestTimeout", value: model.label("settings.aiRequestTimeoutSeconds")
+                        .replacingOccurrences(of: "{{seconds}}", with: String(projection.aiRequestTimeoutSeconds)), id: "timeout")
+                } else if model.settingsAILoading {
+                    ProgressView(model.label("common.loading")).accessibilityIdentifier("ai-summary-loading")
+                } else if model.settingsAIReadFailed {
+                    Text(model.label("settings.feedback.actionFailed")).rnFont(14).foregroundStyle(palette.danger)
+                        .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("ai-summary-error")
+                    Button(model.label("common.retry")) { model.retryAISettingsSummary() }
+                        .buttonStyle(.plain).rnFont(15, .semibold).foregroundStyle(palette.tint)
+                        .frame(minHeight: 44).disabled(model.busy || model.retryNeeded)
+                        .accessibilityIdentifier("ai-summary-retry")
+                }
+                #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                if model.settingsAITestHeld {
+                    Text("held").accessibilityIdentifier("ai-summary-test-held")
+                    Button("Lock fixture") { model.retireAISettingsSummaryFixture("lock") }
+                        .frame(minHeight: 44).accessibilityIdentifier("ai-summary-test-lock")
+                    Button("Replace fixture host") { model.retireAISettingsSummaryFixture("host") }
+                        .frame(minHeight: 44).accessibilityIdentifier("ai-summary-test-host")
+                }
+                #endif
+            }
+            .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityIdentifier("ai-summary-scroll")
+    }
+
+    private func aiSummaryRow(_ label: String, value: String, id: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(model.label(label)).rnFont(15, .semibold).foregroundStyle(palette.text)
+            Text(value).rnFont(15).foregroundStyle(palette.secondary)
+                .accessibilityIdentifier("ai-summary-" + id)
+        }.fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func settingsMenuRow(_ row: CoreObject) -> some View {
         let available = model.settingsAdvancedPresented
-            ? row.text("id") == "calendar"
+            ? ["calendar", "ai"].contains(row.text("id")) && (row.text("id") != "ai" || model.settingsAICanOpen)
             : ["manage", "general", "notifications", "advanced", "gtd", "data", "sync", "about"].contains(row.text("id"))
         return Button {
             if row.text("id") == "manage" { Task { await model.openManageSettings() } }
             else if row.text("id") == "general" { Task { await model.openGeneralSettings() } }
             else if row.text("id") == "notifications" { Task { await model.openNotificationSettings() } }
+            else if row.text("id") == "ai" { model.openAISettingsSummary() }
             else if row.text("id") == "calendar" { Task { await model.openCalendarSettings() } }
             else if row.text("id") == "advanced" { model.openAdvancedSettings() }
             else if row.text("id") == "data" { Task { await model.openDataSettings() } }

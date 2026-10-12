@@ -1,6 +1,8 @@
 import XCTest
 
 final class FoundationUITests: XCTestCase {
+    private var task586Application: XCUIApplication?
+
     private func task578App(_ suffix: String, flags: [String] = [], largest: Bool = false) throws -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -2837,6 +2839,8 @@ final class FoundationUITests: XCTestCase {
             attachment.lifetime = .keepAlways
             add(attachment)
         }
+        task586Application?.terminate()
+        task586Application = nil
         try super.tearDownWithError()
     }
 
@@ -10047,7 +10051,7 @@ final class FoundationUITests: XCTestCase {
         boardEnabled(advanced, timeout: 30); advanced.tap()
         XCTAssertEqual(app.staticTexts["advanced-title"].label, "Advanced")
         XCTAssertTrue(app.buttons["settings-ai"].exists)
-        XCTAssertFalse(app.buttons["settings-ai"].isEnabled)
+        XCTAssertTrue(app.buttons["settings-ai"].isEnabled)
         for _ in 0..<2 {
             let row = app.buttons["settings-calendar"]
             task442Reveal(app, row, in: app.scrollViews["advanced-scroll"])
@@ -10072,6 +10076,164 @@ final class FoundationUITests: XCTestCase {
         boardEnabled(advanced, timeout: 30)
         boardTap(app, "settings-back")
         XCTAssertTrue(app.buttons["tab-menu"].exists)
+    }
+
+    // Task594 uses externally staged, offline libraries. The only AI call is the real
+    // private projection reader; delay/failure seams run after that reader returns.
+    private func task594OpenAI(_ app: XCUIApplication, overlapSearch: Bool = false) {
+        boardEnabled(app.buttons["tab-menu"], timeout: 30); boardTap(app, "tab-menu")
+        let settings = app.buttons["menu-settings"]
+        if !settings.isHittable {
+            task442Reveal(app, settings, in: app.scrollViews.containing(.button, identifier: "menu-settings").firstMatch)
+        }
+        boardTap(app, "menu-settings")
+        if overlapSearch {
+            let search = app.textFields["settings-search"]
+            boardEnabled(search, timeout: 30); search.tap()
+            search.typeText("a")
+            search.typeText(XCUIKeyboardKey.delete.rawValue)
+            search.typeText("b")
+            search.typeText(XCUIKeyboardKey.delete.rawValue)
+            let returnKey = app.keyboards.buttons["Return"]
+            if returnKey.exists && returnKey.isHittable { returnKey.tap() }
+        }
+        let advanced = app.buttons["settings-advanced"]
+        task442Reveal(app, advanced, in: app.scrollViews["settings-scroll"])
+        boardEnabled(advanced, timeout: 30); advanced.tap()
+        if app.launchArguments.contains("--native-ai-summary-proof") { task603Phase(app, "baseline") }
+        task594EnterAI(app)
+    }
+
+    private func task603Phase(_ app: XCUIApplication, _ phase: String) {
+        let control = app.buttons["ai-summary-proof-" + phase]
+        task442Reveal(app, control, in: app.scrollViews["advanced-scroll"])
+        boardEnabled(control, timeout: 30); control.tap()
+        let state = app.staticTexts["ai-summary-proof-state"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", phase + "-ready"), object: state)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 40), .completed,
+                       "Checkpoint must observe natural preferences persistence and actual read-task drain")
+        XCTAssertEqual(state.label, phase + "-ready")
+        let observation = XCTAttachment(string: state.label)
+        observation.name = "AI summary checkpoint " + phase + " admitted"
+        observation.lifetime = .keepAlways; add(observation)
+    }
+    private func task603Final(_ app: XCUIApplication) {
+        guard app.launchArguments.contains("--native-ai-summary-proof") else { return }
+        boardTap(app, "ai-summary-back")
+        XCTAssertTrue(app.staticTexts["advanced-title"].exists)
+        task603Phase(app, "final")
+    }
+
+    private func task594EnterAI(_ app: XCUIApplication) {
+        let row = app.buttons["settings-ai"]
+        task442Reveal(app, row, in: app.scrollViews["advanced-scroll"])
+        boardEnabled(row, timeout: 30); row.tap()
+        XCTAssertTrue(app.staticTexts["ai-summary-title"].waitForExistence(timeout: 10))
+    }
+
+    private func task594AI(_ role: String, provider: String = "OpenAI", enabled: String = "Off", seconds: Int = 30,
+                           largest: Bool = false, retirement: String? = nil, fail: Bool = false, overlapSearch: Bool = false) throws {
+        let library = try task371Library(role, prefix: "MINDWTR_AI_SUMMARY_UI_")
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        if role != "HOST" { app.launchArguments += ["--native-ai-summary-proof"] }
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        if retirement != nil { app.launchArguments += ["--native-ai-summary-delay-once"] }
+        if fail { app.launchArguments += ["--native-ai-summary-read-failure-once"] }
+        addTeardownBlock { app.terminate() }
+        app.launch()
+        task594OpenAI(app, overlapSearch: overlapSearch)
+        if let retirement {
+            XCTAssertTrue(app.staticTexts["ai-summary-test-held"].waitForExistence(timeout: 10))
+            XCTAssertFalse(app.staticTexts["ai-summary-provider"].exists)
+            switch retirement {
+            case "back": boardTap(app, "ai-summary-back")
+            case "background":
+                #if targetEnvironment(simulator)
+                XCUIDevice.shared.press(.home)
+                #else
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.995))
+                    .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
+                #endif
+                let background = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    app.state == .runningBackground || app.state == .runningBackgroundSuspended
+                }, object: app)
+                XCTAssertEqual(XCTWaiter.wait(for: [background], timeout: 10), .completed)
+                app.activate()
+            case "lock": boardTap(app, "ai-summary-test-lock")
+            case "host": boardTap(app, "ai-summary-test-host")
+            default: XCTFail("Unknown retirement fixture")
+            }
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["ai-summary-title"])
+            waitForExpectations(timeout: 15)
+            XCTAssertFalse(app.staticTexts["ai-summary-provider"].exists)
+            XCTAssertFalse(app.staticTexts["ai-summary-error"].exists)
+            if retirement == "lock" {
+                // Recover the fixture's saved disabled lock before judging page retirement.
+                boardEnabled(app.buttons["app-lock-read-retry"], timeout: 20)
+                boardTap(app, "app-lock-read-retry")
+            }
+            if retirement == "host" {
+                // Host identity retirement returns to the root Settings menu.
+                let advanced = app.buttons["settings-advanced"]
+                task442Reveal(app, advanced, in: app.scrollViews["settings-scroll"])
+                boardEnabled(advanced, timeout: 30); advanced.tap()
+            }
+            XCTAssertTrue(app.staticTexts["advanced-title"].waitForExistence(timeout: 20))
+            for name in ["ai-summary-title", "ai-summary-provider", "ai-summary-enabled", "ai-summary-timeout", "ai-summary-error"] {
+                XCTAssertFalse(app.staticTexts[name].exists, "Retired AI content must remain absent after foreground/unlock")
+            }
+            task594EnterAI(app)
+        }
+        if fail {
+            XCTAssertTrue(app.staticTexts["ai-summary-error"].waitForExistence(timeout: 10))
+            XCTAssertFalse(app.staticTexts["ai-summary-provider"].exists)
+            boardTap(app, "ai-summary-retry")
+        }
+        XCTAssertTrue(app.staticTexts["ai-summary-provider"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertEqual(app.staticTexts["ai-summary-provider"].label, provider)
+            XCTAssertEqual(app.staticTexts["ai-summary-enabled"].label, enabled)
+            let timeout = app.staticTexts["ai-summary-timeout"]
+            task442Reveal(app, timeout, in: app.scrollViews["ai-summary-scroll"], requireEnabled: false)
+            XCTAssertEqual(timeout.label, "\(seconds) seconds")
+            XCTAssertTrue(app.staticTexts["ai-summary-note"].label.contains("Saved settings only"))
+            XCTAssertEqual(app.scrollViews["ai-summary-scroll"].switches.count, 0)
+            XCTAssertEqual(app.scrollViews["ai-summary-scroll"].textFields.count, 0)
+            XCTAssertFalse(app.staticTexts["ai-summary-error"].exists)
+            XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Task594-private-sentinel")).firstMatch.exists)
+            boardTap(app, "ai-summary-back")
+            XCTAssertTrue(app.staticTexts["advanced-title"].exists)
+            task594EnterAI(app)
+            XCTAssertTrue(app.staticTexts["ai-summary-provider"].waitForExistence(timeout: 20))
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "AI saved settings \(role)"; shot.lifetime = .keepAlways; add(shot)
+        task603Final(app)
+        // Cold reopen reads saved settings again rather than restoring a UI cache.
+        app.terminate(); app.launch(); task594OpenAI(app, overlapSearch: overlapSearch)
+        if fail {
+            XCTAssertTrue(app.staticTexts["ai-summary-error"].waitForExistence(timeout: 10))
+            boardTap(app, "ai-summary-retry")
+        }
+        XCTAssertTrue(app.staticTexts["ai-summary-provider"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.staticTexts["ai-summary-provider"].label, provider)
+        XCTAssertEqual(app.staticTexts["ai-summary-enabled"].label, enabled)
+        task603Final(app)
+    }
+
+    func testNativeAISummaryDefaultReadOnly() throws { try task594AI("DEFAULT") }
+    func testNativeAISummaryOpenAIReadOnly() throws { try task594AI("OPENAI", enabled: "On", seconds: 120) }
+    func testNativeAISummaryGeminiReadOnly() throws { try task594AI("GEMINI", provider: "Gemini", enabled: "On", seconds: 300) }
+    func testNativeAISummaryAnthropicLargestReadOnly() throws { try task594AI("ANTHROPIC", provider: "Anthropic (Claude)", enabled: "On", seconds: 60, largest: true) }
+    func testNativeAISummaryFailureRetry() throws { try task594AI("FAILURE", fail: true) }
+    func testNativeAISummaryBackRetiresRead() throws { try task594AI("BACK", retirement: "back") }
+    func testNativeAISummaryBackgroundRetiresRead() throws { try task594AI("BACKGROUND", retirement: "background") }
+    func testNativeAISummaryLockRetiresRead() throws { try task594AI("LOCK", retirement: "lock") }
+    func testNativeAISummaryHostReplacementRetiresRead() throws { try task594AI("HOST", retirement: "host") }
+
+    func testNativeAISummaryCheckpointSearchDrainAndColdPreferences() throws {
+        try task594AI("DEFAULT", overlapSearch: true)
     }
 
     func testNativeCalendarSettingsNormalPassiveOpen() throws { try task464CalendarSettings("NORMAL", largest: false) }
@@ -28491,5 +28653,131 @@ extension FoundationUITests {
 
     func testTask583RealTerminalFailureRetriesExactTimerCommand() throws { try task583Recovery("RETRY", cold: false) }
     func testTask583ColdRecoverySettlesTimerWithoutRepeatingStart() throws { try task583Recovery("COLD", cold: true) }
+
+    private func task586App(_ suffix: String, flags: [String] = []) throws -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", try task371Library(suffix, prefix: "MINDWTR_POMODORO_ALARMS_UI_"),
+            "--native-pomodoro-alarm-fixture"] + flags
+        task586Application = app
+        app.launch(); boardEnabled(app.buttons["tab-focus"], timeout: 40)
+        boardEnabled(app.buttons["pomodoro-alarm-fixture-refresh"], timeout: 30)
+        return app
+    }
+
+    private func task586State(_ app: XCUIApplication) -> [String: Any] {
+        guard let data = app.staticTexts["pomodoro-alarm-fixture-state"].label.data(using: .utf8),
+              let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        return state
+    }
+
+    @discardableResult
+    private func task586Wait(_ app: XCUIApplication, _ predicate: ([String: Any]) -> Bool,
+                             file: StaticString = #filePath, line: UInt = #line) -> [String: Any] {
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            boardTap(app, "pomodoro-alarm-fixture-refresh")
+            let state = task586State(app)
+            if predicate(state) { return state }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        let state = task586State(app)
+        XCTFail("Pomodoro alarm fixture did not settle: \(state)", file: file, line: line)
+        return state
+    }
+
+    func testTask586StartupSchedulesOutsideFocusWithoutDiagnosticOrSnapshotLoops() throws {
+        let app = try task586App("STARTUP"); defer { app.terminate() }
+        let before = task586Wait(app) { $0["addAttempts"] as? Int == 1 && $0["alarmDirty"] as? Bool == false
+            && $0["ownerGeneration"] is NSNull }
+        XCTAssertFalse(app.buttons["pomodoro-toggle"].exists)
+        XCTAssertEqual(before["lifecycleActive"] as? Bool, true)
+        for _ in 0..<6 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            boardTap(app, "pomodoro-alarm-fixture-refresh")
+        }
+        let after = task586State(app)
+        XCTAssertEqual(after["addAttempts"] as? Int, 1)
+        XCTAssertEqual(after["permissionReads"] as? Int, before["permissionReads"] as? Int)
+    }
+
+    func testTask586SavedTimerControlsAndCompletionAlertOffReachAlarmOwner() throws {
+        let app = try task586App("CONTROLS"); defer { app.terminate() }
+        task586Wait(app) { $0["outcome"] as? String == "retained" && $0["alarmDirty"] as? Bool == false }
+        boardTap(app, "tab-focus"); boardEnabled(app.buttons["pomodoro-toggle"], timeout: 30)
+        task583Tap(app, "pomodoro-toggle")
+        task586Wait(app) { $0["addAttempts"] as? Int == 1 && $0["alarmDirty"] as? Bool == false }
+        task583Tap(app, "pomodoro-toggle")
+        task586Wait(app) { $0["removePending"] as? Int == 1 && $0["outcome"] as? String == "cancelled" }
+        task583Tap(app, "pomodoro-toggle")
+        task586Wait(app) { $0["addAttempts"] as? Int == 2 && $0["alarmDirty"] as? Bool == false }
+        task103Open(app); boardTap(app, "gtd-pomodoroSettings"); boardEnabled(app.buttons["gtd-pomodoro-back"], timeout: 30)
+        task551SetToggle(app, "pomodoroCompletionAlert", "0")
+        let off = task586Wait(app) { $0["removePending"] as? Int == 2 && $0["outcome"] as? String == "cancelled"
+            && $0["alarmDirty"] as? Bool == false }
+        XCTAssertEqual(off["addAttempts"] as? Int, 2)
+    }
+
+    func testTask586BackgroundDrainsHeldCallbackAndActivationReconcilesWithoutDuplicateAdd() throws {
+        let app = try task586App("HELD", flags: ["--native-pomodoro-alarm-hold-first-add"]); defer { app.terminate() }
+        let held = task586Wait(app) { $0["heldAdd"] as? Bool == true }
+        let generation = try XCTUnwrap(held["lifecycleGeneration"] as? Int)
+        #if targetEnvironment(simulator)
+        XCUIDevice.shared.press(.home)
+        #else
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.995))
+            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
+        #endif
+        let background = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.state == .runningBackground || app.state == .runningBackgroundSuspended
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [background], timeout: 10), .completed)
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        boardEnabled(app.buttons["pomodoro-alarm-fixture-release"], timeout: 30)
+        let returned = task586Wait(app) { ($0["lifecycleGeneration"] as? Int ?? 0) > generation
+            && $0["heldAdd"] as? Bool == true && $0["draining"] as? Bool == true }
+        XCTAssertEqual(returned["ownerGeneration"] as? Int, held["ownerGeneration"] as? Int)
+        XCTAssertEqual(returned["alarmDirty"] as? Bool, true)
+        boardTap(app, "pomodoro-alarm-fixture-release")
+        let settled = task586Wait(app) { $0["heldAdd"] as? Bool == false && $0["draining"] as? Bool == false
+            && $0["alarmDirty"] as? Bool == false && $0["ownerGeneration"] is NSNull }
+        XCTAssertEqual(settled["addAttempts"] as? Int, 1)
+        XCTAssertEqual(settled["lifecycleActive"] as? Bool, true)
+    }
+
+    func testTask586HostRetirementRejectsLateHeldCallbackAndDrainsItsSlot() throws {
+        let app = try task586App("RETIRE", flags: ["--native-pomodoro-alarm-hold-first-add"]); defer { app.terminate() }
+        task586Wait(app) { $0["heldAdd"] as? Bool == true }
+        boardTap(app, "pomodoro-alarm-fixture-retire")
+        let retired = task586Wait(app) { $0["hostRetired"] as? Bool == true && $0["draining"] as? Bool == true }
+        XCTAssertEqual(retired["lifecycleActive"] as? Bool, false)
+        boardTap(app, "pomodoro-alarm-fixture-release")
+        let drained = task586Wait(app) { $0["heldAdd"] as? Bool == false && $0["draining"] as? Bool == false
+            && $0["ownerGeneration"] is NSNull }
+        XCTAssertEqual(drained["alarmDirty"] as? Bool, true)
+        XCTAssertEqual(drained["outcome"] as? String, "")
+        XCTAssertEqual(drained["addAttempts"] as? Int, 1)
+    }
+
+    private func task586CorruptCancellation(_ suffix: String, denied: Bool) throws {
+        var flags = ["--native-pomodoro-alarm-seed-owned"]
+        if denied { flags.append("--native-pomodoro-alarm-denied") }
+        let app = try task586App(suffix, flags: flags); defer { app.terminate() }
+        let cancelled = task586Wait(app) { $0["removePending"] as? Int == 1 && $0["removeDelivered"] as? Int == 1
+            && $0["outcome"] as? String == "cancelled" && $0["alarmDirty"] as? Bool == false }
+        XCTAssertEqual(cancelled["addAttempts"] as? Int, 0)
+        boardTap(app, "tab-focus")
+        XCTAssertTrue(app.staticTexts["pomodoro-error"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+
+    func testTask586ExplicitOffCancelsOwnedAlarmsEvenWithCorruptTimerPanel() throws {
+        try task586CorruptCancellation("OFF_CORRUPT", denied: false)
+    }
+
+    func testTask586DeniedPermissionCancelsOwnedAlarmsEvenWithCorruptTimerPanel() throws {
+        try task586CorruptCancellation("DENIED_CORRUPT", denied: true)
+    }
 
 }

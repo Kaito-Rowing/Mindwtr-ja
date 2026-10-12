@@ -222,6 +222,10 @@ final class CoreModel: ObservableObject {
             if oldValue == .trash && selectedSurface != .trash { retireTrashPresentation(clearSelection: true) }
             if oldValue == .settings && selectedSurface != .settings {
                 retireAppleRemindersSettings()
+                #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                settingsAIProofTask?.cancel()
+                #endif
+                retireAISettingsPage()
                 retireNotificationSettingsPage()
                 retireCalendarSettingsPage()
                 calendarSubscriptionRuntimeRecovery = nil
@@ -275,6 +279,13 @@ final class CoreModel: ObservableObject {
     private var pomodoroWorkHost: CoreHost?
     private var pomodoroWork: Task<Void, Never>?
     private var pomodoroWake: Task<Void, Never>?
+    #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    private(set) var pomodoroAlarmTestEnabled = false
+    private var pomodoroAlarmTestRetired = false
+    @Published private(set) var pomodoroAlarmTestState = ""
+    private var pomodoroAlarmTestOutcome = ""
+    private var pomodoroAlarmTestHost: CoreHost?
+    #endif
     private var pomodoroPickerRevision = ""
     private struct PomodoroCommand {
         let host: CoreHost
@@ -339,6 +350,23 @@ final class CoreModel: ObservableObject {
     @Published private(set) var settingsMenu: CoreObject = [:]
     @Published private(set) var settingsSearch = ""
     @Published private(set) var settingsManagePresented = false
+    @Published private(set) var settingsAIPresented = false
+    @Published private(set) var settingsAIProjection: NativeAISettingsProjection?
+    @Published private(set) var settingsAILoading = false
+    @Published private(set) var settingsAIReadFailed = false
+    private var settingsAISession = UUID()
+    private var settingsAIReadID: UUID?
+    @Published private var settingsAITask: Task<Void, Never>?
+    #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    private var settingsAITestDelayOnce = false
+    private var settingsAITestFailureOnce = false
+    @Published private(set) var settingsAITestHeld = false
+    @Published private(set) var settingsAIProofState = ""
+    private var settingsAIProofTask: Task<Void, Never>?
+    private var settingsAIProofID: UUID?
+    private var settingsAIProofReadAttempts = 0
+    private var settingsAIProofSearchInFlight = 0
+    #endif
     @Published private(set) var settingsAdvancedPresented = false
     @Published private(set) var settingsAboutPresented = false
     @Published private(set) var settingsAboutOpening = false
@@ -1482,6 +1510,9 @@ final class CoreModel: ObservableObject {
     private var reminderConfirmedRevision: UInt64 = 0
     private var reminderWakeTicket: UInt64 = 0
     private var reminderAttemptedTicket: UInt64 = 0
+    private var pomodoroAlarmWakeTicket: UInt64 = 0
+    private var pomodoroAlarmAttemptedTicket: UInt64 = 0
+    private var pomodoroAlarmConfirmedTicket: UInt64 = 0
     private var reminderDebounceReady = true
     private var reminderDrainLease: UIBackgroundTaskIdentifier = .invalid
     private var reminderDrainOwner: UUID?
@@ -1626,6 +1657,9 @@ final class CoreModel: ObservableObject {
     private var host: CoreHost? {
         didSet {
             if oldValue.map({ ObjectIdentifier($0) }) != host.map({ ObjectIdentifier($0) }) {
+                #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                settingsAIProofTask?.cancel(); settingsAIProofState = ""; settingsAIProofReadAttempts = 0
+                #endif
                 pomodoroWork?.cancel(); pomodoroWake?.cancel()
                 pomodoroWork = nil; pomodoroWake = nil; pomodoroWorkHost = nil
                 pomodoroCommand = nil; pomodoroFeedback = nil; pomodoroPanel = [:]
@@ -1637,6 +1671,7 @@ final class CoreModel: ObservableObject {
                 appleRemindersOwner = nil; appleRemindersTask = nil
                 appleRemindersPendingEdit = nil
                 appleRemindersImportRetry = false
+                retireAISettingsPage()
                 retireNotificationSettingsPage()
                 retireCalendarSettingsPage()
                 settingsAdvancedPresented = false
@@ -4920,6 +4955,10 @@ final class CoreModel: ObservableObject {
     private var taskTimeSpentPending: Bool { taskTimeSpentInput != taskTimeSpentResolvedInput }
 
     func start() async {
+        #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+        // Keep the deliberately retired fixture owner available until its held callback drains.
+        guard !pomodoroAlarmTestEnabled || !pomodoroAlarmTestRetired else { return }
+        #endif
         guard !busy else { return }
         retireTrashPresentation(clearSelection: true)
         if projectFileAvailabilityPending {
@@ -5032,6 +5071,8 @@ final class CoreModel: ObservableObject {
                     backupExportTestHoldOnce = arguments.contains("--native-backup-export-hold-once")
                     taskRecoveryResolverTestFailure = arguments.contains("--native-task116-resolver-failure-once")
                     #endif
+                    settingsAITestDelayOnce = arguments.contains("--native-ai-summary-delay-once")
+                    settingsAITestFailureOnce = arguments.contains("--native-ai-summary-read-failure-once")
                     settingsAboutTestUnavailable = arguments.contains("--native-about-lookup-unavailable")
                     settingsFeedbackTestUnavailable = arguments.contains("--native-feedback-unavailable")
                     settingsSyncTestThrowOnce = arguments.contains("--native-sync-command-throw-once")
@@ -5048,6 +5089,17 @@ final class CoreModel: ObservableObject {
                     host = CoreHost(databaseURL: database, bundleURL: bundle,
                         deviceStorage: (directory, namespace),
                         isolatedTestID: identifier)
+                    #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                    if arguments.contains("--native-ai-summary-proof") { try await host!.configureIsolatedAISummaryCheckpoint() }
+                    if arguments.contains("--native-pomodoro-alarm-fixture") {
+                        pomodoroAlarmTestEnabled = true
+                        try await host!.configureIsolatedPomodoroAlarmFixture(
+                            holdFirstAdd: arguments.contains("--native-pomodoro-alarm-hold-first-add"),
+                            denied: arguments.contains("--native-pomodoro-alarm-denied"),
+                            seedOwned: arguments.contains("--native-pomodoro-alarm-seed-owned"))
+                        pomodoroAlarmTestHost = host
+                    }
+                    #endif
                     #if DEBUG && targetEnvironment(simulator)
                     if arguments.contains("--native-apple-reminders-fixture") {
                         try await host!.configureIsolatedAppleRemindersFixture(
@@ -6082,9 +6134,12 @@ final class CoreModel: ObservableObject {
         if !reminderSceneActive {
             reminderSceneActive = true
             reminderWakeTicket &+= 1; reminderDebounceReady = true
+            pomodoroAlarmWakeTicket &+= 1
+            pomodoroNeedsRead = true
             reminderDebounceTask?.cancel(); reminderDebounceTask = nil
             reminderTopUpTask?.cancel(); reminderTopUpTask = nil
         }
+        admitPomodoroRuntime()
         admitReminderLifecycle()
     }
 
@@ -6117,6 +6172,8 @@ final class CoreModel: ObservableObject {
         reminderObservationClaim = UUID(); reminderObservationToken = nil
         reminderRevision = 0; reminderConfirmedRevision = 0
         reminderWakeTicket &+= 1; reminderAttemptedTicket = reminderWakeTicket
+        pomodoroAlarmWakeTicket &+= 1; pomodoroAlarmAttemptedTicket = pomodoroAlarmWakeTicket
+        pomodoroAlarmConfirmedTicket = 0
         if let previous, observed === previous, let registration {
             Task { await previous.removeReminderObserver(registration.id) }
         }
@@ -6126,6 +6183,8 @@ final class CoreModel: ObservableObject {
     func reminderClockChanged() {
         reminderTopUpTask?.cancel(); reminderTopUpTask = nil
         reminderWakeTicket &+= 1
+        pomodoroAlarmWakeTicket &+= 1
+        pomodoroNeedsRead = true; admitPomodoroRuntime()
         debounceReminderLifecycle()
     }
 
@@ -6136,11 +6195,15 @@ final class CoreModel: ObservableObject {
         case .sourceChanged(let revision):
             guard revision > reminderRevision else { return }
             reminderRevision = revision; reminderWakeTicket &+= 1
+            pomodoroAlarmWakeTicket &+= 1
+            pomodoroNeedsRead = true; admitPomodoroRuntime()
             reminderTopUpTask?.cancel(); reminderTopUpTask = nil
             debounceReminderLifecycle()
         case .admissionReady(let revision):
             reminderRevision = max(reminderRevision, revision)
             reminderWakeTicket &+= 1
+            pomodoroAlarmWakeTicket &+= 1
+            admitPomodoroRuntime()
             admitReminderLifecycle()
         }
     }
@@ -6198,16 +6261,19 @@ final class CoreModel: ObservableObject {
     }
 
     private func admitReminderLifecycle() {
-        guard reminderLifecycleTask == nil, reminderDebounceReady, reminderWakeTicket != reminderAttemptedTicket,
+        guard reminderLifecycleTask == nil, reminderDebounceReady,
+              reminderWakeTicket != reminderAttemptedTicket || pomodoroAlarmWakeTicket != pomodoroAlarmAttemptedTicket,
               let observed = host, let token = completedStartupToken, startupSyncCompletedHost === observed,
               reminderSceneActive, UIApplication.shared.applicationState == .active,
               ready, !retryNeeded, !settingsSyncRestartRequired, !appLockRecoveryPending,
               !appLock.concealed, !appLock.authenticating, !busy, !taskSavePending,
+              pomodoroWork == nil, pomodoroWorkHost == nil, pomodoroCommand == nil,
               !taskRecoverySaving, !taskRecoveryHydrating, !taskRecoveryStartupCorrupt,
               !projectFileAddPending, !projectFileAvailabilityPending, !projectNotesWritePending,
               projectNotesFlushTask == nil, projectAttachmentDownloadOwner == nil else { return }
         let owner = ReminderLifecycleOwner(id: UUID(), host: observed, token: token,
             generation: reminderGeneration)
+        let reconcileTaskReminders = reminderWakeTicket != reminderAttemptedTicket
         reminderAttemptedTicket = reminderWakeTicket
         reminderLifecycleOwner = owner
         reminderLifecycleTask = Task { [weak self] in
@@ -6217,6 +6283,9 @@ final class CoreModel: ObservableObject {
                     self.endReminderDrain(owner.id)
                     self.reminderLifecycleTask = nil; self.reminderLifecycleOwner = nil
                     self.admitReminderLifecycle()
+                    #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                    Task { await self.refreshPomodoroAlarmTestState() }
+                    #endif
                 }
             }
             do {
@@ -6240,23 +6309,75 @@ final class CoreModel: ObservableObject {
                     self.reminderRegistration = registration
                     self.reminderRevision = max(self.reminderRevision, registration.revision)
                 }
-                let revision = self.reminderRevision, ticket = self.reminderWakeTicket
-                self.reminderAttemptedTicket = ticket
-                let result = try await owner.host.reconcileReminders()
-                guard self.reminderLifecycleCurrent(owner) else { throw CancellationError() }
-                let deadline = try self.validateReminderLifecycleReply(result)
-                self.reminderConfirmedRevision = max(self.reminderConfirmedRevision, revision)
-                guard self.reminderWakeTicket == ticket else { return }
-                self.installReminderTopUp(deadline, owner: owner)
-                _ = try? await owner.host.call("logLine", argumentsJSON: self.json([
-                    "Native iOS reminder lifecycle reconciled",
-                    #"{"releaseCheck":"v1.3.5/ios-reminder-lifecycle","outcome":"confirmed"}"#,
-                ]))
+                if reconcileTaskReminders {
+                    let revision = self.reminderRevision, ticket = self.reminderWakeTicket
+                    self.reminderAttemptedTicket = ticket
+                    let result = try await owner.host.reconcileReminders()
+                    guard self.reminderLifecycleCurrent(owner) else { throw CancellationError() }
+                    let deadline = try self.validateReminderLifecycleReply(result)
+                    self.reminderConfirmedRevision = max(self.reminderConfirmedRevision, revision)
+                    if self.reminderWakeTicket == ticket {
+                        self.installReminderTopUp(deadline, owner: owner)
+                        _ = try? await owner.host.call("logLine", argumentsJSON: self.json([
+                            "Native iOS reminder lifecycle reconciled",
+                            #"{"releaseCheck":"v1.3.5/ios-reminder-lifecycle","outcome":"confirmed"}"#,
+                        ]))
+                    }
+                }
             } catch {
                 // Retain dirty work, but only a new source/activation/foreign settlement may retry.
             }
+            guard self.reminderLifecycleCurrent(owner), !self.busy, self.pomodoroWork == nil,
+                  self.pomodoroWorkHost == nil, self.pomodoroCommand == nil,
+                  self.pomodoroAlarmWakeTicket != self.pomodoroAlarmAttemptedTicket else { return }
+            let ticket = self.pomodoroAlarmWakeTicket
+            self.pomodoroAlarmAttemptedTicket = ticket
+            do {
+                let result = try self.decode(await owner.host.reconcilePomodoroAlarms())
+                guard self.reminderLifecycleCurrent(owner), Set(result.keys) == Set(["outcome"]),
+                      ["scheduled", "retained", "cancelled", "uncertain", "uninitialized"].contains(result.text("outcome")) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                if result.text("outcome") != "uncertain" { self.pomodoroAlarmConfirmedTicket = ticket }
+                #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                self.pomodoroAlarmTestOutcome = result.text("outcome")
+                #endif
+            } catch {
+                // SDK uncertainty stays dirty until a new relevant wake; callbacks never spin retries.
+            }
         }
     }
+
+    #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    func refreshPomodoroAlarmTestState() async {
+        guard pomodoroAlarmTestEnabled, let observed = pomodoroAlarmTestHost else { return }
+        do {
+            var state = try decode(await observed.readIsolatedPomodoroAlarmFixture())
+            guard pomodoroAlarmTestHost === observed else { return }
+            state["alarmDirty"] = pomodoroAlarmWakeTicket != pomodoroAlarmConfirmedTicket
+            state["lifecycleActive"] = reminderSceneActive
+            state["lifecycleGeneration"] = reminderGeneration
+            state["ownerGeneration"] = reminderLifecycleOwner?.generation as Any? ?? NSNull()
+            state["draining"] = reminderDrainOwner != nil
+            state["outcome"] = pomodoroAlarmTestOutcome
+            state["hostRetired"] = host !== observed
+            pomodoroAlarmTestState = try json(state)
+        } catch { pomodoroAlarmTestState = "fixture-read-unavailable" }
+    }
+
+    func releasePomodoroAlarmTestAdd() async {
+        guard pomodoroAlarmTestEnabled, let observed = pomodoroAlarmTestHost else { return }
+        try? await observed.releaseIsolatedPomodoroAlarmFixture()
+        await refreshPomodoroAlarmTestState()
+    }
+
+    func retirePomodoroAlarmTestHost() {
+        guard pomodoroAlarmTestEnabled, let observed = pomodoroAlarmTestHost, host === observed else { return }
+        pomodoroAlarmTestRetired = true
+        host = nil; ready = false; busy = false
+        Task { await refreshPomodoroAlarmTestState() }
+    }
+    #endif
 
     func requestCalendarPushLifecycle(token: UUID?, active: Bool) {
         guard !Task.isCancelled, let token, token == completedStartupToken else { return }
@@ -7148,6 +7269,7 @@ final class CoreModel: ObservableObject {
         settingsManageRequested = false
         settingsReadError = nil
         settingsSearch = ""
+        retireAISettingsPage()
         retireNotificationSettingsPage()
         retireCalendarSettingsPage()
         settingsGeneralPresented = false
@@ -7193,9 +7315,169 @@ final class CoreModel: ObservableObject {
         catch { self.error = error.localizedDescription }
     }
 
+    var settingsAICanOpen: Bool { settingsAITask == nil }
+
+    func openAISettingsSummary() {
+        guard ready, selectedSurface == .settings, settingsAdvancedPresented, !settingsAIPresented,
+              !busy, !retryNeeded, !appLock.concealed, !settingsCalendarPresented,
+              !settingsSyncPresented, !settingsSyncRestartRequired, settingsAITask == nil,
+              UIApplication.shared.applicationState == .active else { return }
+        observeDiagnosticsConcealment()
+        settingsSearchTask?.cancel(); settingsSearchGeneration += 1
+        settingsAISession = UUID()
+        settingsAIPresented = true
+        retryAISettingsSummary()
+    }
+
+    func retireAISettingsPage() {
+        settingsAISession = UUID()
+        settingsAITask?.cancel()
+        settingsAIPresented = false
+        settingsAIProjection = nil
+        settingsAIReadFailed = false
+        settingsAILoading = false
+        #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+        settingsAITestHeld = false
+        #endif
+        // Keep the task until its private read drains before admitting another page read.
+    }
+
+    private func aiSettingsSummaryCurrent(_ capturedHost: CoreHost, session: UUID) -> Bool {
+        host === capturedHost && settingsAISession == session && ready && settingsAIPresented
+            && selectedSurface == .settings && !appLock.concealed && !retryNeeded && !Task.isCancelled
+            && UIApplication.shared.applicationState == .active
+    }
+
+    func retryAISettingsSummary() {
+        guard let currentHost = host, settingsAITask == nil, !busy,
+              aiSettingsSummaryCurrent(currentHost, session: settingsAISession) else { return }
+        let session = settingsAISession, id = UUID()
+        settingsAIReadID = id; settingsAILoading = true; settingsAIReadFailed = false
+        settingsAIProjection = nil
+        settingsAITask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.settingsAIReadID == id {
+                    self.settingsAITask = nil; self.settingsAIReadID = nil; self.settingsAILoading = false
+                }
+            }
+            do {
+                #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                if self.settingsAIProofEnabled { self.settingsAIProofReadAttempts += 1 }
+                #endif
+                let projection = try await currentHost.readAISettingsProjection()
+                #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                if self.settingsAITestDelayOnce {
+                    self.settingsAITestDelayOnce = false; self.settingsAITestHeld = true
+                    try? await Task.sleep(nanoseconds: 8_000_000_000)
+                    self.settingsAITestHeld = false
+                }
+                if self.settingsAITestFailureOnce {
+                    self.settingsAITestFailureOnce = false
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                #endif
+                guard self.aiSettingsSummaryCurrent(currentHost, session: session) else { return }
+                self.settingsAIProjection = projection
+                _ = try? await currentHost.call("logLine", argumentsJSON: self.json([
+                    "Native iOS AI settings summary published",
+                    #"{"releaseCheck":"v1.3.5/ios-ai-settings-summary","outcome":"confirmed"}"#,
+                ]))
+            } catch {
+                guard self.aiSettingsSummaryCurrent(currentHost, session: session) else { return }
+                self.settingsAIReadFailed = true
+            }
+        }
+    }
+
+    #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    var settingsAIProofEnabled: Bool {
+        guard Bundle.main.bundleIdentifier == "tech.dongdongbh.mindwtr.native.dev",
+              NativeAppLaunch.arguments.filter({ $0 == "--native-ai-summary-proof" }).count == 1,
+              let selection = try? NativeAppLaunch.selection.get(), case .isolated = selection else { return false }
+        return true
+    }
+    private var settingsAIProofSettled: Bool {
+        ready && !busy && !retryNeeded && !settingsSyncRestartRequired && !appLockRecoveryPending
+            && !appLock.concealed && !appLock.authenticating && !appLockActive
+            && selectedSurface == .settings && settingsAdvancedPresented && !settingsAIPresented
+            && operationContextClean && notificationResponseContextClean
+            && settingsAITask == nil && settingsAIReadID == nil && !settingsAILoading
+            && foregroundSyncOwner == nil && foregroundSyncTask == nil
+            && pomodoroWork == nil && pomodoroWorkHost == nil && pomodoroCommand == nil
+            && reminderLifecycleTask == nil && reminderLifecycleOwner == nil && reminderDebounceTask == nil
+            && calendarPushLifecycleTask == nil && calendarPushLifecycleOwner == nil && calendarPushStopTask == nil
+            && searchLifecycleTask == nil && searchLifecycleOwner == nil
+            && notificationResponseTask == nil && entityLinkTask == nil && appleRemindersAutoTask == nil
+            && calendarReadTask == nil && settingsAIProofSearchInFlight == 0
+            && UIApplication.shared.applicationState == .active
+    }
+    private var settingsAIProofWake: [String] {
+        [String(foregroundSyncGeneration), String(reminderGeneration), String(calendarPushGeneration), String(searchGeneration),
+         String(reminderWakeTicket), String(pomodoroAlarmWakeTicket), String(calendarPushWakeTicket), String(entityLinkWake),
+         String(settingsSearchGeneration)]
+    }
+    func captureAISettingsSummaryFixture(_ phase: NativeAISummaryCheckpointPhase) {
+        guard settingsAIProofEnabled, settingsAIProofTask == nil, let currentHost = host,
+              let token = completedStartupToken, startupSyncCompletedHost === currentHost,
+              phase == .baseline ? settingsAIProofReadAttempts == 0 && settingsAIProofState.isEmpty
+                : settingsAIProofReadAttempts > 0 && settingsAIProofState == "baseline-ready" else { return }
+        let id = UUID(), session = settingsAISession, defaults = preferenceDefaults
+        settingsAIProofID = id; settingsAIProofState = "waiting"
+        settingsAIProofTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.settingsAIProofID == id { self.settingsAIProofTask = nil; self.settingsAIProofID = nil } }
+            for _ in 0..<60 {
+                guard !Task.isCancelled, self.host === currentHost, self.completedStartupToken == token,
+                      self.startupSyncCompletedHost === currentHost, self.settingsAISession == session,
+                      self.preferenceDefaults === defaults, self.settingsAIProofID == id else { return }
+                if self.settingsAIProofSettled {
+                    let wake = self.settingsAIProofWake
+                    do {
+                        try await currentHost.captureIsolatedAISummaryCheckpoint(phase, startupToken: token) { [weak self] in
+                            guard let self else { return false }
+                            return self.settingsAIProofEnabled && self.settingsAIProofSettled
+                                && self.host === currentHost && self.completedStartupToken == token
+                                && self.startupSyncCompletedHost === currentHost && self.settingsAISession == session
+                                && self.preferenceDefaults === defaults && self.settingsAIProofID == id
+                                && self.settingsAIProofWake == wake
+                                && (phase == .baseline ? self.settingsAIProofReadAttempts == 0 : self.settingsAIProofReadAttempts > 0)
+                        }
+                        guard self.host === currentHost, self.completedStartupToken == token,
+                              self.startupSyncCompletedHost === currentHost, self.settingsAISession == session,
+                              self.preferenceDefaults === defaults, self.settingsAIProofSettled,
+                              self.settingsAIProofID == id, self.settingsAIProofWake == wake, !Task.isCancelled else { return }
+                        self.settingsAIProofState = phase == .baseline ? "baseline-ready" : "final-ready"
+                        return
+                    } catch { /* Observe natural settlement; never force persistence or clear evidence. */ }
+                }
+                do { try await Task.sleep(nanoseconds: 500_000_000) } catch { return }
+            }
+            if self.host === currentHost, self.completedStartupToken == token, self.settingsAIProofID == id {
+                self.settingsAIProofState = "failed"
+            }
+        }
+    }
+
+    func retireAISettingsSummaryFixture(_ reason: String) {
+        guard settingsAITestHeld, let selection = try? NativeAppLaunch.selection.get(),
+              case .isolated = selection else { return }
+        if reason == "lock" { appLock.readFailed() }
+        else if reason == "host" {
+            let previous = host
+            host = nil
+            ready = false
+            Task { [weak self] in
+                await previous?.close()
+                await self?.start()
+            }
+        }
+    }
+    #endif
+
     func openAdvancedSettings() {
         guard ready, selectedSurface == .settings, !settingsAdvancedPresented, !busy, !retryNeeded,
-              !settingsCalendarPresented, !calendarSettingActive, !settingsNotificationsPresented,
+              !settingsCalendarPresented, !calendarSettingActive, !settingsNotificationsPresented, !settingsAIPresented,
               !settingsAboutPresented, !settingsManagePresented, !settingsGeneralPresented, !settingsGtdPresented,
               !settingsDataPresented, !settingsSyncPresented, !settingsSyncRestartRequired, !appLock.concealed,
               !settingsMenu.object("advanced").text("title").isEmpty else { return }
@@ -7206,7 +7488,7 @@ final class CoreModel: ObservableObject {
     }
 
     func closeAdvancedSettings() {
-        guard selectedSurface == .settings, settingsAdvancedPresented, !settingsCalendarPresented,
+        guard selectedSurface == .settings, settingsAdvancedPresented, !settingsCalendarPresented, !settingsAIPresented,
               !busy, !retryNeeded, !calendarSettingActive, !appLock.concealed else { return }
         settingsSearchTask?.cancel()
         settingsSearchGeneration += 1
@@ -7215,13 +7497,19 @@ final class CoreModel: ObservableObject {
     }
 
     func setSettingsSearch(_ value: String) {
-        guard !settingsCalendarPresented, !calendarSettingActive, !settingsNotificationsPresented, selectedSurface == .settings, !settingsAboutPresented, !settingsManagePresented, !settingsSyncPresented, !settingsSyncRestartRequired, !retryNeeded else { return }
+        guard !settingsCalendarPresented, !calendarSettingActive, !settingsNotificationsPresented, !settingsAIPresented, selectedSurface == .settings, !settingsAboutPresented, !settingsManagePresented, !settingsSyncPresented, !settingsSyncRestartRequired, !retryNeeded else { return }
         settingsSearch = value
         settingsReadError = nil
         settingsSearchGeneration += 1
         let generation = settingsSearchGeneration
         settingsSearchTask?.cancel()
+        #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+        settingsAIProofSearchInFlight += 1
+        #endif
         settingsSearchTask = Task {
+            #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+            defer { settingsAIProofSearchInFlight -= 1 }
+            #endif
             do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
             guard !Task.isCancelled, selectedSurface == .settings, !settingsAboutPresented, !settingsManagePresented,
                   settingsSearchGeneration == generation else { return }
@@ -7235,7 +7523,7 @@ final class CoreModel: ObservableObject {
         let search = settingsSearch, capturedGeneration = generation ?? settingsSearchGeneration
         let advanced = settingsAdvancedPresented
         func current() -> Bool {
-            host === currentHost && !settingsAboutPresented && settingsAboutTask == nil
+            host === currentHost && !settingsAIPresented && !settingsAboutPresented && settingsAboutTask == nil
                 && !settingsCalendarPresented && calendarSettingsCloseTask == nil
                 && !settingsSyncPresented && !settingsSyncRestartRequired && selectedSurface == .settings
                 && !appLock.concealed && !Task.isCancelled
@@ -8411,6 +8699,7 @@ final class CoreModel: ObservableObject {
                 self?.invalidateTaskAttachmentOpen()
                 self?.invalidateProjectAttachmentOpen()
                 self?.cancelProjectFileImport()
+                self?.retireAISettingsPage()
                 self?.invalidateDiagnostics(dropCache: true)
             }
         }
@@ -10598,6 +10887,8 @@ final class CoreModel: ObservableObject {
                     "settings.backupMobile.failedToRestoreBackup", "settings.backupMobile.restoreFailed", "settings.backupMobile.importFailed", "settings.importDiagnostics.limitExceeded", "settings.recoverySnapshotsEmpty",
                     "appLock.title", "appLock.description", "appLock.prompt", "appLock.enablePrompt", "appLock.unlock",
                     "appLock.authenticating", "appLock.useDevicePasscode", "appLock.unavailable", "appLock.cancelled", "appLock.failed",
+                    "settings.ai", "settings.aiEnable", "settings.aiProvider", "settings.aiProviderOpenAI", "settings.aiProviderGemini", "settings.aiProviderAnthropic",
+                    "settings.aiRequestTimeout", "settings.aiRequestTimeoutSeconds", "settings.aiSummaryReadOnly", "settings.on", "settings.off",
                     "settings.iosSearchLabel", "settings.iosSearchDesc", "settings.iosSearchPaused", "settings.iosSearchFailed",
                     "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading", "common.ok", "common.noMatches",
                     "common.play", "common.pause", "quickAdd.audioNoteTitle", "quickAdd.bulkCreateError", "audio.loading",
@@ -31163,6 +31454,7 @@ final class CoreModel: ObservableObject {
             guard self.host === owner else { return }
             self.pomodoroWork = nil
             self.admitPomodoroRuntime()
+            self.admitReminderLifecycle()
         }
     }
 
@@ -31186,8 +31478,10 @@ final class CoreModel: ObservableObject {
         busy = true; pomodoroWorkHost = owner; pomodoroNeedsRead = false; pomodoroError = nil
         defer {
             if host === owner, pomodoroWorkHost === owner {
+                pomodoroAlarmWakeTicket &+= 1
                 finishOperation(); pomodoroWorkHost = nil; armPomodoroDeadline()
                 admitPomodoroRuntime()
+                admitReminderLifecycle()
             }
         }
         do {
@@ -31266,7 +31560,9 @@ final class CoreModel: ObservableObject {
         busy = true; pomodoroWorkHost = command.host; pomodoroError = nil
         defer {
             if host === command.host, pomodoroWorkHost === command.host {
+                pomodoroAlarmWakeTicket &+= 1
                 finishOperation(); pomodoroWorkHost = nil; armPomodoroDeadline()
+                admitReminderLifecycle()
             }
         }
         do {
@@ -32230,11 +32526,15 @@ final class CoreModel: ObservableObject {
         return error is CoreHostRejection
     }
     private func finishOperation() {
-        if pomodoroWorkHost == nil { pomodoroNeedsRead = true }
+        if pomodoroWorkHost == nil {
+            pomodoroNeedsRead = true
+            pomodoroAlarmWakeTicket &+= 1
+        }
         defer {
+            admitPomodoroRuntime()
             admitReminderLifecycle(); admitCalendarPushLifecycle(); admitSearchLifecycle(); admitNotificationResponses()
             if entityLinkTask == nil { requestEntityLinks() }
-            admitAppleRemindersAutoImport(); admitPomodoroRuntime()
+            admitAppleRemindersAutoImport()
             #if DEBUG && targetEnvironment(simulator)
             publishTrashBulkTestState()
             #endif
