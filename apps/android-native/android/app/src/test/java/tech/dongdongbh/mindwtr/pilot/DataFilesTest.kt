@@ -16,6 +16,15 @@ import java.io.IOException
 class DataFilesTest {
     @get:Rule val folder = TemporaryFolder()
 
+    // D1b code review P2: every Data row (Getting Started and the imports included) is off while a sync runs, as RN's
+    // `isSyncing || isBackupBusy`; each entry point (export, pick, import, Getting Started, a snapshot) checks the same guard.
+    @Test fun dataRowsWaitForARunningSync() {
+        assertFalse(dataRowsBusy(null, syncing = false))
+        assertTrue(dataRowsBusy(null, syncing = true))
+        assertTrue(dataRowsBusy("gettingStarted", syncing = false))
+        assertTrue(dataRowsBusy("import:todoist", syncing = true))
+    }
+
     @Test fun theCopyCountsItsOwnBytesWhateverTheProviderSaid() {
         // The provider's SIZE column said 1 byte (RN's 7b7201ab6): the copy counts what it reads and stops past the production limit.
         val out = File(folder.root, "stage")

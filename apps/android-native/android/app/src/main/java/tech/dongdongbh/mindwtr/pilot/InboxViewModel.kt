@@ -271,6 +271,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** The sync badge (RN's useMobileSyncBadge, core's state): the Menu tab's dot and the Settings row's badge. */
     data class SyncBadge(val state: String, val color: String?)
     var syncBadge by mutableStateOf(badgeOf(ProcessCoreHost.syncState)); private set
+    /** A sync is running now (core's activity state, not a pending write): Settings › Data's rows wait for it, as RN's do. */
+    var syncActive by mutableStateOf(ProcessCoreHost.syncState?.optBoolean("active") == true); private set
     private var syncCycles = ProcessCoreHost.syncState?.optInt("cycles") ?: 0
     /** The JS host's events arrive on the engine thread; each is handed to the main thread. */
     private val syncListener: (JSONObject) -> Unit = { event -> ui { syncEvent(event) } }
@@ -285,6 +287,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         when (event.optString("type")) {
             "sync" -> {
                 syncBadge = badgeOf(event)
+                syncActive = event.optBoolean("active")
                 val cycles = event.optInt("cycles")
                 if (cycles != syncCycles) {
                     syncCycles = cycles

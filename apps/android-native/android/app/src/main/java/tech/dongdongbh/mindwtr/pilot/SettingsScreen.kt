@@ -413,7 +413,7 @@ private fun BackupCard(model: InboxViewModel, backup: JSONObject) = with(model.m
         }
         if (open) {
             val running = transfer.action
-            val enabled = running == null
+            val enabled = !transfer.busy
             BackupRow(backup.getString("exportLabel"), backup.getString("description"), theme.exportAction, enabled, running == "export", "data-transfer-export") { transfer.export("json") }
             BackupRow(backup.getString("csvLabel"), backup.getString("csvDescription"), theme.exportAction, enabled, running == "export:csv", "data-transfer-export-csv") { transfer.export("csv") }
             BackupRow(backup.getString("tasknotesLabel"), backup.getString("tasknotesDescription"), theme.exportAction, enabled, running == "export:tasknotes", "data-transfer-export-tasknotes") { transfer.export("tasknotes") }
@@ -456,7 +456,7 @@ private fun ImportCard(model: InboxViewModel, importData: JSONObject) = with(mod
             for (index in 0 until rows.length()) {
                 val row = rows.getJSONObject(index)
                 val key = row.getString("key")
-                BackupRow(row.getString("label"), row.getString("description"), c.tint, running == null, running == "import:$key", "data-transfer-import-$key") { transfer.pickImport(key) }
+                BackupRow(row.getString("label"), row.getString("description"), c.tint, !transfer.busy, running == "import:$key", "data-transfer-import-$key") { transfer.pickImport(key) }
             }
         }
     }

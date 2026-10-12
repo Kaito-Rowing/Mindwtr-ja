@@ -2191,6 +2191,19 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     const projectDetailKinds = [.../val PROJECT_DETAIL_KINDS = setOf\(([^)]*)\)/.exec(source('ProjectDetails.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
     // Settings › Calendar's new subscription (pass C3), sent by CalendarSettings.kt; its other writes are the Settings kind calendarSetting.
     const calendarKinds = [.../val CALENDAR_COMMANDS = setOf\(([^)]*)\)/.exec(source('CalendarSettings.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
+    // Settings › Data's rows (pass D1b code review): off while one runs or a sync runs, every entry point and row on that guard.
+    {
+        const transferSource = source('DataTransfer.kt');
+        assert.match(transferSource, /val busy get\(\) = dataRowsBusy\(action, shell\.syncActive\)/);
+        for (const entry of ['export', 'pickBackup', 'pickImport', 'askSnapshot', 'gettingStarted']) {
+            assert.match(transferSource, new RegExp(`fun ${entry}\\([^)]*\\) \\{\\s+if \\(busy\\) return`), `${entry} waits while a Data action or a sync runs`);
+        }
+        const settingsScreenSource = source('SettingsScreen.kt');
+        assert.match(settingsScreenSource, /val enabled = !transfer\.busy/);
+        assert.match(settingsScreenSource, /c\.tint, !transfer\.busy, running == "import:\$key"/);
+        assert.match(readFileSync(resolve(app, 'bundle/host-sync.ts'), 'utf8'), /active: service\.getMobileSyncActivityState\(\) === 'syncing'/);
+        assert.match(source('InboxViewModel.kt'), /syncActive = event\.optBoolean\("active"\)/);
+    }
     // Settings › Data's own (pass D1b): Getting Started's seed, sent by DataTransfer.kt.
     const dataKinds = [.../val DATA_COMMANDS = setOf\(([^)]*)\)/.exec(source('DataTransfer.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
     assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds, ...calendarKinds, ...attachmentKinds, ...projectDetailKinds, ...dataKinds].sort(), 'every menu command kind is one host command, logged as its operation');

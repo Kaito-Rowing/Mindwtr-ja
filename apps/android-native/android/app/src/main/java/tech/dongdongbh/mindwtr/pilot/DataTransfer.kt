@@ -56,6 +56,9 @@ object DataTransferLimits {
     val MAX_PLAN_BYTES: Long get() = 2 * MAX_DATA_TRANSFER_BYTES + 1024 * 1024
 }
 
+/** Whether Settings › Data's rows are off: an action of theirs runs ([action]), or a sync does ([syncing]), as RN's rows are. */
+internal fun dataRowsBusy(action: String?, syncing: Boolean): Boolean = action != null || syncing
+
 /** Settings › Data's own Menu commands (check-boot-gates.mjs: each is one host command): Getting Started's seed. */
 internal val DATA_COMMANDS = setOf("gettingStarted")
 
@@ -94,7 +97,8 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     /** The export made at press time (RN reads its snapshot before the folder picker), held for the picker's answer. */
     private var exportFile: JSONObject? = null
 
-    val busy get() = action != null
+    /** Every Data row is off while one runs or a sync runs (RN's `isSyncing || isBackupBusy`); each entry point checks it. */
+    val busy get() = dataRowsBusy(action, shell.syncActive)
 
     fun launched() { launch = null }
 
