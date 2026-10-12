@@ -413,7 +413,7 @@ const shootMenu = async (prefix, suffix, rn) => {
     }
 };
 /**
- * Settings from the More sheet's Settings tile (both apps), then General, GTD and Sync (their menu rows, core's labels): each
+ * Settings from the More sheet's Settings tile (both apps, shot as settings-menu), then General, GTD and Sync (their menu rows, core's labels): each
  * shot with its first switch or RN's "Sync is off" box on screen, and closed with Back; Back again leaves Settings.
  */
 const SETTINGS_SCREENS = [
@@ -427,6 +427,7 @@ const shootSettings = async (prefix, suffix, rn) => {
     await tap(rn ? menu.find((node) => node['content-desc'] === 'Menu') : tab(menu, 'Menu'));
     const sheet = await waitFor('the Settings tile', (current) => Boolean(withDescription(current, en['nav.settings'])), 15_000);
     await tap(withDescription(sheet, en['nav.settings']));
+    await shoot(`${prefix}-settings-menu-${suffix}`, (current) => Boolean(withDescription(current, SETTINGS_SCREENS[0].row)));
     for (const screen of SETTINGS_SCREENS) {
         const rows = await waitFor(`the ${screen.name} row`, (current) => Boolean(withDescription(current, screen.row)), 30_000);
         await tap(withDescription(rows, screen.row));
