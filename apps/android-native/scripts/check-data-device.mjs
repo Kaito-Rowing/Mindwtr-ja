@@ -702,9 +702,9 @@ try {
     check(staged().length === 0 && !confirmButton(await screen()), '(I3) a 13 MiB file is refused while copied, with core\'s limit text and no staged copy');
     sh(`rm -f ${PHONE_DIR}/${big.name}`);
 
-    // I4: a Todoist import stopped before the journal lands nothing and leaves no result; stopped after its COMMIT, it is there
-    // exactly once with its receipt, the next start shows its result once, and only the replay line is logged (the stop comes
-    // before the commit's own line).
+    // I4: a Todoist import stopped before the journal; then one stopped right after its COMMIT. Each time the files are read
+    // while the process is dead (the disk as the next start finds it), then the start is watched, dump by dump, until the
+    // Inbox shows and the leftovers are cleaned: a result toast in any dump is caught however briefly it shows.
     const importCrash = async (label, props, file) => {
         push(file);
         for (const [name, value] of Object.entries(props)) setProp(name, value);
@@ -713,18 +713,34 @@ try {
         await until(`the process to end (I4 ${label})`, () => !pid(), 120_000, 500);
         for (const name of Object.keys(props)) setProp(name, '');
     };
+    const hasResult = () => listing('no_backup/backup-operations').includes('result.json');
+    const resultToast = (nodes) => hasText(nodes, en['settings.backupMobile.importComplete']) || hasText(nodes, en['settings.backupMobile.importFailed']);
+    /** Starts the app and reads every screen until it is on the Inbox and [settled] holds; whether any showed a result toast. */
+    const watchStart = async (settled) => {
+        device.launch(ACTIVITY);
+        let toast = false;
+        const deadline = Date.now() + 90_000;
+        for (;;) {
+            const nodes = await screen().catch(() => []);
+            if (resultToast(nodes)) toast = true;
+            if (onInbox(nodes) && settled()) return toast;
+            if (Date.now() > deadline) fail('timed out watching the start');
+            await sleep(300);
+        }
+    };
     const todoistCsv = (titles) => strToU8(['TYPE,CONTENT,PRIORITY,INDENT,DATE,DESCRIPTION', ...titles.map((title) => `task,${title},1,1,,`)].join('\n'));
     for (const [label, stop] of [['after-snapshot', 'after-snapshot'], ['mid-plan', 'mid-plan']]) {
         const titles = [`d1i4${label.replace('-', '')}${run}`];
         const lines = committedLines('todoist');
         const replays = replayLines().length;
         await importCrash(label, { backup_stop: stop }, binary(`d1-i4-${label}-${run}.zip`, zipSync({ [`d1i4proj${run}.csv`]: todoistCsv(titles) })));
-        await launch();
-        await sleep(8_000);
-        check(!hasText(await screen(), en['settings.backupMobile.importComplete']) && !hasText(await screen(), en['settings.backupMobile.importFailed']), `(I4 ${label}) the next start shows no result`);
+        // Dead: no journal entry, no result record; a mid-plan stop leaves only its unpublished folder.
+        check(journal().length === 0 && !hasResult(), `(I4 ${label}) while stopped: no journal entry and no result record`);
+        check(stop === 'mid-plan' ? operations().length === 1 : operations().length === 0, `(I4 ${label}) while stopped: ${stop === 'mid-plan' ? 'one unpublished operation folder' : 'no operation folder'}`);
         check(!taggedRows(pullDb(`i4-${label}`)).some((row) => titles.includes(row.title)), `(I4 ${label}) nothing landed`);
-        check(!listing('no_backup/backup-operations').includes('result.json') && journal().length === 0 && operations().length === 0, `(I4 ${label}) no result record, an empty journal and operation folder`);
-        check(committedLines('todoist') === lines && replayLines().length === replays, `(I4 ${label}) neither the commit line nor a replay line`);
+        const toast = await watchStart(() => operations().length === 0 && journal().length === 0);
+        check(!toast, `(I4 ${label}) the start showed no result toast`);
+        check(!hasResult() && committedLines('todoist') === lines && replayLines().length === replays, `(I4 ${label}) no result record, no commit line and no replay line`);
     }
     {
         const titles = [`d1i4aftercommit${run}`];
@@ -732,18 +748,20 @@ try {
         const replays = replayLines().length;
         const receipts = receiptCount('i4-receipts-before', 'todoist');
         await importCrash('after-commit', { commit_stop: 'backupDocumentCommit' }, binary(`d1-i4-after-commit-${run}.zip`, zipSync({ [`d1i4proj${run}.csv`]: todoistCsv(titles) })));
-        await launch();
-        await toastWith(en['settings.backupMobile.importComplete'], 60_000);
+        // Dead right after COMMIT: the rows and the receipt are in SQLite, the entry still journaled, no result record yet.
+        check(journal().length === 1 && operations().length === 1 && !hasResult(), '(I4 after-commit) while stopped: the entry and its folder, no result record');
         const landed = taggedRows(pullDb('i4-after-commit')).filter((row) => titles.includes(row.title));
-        check(landed.length === 1, `(I4 after-commit) the import landed exactly once: ${JSON.stringify(landed)}`);
-        check(receiptCount('i4-receipts-after', 'todoist') === receipts + 1, '(I4 after-commit) its receipt is in SQLite');
+        check(landed.length === 1, `(I4 after-commit) while stopped: the import landed exactly once: ${JSON.stringify(landed)}`);
+        check(receiptCount('i4-receipts-after', 'todoist') === receipts + 1, '(I4 after-commit) while stopped: its receipt is in SQLite');
         check(committedLines('todoist') === lines, '(I4 after-commit) no commit line: the stop came right after COMMIT');
+        const toast = await watchStart(() => journal().length === 0 && operations().length === 0 && !hasResult());
+        check(toast, '(I4 after-commit) the start showed the leftover result');
+        check(taggedRows(pullDb('i4-after-replay')).filter((row) => titles.includes(row.title)).length === 1, '(I4 after-commit) still exactly once after the replay');
         const replayed = replayLines().slice(replays);
         check(replayed.length === 1 && replayed[0].includes('"operation":"todoist"') && replayed[0].includes('"outcome":"committed"'), `(I4 after-commit) one replay line, todoist committed: ${replayed.join(' | ')}`);
-        await until('(I4 after-commit) the result record to go', () => !listing('no_backup/backup-operations').includes('result.json'), 30_000);
-        await relaunch();
-        await sleep(8_000);
-        check(!hasText(await screen(), en['settings.backupMobile.importComplete']), '(I4 after-commit) a second start shows the result no more');
+        await device.stopApp();
+        check(!hasResult() && journal().length === 0, '(I4 after-commit) stopped again: no result record is left to show');
+        check(!(await watchStart(() => true)), '(I4 after-commit) a second start shows the result no more');
     }
 
     // I5: Codex's 60 000-row Mindwtr CSV grows the library past what its Undo could admit: refused before COMMIT, nothing lands.
@@ -758,26 +776,51 @@ try {
     await until('(I5) the journal and the operation folder to empty', () => journal().length === 0 && operations().length === 0, 60_000);
     sh(`rm -f ${PHONE_DIR}/${expansion.name}`);
 
-    // I6: sentinels in a dropped repeat rule, a renamed project and a skipped archive entry's name stay out of every record.
+    // I6: sentinels in a dropped repeat rule, a renamed project and a skipped archive entry's name. The durable files are read
+    // while the process is dead at the two points they exist: right after the commit's reply (journal entry, plan, manifest and
+    // receipt on disk) and right after the result record is written (before its toast).
     const S1 = `TOKEN=d1sentinelone${run}`;
     const S2 = `d1sentineltwo${run}`;
     const S3 = `d1sentinelthree${run}`;
-    const named = binary(`d1-named-${run}.zip`, zipSync({ [`${S2}.csv`]: todoistCsv([`d1s2a${run}`]) }));
-    const renamed = binary(`d1-renamed-${run}.zip`, zipSync({ [`${S2}.csv`]: todoistCsv([`d1s2b${run}`]) }));
-    const rule = binary(`d1-rule-${run}.zip`, zipSync({ 'tasks.csv': strToU8(`Title,Recurrence\nd1s1a${run},${S1}\n`), [`${S3}.zip`]: zipSync({ 'inner.csv': strToU8('Title\nx') }) }));
-    for (const [key, file, title] of [['todoist', named, en['settings.backupMobile.importTodoistData']], ['todoist', renamed, en['settings.backupMobile.importTodoistData']],
-        ['mindwtr-csv', rule, en['settings.backupMobile.importMindwtrCsvData']]]) {
-        push(file);
-        await importPick(key, file);
-        await confirmQuestion(title);
-        await toastWith(en['settings.backupMobile.importComplete']);
-    }
     const holders = (sentinel) => runAs(`sh -c 'grep -rl "${sentinel}" files no_backup databases 2>/dev/null || true'`).split(/\s+/).filter(Boolean);
-    check(holders(S1).length === 0 && holders(S3).length === 0, `(I6) the dropped rule and the skipped entry's name are nowhere on disk: ${[...holders(S1), ...holders(S3)].join(' ')}`);
-    check(holders(S2).every((path) => path.startsWith('files/SQLite/') || path.startsWith('files/snapshots/')), `(I6) the renamed project's name is only in the library and its snapshots: ${holders(S2).join(' ')}`);
-    check(!allLogs().includes(S1) && !allLogs().includes(S2) && !allLogs().includes(S3), '(I6) no log line names a sentinel');
-    const receiptReplies = JSON.stringify(sqlite(pullDb('i6'), 'SELECT reply FROM native_request_receipts'));
-    check(![S1, S2, S3].some((sentinel) => receiptReplies.includes(sentinel)), '(I6) no receipt reply holds a sentinel');
+    const receiptReplies = (label) => JSON.stringify(sqlite(pullDb(label), 'SELECT reply FROM native_request_receipts'));
+    // A project titled S2 made by a Mindwtr CSV import: an unrelated id, so the Todoist file named S2 collides by title.
+    const seed = binary(`d1-seed-${run}.csv`, strToU8(`Title,Project\nd1s2seed${run},${S2}\n`));
+    push(seed);
+    await importPick('mindwtr-csv', seed);
+    await confirmQuestion(en['settings.backupMobile.importMindwtrCsvData']);
+    await toastWith(en['settings.backupMobile.importComplete']);
+    // The colliding Todoist import, stopped once its result record is written: it renamed the project (the warning ran).
+    const renamed = binary(`d1-renamed-${run}.zip`, zipSync({ [`${S2}.csv`]: todoistCsv([`d1s2b${run}`]) }));
+    push(renamed);
+    setProp('backup_stop', 'after-settle');
+    await importPick('todoist', renamed);
+    await confirmQuestion(en['settings.backupMobile.importTodoistData']);
+    await until('the process to end (I6 rename)', () => !pid(), 120_000, 500);
+    setProp('backup_stop', '');
+    const renamedProjects = sqlite(pullDb('i6-rename'), 'SELECT title FROM projects WHERE deletedAt IS NULL').map((row) => row.title).filter((title) => title.startsWith(S2));
+    check(renamedProjects.length === 2 && renamedProjects.some((title) => title !== S2), `(I6) the Todoist import collided and renamed its project: ${renamedProjects.join(' | ')}`);
+    check(hasResult(), '(I6 rename) while stopped: the result record is on disk');
+    const renameRecord = runAs('cat no_backup/backup-operations/result.json');
+    check(renameRecord.includes('renamed-container:1') && !renameRecord.includes(S2), `(I6 rename) while stopped: the result record holds the rename's code, not the name: ${renameRecord.slice(renameRecord.indexOf('"warnings"'), renameRecord.indexOf('"warnings"') + 80)}`);
+    check(!receiptReplies('i6-rename-receipts').includes(S2), '(I6 rename) while stopped: no receipt reply names the project');
+    check(holders(S2).every((path) => path.startsWith('files/SQLite/') || path.startsWith('files/snapshots/')), `(I6 rename) while stopped: the name is only in the library and its snapshots: ${holders(S2).join(' ')}`);
+    check(await watchStart(() => !hasResult()), '(I6 rename) the start showed its result once');
+    // The dropped rule and the skipped entry, stopped right after the commit's reply: the journal entry, the plan, the manifest
+    // and the receipt are all on disk.
+    const rule = binary(`d1-rule-${run}.zip`, zipSync({ 'tasks.csv': strToU8(`Title,Recurrence\nd1s1a${run},${S1}\n`), [`${S3}.zip`]: zipSync({ 'inner.csv': strToU8('Title\nx') }) }));
+    push(rule);
+    setProp('journal_stop', 'after:backupDocumentCommit');
+    await importPick('mindwtr-csv', rule);
+    await confirmQuestion(en['settings.backupMobile.importMindwtrCsvData']);
+    await until('the process to end (I6 rule)', () => !pid(), 120_000, 500);
+    setProp('journal_stop', '');
+    check(journal().length === 1 && operations().length === 1, '(I6 rule) while stopped: the journal entry and its plan are on disk');
+    check(receiptReplies('i6-rule-receipts').includes('unsupported-recurrence:1'), '(I6 rule) while stopped: the receipt holds the dropped rule\'s code');
+    check(holders(S1).length === 0 && holders(S3).length === 0, `(I6 rule) while stopped: the dropped rule and the skipped entry's name are nowhere on disk: ${[...holders(S1), ...holders(S3)].join(' ')}`);
+    check(await watchStart(() => journal().length === 0 && operations().length === 0 && !hasResult()), '(I6 rule) the start replayed and showed the result');
+    check(holders(S1).length === 0 && holders(S3).length === 0, '(I6 rule) after the replay too');
+    check(![S1, S2, S3].some((sentinel) => allLogs().includes(sentinel)), '(I6) no log line names a sentinel');
 
     // G3: a seed stopped with its entry on disk, before core saw it: the next start replays it once.
     await freshInstall();
