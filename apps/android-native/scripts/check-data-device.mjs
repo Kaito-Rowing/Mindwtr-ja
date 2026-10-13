@@ -620,7 +620,8 @@ try {
     const open = nodes.find((node) => node.text === en['common.open']);
     check(Boolean(open), '(G1) the toast offers RN\'s Open');
     await tap(open);
-    await waitFor('the Getting Started project', (current) => hasText(current, en['starter.projectTitle']), 30_000);
+    // The project screen shows its title in an editable field, which hasText skips.
+    await waitFor('the Getting Started project', (current) => tagged(current, 'project-title-input')?.text === en['starter.projectTitle'], 30_000);
     let seeded = starterRows('g1-after');
     check(seeded.projects === 1 && seeded.tasks === 7 && seeded.samples === 2, `(G1) one project with 7 tasks and 2 Inbox samples: ${JSON.stringify(seeded)}`);
     check(seededLines('created') === created + 1, '(G1) the log shows outcome=created once');
