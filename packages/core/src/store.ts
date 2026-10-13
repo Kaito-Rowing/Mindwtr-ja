@@ -627,13 +627,14 @@ const retryPendingPersistence = (): Promise<void> => {
 };
 
 /**
- * Store functions that are not commands: reads, view state, and the load itself. Every other function on
- * the store writes data and runs as a store command: behind a data transfer's write lock, and inside the
- * sync write gate (store-write-gate.ts), so no command lands between a sync save and its store publish.
+ * Store functions that are not commands: reads and view state. Every other function on the store writes
+ * data and runs as a store command inside the sync write gate (store-write-gate.ts), so no command lands
+ * between a sync save's freshness check and its store publish; all but the load also wait behind a data
+ * transfer's write lock.
  * A new action is a command by default; adding one here needs it to be a read (store-write-gate.test.ts).
  */
 export const STORE_NON_COMMAND_KEYS: ReadonlySet<string> = new Set([
-    'fetchData', 'getDerivedState', 'getFocusStarAction', 'getFocusedCount', 'queryTasks',
+    'getDerivedState', 'getFocusStarAction', 'getFocusedCount', 'queryTasks',
     'lockEditing', 'unlockEditing', 'setError', 'setHighlightTask',
 ]);
 
@@ -642,8 +643,12 @@ const wrapStoreWriteActions = (actions: TaskStore): TaskStore => {
     for (const [key, value] of Object.entries(actions)) {
         if (typeof value !== 'function' || STORE_NON_COMMAND_KEYS.has(key)) continue;
         const action = value as (...args: unknown[]) => Promise<unknown>;
-        wrapped[key] = markStoreCommand((...args: unknown[]) =>
-            runAfterStoreWriteLock(() => runStoreCommand(() => action(...args))));
+        // A load publishes what it read and may save its migrations: inside the gate, so no sync save
+        // publishes between its read and its publish. It skips the data transfer's write lock, because a
+        // transfer refreshes the store through it while holding that lock.
+        wrapped[key] = markStoreCommand(key === 'fetchData'
+            ? (...args: unknown[]) => runStoreCommand(() => action(...args))
+            : (...args: unknown[]) => runAfterStoreWriteLock(() => runStoreCommand(() => action(...args))));
     }
     return wrapped as unknown as TaskStore;
 };

@@ -37,13 +37,13 @@ describe('store write gate', () => {
     it('runs every store function that writes as a gated command', () => {
         const state = useTaskStore.getState() as unknown as Record<string, unknown>;
         const functions = Object.keys(state).filter((key) => typeof state[key] === 'function');
-        // The non-commands are reads, view state and the load: none persists a store change.
-        expect([...STORE_NON_COMMAND_KEYS].sort()).toEqual(['fetchData', 'getDerivedState', 'getFocusStarAction', 'getFocusedCount',
+        // The non-commands are reads and view state: none persists a store change.
+        expect([...STORE_NON_COMMAND_KEYS].sort()).toEqual(['getDerivedState', 'getFocusStarAction', 'getFocusedCount',
             'lockEditing', 'queryTasks', 'setError', 'setHighlightTask', 'unlockEditing']);
         const ungated = functions.filter((key) => !isStoreCommand(state[key]));
         expect(ungated.sort()).toEqual([...STORE_NON_COMMAND_KEYS].sort());
         // Prepared mutators and App Lock's commit and retry are commands too (review of change 0, P1 3).
-        for (const key of ['commitPreparedTaskEdit', 'commitPreparedAppLock', 'retryPreparedAppLockSnapshot', 'cancelTask']) {
+        for (const key of ['commitPreparedTaskEdit', 'commitPreparedAppLock', 'retryPreparedAppLockSnapshot', 'cancelTask', 'fetchData']) {
             expect(isStoreCommand(state[key])).toBe(true);
         }
     });

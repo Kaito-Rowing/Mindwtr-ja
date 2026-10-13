@@ -176,9 +176,11 @@ export interface SyncRunStorage {
     /** Durably persist the merged snapshot locally. Implementations must mark
      *  the write as self-written for every watcher the platform runs. */
     persistLocal(data: AppData): Promise<AppData | void>;
-    /** Desktop only: apply persisted data to the in-memory store immediately
-     *  after each local write (the machine then refreshes its change-tracking
-     *  from the store). Mobile refreshes once at cycle end instead. */
+    /** A check after a committed local save (File Sync's lease). It runs once the store shows that save. */
+    afterPersistLocal?(): Promise<void>;
+    /** Apply persisted data to the in-memory store right after each committed local
+     *  write, inside the store write gate (the machine then refreshes its change-tracking
+     *  from the store). Desktop and the mobile sync service bind it. */
     applyDataToStore?(data: AppData): void;
     /** Persist sync status fields to the device-local status cache (and the
      *  in-memory settings), never to the synced document. */

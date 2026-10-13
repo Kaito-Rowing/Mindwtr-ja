@@ -2587,7 +2587,7 @@ describe('runSharedSyncCycle', () => {
         );
     });
 
-    it('requeues before uploading when a local edit lands during persistence, keeping the edit over the published document', async () => {
+    it('requeues before applying or uploading data when a local edit lands during persistence', async () => {
         const local = createData([createTask('t-local', 'Before sync')]);
         let raceMidPersist: () => void = () => {
             throw new Error('Harness mutation was not initialized');
@@ -2624,9 +2624,8 @@ describe('runSharedSyncCycle', () => {
         const result = await run();
 
         expect(result).toMatchObject({ success: true, skipped: 'requeued' });
-        // The store took the document before the commit (store-write-gate.ts); the edit lands on top of it.
-        expect(applyDataToStore).toHaveBeenCalledTimes(1);
-        expect(harness.inMemory.tasks.find((task) => task.title === 'Edited while saving')).toBeTruthy();
+        expect(harness.inMemory.tasks[0]?.title).toBe('Edited while saving');
+        expect(applyDataToStore).not.toHaveBeenCalled();
         expect(io.writeRemote).not.toHaveBeenCalled();
         expect(hooks.requestFollowUp).toHaveBeenCalled();
         expect(hooks.onStaleSnapshot).toHaveBeenCalled();

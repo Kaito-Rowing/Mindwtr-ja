@@ -6,9 +6,11 @@ import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from
 import { getInMemoryAppDataSnapshot } from './sync-client-helpers';
 import { SqliteAdapter, type SqliteClient } from './sqlite-adapter';
 import { performSyncCycle } from './sync';
-import { createNativeHostContract } from './native-host-contract';
+import { createNativeHostContract, NATIVE_CONTRACT_UNGATED_METHODS } from './native-host-contract';
+import { isStoreCommand } from './store-write-gate';
 import { NativeReceiptSqliteAdapter, resetNativeRequestReceipts, revisionOf } from './native-request-receipts';
 import { CLOUD_PROVIDER_KEY, CLOUD_TOKEN_KEY, CLOUD_URL_KEY, SYNC_BACKEND_KEY } from './sync-storage-keys';
+import { createSyncEncryptionStateStore } from './sync-encryption-local-state';
 import type { AppData, Project, Task } from './types';
 
 // A command that lands while a sync cycle waits on the network, after its first local save,
@@ -70,8 +72,26 @@ function createHost(adapter: SqliteAdapter, remote: AppData) {
         await new Promise<void>((release) => { releasePut = release; });
         return { fingerprint: 'remote-after-put' };
     });
+    const lease = { lost: false };
+    const encryption = createSyncEncryptionStateStore({
+        storage,
+        secureConfig: { getSecureConfigValue: async () => null, setSecureConfigValue: async () => undefined, deleteSecureConfigValue: async () => undefined },
+        readActiveScope: async () => null,
+        log: { info: () => undefined, warn: () => undefined },
+    });
     const host = {
         storage,
+        encryption,
+        fileSync: {
+            readVersioned: async () => ({ data: JSON.parse(JSON.stringify(remote)), fingerprint: 'file:v1:remote', needsRepair: false }),
+            write: async () => undefined,
+            resolveUri: async (uri: string) => uri,
+            isBookmarksAvailable: () => false,
+            resolveBookmark: async () => null,
+            acquireLease: async () => ({ token: 'lease' }),
+            revalidateLease: async () => { if (lease.lost) throw new Error('File Sync lease lost'); },
+            releaseLease: async () => undefined,
+        },
         getSecureConfigValue: async (key: string) => (key === CLOUD_TOKEN_KEY ? 'token' : null),
         platform: { os: () => 'android', isFossBuild: false, dropboxAppKey: () => '' },
         network: {
@@ -99,7 +119,7 @@ function createHost(adapter: SqliteAdapter, remote: AppData) {
             })),
         },
     } as unknown as MobileSyncServiceHost<unknown>;
-    return { host, putStarted, releasePut: () => releasePut(), put };
+    return { host, putStarted, releasePut: () => releasePut(), put, lease };
 }
 
 const runCycle = async (service: ReturnType<typeof createMobileSyncService>) => {
@@ -193,22 +213,22 @@ describe.each([false, true])('a command during the remote write (guarded adapter
         }
     });
 
-    it('publishes what disk holds when the save fails after its commit', async () => {
+    it('publishes the committed document before a lease check after the commit fails', async () => {
         const adapter = await openStore(guarded);
         const fake = createHost(adapter, winner());
-        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
-        let failed = false;
         fake.host.localData.saveData = async (data: AppData) => {
             await adapter.saveData(data);
-            if (!failed) {
-                failed = true;
-                // A post-save check (the File Sync lease) refuses after the rows are committed.
-                throw new Error('lease lost after commit');
-            }
+            // The rows are committed; the File Sync lease check that follows the save now fails.
+            fake.lease.lost = true;
         };
         const service = createMobileSyncService(fake.host);
         try {
-            await runCycle(service);
+            const result = await service.performMobileSync(undefined, {
+                manual: true, configOverride: { backend: 'file', syncPath: 'file:///sync/data.json' },
+            });
+            service.__mobileSyncTestUtils.clearFollowUpForTests();
+            expect(result).toMatchObject({ success: false, error: 'Error: File Sync lease lost' });
+            expect(useTaskStore.getState()._tasksById.get('shared')?.title).toBe('winner');
             await useTaskStore.getState().updateTask('shared', { status: 'done' });
             await useTaskStore.getState().updateSettings({ theme: 'dark' });
             await flushPendingSave();
@@ -220,7 +240,41 @@ describe.each([false, true])('a command during the remote write (guarded adapter
         }
     });
 
-    it('takes back the published document when the save fails before its commit', async () => {
+    it('lets a load that began before a sync save publish only before that save', async () => {
+        const adapter = await openStore(guarded);
+        const fake = createHost(adapter, winner());
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
+        let releaseRead!: () => void;
+        const readHeld = new Promise<void>((resolve) => { releaseRead = resolve; });
+        let holdNextStoreRead = true;
+        const read = adapter.getData.bind(adapter);
+        adapter.getData = async (...args: Parameters<typeof adapter.getData>) => {
+            const rows = await read(...args);
+            if (holdNextStoreRead) {
+                holdNextStoreRead = false;
+                // The load read the old rows; it publishes them only after this point.
+                await readHeld;
+            }
+            return rows;
+        };
+        const load = useTaskStore.getState().fetchData({ silent: true });
+        await Promise.resolve();
+        const service = createMobileSyncService(fake.host);
+        try {
+            const cycle = runCycle(service);
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            releaseRead();
+            await Promise.all([load, cycle]);
+            expect(useTaskStore.getState()._tasksById.get('shared')?.title).toBe('winner');
+            await useTaskStore.getState().updateTask('shared', { status: 'done' });
+            await flushPendingSave();
+            expect((await adapter.getData()).tasks.find((row) => row.id === 'shared')).toMatchObject({ title: 'winner', status: 'done' });
+        } finally {
+            service.__mobileSyncTestUtils.reset();
+        }
+    });
+
+    it('publishes nothing when the save fails before its commit', async () => {
         const adapter = await openStore(guarded);
         const fake = createHost(adapter, winner());
         fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
@@ -228,7 +282,7 @@ describe.each([false, true])('a command during the remote write (guarded adapter
         const service = createMobileSyncService(fake.host);
         try {
             await runCycle(service);
-            // Nothing landed, so the store shows the disk again, not the merge it was handed first.
+            // Nothing landed, so the store still shows the disk.
             expect(useTaskStore.getState()._tasksById.get('shared')?.title).toBe('old');
             expect(useTaskStore.getState().settings.pendingRemoteWriteAt).toBeUndefined();
         } finally {
@@ -269,5 +323,62 @@ describe('a native command during the sync save', () => {
         } finally {
             service.__mobileSyncTestUtils.reset();
         }
+    });
+
+    const failedFirstSave = async (start: (contract: ReturnType<typeof createNativeHostContract>) => Promise<unknown>) => {
+        const adapter = await openStore(true, true);
+        await flushPendingSave();
+        const contract = createNativeHostContract();
+        expect(await contract.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        await flushPendingSave();
+        const fake = createHost(adapter, winner());
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
+        let command: Promise<unknown> | null = null;
+        fake.host.localData.saveData = async () => {
+            // The command arrives while the sync save holds the gate; that save then fails before its commit.
+            command ??= start(contract);
+            throw new Error('disk full before commit');
+        };
+        const service = createMobileSyncService(fake.host);
+        try {
+            await runCycle(service);
+            const reply = await command;
+            await flushPendingSave();
+            return { reply, saved: await adapter.getData() };
+        } finally {
+            service.__mobileSyncTestUtils.reset();
+        }
+    };
+
+    it.each([true, false])('sets the project star to %s on the state the failed save left', async (focused) => {
+        const { reply, saved } = await failedFirstSave((contract) => contract.setProjectFocus({
+            id: 'starred', focused, projectRevision: revisionOf(useTaskStore.getState()._projectsById.get('starred')!),
+        }));
+        expect(reply).toEqual({ ok: true, value: { id: 'starred', focused } });
+        expect(saved.projects.find((row) => row.id === 'starred')?.isFocused ?? false).toBe(focused);
+        expect(useTaskStore.getState()._projectsById.get('starred')?.isFocused ?? false).toBe(focused);
+    });
+
+    it('applies a receipted task edit, and receipts that it changed, on the state the failed save left', async () => {
+        const { reply, saved } = await failedFirstSave((contract) => contract.updateTask({
+            id: 'shared', requestId: '22222222-3333-4444-8555-666666666666', base: { title: 'old' }, patch: { title: 'winner' },
+        }));
+        expect(reply).toEqual({ ok: true, value: { id: 'shared', changed: true } });
+        expect(saved.tasks.find((row) => row.id === 'shared')?.title).toBe('winner');
+    });
+
+    it('runs every asynchronous contract method as a gated store command', () => {
+        const contract = createNativeHostContract() as unknown as Record<string, unknown>;
+        const functions = Object.entries(contract).filter(([, value]) => typeof value === 'function');
+        for (const [name, method] of functions) {
+            if (isStoreCommand(method) || NATIVE_CONTRACT_UNGATED_METHODS.has(name)) continue;
+            // An ungated method answers synchronously: it never awaits, and it writes no receipt.
+            expect(method.constructor.name, name).not.toBe('AsyncFunction');
+            expect(/receipts\.run\(|await /.test(Function.prototype.toString.call(method)), name).toBe(false);
+        }
+        expect(isStoreCommand(contract.setProjectFocus)).toBe(true);
+        expect(isStoreCommand(contract.updateTask)).toBe(true);
+        expect(isStoreCommand(contract.setFocusGroupBy)).toBe(true);
+        expect(isStoreCommand(contract.syncNow)).toBe(false);
     });
 });

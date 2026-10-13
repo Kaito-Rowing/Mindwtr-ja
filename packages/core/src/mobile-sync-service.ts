@@ -1397,8 +1397,9 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
         persistLocal: async (data) => {
           await this.assertFileSyncLeaseHeld();
           await host.localData.saveData(data);
-          await this.assertFileSyncLeaseHeld();
         },
+        // After the store shows the committed save: a lease lost now ends the cycle, never the publish.
+        afterPersistLocal: () => this.assertFileSyncLeaseHeld(),
         // In the same gate hold as the save: a command never acts on a store older than the disk.
         applyDataToStore: (data) => applySyncedDataToStore(data, core.useTaskStore),
         persistSyncStatus: async (updates) => {

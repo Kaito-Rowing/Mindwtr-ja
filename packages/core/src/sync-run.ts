@@ -996,10 +996,10 @@ class SharedSyncRunMachine {
     }
 
     /**
-     * One local save and its store publish, inside the store write gate (store-write-gate.ts). The store
-     * takes the document in the same turn as the freshness check, before the commit: any command that
-     * reads while the save runs reads what disk is about to hold, and its write waits for the commit.
-     * [data] is a builder when the document must be read from the store inside the gate.
+     * One local save and its store publish, inside the store write gate (store-write-gate.ts): no command
+     * runs from the freshness check through the commit, and the committed document reaches the store
+     * before any check after the save can end the cycle. A save that fails publishes nothing: the store
+     * still matches the disk. [data] is a builder when the document must be read from the store inside the gate.
      */
     private async persistLocalDataWithTracking(data: AppData | (() => AppData)): Promise<AppData> {
         await this.assertRemoteMutationFenceHeld();
@@ -1009,22 +1009,16 @@ class SharedSyncRunMachine {
             await this.store.flushPendingSave();
             const next = typeof data === 'function' ? data() : data;
             this.ensureLocalSnapshotFresh(next);
-            this.publishToStore(next);
-            let persisted: AppData;
-            try {
-                persisted = await traceSectionAsync('sync:saveData', () => this.storage.persistLocal(next)) ?? next;
-            } catch (error) {
-                // The rows may or may not have landed (a check after the commit, File Sync's lease, can
-                // fail the save): the store takes what disk holds now, before the gate lets a command in.
-                await this.publishDiskAfterFailedSave();
-                throw error;
-            }
-            if (persisted !== next) this.publishToStore(persisted);
+            const persisted = await traceSectionAsync('sync:saveData', () => this.storage.persistLocal(next)) ?? next;
             // Disk has moved past the snapshot this cycle read, so it is no longer
             // a baseline for the unchanged-write guard.
             this.state.localSnapshotMatchesDisk = false;
-            this.state.wroteLocal = true;
+            // Behind the gate only an ungated writer can move the stamp during the save; its edit stays
+            // in the store and the cycle requeues, as before the gate.
             this.ensureLocalSnapshotFresh(persisted);
+            this.publishToStore(persisted);
+            this.state.wroteLocal = true;
+            await this.storage.afterPersistLocal?.();
             return persisted;
         });
     }
@@ -1044,15 +1038,6 @@ class SharedSyncRunMachine {
                 step: this.state.step ?? '-',
                 releaseCheck: 'v1.3.7/sync-write-gate',
             });
-        }
-    }
-
-    private async publishDiskAfterFailedSave(): Promise<void> {
-        if (!this.storage.applyDataToStore) return;
-        try {
-            this.storage.applyDataToStore(await this.storage.readPersistedLocal());
-        } catch (error) {
-            this.notifier.logWarning('Sync could not reload the store after a failed save', error);
         }
     }
 
