@@ -284,7 +284,8 @@ export const LOCALES = {
         // Three translated UpNote link recovery strings raise the commitment with English.
         // Includes the local MCP integration strings; pin to the actual translated count
         // so English growth does not reclassify deliberate protocol and brand names.
-        translatedKeyFloor: 2546,
+        // Eight MCP permission, port, and Codex-copy labels are translated in #1337.
+        translatedKeyFloor: 2554,
     },
     it: {
         loadSync: () => require('./locales/it') as typeof import('./locales/it'),

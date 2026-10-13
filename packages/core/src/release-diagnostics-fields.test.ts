@@ -13,6 +13,9 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // mcp-access-controls: device-local grants, loopback port, fixed denied category; no payload.
+    'allowWrite', 'allowArchive', 'allowDelete', 'port', 'category',
+    // mcp-codex-copy reuses releaseCheck, operation, outcome, backend below.
     // linux-task-link-launcher reuses releaseCheck and outcome below; no executable paths.
     // linux-quick-add-focus reuses backend and outcome below; no window or input content.
     // inactive-sync-credential: fixed service category only; no endpoint or secret.

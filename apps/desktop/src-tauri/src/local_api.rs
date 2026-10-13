@@ -321,15 +321,15 @@ pub(crate) fn start_mcp_listener(
     state: &LocalApiServerState,
     port: u16,
     token: String,
-    allow_write: bool,
+    permissions: crate::mcp_server::McpPermissions,
 ) -> Result<LocalApiHandle, String> {
     start_runtime_with_access(
         app,
         port,
         token,
         state.write_lock.clone(),
-        allow_write,
-        true,
+        permissions.any_write(),
+        Some(permissions),
     )
 }
 
@@ -339,7 +339,7 @@ fn start_runtime(
     token: String,
     write_lock: Arc<Mutex<()>>,
 ) -> Result<LocalApiHandle, String> {
-    start_runtime_with_access(app, port, token, write_lock, true, false)
+    start_runtime_with_access(app, port, token, write_lock, true, None)
 }
 
 fn start_runtime_with_access(
@@ -348,14 +348,19 @@ fn start_runtime_with_access(
     token: String,
     write_lock: Arc<Mutex<()>>,
     allow_write: bool,
-    mcp: bool,
+    mcp_permissions: Option<crate::mcp_server::McpPermissions>,
 ) -> Result<LocalApiHandle, String> {
     ensure_data_file(&app)?;
     start_http_listener(port, allow_write, move |access, port, request| {
-        if mcp {
-            crate::mcp_server::handle_mcp_request(&token, access, port, request, |operation| {
-                execute_operation(&app, &write_lock, access, operation)
-            })
+        if let Some(permissions) = mcp_permissions {
+            crate::mcp_server::handle_mcp_request(
+                &token,
+                access,
+                permissions,
+                port,
+                request,
+                |operation| execute_operation(&app, &write_lock, access, operation),
+            )
         } else {
             handle_api_request(&app, &token, &write_lock, access, request)
         }
@@ -5884,6 +5889,99 @@ mod tests {
             find_task(&read_sqlite_data(&conn).unwrap(), &id).unwrap(),
             task,
             "failed operation rolls back atomically"
+        );
+    }
+
+    #[test]
+    fn mcp_archive_permission_preserves_history_and_never_spawns_recurring_tasks() {
+        use crate::mcp_server::{handle_mcp_request, McpPermissions};
+        use crate::storage::{
+            local_operation_test_commit, local_operation_test_seed, read_sqlite_data,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mcp-archive.sqlite");
+        let mut conn = rusqlite::Connection::open(&path).unwrap();
+        let mut seed = empty_local_api_data();
+        let completed_at = "2026-10-01T12:00:00Z";
+        seed["tasks"] = json!([
+            {"id":"history", "title":"History", "status":"done", "completedAt":completed_at,
+                "recurrence":{"rule":"daily","count":5,"completedOccurrences":2},
+                "createdAt":completed_at,"updatedAt":completed_at,"rev":1,"tags":[],"contexts":[]},
+            {"id":"recurring", "title":"Recurring", "status":"next",
+                "recurrence":{"rule":"daily","count":5,"completedOccurrences":2},
+                "createdAt":completed_at,"updatedAt":completed_at,"rev":1,"tags":[],"contexts":[]}
+        ]);
+        local_operation_test_seed(&mut conn, &seed).unwrap();
+        let before = read_sqlite_data(&conn).unwrap();
+        let access = LocalApiAccess {
+            allow_write: true,
+            shutdown: Arc::new(AtomicBool::new(false)),
+        };
+        for allowed in [false, true] {
+            for id in ["history", "recurring"] {
+                let request = ApiRequest {
+                    method: "POST".into(),
+                    path: "/mcp".into(),
+                    query: HashMap::new(),
+                    headers: HashMap::from([
+                        ("host".into(), "127.0.0.1:9123".into()),
+                        ("authorization".into(), "Bearer fixture".into()),
+                        ("content-type".into(), "application/json".into()),
+                        (
+                            "accept".into(),
+                            "application/json, text/event-stream".into(),
+                        ),
+                    ]),
+                    body: serde_json::to_vec(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                        "params":{"name":"mindwtr_archive_task","arguments":{"id":id}}}))
+                    .unwrap(),
+                };
+                let mut executed = false;
+                let response = handle_mcp_request(
+                    "fixture",
+                    &access,
+                    McpPermissions {
+                        allow_write: !allowed,
+                        allow_archive: allowed,
+                        allow_delete: false,
+                    },
+                    9123,
+                    request,
+                    |operation| {
+                        executed = true;
+                        let persisted = local_operation_test_commit(
+                            &conn,
+                            TaskMutationReadScope::existing(id, false),
+                            |data| mutate_task_operation(data, &operation),
+                        )?;
+                        Ok(json!({"task":find_task(&persisted, id).unwrap()}))
+                    },
+                );
+                assert_eq!(executed, allowed);
+                assert_eq!(response.body["result"]["isError"] == true, !allowed);
+                if !allowed {
+                    assert_eq!(
+                        read_sqlite_data(&conn).unwrap(),
+                        before,
+                        "denial leaves durable rows unchanged"
+                    );
+                }
+            }
+        }
+        drop(conn);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let reopened = read_sqlite_data(&conn).unwrap();
+        assert_eq!(reopened["tasks"].as_array().unwrap().len(), 2);
+        for id in ["history", "recurring"] {
+            let task = find_task(&reopened, id).unwrap();
+            assert_eq!(task["status"], "archived");
+            assert_eq!(task["rev"], 2);
+            assert_eq!(task["recurrence"]["completedOccurrences"], 2);
+            assert!(valid_cancellation_timestamp(task.get("archivedAt")));
+        }
+        assert_eq!(
+            find_task(&reopened, "history").unwrap()["completedAt"],
+            completed_at
         );
     }
 
