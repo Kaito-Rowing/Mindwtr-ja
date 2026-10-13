@@ -102,7 +102,18 @@ const device = connect({ serial, pkg: PKG, uiFile: UI_FILE });
 const { adbRaw, sh, home, front, requireAppFront, pid, screen, waitFor, tap, tapExpecting } = device;
 const runAs = (command) => sh(`run-as ${PKG} ${command}`);
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
-const allLogs = () => adbRaw('logcat', '-d', '-s', `${TAG}:*`).toString('utf8').replace(/\\/g, '');
+// The phone's log ring drops old lines on a long run, so a count read twice could shrink and a `===` against an earlier
+// count fail with nothing new logged. Every line read stays here (a line carries its millisecond stamp and thread, so a
+// repeat is the same line); clearLogs empties the phone's log and this together.
+const seenLogs = new Set();
+const allLogs = () => {
+    for (const line of adbRaw('logcat', '-d', '-s', `${TAG}:*`).toString('utf8').replace(/\\/g, '').split('\n')) if (line.trim()) seenLogs.add(line);
+    return [...seenLogs].join('\n');
+};
+const clearLogs = () => {
+    adbRaw('logcat', '-c');
+    seenLogs.clear();
+};
 const until = async (description, holds, timeoutMs = 60_000, everyMs = 1_000) => {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -365,7 +376,7 @@ try {
     // The throwaway package, fresh (as each check-upgrade-device scenario starts).
     if (sh(`pm list packages ${PKG}`).split('\n').some((line) => line.trim() === `package:${PKG}`)) sh(`pm uninstall ${PKG}`);
     adbRaw('install', '-g', apk);
-    adbRaw('logcat', '-c');
+    clearLogs();
     sh('settings put system accelerometer_rotation 0');
     sh('settings put system user_rotation 0');
     await launch();
