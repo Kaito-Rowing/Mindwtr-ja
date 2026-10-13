@@ -450,16 +450,18 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
     };
     const signature = (nodes) => nodes.map((node) => `${node.text}|${node['content-desc']}|${node.bounds}`).join('\n');
     /**
-     * Scrolls the app's list until [find] picks a node fully inside it (40 px clear of its bottom): from the top unless
-     * [fromTop] is false, then down. A node already partly on screen comes in with one short, slow drag to the list's
-     * middle: a full swipe flings past a field just under the fold (Sync's Username, once settings rows grew to RN's height).
+     * Scrolls the app's list until [find] picks a node inside it (its centre below the list's top, its bottom 40 px clear of
+     * the list's bottom): from the top unless [fromTop] is false, then down. The centre, not the top, because a clickable
+     * row title's 48 dp touch area reaches above its card: the list's first row sticks out over the list's top edge. A node
+     * already partly on screen comes in with one short, slow drag to the list's middle: a full swipe flings past a field
+     * just under the fold (Sync's Username, once settings rows grew to RN's height).
      */
     const revealNode = async (find, description, fromTop = true) => {
         let nodes = fromTop ? await toTop() : await screen();
         const inView = (current) => {
             const node = find(current);
             const list = mainList(current);
-            return node && (!list || (box(node)[1] >= box(list)[1] && box(node)[3] <= box(list)[3] - 40)) ? node : null;
+            return node && (!list || ((box(node)[1] + box(node)[3]) / 2 >= box(list)[1] && box(node)[3] <= box(list)[3] - 40)) ? node : null;
         };
         for (let step = 0; step < 20 && !inView(nodes); step += 1) {
             const partly = find(nodes);
