@@ -82,6 +82,13 @@ export const field = (nodes) => nodes.find((node) => node.class === 'android.wid
 /** A swipe that starts left of this x can be read as the system Back gesture (gesture navigation). */
 export const EDGE_SAFE_X = 160;
 export const box = (node) => node.bounds.match(/\d+/g).map(Number);
+// logcat's threadtime lines start with "MM-DD HH:MM:SS.mmm". The ring buffer drops its oldest lines while a long sync logs,
+// so a count of matching lines can stay flat after a new one arrives: count only lines newer than a stamp taken before the act.
+const LOG_STAMP = /^\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}/;
+/** The newest line's stamp in [text] ('' for none). */
+export const logStamp = (text) => text.split('\n').reduce((newest, line) => (line.match(LOG_STAMP)?.[0] ?? '') > newest ? line.match(LOG_STAMP)[0] : newest, '');
+/** The lines of [text] stamped after [stamp] (all lines when [stamp] is ''). */
+export const linesAfter = (text, stamp) => text.split('\n').filter((line) => !stamp || (line.match(LOG_STAMP)?.[0] ?? '') > stamp);
 /**
  * The screen's main vertical list: the tallest scrollable node that is not horizontal. A screen can have a second
  * scrollable, as the Weekly Review's row of step chips (a HorizontalScrollView), and the first one found is not always

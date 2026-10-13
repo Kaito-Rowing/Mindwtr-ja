@@ -27,7 +27,7 @@ import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { box, button, check, connect, evidenced, fail, inboxCount, inEditor, inList, isOn, mainList, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
+import { box, button, check, connect, evidenced, fail, inboxCount, inEditor, inList, isOn, linesAfter, logStamp, mainList, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
 import { cleanupOnExit } from './check-net-device.mjs';
 import { hostDevice, serveWebdav } from './sync-harness.mjs';
 
@@ -186,12 +186,14 @@ const insecureOn = async () => {
     if (!switchOn(await screen(), label)) await tapExpecting(node, (current) => switchOn(current, label), 'insecure HTTP on');
 };
 /** How many times [operation] answered (host-entry.ts taskResult's line; its context's quotes arrive escaped). */
-const commands = (operation, outcome = 'saved') => logs().replace(/\\/g, '').split('\n')
+/** The [operation] answers logged with [outcome] after [since] (a logStamp; '' counts the whole buffer). */
+const commands = (operation, outcome = 'saved', since = '') => linesAfter(logs().replace(/\\/g, ''), since)
     .filter((line) => line.includes(`"operation":"${operation}"`) && line.includes(`"outcome":"${outcome}"`)).length;
+const stamp = () => logStamp(logs());
 // A Save runs a verification sync and then a normal sync; on the test phone's ~5,600-task library that measured ~95 s (10-13).
 const runCommand = async (tag, operation, description, timeoutMs = 240_000) => {
-    const before = commands(operation);
-    await tapTag(tag, () => commands(operation) > before, description, timeoutMs);
+    const since = stamp();
+    await tapTag(tag, () => commands(operation, 'saved', since) > 0, description, timeoutMs);
 };
 const syncNow = async (description) => {
     await openSync();
@@ -391,8 +393,8 @@ try {
     await tapExpecting(tagged(await screen(), 'attachment-link-save') ?? fail('no link Save'), (current) => !tagged(current, 'attachment-link-sheet'), 'the link saved');
     nodes = await waitFor('three rows', (current) => rowTitles(current).length === 3, 15_000);
     check(rowTitles(nodes).includes(linkRow(names.link)), `(2) Add link lists ${names.link} (as "${linkRow(names.link)}")`);
-    const savesBefore = commands('saveTaskDraft');
-    await tapExpecting(button(await screen(), en['common.save']) ?? fail('no Save'), (current) => !inEditor(current) && commands('saveTaskDraft') > savesBefore, 'the editor saved');
+    const savesSince = stamp();
+    await tapExpecting(button(await screen(), en['common.save']) ?? fail('no Save'), (current) => !inEditor(current) && commands('saveTaskDraft', 'saved', savesSince) > 0, 'the editor saved');
     let saved = stored('tasks', names.task);
     const pdf = saved.find((attachment) => attachment.title === names.pdf);
     const png = saved.find((attachment) => attachment.title === photoRow);
