@@ -1477,6 +1477,7 @@ export const zhHant: Record<string, string> = {
         'settings.aiProviderOpenAI': 'OpenAI',
         'settings.aiProviderGemini': 'Gemini',
         'settings.aiProviderAnthropic': 'Anthropic (Claude)',
+        'settings.aiEffortMinimalSaved': '已儲存：最低',
         'settings.aiEffortLow': '低',
         'settings.aiEffortMedium': '中',
         'settings.aiEffortHigh': '高',

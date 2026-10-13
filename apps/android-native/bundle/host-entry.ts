@@ -149,6 +149,7 @@ import { buildNativePomodoroAlarmIntent } from '../../../packages/core/src/nativ
 import { planNativePomodoroAlarmEffects, prepareNativePomodoroAlarmDispatch } from '../../../packages/core/src/native-pomodoro-alarm-effects';
 import { buildNativeAISettingsProjection } from '../../../packages/core/src/native-ai-settings-projection';
 import { createNativeAIRequestTimeoutMethods } from '../../../packages/core/src/native-ai-request-timeout';
+import { createNativeAIReasoningEffortMethods } from '../../../packages/core/src/native-ai-reasoning-effort';
 import { readNativeAIProviderDeviceState } from '../../../packages/core/src/native-ai-provider-device-state';
 import { createPreparedProjectAvailabilityMethods, createProjectAvailabilityMethods } from '../../../packages/core/src/native-host-contract-project-availability';
 import { SYNC_ENCRYPTION_STATE_KEY } from '../../../packages/core/src/sync-storage-keys';
@@ -1215,7 +1216,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -1268,6 +1269,25 @@ const aiRequestTimeoutOwner = (owner: () => unknown, signal: AbortSignal) => {
     if (typeof owner !== 'function') throw new Error('INVALID_INPUT: AI timeout needs private owner authority');
     return () => {
         if (signal.aborted || owner() !== '') throw new Error('STALE_REVISION: AI timeout owner is unavailable');
+    };
+};
+
+const aiReasoningEffortMethods = createNativeAIReasoningEffortMethods({
+    readiness: () => {
+        if (globalThis.__mindwtrHostPlatform !== 'ios' || !bootAdapter || getStorageAdapter() !== bootAdapter
+            || !bootAdapter.concurrentWritesGuarded || isSandboxMode() || isWorkspaceTransitionActive())
+            return { ok: false, error: { code: 'NOT_READY', message: 'AI reasoning effort requires current personal storage' } };
+        return { ok: true, value: null };
+    },
+    save: async () => {
+        try { await flushPendingSave(); requireSaved(); return { ok: true, value: null }; }
+        catch { return { ok: false, error: { code: 'SAVE_FAILED', message: 'AI reasoning effort save could not be confirmed' } }; }
+    },
+});
+const aiReasoningEffortOwner = (owner: () => unknown, signal: AbortSignal) => {
+    if (typeof owner !== 'function') throw new Error('INVALID_INPUT: AI reasoning effort needs private owner authority');
+    return () => {
+        if (signal.aborted || owner() !== '') throw new Error('STALE_REVISION: AI reasoning effort owner is unavailable');
     };
 };
 
@@ -5542,6 +5562,32 @@ globalThis.MindwtrHost = {
             try {
                 logInfo('Native iOS AI request timeout saved', { scope: 'native-ios', force: true,
                     context: { releaseCheck: 'v1.3.5/ios-ai-request-timeout', outcome: 'saved' } });
+                await diagnosticsLog.serialize(async () => undefined);
+            } catch { /* Diagnostics cannot change a verified durable reply. */ }
+            return null;
+        });
+    },
+    iosAIReasoningEffortOptions(json: string, owner: () => unknown): string {
+        return submit(async signal => unwrap(await aiReasoningEffortMethods.options(completionJson(json, 256), aiReasoningEffortOwner(owner, signal))));
+    },
+    iosAIReasoningEffortPrepare(json: string, owner: () => unknown): string {
+        return submit(async signal => unwrap(await aiReasoningEffortMethods.prepare(completionJson(json, 2048), aiReasoningEffortOwner(owner, signal))));
+    },
+    iosAIReasoningEffortValidate(json: string): string {
+        return submit(async () => unwrap(aiReasoningEffortMethods.validate(completionJson(json, 8192))));
+    },
+    iosAIReasoningEffortCommit(json: string, owner: () => unknown): string {
+        return submit(async signal => unwrap(await aiReasoningEffortMethods.commit(completionJson(json, 8192), aiReasoningEffortOwner(owner, signal))));
+    },
+    iosAIReasoningEffortRetryOutcome(json: string): string {
+        return submit(async () => unwrap(aiReasoningEffortMethods.outcome(completionJson(json, 2048))));
+    },
+    iosAIReasoningEffortAcknowledged(): string {
+        return submit(async () => {
+            if (globalThis.__mindwtrHostPlatform !== 'ios') return null;
+            try {
+                logInfo('Native iOS AI reasoning effort saved', { scope: 'native-ios', force: true,
+                    context: { releaseCheck: 'v1.3.5/ios-ai-reasoning-effort', outcome: 'saved' } });
                 await diagnosticsLog.serialize(async () => undefined);
             } catch { /* Diagnostics cannot change a verified durable reply. */ }
             return null;

@@ -1543,6 +1543,7 @@ export const en: Record<string, string> = {
         'settings.aiProviderOpenAI': 'OpenAI',
         'settings.aiProviderGemini': 'Gemini',
         'settings.aiProviderAnthropic': 'Anthropic (Claude)',
+        'settings.aiEffortMinimalSaved': 'Saved: Minimal',
         'settings.aiEffortLow': 'Low',
         'settings.aiEffortMedium': 'Medium',
         'settings.aiEffortHigh': 'High',

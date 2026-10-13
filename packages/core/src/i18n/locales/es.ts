@@ -1499,6 +1499,7 @@ export const esOverrides: Record<string, string> = {
 'settings.aiProviderOpenAI': "OpenAI",
 'settings.aiProviderGemini': "Gemini",
 'settings.aiProviderAnthropic': "Anthropic (Claude)",
+'settings.aiEffortMinimalSaved': 'Guardado: Mínimo',
 'settings.aiEffortLow': "Bajo",
 'settings.aiEffortMedium': "Medio",
 'settings.aiEffortHigh': "Alto",

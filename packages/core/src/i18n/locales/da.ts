@@ -1590,6 +1590,7 @@ export const daOverrides: Record<string, string> = {
     'settings.aiProviderOpenAI': 'OpenAI',
     'settings.aiProviderGemini': 'Gemini',
     'settings.aiProviderAnthropic': 'Antropisk (Claude)',
+    'settings.aiEffortMinimalSaved': 'Gemt: Minimal',
     'settings.aiEffortLow': 'Lav',
     'settings.aiEffortMedium': 'Medium',
     'settings.aiEffortHigh': 'Høj',

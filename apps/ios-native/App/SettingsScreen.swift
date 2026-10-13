@@ -1985,6 +1985,7 @@ struct SettingsScreen: View {
                     aiSummaryRow("settings.aiEnable", value: model.label(projection.aiEnabled ? "settings.on" : "settings.off"), id: "enabled")
                     aiSummaryRow("settings.aiProvider", value: model.label(projection.aiProvider == .openai ? "settings.aiProviderOpenAI"
                         : projection.aiProvider == .gemini ? "settings.aiProviderGemini" : "settings.aiProviderAnthropic"), id: "provider")
+                    aiSummaryRow("settings.aiReasoning", value: model.aiReasoningEffortLabel(projection.aiReasoningEffortSavedValue), id: "effort")
                     aiSummaryRow("settings.aiRequestTimeout", value: model.label("settings.aiRequestTimeoutSeconds")
                         .replacingOccurrences(of: "{{seconds}}", with: String(projection.aiRequestTimeoutSeconds)), id: "timeout")
                 } else if model.settingsAILoading {
@@ -1996,6 +1997,33 @@ struct SettingsScreen: View {
                         .buttonStyle(.plain).rnFont(15, .semibold).foregroundStyle(palette.tint)
                         .frame(minHeight: 44).disabled(model.busy || model.retryNeeded)
                         .accessibilityIdentifier("ai-summary-retry")
+                }
+                if model.settingsAIProjection?.aiProvider == .openai {
+                    Text(model.label("settings.aiReasoningHint")).rnFont(14).foregroundStyle(palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let options = model.settingsAIEffortOptions {
+                        ForEach([NativeAIReasoningEffortValue.low, .medium, .high], id: \.rawValue) { value in
+                            Button { model.saveAIReasoningEffort(value) } label: {
+                                HStack {
+                                    Text(model.label(value == .low ? "settings.aiEffortLow"
+                                        : value == .medium ? "settings.aiEffortMedium" : "settings.aiEffortHigh")).rnFont(15)
+                                    Spacer()
+                                    if options.value.rawValue == value.rawValue { Image(systemName: "checkmark") }
+                                }.frame(minHeight: 44).contentShape(Rectangle())
+                            }.buttonStyle(.plain).foregroundStyle(palette.text)
+                                .disabled(!model.settingsAIReasoningCanChoose)
+                                .accessibilityAddTraits(options.value.rawValue == value.rawValue ? .isSelected : [])
+                                .accessibilityIdentifier("ai-effort-choice-" + value.rawValue)
+                        }
+                    } else if model.settingsAIEffortOptionsFailed {
+                        Text(model.label("settings.feedback.actionFailed")).foregroundStyle(palette.danger)
+                            .accessibilityIdentifier("ai-effort-options-error")
+                        Button(model.label("common.retry")) { model.retryAIReasoningEffortOptions() }
+                            .frame(minHeight: 44).disabled(model.busy || model.retryNeeded || !model.settingsAICanOpen)
+                            .accessibilityIdentifier("ai-effort-options-retry")
+                    } else if !model.retryNeeded {
+                        ProgressView(model.label("common.loading")).accessibilityIdentifier("ai-effort-loading")
+                    }
                 }
                 Button { model.toggleAIAdvanced() } label: {
                     HStack {
@@ -2038,12 +2066,21 @@ struct SettingsScreen: View {
                     Text(model.label("settings.feedback.actionFailed")).foregroundStyle(palette.danger)
                         .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("ai-timeout-save-error")
                 }
+                if model.settingsAIEffortSaveFailed {
+                    Text(model.label("settings.feedback.actionFailed")).foregroundStyle(palette.danger)
+                        .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("ai-effort-save-error")
+                }
                 #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                if !model.settingsAIEffortFixtureState.isEmpty {
+                    Text(model.settingsAIEffortFixtureState).accessibilityIdentifier("ai-effort-fixture-state")
+                }
                 if !model.settingsAITimeoutFixtureState.isEmpty {
                     Text(model.settingsAITimeoutFixtureState).accessibilityIdentifier("ai-timeout-fixture-state")
                 }
-                if model.settingsAITestHeld || model.settingsAITimeoutTestHeld || model.settingsAISaveFailed {
+                if model.settingsAITestHeld || model.settingsAITimeoutTestHeld || model.settingsAISaveFailed
+                    || model.settingsAIEffortTestHeld || model.settingsAIEffortSaveFailed {
                     if model.settingsAITimeoutTestHeld { Text("held").accessibilityIdentifier("ai-timeout-test-held") }
+                    if model.settingsAIEffortTestHeld { Text("held").accessibilityIdentifier("ai-effort-test-held") }
                     Text("held").accessibilityIdentifier("ai-summary-test-held")
                     Button("Lock fixture") { model.retireAISettingsSummaryFixture("lock") }
                         .frame(minHeight: 44).accessibilityIdentifier("ai-summary-test-lock")

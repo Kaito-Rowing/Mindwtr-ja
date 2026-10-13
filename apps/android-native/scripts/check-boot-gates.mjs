@@ -580,7 +580,7 @@ assert.match(hostEntry, /createNativeSync\(nativeSyncBindings\)/);
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -3695,6 +3695,22 @@ export function createNativeAIRequestTimeoutMethods(deps) {
     outcome: input => { const ready = deps.readiness(); if (!ready.ok) return ready; globalThis.aiTimeoutInputs.push(['outcome', JSON.stringify(input)]); return globalThis.aiTimeoutReplies.outcome; },
   };
 }
+export function createNativeAIReasoningEffortMethods(deps) {
+  globalThis.aiReasoningDeps = deps;
+  const read = async (kind, input, current) => {
+    current(); const ready = deps.readiness(); if (!ready.ok) return ready;
+    await globalThis.aiReasoningHold; current();
+    globalThis.aiReasoningInputs.push([kind, JSON.stringify(input)]);
+    return globalThis.aiReasoningReplies[kind];
+  };
+  return {
+    options: (input, current) => read('options', input, current),
+    prepare: (input, current) => read('prepare', input, current),
+    commit: (input, current) => read('commit', input, current),
+    validate: input => { globalThis.aiReasoningInputs.push(['validate', JSON.stringify(input)]); return globalThis.aiReasoningReplies.validate; },
+    outcome: input => { const ready = deps.readiness(); if (!ready.ok) return ready; globalThis.aiReasoningInputs.push(['outcome', JSON.stringify(input)]); return globalThis.aiReasoningReplies.outcome; },
+  };
+}
 export function setLogger(logger) { globalThis.coreLogger = logger; setRealLogger(logger); }
 export function consoleLogger() {}
 export class SqliteAdapter {
@@ -4163,6 +4179,7 @@ const built = await build({
     plugins: [{ name: 'fake-core', setup(plugin) {
         plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'test' }));
         plugin.onResolve({ filter: /packages\/core\/src\/native-ai-request-timeout$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-reasoning-effort$/ }, () => ({ path: 'core', namespace: 'test' }));
         plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
     } }],
 });
@@ -4246,6 +4263,7 @@ const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined, c
         },
     };
     state.aiTimeoutInputs = []; state.aiTimeoutReplies = {};
+    state.aiReasoningInputs = []; state.aiReasoningReplies = {};
     configure(state);
     vm.runInNewContext(source, state);
     assert.equal(state.contractBindings.reminderPlatform, hostPlatform === 'ios' ? 'ios' : 'android');
@@ -4412,6 +4430,98 @@ const poll = async (state, id) => {
         assert.throws(() => requireTypedAITimeoutFacade(swift.replace(before, after)));
     }
     console.log('Task590: production private timeout invocation, exact arguments, owner refusal and receipt registration passed; Apple execution pending');
+}
+// Task678: production private reasoning routes; shared real-module/SQLite
+// tests own state semantics. This VM proves wiring, owner fences and receipt scope.
+{
+    const ready = async (platform = 'ios') => {
+        const state = makeState(0, [], platform);
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        return state;
+    };
+    const state = await ready();
+    assert.equal(typeof state.MindwtrHost.iosAIReasoningEffortOptions, 'function', 'actual private reasoning route missing');
+    assert(state.receiptScope.includes('aiReasoningEffort'), 'effort receipts survive restart independently of timeout');
+    assert(state.receiptScope.includes('aiRequestTimeout'));
+    const expected = { aiPresent: true, effortPresent: true, effort: 'minimal', providerPresent: false, provider: null, stampPresent: false, stamp: null };
+    const request = { requestId: '00000000-0000-4000-8000-000000000678', value: 'medium', expected };
+    const prepared = { version: 1, request }, envelope = { request, prepared }, reply = { value: 'medium', changed: true };
+    state.aiReasoningReplies = {
+        options: { ok: true, value: { value: 'minimal', expected } }, prepare: { ok: true, value: { kind: 'prepared', prepared } },
+        validate: { ok: true, value: reply }, commit: { ok: true, value: reply }, outcome: { ok: true, value: reply },
+    };
+    const routes = [['iosAIReasoningEffortOptions', 'options', {}], ['iosAIReasoningEffortPrepare', 'prepare', request],
+        ['iosAIReasoningEffortValidate', 'validate', envelope], ['iosAIReasoningEffortCommit', 'commit', envelope],
+        ['iosAIReasoningEffortRetryOutcome', 'outcome', request]];
+    const invoke = (route, input, owner = () => '') => poll(state, state.MindwtrHost[route](JSON.stringify(input), owner));
+    for (const [route, kind, input] of routes) {
+        assert.equal(typeof state.MindwtrHost[route], 'function');
+        const before = state.aiReasoningInputs.length;
+        assert.deepEqual(await invoke(route, input), state.aiReasoningReplies[kind]);
+        assert.deepEqual(JSON.parse(JSON.stringify(state.aiReasoningInputs.at(-1))), [kind, JSON.stringify(input)]);
+        assert.equal(state.aiReasoningInputs.length, before + 1);
+    }
+    for (const value of ['low', 'medium', 'high']) {
+        const input = { ...request, value };
+        await invoke('iosAIReasoningEffortPrepare', input);
+        assert.equal(JSON.parse(state.aiReasoningInputs.at(-1)[1]).value, value);
+    }
+    for (const route of ['iosAIReasoningEffortOptions', 'iosAIReasoningEffortPrepare', 'iosAIReasoningEffortCommit']) {
+        const before = state.aiReasoningInputs.length;
+        assert.equal((await invoke(route, {}, null)).ok, false);
+        assert.equal((await invoke(route, {}, () => 'retired')).ok, false);
+        for (const raw of ['{', ' '.repeat(route.endsWith('Options') ? 257 : route.endsWith('Prepare') ? 2049 : 8193) + '{}'])
+            assert.equal((await poll(state, state.MindwtrHost[route](raw, () => ''))).ok, false);
+        assert.equal(state.aiReasoningInputs.length, before);
+        let release; state.aiReasoningHold = new Promise(resolve => { release = resolve; });
+        const ticket = state.MindwtrHost[route]('{}', () => '');
+        state.MindwtrHost.abort(ticket); release();
+        assert.equal((await poll(state, ticket)).ok, false);
+        assert.equal(state.aiReasoningInputs.length, before, 'cancelled route does not reach contract');
+        state.aiReasoningHold = undefined;
+        let active = true;
+        state.aiReasoningHold = new Promise(resolve => { release = resolve; });
+        const changed = state.MindwtrHost[route]('{}', () => active ? '' : 'retired');
+        active = false; release();
+        assert.equal((await poll(state, changed)).ok, false);
+        assert.equal(state.aiReasoningInputs.length, before, 'late owner refuses');
+        state.aiReasoningHold = undefined;
+    }
+    for (const [route, , input] of routes.filter(([route]) => route.endsWith('Validate') || route.endsWith('RetryOutcome'))) {
+        const before = state.aiReasoningInputs.length;
+        for (const raw of ['{', ' '.repeat(route.endsWith('Validate') ? 8193 : 2049) + '{}'])
+            assert.equal((await poll(state, state.MindwtrHost[route](raw))).ok, false);
+        assert.equal(state.aiReasoningInputs.length, before);
+    }
+    for (const flag of ['sandbox', 'workspaceTransition', 'linesUnguarded']) {
+        state[flag] = true;
+        assert.equal((await invoke('iosAIReasoningEffortOptions', {})).ok, false);
+        assert.equal((await invoke('iosAIReasoningEffortRetryOutcome', request)).ok, false);
+        state[flag] = false;
+    }
+    const adapter = state.adapter; state.adapter = {};
+    assert.equal((await invoke('iosAIReasoningEffortOptions', {})).ok, false); state.adapter = adapter;
+    const android = await ready('android');
+    assert.equal((await poll(android, android.MindwtrHost.iosAIReasoningEffortOptions('{}', () => ''))).ok, false);
+    assert.equal((await poll(android, android.MindwtrHost.iosAIReasoningEffortAcknowledged())).ok, true);
+    assert(!(android.logText ?? '').includes('v1.3.5/ios-ai-reasoning-effort'));
+    assert.equal((await state.aiReasoningDeps.save()).ok, true);
+    state.flushError = 'PRIVATE678-FAILURE';
+    assert.equal((await state.aiReasoningDeps.save()).ok, false); state.flushError = undefined;
+    const marker = 'v1.3.5/ios-ai-reasoning-effort';
+    assert(!(state.logText ?? '').includes(marker), 'route replies do not claim native acknowledgment');
+    assert.equal((await poll(state, state.MindwtrHost.iosAIReasoningEffortAcknowledged())).ok, true);
+    const lines = state.logText.split('\n').filter(line => line.includes(marker));
+    assert.equal(lines.length, 1);
+    assert.deepEqual(JSON.parse(lines[0]).context, { releaseCheck: marker, outcome: 'saved' });
+    assert(!lines[0].includes(request.requestId) && !lines[0].includes('minimal') && !lines[0].includes('medium'));
+    for (const dispatch of ['menuRead', 'menuCommand']) {
+        for (const route of ['iosAIReasoningEffort', ...routes.map(([route]) => route), 'iosAIReasoningEffortAcknowledged'])
+            assert.equal((await poll(state, state.MindwtrHost[dispatch](route, '{}'))).ok, false);
+    }
+    const count = state.logText.split('\n').filter(line => line.includes(marker)).length;
+    assert.equal(count, 1, 'generic route cannot emit marker');
+    console.log('Task678: private reasoning routing, saved minimal, choices, bounds, platform/owner/cancellation, receipts and fixed acknowledgment gates passed; Swift/Apple pending');
 }
 // Task592: actual private route and real selected-provider helper; device metadata
 // is a native stand-in here. Apple tests own actual Keychain/KV/SQLite evidence.
@@ -5256,6 +5366,7 @@ export function createNativeSync() {
             plugin.onLoad({ filter: /.*/, namespace: 'download-test' }, () => ({ contents: syncFixture, loader: 'js' }));
             plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'test' }));
         plugin.onResolve({ filter: /packages\/core\/src\/native-ai-request-timeout$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-reasoning-effort$/ }, () => ({ path: 'core', namespace: 'test' }));
             plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
         } }],
     });
@@ -7720,7 +7831,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'aiRequestTimeout', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);

@@ -3,6 +3,7 @@ import XCTest
 final class FoundationUITests: XCTestCase {
     private var task586Application: XCUIApplication?
     private var task601Application: XCUIApplication?
+    private var task680Application: XCUIApplication?
 
     private func task578App(_ suffix: String, flags: [String] = [], largest: Bool = false) throws -> XCUIApplication {
         continueAfterFailure = false
@@ -2841,6 +2842,7 @@ final class FoundationUITests: XCTestCase {
             add(attachment)
         }
         task601Application?.terminate(); task601Application = nil
+        task680Application?.terminate(); task680Application = nil
         task586Application?.terminate()
         task586Application = nil
         try super.tearDownWithError()
@@ -28930,6 +28932,141 @@ extension FoundationUITests {
         task601Advanced(app); task601Choose(app, 60)
         // The initial typed save exhausts five real SQL COMMIT attempts.
         task601State(app, "failure=true;exact=false;commits=5;retired=false")
+        boardTap(app, "ai-summary-test-host")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["ai-summary-title"])
+        waitForExpectations(timeout: 30)
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); boardTap(app, "persistence-retry")
+        XCTAssertFalse(app.staticTexts["ai-summary-title"].exists)
+        XCTAssertTrue(app.buttons["persistence-retry"].exists)
+        XCTAssertTrue(app.staticTexts["persistence-error"].exists)
+    }
+
+    private func task680App(_ role: String, flags: [String] = [], largest: Bool = false) throws -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication(); task680Application = app
+        app.launchArguments = ["--native-ui-test-library", try task371Library(role, prefix: "MINDWTR_AI_EFFORT_UI_"),
+            "--native-ai-reasoning-fixture", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"] + flags
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); task594OpenAI(app)
+        XCTAssertTrue(app.staticTexts["ai-summary-effort"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["ai-timeout-choice-30"].exists, "Advanced defaults to collapsed")
+        return app
+    }
+    private func task680Choose(_ app: XCUIApplication, _ value: String) {
+        let choice = app.buttons["ai-effort-choice-" + value]
+        task442Reveal(app, choice, in: app.scrollViews["ai-summary-scroll"])
+        boardEnabled(choice, timeout: 30); choice.tap()
+    }
+    private func task680Value(_ app: XCUIApplication, _ value: String) {
+        let text = app.staticTexts["ai-summary-effort"]
+        let labels = ["low": "Low", "medium": "Medium", "high": "High"]
+        expectation(for: NSPredicate { _, _ in text.exists && text.label == labels[value] }, evaluatedWith: text)
+        waitForExpectations(timeout: 30)
+        boardEnabled(app.buttons["ai-effort-choice-low"], timeout: 30)
+        XCTAssertTrue(app.buttons["ai-effort-choice-" + value].isSelected)
+    }
+    private func task680State(_ app: XCUIApplication, _ expected: String) {
+        let state = app.staticTexts["ai-effort-fixture-state"]
+        expectation(for: NSPredicate { _, _ in state.exists && state.label == expected }, evaluatedWith: state)
+        waitForExpectations(timeout: 30)
+    }
+    func testNativeAIReasoningThreeChoicesWhileDisabledAndColdSaved() throws {
+        let app = try task680App("CHOICES"); defer { app.terminate() }
+        XCTAssertEqual(app.staticTexts["ai-summary-enabled"].label, "Off")
+        for value in ["low", "medium", "high"] { task680Choose(app, value); task680Value(app, value) }
+        XCTAssertEqual(app.staticTexts["ai-summary-enabled"].label, "Off")
+        XCTAssertEqual(app.staticTexts["ai-summary-provider"].label, "OpenAI")
+        XCTAssertEqual(app.staticTexts["ai-summary-timeout"].label, "30 seconds")
+        app.terminate(); app.launch(); task594OpenAI(app)
+        task680Value(app, "high")
+    }
+    func testNativeAIReasoningSavedMinimalDisplayThenExplicitLow() throws {
+        let app = try task680App("MINIMAL", largest: true); defer { app.terminate() }
+        XCTAssertEqual(app.staticTexts["ai-summary-effort"].label, "Saved: Minimal")
+        boardEnabled(app.buttons["ai-effort-choice-low"], timeout: 30)
+        XCTAssertFalse(app.buttons["ai-effort-choice-minimal"].exists)
+        for value in ["low", "medium", "high"] { XCTAssertFalse(app.buttons["ai-effort-choice-" + value].isSelected) }
+        task680Choose(app, "low"); task680Value(app, "low")
+    }
+    func testNativeAIReasoningExplicitAbsentLowAndSavedLowNoop() throws {
+        for role in ["EXPLICIT_DEFAULT", "NOOP"] {
+            let app = try task680App(role); defer { app.terminate() }
+            task680Choose(app, "low"); task680Value(app, "low")
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            app.terminate()
+        }
+    }
+    func testNativeAIReasoningNonOpenAIHasNoActions() throws {
+        for role in ["GEMINI", "ANTHROPIC"] {
+            let app = try task680App(role); defer { app.terminate() }
+            XCTAssertEqual(app.staticTexts["ai-summary-provider"].label, role == "GEMINI" ? "Gemini" : "Anthropic (Claude)")
+            for value in ["low", "medium", "high", "minimal"] { XCTAssertFalse(app.buttons["ai-effort-choice-" + value].exists) }
+            XCTAssertFalse(app.buttons["ai-effort-options-retry"].exists)
+            app.terminate()
+        }
+    }
+    func testNativeAIReasoningOptionsFailureRetriesOnlyRead() throws {
+        let app = try task680App("OPTIONS_FAILURE", flags: ["--native-ai-reasoning-options-failure-once"]); defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["ai-effort-options-error"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["ai-effort-choice-low"].exists)
+        boardTap(app, "ai-effort-options-retry")
+        boardEnabled(app.buttons["ai-effort-choice-low"], timeout: 30)
+        XCTAssertTrue(app.buttons["ai-effort-choice-low"].isSelected)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+    private func task680CancelWrite(_ role: String, retirement: String) throws {
+        let app = try task680App(role, flags: ["--native-ai-reasoning-readmission-hold-once"]); defer { app.terminate() }
+        task680Choose(app, "medium")
+        XCTAssertTrue(app.staticTexts["ai-effort-test-held"].waitForExistence(timeout: 20))
+        if retirement == "back" { boardTap(app, "ai-summary-back") }
+        else if retirement == "background" { task601Background(app) }
+        else { boardTap(app, "ai-summary-test-" + retirement) }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["ai-summary-title"])
+        waitForExpectations(timeout: 20)
+        if retirement == "lock" { boardEnabled(app.buttons["app-lock-read-retry"], timeout: 20); boardTap(app, "app-lock-read-retry") }
+        if retirement == "host" {
+            let advanced = app.buttons["settings-advanced"]
+            task442Reveal(app, advanced, in: app.scrollViews["settings-scroll"]); boardEnabled(advanced, timeout: 30); advanced.tap()
+        }
+        XCTAssertTrue(app.staticTexts["advanced-title"].waitForExistence(timeout: 30))
+        task594EnterAI(app); task680Value(app, "low")
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+    func testNativeAIReasoningBackCancelsBeforeCommit() throws { try task680CancelWrite("BACK", retirement: "back") }
+    func testNativeAIReasoningBackgroundCancelsBeforeCommit() throws { try task680CancelWrite("BACKGROUND", retirement: "background") }
+    func testNativeAIReasoningLockCancelsBeforeCommit() throws { try task680CancelWrite("LOCK", retirement: "lock") }
+    func testNativeAIReasoningHostReplacementCancelsBeforeCommit() throws { try task680CancelWrite("HOST", retirement: "host") }
+    private func task680Uncertain(_ role: String, retirement: String? = nil, refreshFailure: Bool = false) throws {
+        var flags = ["--native-ai-reasoning-commit-failure-once"]
+        if refreshFailure { flags += ["--native-ai-reasoning-refresh-failure-once"] }
+        let app = try task680App(role, flags: flags); defer { app.terminate() }
+        task680Choose(app, "medium")
+        XCTAssertTrue(app.staticTexts["ai-effort-save-error"].waitForExistence(timeout: 20))
+        task680State(app, "failure=true;exact=false;commits=5;retired=false")
+        XCTAssertEqual(app.staticTexts["ai-summary-effort"].label, "Low")
+        if retirement == "background" { task601Background(app) }
+        if retirement != nil { XCTAssertFalse(app.staticTexts["ai-summary-title"].exists) }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); boardTap(app, "persistence-retry")
+        task680State(app, "failure=true;exact=true;commits=6;retired=true")
+        if refreshFailure {
+            XCTAssertTrue(app.staticTexts["ai-summary-error"].waitForExistence(timeout: 20))
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            boardTap(app, "ai-summary-retry")
+            task680State(app, "failure=true;exact=true;commits=6;retired=true")
+        }
+        task680Value(app, "medium")
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        app.launchArguments.removeAll { $0 == "--native-ai-reasoning-commit-failure-once" }
+        app.terminate(); app.launch(); task594OpenAI(app)
+        task680Value(app, "medium")
+    }
+    func testNativeAIReasoningRealCommitFailureExactWarmRetry() throws { try task680Uncertain("COMMIT") }
+    func testNativeAIReasoningBackgroundThenExplicitExactRetry() throws { try task680Uncertain("COMMIT_BACKGROUND", retirement: "background") }
+    func testNativeAIReasoningAcknowledgedRefreshFailureRetriesOnlyRead() throws { try task680Uncertain("REFRESH_FAILURE", refreshFailure: true) }
+    func testNativeAIReasoningReplacementHostCannotRetryUncertainOwner() throws {
+        let app = try task680App("COMMIT_HOST", flags: ["--native-ai-reasoning-commit-failure-once"]); defer { app.terminate() }
+        task680Choose(app, "medium")
+        task680State(app, "failure=true;exact=false;commits=5;retired=false")
         boardTap(app, "ai-summary-test-host")
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["ai-summary-title"])
         waitForExpectations(timeout: 30)

@@ -278,7 +278,7 @@ private struct NativeCalendarFileCaptureAdmission: Sendable {
 /// Private prerequisite only; these saved switches do not promise native AI capability.
 public struct NativeAISettingsProjection: Decodable, Sendable, Equatable {
     public enum Provider: String, Decodable, Sendable { case openai, gemini, anthropic }
-    enum Effort: String, Decodable, Sendable { case minimal, low, medium, high }
+    typealias Effort = NativeAIReasoningEffortSavedValue
     enum SpeechProvider: String, Decodable, Sendable { case openai, gemini, whisper }
     enum SpeechMode: String, Decodable, Sendable { case smart_parse, transcribe_only }
     enum FieldStrategy: String, Decodable, Sendable { case smart, title_only, description_only }
@@ -287,6 +287,7 @@ public struct NativeAISettingsProjection: Decodable, Sendable, Equatable {
     public let aiEnabled: Bool
     let staticAiModelOptions: [String]
     let aiReasoningEffort: Effort
+    public var aiReasoningEffortSavedValue: NativeAIReasoningEffortSavedValue { aiReasoningEffort }
     let aiThinkingBudget: Int
     let staticAiCopilotOptions: [String]
     public let aiRequestTimeoutSeconds: Int
@@ -313,6 +314,84 @@ public struct NativeAISettingsProjection: Decodable, Sendable, Equatable {
                 $0.utf8.count <= 64 && $0.range(of: "^[a-z0-9][a-z0-9.-]*$", options: .regularExpression) != nil
             }
         }) else { throw failure }
+        return result
+    }
+}
+
+public enum NativeAIReasoningEffortValue: String, Codable, Sendable { case low, medium, high }
+public enum NativeAIReasoningEffortSavedValue: String, Codable, Sendable { case minimal, low, medium, high }
+
+public struct NativeAIReasoningEffortWitness: Sendable, Equatable {
+    let aiPresent: Bool
+    let effortPresent: Bool
+    let effort: NativeAIReasoningEffortSavedValue?
+    let providerPresent: Bool
+    let provider: String?
+    let stampPresent: Bool
+    let stamp: String?
+    var object: [String: Any] { ["aiPresent": aiPresent, "effortPresent": effortPresent, "effort": effort.map { $0.rawValue as Any } ?? NSNull(),
+        "providerPresent": providerPresent, "provider": provider.map { $0 as Any } ?? NSNull(),
+        "stampPresent": stampPresent, "stamp": stamp.map { $0 as Any } ?? NSNull()] }
+    private struct Payload: Decodable {
+        let aiPresent: Bool
+        let effortPresent: Bool
+        let effort: NativeAIReasoningEffortSavedValue?
+        let providerPresent: Bool
+        let provider: String?
+        let stampPresent: Bool
+        let stamp: String?
+    }
+    static func validated(_ input: Any?) throws -> Self {
+        guard let object = input as? [String: Any], Set(object.keys) == Set(["aiPresent", "effortPresent", "effort", "providerPresent", "provider", "stampPresent", "stamp"]),
+              let value = try? JSONDecoder().decode(Payload.self, from: JSONSerialization.data(withJSONObject: object)),
+              value.aiPresent || (!value.effortPresent && !value.providerPresent),
+              value.effortPresent ? value.effort != nil : value.effort == nil,
+              value.providerPresent ? value.provider.map({ ["openai", "gemini", "anthropic"].contains($0) }) == true : value.provider == nil,
+              value.stampPresent ? value.stamp != nil : value.stamp == nil else { throw HostFailure("INVALID_INPUT: AI reasoning effort witness is malformed") }
+        if let stamp = value.stamp {
+            let format = ISO8601DateFormatter(); format.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            guard stamp.utf8.count <= 40, let date = format.date(from: stamp), format.string(from: date) == stamp else {
+                throw HostFailure("INVALID_INPUT: AI reasoning effort stamp is malformed")
+            }
+        }
+        return .init(aiPresent: value.aiPresent, effortPresent: value.effortPresent, effort: value.effort,
+            providerPresent: value.providerPresent, provider: value.provider, stampPresent: value.stampPresent, stamp: value.stamp)
+    }
+}
+public struct NativeAIReasoningEffortRequest: Sendable, Equatable {
+    let requestId: String
+    public let value: NativeAIReasoningEffortValue
+    let expected: NativeAIReasoningEffortWitness
+    public init(requestId: String, value: NativeAIReasoningEffortValue, expected: NativeAIReasoningEffortWitness) {
+        self.requestId = requestId; self.value = value; self.expected = expected
+    }
+    func json() throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: ["requestId": requestId, "value": value.rawValue, "expected": expected.object], options: [.sortedKeys]), as: UTF8.self)
+    }
+}
+public struct NativeAIReasoningEffortOptions: Sendable, Equatable {
+    public let value: NativeAIReasoningEffortSavedValue
+    public let expected: NativeAIReasoningEffortWitness
+    static func validated(_ raw: String) throws -> Self {
+        guard raw.utf8.count <= 2048, try NativeJSON.hasUniqueObjectKeys(raw),
+              let object = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any], Set(object.keys) == Set(["value", "expected"]),
+              let rawValue = object["value"] as? String, let value = NativeAIReasoningEffortSavedValue(rawValue: rawValue) else {
+            throw HostFailure("INVALID_INPUT: AI reasoning effort options are malformed")
+        }
+        let expected = try NativeAIReasoningEffortWitness.validated(object["expected"])
+        guard value == (expected.effort ?? .low), !expected.providerPresent || expected.provider == "openai" else { throw HostFailure("INVALID_INPUT: AI reasoning effort options disagree with saved controls") }
+        return .init(value: value, expected: expected)
+    }
+}
+public struct NativeAIReasoningEffortResult: Decodable, Sendable, Equatable {
+    public let value: NativeAIReasoningEffortValue
+    public let changed: Bool
+    static func validated(_ raw: String) throws -> Self {
+        guard raw.utf8.count <= 1024, try NativeJSON.hasUniqueObjectKeys(raw),
+              let object = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any], Set(object.keys) == Set(["value", "changed"]),
+              let result = try? JSONDecoder().decode(Self.self, from: Data(raw.utf8)) else {
+            throw HostFailure("INVALID_INPUT: AI reasoning effort reply is malformed")
+        }
         return result
     }
 }
@@ -395,6 +474,15 @@ public struct NativeAIRequestTimeoutResult: Decodable, Sendable, Equatable {
 
 #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
 public struct NativeAIRequestTimeoutFixtureState: Sendable {
+    public let failureInjected: Bool
+    public let exactRequestRetried: Bool
+    /// Matching SQL COMMIT attempts, including the shared save's internal retries.
+    public let commitAttempts: Int
+    public let journalRetired: Bool
+}
+#endif
+#if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+public struct NativeAIReasoningEffortFixtureState: Sendable {
     public let failureInjected: Bool
     public let exactRequestRetried: Bool
     /// Matching SQL COMMIT attempts, including the shared save's internal retries.
@@ -501,6 +589,46 @@ public final class CoreHost: @unchecked Sendable {
             } catch { result = .failure(error) }
             _ = try? await perform(reminderOwned: true) { $0.finishAIRequestTimeout(id) }
             return try NativeAIRequestTimeoutResult.validated(result.get())
+        } onCancel: { cancellation.cancel(); self.notificationAuthorization.cancelReadmission(id) }
+    }
+
+    #if DEBUG
+    func aiReasoningEffortQueueFenceForTests() -> () -> Void {
+        let ownedQueue = queue
+        return { dispatchPrecondition(condition: .notOnQueue(ownedQueue)); ownedQueue.sync {} }
+    }
+    #endif
+
+    public func readAIReasoningEffortOptions() async throws -> NativeAIReasoningEffortOptions {
+        try await perform { try NativeAIReasoningEffortOptions.validated($0.readAIReasoningEffortOptions()) }
+    }
+    func probeAIReasoningEffortOutcome(_ request: NativeAIReasoningEffortRequest) async throws -> NativeAIReasoningEffortResult {
+        let raw = try request.json()
+        return try await perform { try NativeAIReasoningEffortResult.validated($0.probeAIReasoningEffortOutcome(requestJSON: raw)) }
+    }
+    public func setAIReasoningEffort(_ request: NativeAIReasoningEffortRequest,
+        readmission: @escaping @Sendable () async -> Bool) async throws -> NativeAIReasoningEffortResult {
+        let id = try notificationAuthorization.begin(), cancellation = NativeAttachmentCancellation(), raw = try request.json()
+        localAttachmentRequests.register(cancellation, id: id)
+        defer { localAttachmentRequests.remove(id); notificationAuthorization.finish(id) }
+        if Task.isCancelled { cancellation.cancel() }
+        return try await withTaskCancellationHandler {
+            let result: Result<String, Error>
+            var retry = false
+            do {
+                let admission = try await perform { try $0.beginAIReasoningEffort(id, requestJSON: raw, cancellation: cancellation) }
+                retry = admission.retry
+                if let replay = admission.replay { result = .success(replay) }
+                else {
+                    guard !cancellation.isCancelled, await notificationAuthorization.readmit(id, check: readmission), !cancellation.isCancelled else {
+                        if retry { throw HostFailure("AI reasoning effort save still requires exact retry") }
+                        throw CoreHostRejection(message: "STALE_REVISION: AI reasoning effort edit is no longer current")
+                    }
+                    result = .success(try await perform { try $0.commitAIReasoningEffort(id) })
+                }
+            } catch { result = .failure(error) }
+            _ = try? await perform(reminderOwned: true) { $0.finishAIReasoningEffort(id) }
+            return try NativeAIReasoningEffortResult.validated(result.get())
         } onCancel: { cancellation.cancel(); self.notificationAuthorization.cancelReadmission(id) }
     }
 
@@ -844,6 +972,7 @@ public final class CoreHost: @unchecked Sendable {
         }
         guard !Engine.reminderMethods.contains(method) else { throw NativeReminderEffects.unavailable }
         guard !Engine.aiRequestTimeoutMethods.contains(method) else { throw CoreHostRejection(message: "INVALID_INPUT: AI timeout requires its private facade") }
+        guard !Engine.aiReasoningEffortMethods.contains(method) else { throw CoreHostRejection(message: "INVALID_INPUT: AI reasoning effort requires its private facade") }
         guard !Engine.notificationSettingMethods.contains(method) else { throw CoreHostRejection(message: "INVALID_INPUT: Notification Settings require their explicit facade") }
         guard !Engine.deviceCalendarSettingMethods.contains(method) else { throw CoreHostRejection(message: "INVALID_INPUT: Device Calendar Settings require their explicit facade") }
         guard !Engine.calendarSubscriptionSettingMethods.contains(method) else { throw CoreHostRejection(message: "INVALID_INPUT: Calendar subscription settings require their explicit facade") }
@@ -951,6 +1080,12 @@ public final class CoreHost: @unchecked Sendable {
     }
     public func isolatedAIRequestTimeoutFixtureState() async throws -> NativeAIRequestTimeoutFixtureState {
         try await perform { try $0.isolatedAIRequestTimeoutFixtureState() }
+    }
+    public func configureIsolatedAIReasoningEffortCommitFailureOnce() async throws {
+        try await perform { try $0.configureIsolatedAIReasoningEffortCommitFailureOnce() }
+    }
+    public func isolatedAIReasoningEffortFixtureState() async throws -> NativeAIReasoningEffortFixtureState {
+        try await perform { try $0.isolatedAIReasoningEffortFixtureState() }
     }
     #endif
     #if DEBUG && os(iOS) && targetEnvironment(simulator)
@@ -2241,6 +2376,33 @@ private final class Engine: @unchecked Sendable {
     #endif
     fileprivate static let aiRequestTimeoutMethods: Set<String> = ["iosAIRequestTimeout", "iosAIRequestTimeoutOptions",
         "iosAIRequestTimeoutPrepare", "iosAIRequestTimeoutValidate", "iosAIRequestTimeoutCommit", "iosAIRequestTimeoutRetryOutcome", "iosAIRequestTimeoutAcknowledged"]
+    private final class AIReasoningEffortTurn {
+        let id: UUID
+        let runtime: JSContext
+        let connection: SQLiteBridge
+        let library: OwnedDiscardIdentity
+        let generation: UInt64
+        let epoch: Int64
+        let cancellation: NativeAttachmentCancellation
+        let requestJSON: String?
+        let retry: Bool
+        init(id: UUID, runtime: JSContext, connection: SQLiteBridge, library: OwnedDiscardIdentity, generation: UInt64,
+             epoch: Int64, cancellation: NativeAttachmentCancellation, requestJSON: String?, retry: Bool) {
+            self.id = id; self.runtime = runtime; self.connection = connection; self.library = library
+            self.generation = generation; self.epoch = epoch; self.cancellation = cancellation; self.requestJSON = requestJSON; self.retry = retry
+        }
+    }
+    private var aiReasoningEffortTurn: AIReasoningEffortTurn?
+    private var aiReasoningEffortOwnerAccess = false
+    private var aiReasoningEffortRetired = false
+    #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    private var aiReasoningEffortFixtureOriginal: String?
+    private var aiReasoningEffortFixtureArmed = false
+    private var aiReasoningEffortFixtureSQLCommitAttempts = 0
+    private var aiReasoningEffortFixtureExactRetry = false
+    #endif
+    fileprivate static let aiReasoningEffortMethods: Set<String> = ["iosAIReasoningEffort", "iosAIReasoningEffortOptions",
+        "iosAIReasoningEffortPrepare", "iosAIReasoningEffortValidate", "iosAIReasoningEffortCommit", "iosAIReasoningEffortRetryOutcome", "iosAIReasoningEffortAcknowledged"]
     private final class DeviceCalendarSettingTurn {
         let runtime: JSContext
         let storage: NativeDeviceKV
@@ -2607,6 +2769,7 @@ private final class Engine: @unchecked Sendable {
     private var startupDataSettingResult: String?
     private var startupGeneralPreferenceResult: String?
     private var startupAIRequestTimeoutResult: String?
+    private var startupAIReasoningEffortResult: String?
     private var startupNotificationSettingResult: String?
     private var startupDeviceCalendarSettingResult: String?
     private var startupCalendarSubscriptionSettingResult: String?
@@ -2670,7 +2833,7 @@ private final class Engine: @unchecked Sendable {
         "projectSectionOrderOptions": 1, "projectSectionOrder": 1, "projectSectionOrderRetryOutcome": 1,
         "appLockOptions": 1, "appLock": 1, "appLockRetryOutcome": 1,
         "gtdWorkflowOptions": 1, "gtdPomodoroOptions": 1, "gtdArchiveOptions": 1, "gtdReviewOptions": 1, "gtdInboxOptions": 1, "gtdCaptureAreaOptions": 1, "gtdCaptureParseOptions": 1, "gtdTaskEditorOpenOptions": 1, "gtdTaskEditorPresetOptions": 1, "gtdTaskEditorFieldOptions": 1, "gtdWorkflowDraft": 1, "gtdWorkflow": 1, "gtdWorkflowRetryOutcome": 1,
-        "iosEntityOpen": 1, "iosSearchSnapshot": 0, "iosSearchObservation": 0, "iosSearchOpen": 1, "iosNotificationOpen": 1, "iosAIRequestTimeout": 1, "notificationSetting": 1, "reminderCompletionCommit": 1, "reminderSnoozeCommit": 4,
+        "iosEntityOpen": 1, "iosSearchSnapshot": 0, "iosSearchObservation": 0, "iosSearchOpen": 1, "iosNotificationOpen": 1, "iosAIRequestTimeout": 1, "iosAIReasoningEffort": 1, "notificationSetting": 1, "reminderCompletionCommit": 1, "reminderSnoozeCommit": 4,
         "generalPreferenceOptions": 1, "generalPreference": 1, "generalPreferenceRetryOutcome": 1, "deviceCalendarSetting": 1, "calendarSubscriptionSetting": 1, "calendarSubscriptionAdd": 1,
         "manageTaxonomyOptions": 1, "manageTaxonomy": 1, "manageTaxonomyRetryOutcome": 1,
         "managePersonEditOptions": 1, "managePersonEdit": 1, "managePersonEditRetryOutcome": 1,
@@ -2738,7 +2901,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["iosAIRequestTimeout", "pomodoroTransitionWrite", "calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "referenceTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "captureLinesSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["iosAIRequestTimeout", "iosAIReasoningEffort", "pomodoroTransitionWrite", "calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "referenceTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "captureLinesSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -3307,6 +3470,10 @@ private final class Engine: @unchecked Sendable {
                 _ = try invoke("iosAIRequestTimeoutValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validateAIRequestTimeoutAcknowledgment(command, value: value) }
             }
+            if let command = pending, command.method == "iosAIReasoningEffortCommit" {
+                _ = try invoke("iosAIReasoningEffortValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateAIReasoningEffortAcknowledgment(command, value: value) }
+            }
             if let command = pending, let operation = CalendarSubscriptionOperation(commitMethod: command.method) {
                 _ = try invoke(operation.rawValue + "Validate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validateCalendarSubscriptionSettingAcknowledgment(command, value: value) }
@@ -3615,6 +3782,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringDataSetting = pending?.method == "dataSetting"
         let recoveringGeneralPreference = pending?.method == "generalPreferenceCommit"
         let recoveringAIRequestTimeout = pending?.method == "iosAIRequestTimeoutCommit"
+        let recoveringAIReasoningEffort = pending?.method == "iosAIReasoningEffortCommit"
         let recoveringNotificationSetting = pending?.method == "notificationSettingCommit"
         let recoveringDeviceCalendarSetting = pending?.method == "deviceCalendarSettingCommit"
         let recoveringCalendarSubscriptionSetting = pending?.method == "calendarSubscriptionSettingCommit"
@@ -3734,6 +3902,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringDataSetting, let terminal, case .success(let value) = terminal { startupDataSettingResult = value }
         if recoveringGeneralPreference, let terminal, case .success(let value) = terminal { startupGeneralPreferenceResult = value }
         if recoveringAIRequestTimeout, let terminal, case .success(let value) = terminal { startupAIRequestTimeoutResult = value }
+        if recoveringAIReasoningEffort, let terminal, case .success(let value) = terminal { startupAIReasoningEffortResult = value }
         if recoveringNotificationSetting, let terminal, case .success(let value) = terminal { startupNotificationSettingResult = value }
         if recoveringDeviceCalendarSetting, let terminal, case .success(let value) = terminal { startupDeviceCalendarSettingResult = value }
         if recoveringCalendarSubscriptionSetting, let terminal, case .success(let value) = terminal { startupCalendarSubscriptionSettingResult = value }
@@ -3793,8 +3962,11 @@ private final class Engine: @unchecked Sendable {
         let recoveredSomedaySections = startupSomedaySectionCreateResult ?? startupSomedaySectionRenameResult
             ?? startupSomedaySectionDeleteResult ?? startupSomedaySectionOrderResult
             ?? startupSomedaySectionTaskResult
+        let recoveredAISettings = startupAIRequestTimeoutResult ?? startupAIReasoningEffortResult
+        let recoveredCalendarSettings = startupNotificationSettingResult ?? startupDeviceCalendarSettingResult
+            ?? startupCalendarSubscriptionSettingResult ?? startupCalendarSubscriptionAddResult
         let recoveredSettings = startupBackupDocumentResult ?? startupDataSettingResult ?? startupGtdWorkflowResult
-            ?? startupAppLockResult ?? startupGeneralPreferenceResult ?? startupAIRequestTimeoutResult ?? startupNotificationSettingResult ?? startupDeviceCalendarSettingResult ?? startupCalendarSubscriptionSettingResult ?? startupCalendarSubscriptionAddResult
+            ?? startupAppLockResult ?? startupGeneralPreferenceResult ?? recoveredAISettings ?? recoveredCalendarSettings
         let recoveredManage = recoveredSettings ?? startupUnassignedAreaColorResult ?? startupPersonCreateResult
             ?? startupPersonDeleteResult ?? startupPersonEditResult ?? startupTaxonomyResult
         let recoveredDoneRows = startupDoneTaskCompletedAtResult ?? startupDoneTaskStatusResult
@@ -3883,6 +4055,7 @@ private final class Engine: @unchecked Sendable {
                 : startupDataSettingResult != nil ? "dataSetting"
                 : startupGeneralPreferenceResult != nil ? "generalPreferenceCommit"
                 : startupAIRequestTimeoutResult != nil ? "iosAIRequestTimeoutCommit"
+                : startupAIReasoningEffortResult != nil ? "iosAIReasoningEffortCommit"
                 : startupNotificationSettingResult != nil ? "notificationSettingCommit"
                 : startupDeviceCalendarSettingResult != nil ? "deviceCalendarSettingCommit"
                 : startupCalendarSubscriptionSettingResult != nil ? "calendarSubscriptionSettingCommit"
@@ -3996,6 +4169,7 @@ private final class Engine: @unchecked Sendable {
         startupDataSettingResult = nil
         startupGeneralPreferenceResult = nil
         startupAIRequestTimeoutResult = nil
+        startupAIReasoningEffortResult = nil
         startupNotificationSettingResult = nil
         startupDeviceCalendarSettingResult = nil
         startupCalendarSubscriptionSettingResult = nil
@@ -5978,7 +6152,7 @@ private final class Engine: @unchecked Sendable {
         return request
     }
     private func makeAIRequestTimeoutTurn(_ id: UUID, requestJSON: String?, cancellation: NativeAttachmentCancellation, retry: Bool) throws {
-        guard !aiRequestTimeoutRetired, aiRequestTimeoutTurn == nil, started, !closed, !recoveryActivationPending, lockFD >= 0,
+        guard !aiRequestTimeoutRetired, aiRequestTimeoutTurn == nil, aiReasoningEffortTurn == nil, started, !closed, !recoveryActivationPending, lockFD >= 0,
               let runtime = context, let connection = database, let library = calendarPushDatabaseBinding,
               try Self.bindingIdentity(databaseURL) == library else {
             throw CoreHostRejection(message: "STALE_REVISION: AI timeout owner is unavailable; reload before editing")
@@ -6051,7 +6225,7 @@ private final class Engine: @unchecked Sendable {
         }
     }
     func beginAIRequestTimeout(_ id: UUID, requestJSON: String, cancellation: NativeAttachmentCancellation) throws -> (replay: String?, retry: Bool) {
-        guard aiRequestTimeoutTurn == nil, started, !closed, !recoveryActivationPending, lockFD >= 0 else {
+        guard aiRequestTimeoutTurn == nil, aiReasoningEffortTurn == nil, started, !closed, !recoveryActivationPending, lockFD >= 0 else {
             throw CoreHostRejection(message: "NOT_READY: AI timeout edit is unavailable")
         }
         try requireNoAttachmentDraft(); try denyCleanupOwner()
@@ -6107,6 +6281,150 @@ private final class Engine: @unchecked Sendable {
     }
     private func invokeAIRequestTimeoutCommit(_ command: PendingCommand) throws -> String {
         try invokeAIRequestTimeoutRead("iosAIRequestTimeoutCommit", arguments: journalArguments(command))
+    }
+
+    private static func aiReasoningEffortRequest(_ raw: String) throws -> [String: Any] {
+        guard raw.utf8.count <= 2048, try NativeJSON.hasUniqueObjectKeys(raw),
+              let request = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              Set(request.keys) == Set(["requestId", "value", "expected"]), let id = request["requestId"] as? String,
+              let uuid = UUID(uuidString: id), uuid.uuidString.lowercased() == id,
+              let value = request["value"] as? String, NativeAIReasoningEffortValue(rawValue: value) != nil else {
+            throw HostFailure("INVALID_INPUT: A bounded AI reasoning effort request is required")
+        }
+        _ = try NativeAIReasoningEffortWitness.validated(request["expected"])
+        return request
+    }
+    private func makeAIReasoningEffortTurn(_ id: UUID, requestJSON: String?, cancellation: NativeAttachmentCancellation, retry: Bool) throws {
+        guard !aiReasoningEffortRetired, aiReasoningEffortTurn == nil, aiRequestTimeoutTurn == nil, started, !closed, !recoveryActivationPending, lockFD >= 0,
+              let runtime = context, let connection = database, let library = calendarPushDatabaseBinding,
+              try Self.bindingIdentity(databaseURL) == library else {
+            throw CoreHostRejection(message: "STALE_REVISION: AI reasoning effort owner is unavailable; reload before editing")
+        }
+        try requireNoAttachmentDraft(); try denyCleanupOwner()
+        guard calendarAccessTurn == nil, calendarPushTurn == nil, notificationSettingTurn == nil, reminderEffectsTurn == nil,
+              deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil, encryptionUnlockTurn == nil,
+              providerCopy == nil, retainedOrdinaryTurn == nil, projectFileAddTurn == nil, projectDownloadTurn == nil,
+              projectDownloadAcknowledgedTurn == nil, taskDownloadTurn == nil, projectAvailabilityTurn == nil,
+              !cleanupOwed, !foregroundCleanupActive, ordinaryMutationDepth == 0 else {
+            throw CoreHostRejection(message: "NOT_READY: AI reasoning effort edit is unavailable")
+        }
+        aiReasoningEffortTurn = .init(id: id, runtime: runtime, connection: connection, library: library, generation: attachmentGeneration,
+            epoch: try captureLinesDataVersion(), cancellation: cancellation, requestJSON: requestJSON, retry: retry)
+    }
+    private func requireAIReasoningEffortTurn(checkCancellation: Bool = true) throws {
+        guard let turn = aiReasoningEffortTurn, !aiReasoningEffortRetired, started, !closed, lockFD >= 0,
+              context === turn.runtime, database === turn.connection, attachmentGeneration == turn.generation,
+              try Self.bindingIdentity(databaseURL) == turn.library, try captureLinesDataVersion() == turn.epoch else {
+            aiReasoningEffortRetired = true
+            throw HostFailure("STALE_REVISION: AI reasoning effort owner changed; reload before editing")
+        }
+        if checkCancellation && turn.cancellation.isCancelled {
+            throw HostFailure("CANCELLED: AI reasoning effort edit is no longer current")
+        }
+    }
+    private func invokeAIReasoningEffortRead(_ method: String, arguments: [Any]) throws -> String {
+        try requireAIReasoningEffortTurn()
+        guard let runtime = aiReasoningEffortTurn?.runtime else { throw HostFailure("NOT_READY: AI reasoning effort owner is unavailable") }
+        let owner: @convention(block) () -> String = { [weak self] in
+            guard let self else { return "!MindwtrNativeError:AI reasoning effort owner is unavailable" }
+            return self.guarded { try self.requireAIReasoningEffortTurn(); return "" } ?? "!MindwtrNativeError:AI reasoning effort owner is unavailable"
+        }
+        do {
+            runtime.exception = nil
+            guard let ownerValue = JSValue(object: owner, in: runtime), runtime.exception == nil else {
+                throw HostFailure("NOT_READY: AI reasoning effort owner callback is unavailable")
+            }
+            let value = try invoke(method, arguments: arguments + [ownerValue], localCancellation: aiReasoningEffortTurn?.cancellation)
+            // A published commit's validated terminal result wins caller cancellation.
+            try requireAIReasoningEffortTurn(checkCancellation: method != "iosAIReasoningEffortCommit")
+            return value
+        } catch {
+            // JS may have advanced the adapter epoch before refusal; do not reuse this native admission.
+            let message = (error as? HostFailure)?.message
+            let uncertainSave = message?.hasPrefix("SAVE_FAILED:") == true || error is CancellationError
+                || message?.hasPrefix("CANCELLED:") == true
+            if method != "iosAIReasoningEffortCommit" || !uncertainSave {
+                aiReasoningEffortRetired = true
+            }
+            throw error
+        }
+    }
+    func readAIReasoningEffortOptions() throws -> String {
+        try requireCalendarAdmission()
+        let id = UUID()
+        try makeAIReasoningEffortTurn(id, requestJSON: nil, cancellation: NativeAttachmentCancellation(), retry: false)
+        defer { finishAIReasoningEffort(id) }
+        aiReasoningEffortOwnerAccess = true; defer { aiReasoningEffortOwnerAccess = false }
+        let raw = try invokeAIReasoningEffortRead("iosAIReasoningEffortOptions", arguments: ["{}"])
+        _ = try NativeAIReasoningEffortOptions.validated(raw); return raw
+    }
+    func probeAIReasoningEffortOutcome(requestJSON: String) throws -> String {
+        try requireCalendarAdmission()
+        let request = try Self.aiReasoningEffortRequest(requestJSON)
+        do {
+            let value = try invoke("iosAIReasoningEffortRetryOutcome", arguments: [requestJSON])
+            try validateAIReasoningEffortResult(value, request: request, changed: true); return value
+        } catch let error as HostFailure where error.message.hasPrefix("STALE_REVISION:") || error.message.hasPrefix("INVALID_INPUT:") {
+            throw CoreHostRejection(message: error.message)
+        }
+    }
+    func beginAIReasoningEffort(_ id: UUID, requestJSON: String, cancellation: NativeAttachmentCancellation) throws -> (replay: String?, retry: Bool) {
+        guard aiReasoningEffortTurn == nil, aiRequestTimeoutTurn == nil, started, !closed, !recoveryActivationPending, lockFD >= 0 else {
+            throw CoreHostRejection(message: "NOT_READY: AI reasoning effort edit is unavailable")
+        }
+        try requireNoAttachmentDraft(); try denyCleanupOwner()
+        let request = try Self.aiReasoningEffortRequest(requestJSON)
+        if let command = pending {
+            guard command.method == "iosAIReasoningEffortCommit", let raw = try journalArguments(command).first as? String,
+                  let envelope = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any], Self.equalJSON(envelope["request"], request) else {
+                throw HostFailure("Previous changes require their exact retry")
+            }
+        } else {
+            try requireCalendarAdmission()
+            do {
+                let replay = try invoke("iosAIReasoningEffortRetryOutcome", arguments: [requestJSON])
+                try validateAIReasoningEffortResult(replay, request: request, changed: true); return (replay, false)
+            } catch let error as HostFailure where error.message.hasPrefix("STALE_REVISION:") { }
+            catch let error as HostFailure where error.message.hasPrefix("INVALID_INPUT:") { throw CoreHostRejection(message: error.message) }
+        }
+        if cancellation.isCancelled {
+            if pending != nil { throw HostFailure("AI reasoning effort save still requires exact retry") }
+            throw CoreHostRejection(message: "STALE_REVISION: AI reasoning effort edit is no longer current")
+        }
+        try makeAIReasoningEffortTurn(id, requestJSON: requestJSON, cancellation: cancellation, retry: pending != nil)
+        return (nil, pending != nil)
+    }
+    func commitAIReasoningEffort(_ id: UUID) throws -> String {
+        guard let turn = aiReasoningEffortTurn, turn.id == id else { throw HostFailure("AI reasoning effort owner is unavailable") }
+        aiReasoningEffortOwnerAccess = true; defer { aiReasoningEffortOwnerAccess = false }
+        do { try requireAIReasoningEffortTurn() }
+        catch { if turn.retry { throw HostFailure("AI reasoning effort save still requires exact retry") }; throw CoreHostRejection(message: error.localizedDescription) }
+        if turn.retry {
+            guard let terminal = try resolvePending() else { throw HostFailure("AI reasoning effort save still requires exact retry") }
+            return try terminal.value()
+        }
+        guard let request = turn.requestJSON else { throw HostFailure("AI reasoning effort request is unavailable") }
+        return try call("iosAIReasoningEffort", argumentsJSON: Self.ownedJSON([request]))
+    }
+    func finishAIReasoningEffort(_ id: UUID) { if aiReasoningEffortTurn?.id == id { aiReasoningEffortTurn = nil } }
+    private func validateAIReasoningEffortResult(_ value: String, request: [String: Any], changed: Bool) throws {
+        let result = try NativeAIReasoningEffortResult.validated(value)
+        let witness = try NativeAIReasoningEffortWitness.validated(request["expected"])
+        guard result.value.rawValue == request["value"] as? String, result.changed == changed,
+              changed || (witness.effortPresent && witness.effort?.rawValue == result.value.rawValue) else { throw HostFailure("Malformed AI reasoning effort acknowledgment") }
+    }
+    private func aiReasoningEffortJournalRequest(_ command: PendingCommand) throws -> String {
+        guard let raw = try journalArguments(command).first as? String,
+              let envelope = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any] else { throw HostFailure("Malformed AI reasoning effort journal") }
+        return try Self.ownedJSON(request)
+    }
+    private func validateAIReasoningEffortAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let request = try Self.aiReasoningEffortRequest(aiReasoningEffortJournalRequest(command))
+        try validateAIReasoningEffortResult(value, request: request, changed: true)
+    }
+    private func invokeAIReasoningEffortCommit(_ command: PendingCommand) throws -> String {
+        try invokeAIReasoningEffortRead("iosAIReasoningEffortCommit", arguments: journalArguments(command))
     }
 
     func readAISettingsProjection() throws -> NativeAISettingsProjection {
@@ -6240,6 +6558,7 @@ private final class Engine: @unchecked Sendable {
     private func requireNoAttachmentDraft() throws {
         guard calendarAccessTurn == nil else { throw CoreHostRejection(message: "NOT_READY: Calendar access is still awaiting its owner") }
         guard aiRequestTimeoutTurn == nil || aiRequestTimeoutOwnerAccess else { throw HostFailure("AI timeout edit is still awaiting its owner") }
+        guard aiReasoningEffortTurn == nil || aiReasoningEffortOwnerAccess else { throw HostFailure("AI reasoning effort edit is still awaiting its owner") }
         guard notificationSettingTurn == nil || notificationSettingOwnerAccess else { throw HostFailure("Notification edit is still awaiting its owner") }
         guard (reminderEffectsTurn == nil && pomodoroAlarmTurn == nil) || reminderOwnerAccess else { throw NativeReminderEffects.unavailable }
         try requireEncryptionUnlockTurn()
@@ -10306,6 +10625,7 @@ private final class Engine: @unchecked Sendable {
             throw CoreHostRejection(message: "INVALID_INPUT: AI projection requires its private read facade")
         }
         guard !Self.aiRequestTimeoutMethods.contains(method) || (method == "iosAIRequestTimeout" && aiRequestTimeoutOwnerAccess) else { throw CoreHostRejection(message: "INVALID_INPUT: AI timeout requires its private facade") }
+        guard !Self.aiReasoningEffortMethods.contains(method) || (method == "iosAIReasoningEffort" && aiReasoningEffortOwnerAccess) else { throw CoreHostRejection(message: "INVALID_INPUT: AI reasoning effort requires its private facade") }
         guard method != "iosAIProviderDeviceState" else {
             throw CoreHostRejection(message: "INVALID_INPUT: AI provider device metadata requires its private read facade")
         }
@@ -11932,6 +12252,37 @@ private final class Engine: @unchecked Sendable {
                 command = PendingCommand(version: 2, method: "iosAIRequestTimeoutCommit", argumentsJSON: encoded)
                 _ = try invoke("iosAIRequestTimeoutValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "iosAIReasoningEffort" {
+            do {
+                let value = try invokeAIReasoningEffortRead("iosAIReasoningEffortPrepare", arguments: args)
+                guard aiReasoningEffortTurn?.cancellation.isCancelled == false else {
+                    throw CoreHostRejection(message: "STALE_REVISION: AI reasoning effort edit is no longer current")
+                }
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed AI reasoning effort write preparation")
+                }
+                if kind == "noop" {
+                    guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any] else {
+                        throw HostFailure("Malformed no-write AI reasoning effort result")
+                    }
+                    try validateAIReasoningEffortResult(Self.ownedJSON(result), request: submitted, changed: false)
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any], Self.equalJSON(request, submitted) else {
+                    throw HostFailure("Malformed prepared AI reasoning effort write")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 8_192 else { throw HostFailure("INVALID_INPUT: Prepared AI reasoning effort write is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 18_192 else { throw HostFailure("INVALID_INPUT: Prepared AI reasoning effort write journal is too large") }
+                command = PendingCommand(version: 2, method: "iosAIReasoningEffortCommit", argumentsJSON: encoded)
+                _ = try invoke("iosAIReasoningEffortValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if let operation = CalendarSubscriptionOperation(rawValue: method) {
             do {
                 let raw = try invoke(operation.rawValue + "Prepare", arguments: args)
@@ -12967,6 +13318,10 @@ private final class Engine: @unchecked Sendable {
             guard aiRequestTimeoutOwnerAccess else { throw HostFailure("AI timeout owner is unavailable") }
             try requireAIRequestTimeoutTurn()
         }
+        if method == "iosAIReasoningEffort" {
+            guard aiReasoningEffortOwnerAccess else { throw HostFailure("AI reasoning effort owner is unavailable") }
+            try requireAIReasoningEffortTurn()
+        }
         if command.method == "backupDocumentCommit" {
             try requireBackupDocumentMutationAllowed(command, arguments: backupDocumentArguments(command))
         }
@@ -12983,6 +13338,7 @@ private final class Engine: @unchecked Sendable {
             else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
             else { replay = try journalArguments(command) }
             if command.method == "iosAIRequestTimeoutCommit" { terminal = .success(try invokeAIRequestTimeoutCommit(command)) }
+            else if command.method == "iosAIReasoningEffortCommit" { terminal = .success(try invokeAIReasoningEffortCommit(command)) }
             else if CalendarSubscriptionOperation(commitMethod: command.method) != nil { terminal = .success(try invokeCalendarSubscriptionSettingCommit(command)) }
             else { terminal = .success(try command.method == "deviceCalendarSettingCommit"
                 ? invokeDeviceCalendarSettingCommit(command) : invoke(command.method, arguments: replay)) }
@@ -13008,6 +13364,9 @@ private final class Engine: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         guard aiRequestTimeoutTurn == nil, pending?.method != "iosAIRequestTimeoutCommit" else {
             throw CoreHostRejection(message: "NOT_READY: AI timeout save requires its exact typed retry")
+        }
+        guard aiReasoningEffortTurn == nil, pending?.method != "iosAIReasoningEffortCommit" else {
+            throw CoreHostRejection(message: "NOT_READY: AI reasoning effort save requires its exact typed retry")
         }
         guard calendarAccessTurn == nil else { throw CoreHostRejection(message: "NOT_READY: Calendar access is still awaiting its owner") }
         guard notificationSettingTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw CoreHostRejection(message: "NOT_READY: Settings edit is still awaiting its owner") }
@@ -13223,6 +13582,18 @@ private final class Engine: @unchecked Sendable {
             }
             return try finish(command, with: terminal)
         }
+        if command.method == "iosAIReasoningEffortCommit", recoveryActivationPending {
+            let terminal: TerminalResult
+            do {
+                let value = try invoke("iosAIReasoningEffortRetryOutcome", arguments: [aiReasoningEffortJournalRequest(command)])
+                try validateAIReasoningEffortAcknowledgment(command, value: value)
+                terminal = .success(value)
+            } catch let failure as HostFailure where failure.message.hasPrefix("STALE_REVISION:") {
+                // A cold intent without a receipt has no surviving permission or write authority.
+                terminal = .rejected(failure.message)
+            }
+            return try finish(command, with: terminal)
+        }
         if let terminal = command.terminal {
             if command.method == "referenceTasksMoveCommit", case .success(let value) = terminal {
                 let probed = try invoke("referenceTasksMoveOutcome", arguments: referenceTasksMoveJournalArguments(command))
@@ -13312,6 +13683,7 @@ private final class Engine: @unchecked Sendable {
             else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
             else { replay = try journalArguments(command) }
             if command.method == "iosAIRequestTimeoutCommit" { value = try invokeAIRequestTimeoutCommit(command) }
+            else if command.method == "iosAIReasoningEffortCommit" { value = try invokeAIReasoningEffortCommit(command) }
             else { value = try command.method == "backupDocumentCommit"
                 ? invokeBackupDocumentReplay(command, arguments: replay) : invoke(command.method, arguments: replay) }
         }
@@ -13537,6 +13909,18 @@ private final class Engine: @unchecked Sendable {
                 guard Self.equalJSON(try NativeJSON.jsonObject(with: Data(proven.utf8)),
                                      try NativeJSON.jsonObject(with: Data(value.utf8))) else {
                     throw HostFailure("SAVE_FAILED: AI timeout outcome cannot be verified")
+                }
+            }
+        }
+        if command.method == "iosAIReasoningEffortCommit" {
+            _ = try invoke("iosAIReasoningEffortValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal {
+                let proven = try invoke("iosAIReasoningEffortRetryOutcome", arguments: [aiReasoningEffortJournalRequest(command)])
+                try validateAIReasoningEffortAcknowledgment(command, value: proven)
+                try validateAIReasoningEffortAcknowledgment(command, value: value)
+                guard Self.equalJSON(try NativeJSON.jsonObject(with: Data(proven.utf8)),
+                                     try NativeJSON.jsonObject(with: Data(value.utf8))) else {
+                    throw HostFailure("SAVE_FAILED: AI reasoning effort outcome cannot be verified")
                 }
             }
         }
@@ -14142,6 +14526,9 @@ private final class Engine: @unchecked Sendable {
         if command.method == "iosAIRequestTimeoutCommit", case .success = terminal {
             _ = try? invoke("iosAIRequestTimeoutAcknowledged", arguments: [])
         }
+        if command.method == "iosAIReasoningEffortCommit", case .success = terminal {
+            _ = try? invoke("iosAIReasoningEffortAcknowledged", arguments: [])
+        }
         if command.method == "notificationSettingCommit", case .success = terminal {
             _ = try? invoke("notificationSettingAcknowledged", arguments: [])
         }
@@ -14436,7 +14823,7 @@ private final class Engine: @unchecked Sendable {
             || (["reminderCompletionCommit", "reminderSnoozeCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["doneTaskStatusCommit", "doneTaskCompletedAtCommit", "archiveTaskCompletedAtCommit", "referenceTaskBackdateCommit", "referenceTaskDestinationCommit", "referenceProjectNextActionCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["referenceTasksRemoveTagCommit", "referenceTasksAddTagCommit", "referenceTasksMoveCommit", "archivedTaskRestoreCommit", "archivedTasksRestoreCommit", "trashItemsRestoreCommit", "trashItemsPurgeCommit", "archivedTasksDeleteCommit", "archivedTasksDeleteUndoCommit", "taskCompletionCommit", "taskCompletionUndoCommit", "taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit", "projectDuplicateCommit", "projectLifecycleCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
-            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "calendarEventTaskCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "notificationSettingCommit", "iosAIRequestTimeoutCommit", "deviceCalendarSettingCommit", "calendarSubscriptionSettingCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectFileRemoveWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "calendarEventTaskCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "notificationSettingCommit", "iosAIRequestTimeoutCommit", "iosAIReasoningEffortCommit", "deviceCalendarSettingCommit", "calendarSubscriptionSettingCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectFileRemoveWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionOrderWrite", "backupDocumentCommit", "captureLinesCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
@@ -18625,6 +19012,23 @@ private final class Engine: @unchecked Sendable {
             _ = try arguments("iosAIRequestTimeout", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
             return args
         }
+        if command.method == "iosAIReasoningEffortCommit" {
+            guard !retainedOrdinary else { throw Self.retainedOrdinaryFailure }
+            guard command.argumentsJSON.utf8.count <= 49_152, try NativeJSON.hasUniqueObjectKeys(command.argumentsJSON),
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 8_192, try NativeJSON.hasUniqueObjectKeys(args[0]),
+                  let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Set(prepared.keys) == Set(["version", "request"]), Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any], Self.equalJSON(request, original) else {
+                throw HostFailure("Malformed prepared AI reasoning effort journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("iosAIReasoningEffort", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
         if command.method == "generalPreferenceCommit" {
             guard !retainedOrdinary else { throw Self.retainedOrdinaryFailure }
             guard command.argumentsJSON.utf8.count <= 49_152,
@@ -20944,6 +21348,10 @@ private final class Engine: @unchecked Sendable {
             guard let raw = args.first as? String else { throw HostFailure("INVALID_INPUT: AI timeout requires one request") }
             _ = try Self.aiRequestTimeoutRequest(raw)
         }
+        if method == "iosAIReasoningEffort" {
+            guard let raw = args.first as? String else { throw HostFailure("INVALID_INPUT: AI reasoning effort requires one request") }
+            _ = try Self.aiReasoningEffortRequest(raw)
+        }
         if method == "notificationSetting" {
             guard let encoded = args.first as? String else { throw HostFailure("INVALID_INPUT: Notification setting requires one request") }
             _ = try Self.notificationSettingRequest(encoded)
@@ -22805,7 +23213,7 @@ private final class Engine: @unchecked Sendable {
     private func aiSummaryCheckpointSettled(cancellation: NativeAttachmentCancellation) throws -> String {
         _ = try requireIsolatedAISummaryCheckpoint()
         try requireCalendarAdmission(); _ = try requireDeviceStorageAdmission()
-        guard aiSummaryCheckpointConfigured, !invoking, aiRequestTimeoutTurn == nil, calendarPushTurn == nil,
+        guard aiSummaryCheckpointConfigured, !invoking, aiRequestTimeoutTurn == nil, aiReasoningEffortTurn == nil, calendarPushTurn == nil,
               try Self.bindingIdentity(databaseURL) == calendarPushDatabaseBinding,
               let context, let host = context.objectForKeyedSubscript("MindwtrHost") else { throw NativeAISummaryEvidence.unavailable }
         guard let connection = database, let library = calendarPushDatabaseBinding else { throw NativeAISummaryEvidence.unavailable }
@@ -23055,6 +23463,73 @@ private final class Engine: @unchecked Sendable {
         let journalAbsent = try mixedSaveFileBinding(journalURL, maximumBytes: Self.ownedSaveMaximumBytes) == nil
         return .init(failureInjected: aiRequestTimeoutFixtureOriginal != nil,
             exactRequestRetried: aiRequestTimeoutFixtureExactRetry, commitAttempts: aiRequestTimeoutFixtureSQLCommitAttempts,
+            journalRetired: pending == nil && journalAbsent)
+    }
+    #endif
+
+    #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    private func requireIsolatedAIReasoningEffortFixture() throws {
+        let directory = databaseURL.deletingLastPathComponent(), identifier = directory.lastPathComponent
+        let arguments = ProcessInfo.processInfo.arguments
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+        let selection = try NativeLaunchSelection.resolve(arguments: arguments, bundleIdentifier: Bundle.main.bundleIdentifier,
+            supportURL: support, homeURL: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true), mode: .deviceTest)
+        guard Bundle.main.bundleIdentifier == "tech.dongdongbh.mindwtr.native.dev",
+              arguments.contains("--native-ai-reasoning-fixture"),
+              case let .isolated(selectedDatabase, selectedContainer, namespace, selectedID) = selection,
+              selectedID.uuidString.lowercased() == identifier,
+              selectedDatabase.resolvingSymlinksInPath() == databaseURL.resolvingSymlinksInPath(),
+              selectedContainer.resolvingSymlinksInPath() == directory.resolvingSymlinksInPath(),
+              databaseURL.lastPathComponent == "mindwtr.sqlite",
+              directory.deletingLastPathComponent().lastPathComponent == "NativeUITests",
+              Self.ownedDiscardUUID(identifier) == identifier,
+              deviceStorageLocation?.bundleIdentifier == namespace,
+              faults?.secretService == "mindwtr.native-keychain.fixture." + identifier else {
+            throw HostFailure("Isolated AI reasoning effort fixture is unavailable")
+        }
+    }
+    func configureIsolatedAIReasoningEffortCommitFailureOnce() throws {
+        try requireIsolatedAIReasoningEffortFixture()
+        guard !started, !closed, !invoking, pending == nil, aiReasoningEffortTurn == nil, aiRequestTimeoutTurn == nil,
+              !aiReasoningEffortFixtureArmed, let faults, faults.beforeSQL == nil, faults.afterSQL == nil,
+              try mixedSaveFileBinding(journalURL, maximumBytes: Self.ownedSaveMaximumBytes) == nil else {
+            throw HostFailure("Isolated AI reasoning effort fixture is unavailable")
+        }
+        aiReasoningEffortFixtureArmed = true
+        faults.beforeSQL = { [weak self] sql in
+            guard let self else { throw HostFailure("Isolated AI reasoning effort COMMIT interrupted") }
+            guard sql == "COMMIT", self.pending?.method == "iosAIReasoningEffortCommit" else { return }
+            self.aiReasoningEffortFixtureSQLCommitAttempts += 1
+            guard let turn = self.aiReasoningEffortTurn, let request = turn.requestJSON else {
+                throw HostFailure("Isolated AI reasoning effort COMMIT interrupted")
+            }
+            // The published save retains its cancellation contract and exact owner fences.
+            try self.requireAIReasoningEffortTurn(checkCancellation: false)
+            guard let command = self.pending, let envelopeRaw = try self.journalArguments(command).first as? String,
+                  let envelope = try NativeJSON.jsonObject(with: Data(envelopeRaw.utf8)) as? [String: Any] else {
+                throw HostFailure("Isolated AI reasoning effort COMMIT interrupted")
+            }
+            let submitted = try Self.aiReasoningEffortRequest(request)
+            guard Self.equalJSON(envelope["request"], submitted) else {
+                throw HostFailure("Isolated AI reasoning effort COMMIT interrupted")
+            }
+            if let original = self.aiReasoningEffortFixtureOriginal {
+                guard request == original else { throw HostFailure("Isolated AI reasoning effort COMMIT interrupted") }
+            } else {
+                guard !turn.retry else { throw HostFailure("Isolated AI reasoning effort COMMIT interrupted") }
+                self.aiReasoningEffortFixtureOriginal = request
+            }
+            // "Once" is the initial typed save: every shared SQL retry must still fail.
+            guard turn.retry else { throw HostFailure("Isolated AI reasoning effort COMMIT interrupted") }
+            self.aiReasoningEffortFixtureExactRetry = true
+        }
+    }
+    func isolatedAIReasoningEffortFixtureState() throws -> NativeAIReasoningEffortFixtureState {
+        try requireIsolatedAIReasoningEffortFixture()
+        guard aiReasoningEffortFixtureArmed, !closed else { throw HostFailure("Isolated AI reasoning effort fixture is unavailable") }
+        let journalAbsent = try mixedSaveFileBinding(journalURL, maximumBytes: Self.ownedSaveMaximumBytes) == nil
+        return .init(failureInjected: aiReasoningEffortFixtureOriginal != nil,
+            exactRequestRetried: aiReasoningEffortFixtureExactRetry, commitAttempts: aiReasoningEffortFixtureSQLCommitAttempts,
             journalRetired: pending == nil && journalAbsent)
     }
     #endif
@@ -25125,7 +25600,7 @@ private final class Engine: @unchecked Sendable {
     private static let deviceStorageFrameLimit = 12 * 1024 * 1024
 
     private func requireDeviceStorageAdmission() throws -> NativeDeviceKV {
-        guard aiRequestTimeoutTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
+        guard aiRequestTimeoutTurn == nil, aiReasoningEffortTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
         try requireEncryptionUnlockTurn()
         dispatchPrecondition(condition: .onQueue(queue))
         guard taskDownloadTurn == nil, projectAvailabilityTurn == nil else { throw Self.deviceStorageUnavailable }
@@ -25236,7 +25711,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func requireHTTPAdmission(_ input: String) throws {
-        guard aiRequestTimeoutTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
+        guard aiRequestTimeoutTurn == nil, aiReasoningEffortTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
         try requireEncryptionUnlockTurn()
         dispatchPrecondition(condition: .onQueue(queue))
         guard projectAvailabilityTurn == nil else { throw Self.foregroundSyncFailure }
@@ -25265,7 +25740,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func requireSecretAdmission(_ input: String) throws {
-        guard aiRequestTimeoutTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
+        guard aiRequestTimeoutTurn == nil, aiReasoningEffortTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
         try requireEncryptionUnlockTurn()
         dispatchPrecondition(condition: .onQueue(queue))
         guard projectAvailabilityTurn == nil else { throw Self.foregroundSyncFailure }
@@ -25310,7 +25785,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func requireCryptoAdmission(_ input: String) throws {
-        guard aiRequestTimeoutTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
+        guard aiRequestTimeoutTurn == nil, aiReasoningEffortTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw Self.deviceStorageUnavailable }
         try requireEncryptionUnlockTurn()
         dispatchPrecondition(condition: .onQueue(queue))
         guard projectAvailabilityTurn == nil else { throw Self.foregroundSyncFailure }
@@ -25884,6 +26359,7 @@ private final class Engine: @unchecked Sendable {
         reminderEffectsTurn = nil
         pomodoroAlarmTurn = nil
         aiRequestTimeoutTurn = nil; aiRequestTimeoutOwnerAccess = false; aiRequestTimeoutRetired = false
+        aiReasoningEffortTurn = nil; aiReasoningEffortOwnerAccess = false; aiReasoningEffortRetired = false
         notificationSettingTurn = nil; notificationSettingOwnerAccess = false
         deviceCalendarSettingTurn = nil
         calendarSubscriptionSettingTurn = nil

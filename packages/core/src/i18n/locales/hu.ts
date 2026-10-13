@@ -1499,6 +1499,7 @@ export const huOverrides: Record<string, string> = {
     'settings.aiProviderOpenAI': 'OpenAI',
     'settings.aiProviderGemini': 'Gemini',
     'settings.aiProviderAnthropic': 'Anthropic (Claude)',
+    'settings.aiEffortMinimalSaved': 'Mentett: Minimális',
     'settings.aiEffortLow': 'Alacsony',
     'settings.aiEffortMedium': 'Közepes',
     'settings.aiEffortHigh': 'Magas',
