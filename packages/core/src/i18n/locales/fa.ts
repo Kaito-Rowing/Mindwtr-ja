@@ -1462,7 +1462,7 @@ export const faOverrides: Record<string, string> = {
         'settings.advanced': 'پیشرفته',
         'settings.aiDesc': 'کمک اختیاری برای شفاف‌سازی و تجزیه کارها.',
         'settings.aiEnable': 'فعال‌سازی دستیار هوش مصنوعی',
-        'settings.aiSummaryReadOnly': "فقط تنظیمات ذخیره‌شده نمایش داده می‌شوند. در اینجا نمی‌توانید آن‌ها را تغییر دهید و درخواست‌های هوش مصنوعی هنوز در این برنامه در دسترس نیستند.",
+        'settings.aiSummaryReadOnly': "درخواست‌های هوش مصنوعی هنوز در این برنامهٔ بومی در دسترس نیستند.",
         "ai.appleClarification.stale": "مورد یا ارتباط‌های موجود آن تغییر کرده است. پیشنهاد تازه‌ای درخواست کنید.",
         "ai.appleClarification.suggestionTitle": "پیشنهاد روی دستگاه",
         "settings.appleClarification.title": "شفاف‌سازی صندوق ورودی",

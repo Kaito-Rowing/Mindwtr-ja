@@ -1421,7 +1421,7 @@ export const zhHant: Record<string, string> = {
         'settings.advanced': '進階',
         'settings.aiDesc': '幫助澄清與拆解任務（可選）。',
         'settings.aiEnable': '啓用 AI 助手',
-        'settings.aiSummaryReadOnly': "這裡只顯示已儲存的設定，暫時無法修改。此應用尚不支援 AI 請求。",
+        'settings.aiSummaryReadOnly': "此原生應用暫不支援 AI 請求。",
         "ai.appleClarification.stale": "項目或可用的關聯項目已變更，請重新取得建議。",
         "ai.appleClarification.suggestionTitle": "裝置端建議",
         "settings.appleClarification.title": "收集箱釐清",

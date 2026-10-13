@@ -317,7 +317,7 @@ public struct NativeAISettingsProjection: Decodable, Sendable, Equatable {
     }
 }
 
-struct NativeAIRequestTimeoutWitness: Decodable, Sendable, Equatable {
+public struct NativeAIRequestTimeoutWitness: Sendable, Equatable {
     let aiPresent: Bool
     let timeoutPresent: Bool
     let timeout: Int?
@@ -328,9 +328,18 @@ struct NativeAIRequestTimeoutWitness: Decodable, Sendable, Equatable {
     var object: [String: Any] { ["aiPresent": aiPresent, "timeoutPresent": timeoutPresent, "timeout": timeout.map { $0 as Any } ?? NSNull(),
         "providerPresent": providerPresent, "provider": provider.map { $0 as Any } ?? NSNull(),
         "stampPresent": stampPresent, "stamp": stamp.map { $0 as Any } ?? NSNull()] }
+    private struct Payload: Decodable {
+        let aiPresent: Bool
+        let timeoutPresent: Bool
+        let timeout: Int?
+        let providerPresent: Bool
+        let provider: String?
+        let stampPresent: Bool
+        let stamp: String?
+    }
     static func validated(_ input: Any?) throws -> Self {
         guard let object = input as? [String: Any], Set(object.keys) == Set(["aiPresent", "timeoutPresent", "timeout", "providerPresent", "provider", "stampPresent", "stamp"]),
-              let value = try? JSONDecoder().decode(Self.self, from: JSONSerialization.data(withJSONObject: object)),
+              let value = try? JSONDecoder().decode(Payload.self, from: JSONSerialization.data(withJSONObject: object)),
               value.aiPresent || (!value.timeoutPresent && !value.providerPresent),
               value.timeoutPresent ? value.timeout.map({ [30, 60, 120, 300].contains($0) }) == true : value.timeout == nil,
               value.providerPresent ? value.provider.map({ ["openai", "gemini", "anthropic"].contains($0) }) == true : value.provider == nil,
@@ -341,20 +350,24 @@ struct NativeAIRequestTimeoutWitness: Decodable, Sendable, Equatable {
                 throw HostFailure("INVALID_INPUT: AI timeout stamp is malformed")
             }
         }
-        return value
+        return .init(aiPresent: value.aiPresent, timeoutPresent: value.timeoutPresent, timeout: value.timeout,
+            providerPresent: value.providerPresent, provider: value.provider, stampPresent: value.stampPresent, stamp: value.stamp)
     }
 }
-struct NativeAIRequestTimeoutRequest: Sendable, Equatable {
+public struct NativeAIRequestTimeoutRequest: Sendable, Equatable {
     let requestId: String
-    let value: Int
+    public let value: Int
     let expected: NativeAIRequestTimeoutWitness
+    public init(requestId: String, value: Int, expected: NativeAIRequestTimeoutWitness) {
+        self.requestId = requestId; self.value = value; self.expected = expected
+    }
     func json() throws -> String {
         String(decoding: try JSONSerialization.data(withJSONObject: ["requestId": requestId, "value": value, "expected": expected.object], options: [.sortedKeys]), as: UTF8.self)
     }
 }
-struct NativeAIRequestTimeoutOptions: Sendable, Equatable {
-    let value: Int
-    let expected: NativeAIRequestTimeoutWitness
+public struct NativeAIRequestTimeoutOptions: Sendable, Equatable {
+    public let value: Int
+    public let expected: NativeAIRequestTimeoutWitness
     static func validated(_ raw: String) throws -> Self {
         guard raw.utf8.count <= 2048, try NativeJSON.hasUniqueObjectKeys(raw),
               let object = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any], Set(object.keys) == Set(["value", "expected"]),
@@ -367,9 +380,9 @@ struct NativeAIRequestTimeoutOptions: Sendable, Equatable {
         return .init(value: value, expected: expected)
     }
 }
-struct NativeAIRequestTimeoutResult: Decodable, Sendable, Equatable {
-    let value: Int
-    let changed: Bool
+public struct NativeAIRequestTimeoutResult: Decodable, Sendable, Equatable {
+    public let value: Int
+    public let changed: Bool
     static func validated(_ raw: String) throws -> Self {
         guard raw.utf8.count <= 1024, try NativeJSON.hasUniqueObjectKeys(raw),
               let object = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any], Set(object.keys) == Set(["value", "changed"]),
@@ -379,6 +392,16 @@ struct NativeAIRequestTimeoutResult: Decodable, Sendable, Equatable {
         return result
     }
 }
+
+#if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+public struct NativeAIRequestTimeoutFixtureState: Sendable {
+    public let failureInjected: Bool
+    public let exactRequestRetried: Bool
+    /// Matching SQL COMMIT attempts, including the shared save's internal retries.
+    public let commitAttempts: Int
+    public let journalRetired: Bool
+}
+#endif
 
 /// Private display-only selected-provider metadata, never credential usability or request authority.
 struct NativeAIProviderDeviceState: Decodable, Sendable, Equatable {
@@ -448,14 +471,14 @@ public final class CoreHost: @unchecked Sendable {
         try await perform { try $0.readAISettingsProjection() }
     }
 
-    func readAIRequestTimeoutOptions() async throws -> NativeAIRequestTimeoutOptions {
+    public func readAIRequestTimeoutOptions() async throws -> NativeAIRequestTimeoutOptions {
         try await perform { try NativeAIRequestTimeoutOptions.validated($0.readAIRequestTimeoutOptions()) }
     }
     func probeAIRequestTimeoutOutcome(_ request: NativeAIRequestTimeoutRequest) async throws -> NativeAIRequestTimeoutResult {
         let raw = try request.json()
         return try await perform { try NativeAIRequestTimeoutResult.validated($0.probeAIRequestTimeoutOutcome(requestJSON: raw)) }
     }
-    func setAIRequestTimeout(_ request: NativeAIRequestTimeoutRequest,
+    public func setAIRequestTimeout(_ request: NativeAIRequestTimeoutRequest,
         readmission: @escaping @Sendable () async -> Bool) async throws -> NativeAIRequestTimeoutResult {
         let id = try notificationAuthorization.begin(), cancellation = NativeAttachmentCancellation(), raw = try request.json()
         localAttachmentRequests.register(cancellation, id: id)
@@ -920,6 +943,14 @@ public final class CoreHost: @unchecked Sendable {
     /// Existing DEBUG isolated-library fixture only, one known durable boundary.
     public func configureIsolatedProjectFileDownloadFilledFailureOnce(metadataOnly: Bool = false) async throws {
         try await perform { try $0.configureIsolatedProjectFileDownloadFilledFailureOnce(metadataOnly: metadataOnly) }
+    }
+    #endif
+    #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    public func configureIsolatedAIRequestTimeoutCommitFailureOnce() async throws {
+        try await perform { try $0.configureIsolatedAIRequestTimeoutCommitFailureOnce() }
+    }
+    public func isolatedAIRequestTimeoutFixtureState() async throws -> NativeAIRequestTimeoutFixtureState {
+        try await perform { try $0.isolatedAIRequestTimeoutFixtureState() }
     }
     #endif
     #if DEBUG && os(iOS) && targetEnvironment(simulator)
@@ -2202,6 +2233,12 @@ private final class Engine: @unchecked Sendable {
     private var aiRequestTimeoutTurn: AIRequestTimeoutTurn?
     private var aiRequestTimeoutOwnerAccess = false
     private var aiRequestTimeoutRetired = false
+    #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    private var aiRequestTimeoutFixtureOriginal: String?
+    private var aiRequestTimeoutFixtureArmed = false
+    private var aiRequestTimeoutFixtureSQLCommitAttempts = 0
+    private var aiRequestTimeoutFixtureExactRetry = false
+    #endif
     fileprivate static let aiRequestTimeoutMethods: Set<String> = ["iosAIRequestTimeout", "iosAIRequestTimeoutOptions",
         "iosAIRequestTimeoutPrepare", "iosAIRequestTimeoutValidate", "iosAIRequestTimeoutCommit", "iosAIRequestTimeoutRetryOutcome", "iosAIRequestTimeoutAcknowledged"]
     private final class DeviceCalendarSettingTurn {
@@ -22954,6 +22991,72 @@ private final class Engine: @unchecked Sendable {
         return publication
     }
 
+    #endif
+
+    #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    private func requireIsolatedAIRequestTimeoutFixture() throws {
+        let directory = databaseURL.deletingLastPathComponent(), identifier = directory.lastPathComponent
+        let arguments = ProcessInfo.processInfo.arguments
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+        let selection = try NativeLaunchSelection.resolve(arguments: arguments, bundleIdentifier: Bundle.main.bundleIdentifier,
+            supportURL: support, homeURL: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true), mode: .deviceTest)
+        guard Bundle.main.bundleIdentifier == "tech.dongdongbh.mindwtr.native.dev",
+              arguments.contains("--native-ai-timeout-fixture"),
+              case let .isolated(selectedDatabase, selectedContainer, namespace, selectedID) = selection,
+              selectedID.uuidString.lowercased() == identifier,
+              selectedDatabase.resolvingSymlinksInPath() == databaseURL.resolvingSymlinksInPath(),
+              selectedContainer.resolvingSymlinksInPath() == directory.resolvingSymlinksInPath(),
+              databaseURL.lastPathComponent == "mindwtr.sqlite",
+              directory.deletingLastPathComponent().lastPathComponent == "NativeUITests",
+              Self.ownedDiscardUUID(identifier) == identifier,
+              deviceStorageLocation?.bundleIdentifier == namespace,
+              faults?.secretService == "mindwtr.native-keychain.fixture." + identifier else {
+            throw HostFailure("Isolated AI timeout fixture is unavailable")
+        }
+    }
+    func configureIsolatedAIRequestTimeoutCommitFailureOnce() throws {
+        try requireIsolatedAIRequestTimeoutFixture()
+        guard !started, !closed, !invoking, pending == nil, aiRequestTimeoutTurn == nil,
+              !aiRequestTimeoutFixtureArmed, let faults, faults.beforeSQL == nil, faults.afterSQL == nil,
+              try mixedSaveFileBinding(journalURL, maximumBytes: Self.ownedSaveMaximumBytes) == nil else {
+            throw HostFailure("Isolated AI timeout fixture is unavailable")
+        }
+        aiRequestTimeoutFixtureArmed = true
+        faults.beforeSQL = { [unowned self] sql in
+            guard sql == "COMMIT", self.pending?.method == "iosAIRequestTimeoutCommit" else { return }
+            self.aiRequestTimeoutFixtureSQLCommitAttempts += 1
+            guard let turn = self.aiRequestTimeoutTurn, let request = turn.requestJSON else {
+                throw HostFailure("Isolated AI timeout COMMIT interrupted")
+            }
+            // The published save retains its cancellation contract and exact owner fences.
+            try self.requireAIRequestTimeoutTurn(checkCancellation: false)
+            guard let command = self.pending, let envelopeRaw = try self.journalArguments(command).first as? String,
+                  let envelope = try NativeJSON.jsonObject(with: Data(envelopeRaw.utf8)) as? [String: Any] else {
+                throw HostFailure("Isolated AI timeout COMMIT interrupted")
+            }
+            let submitted = try Self.aiRequestTimeoutRequest(request)
+            guard Self.equalJSON(envelope["request"], submitted) else {
+                throw HostFailure("Isolated AI timeout COMMIT interrupted")
+            }
+            if let original = self.aiRequestTimeoutFixtureOriginal {
+                guard request == original else { throw HostFailure("Isolated AI timeout COMMIT interrupted") }
+            } else {
+                guard !turn.retry else { throw HostFailure("Isolated AI timeout COMMIT interrupted") }
+                self.aiRequestTimeoutFixtureOriginal = request
+            }
+            // "Once" is the initial typed save: every shared SQL retry must still fail.
+            guard turn.retry else { throw HostFailure("Isolated AI timeout COMMIT interrupted") }
+            self.aiRequestTimeoutFixtureExactRetry = true
+        }
+    }
+    func isolatedAIRequestTimeoutFixtureState() throws -> NativeAIRequestTimeoutFixtureState {
+        try requireIsolatedAIRequestTimeoutFixture()
+        guard aiRequestTimeoutFixtureArmed, !closed else { throw HostFailure("Isolated AI timeout fixture is unavailable") }
+        let journalAbsent = try mixedSaveFileBinding(journalURL, maximumBytes: Self.ownedSaveMaximumBytes) == nil
+        return .init(failureInjected: aiRequestTimeoutFixtureOriginal != nil,
+            exactRequestRetried: aiRequestTimeoutFixtureExactRetry, commitAttempts: aiRequestTimeoutFixtureSQLCommitAttempts,
+            journalRetired: pending == nil && journalAbsent)
+    }
     #endif
 
     #if DEBUG && os(iOS) && targetEnvironment(simulator)

@@ -2,6 +2,7 @@ import XCTest
 
 final class FoundationUITests: XCTestCase {
     private var task586Application: XCUIApplication?
+    private var task601Application: XCUIApplication?
 
     private func task578App(_ suffix: String, flags: [String] = [], largest: Bool = false) throws -> XCUIApplication {
         continueAfterFailure = false
@@ -2839,6 +2840,7 @@ final class FoundationUITests: XCTestCase {
             attachment.lifetime = .keepAlways
             add(attachment)
         }
+        task601Application?.terminate(); task601Application = nil
         task586Application?.terminate()
         task586Application = nil
         try super.tearDownWithError()
@@ -10079,7 +10081,7 @@ final class FoundationUITests: XCTestCase {
     }
 
     // Task594 uses externally staged, offline libraries. The only AI call is the real
-    // private projection reader; delay/failure seams run after that reader returns.
+    // private projection reader until Advanced is opened; delay/failure seams run after that reader returns.
     private func task594OpenAI(_ app: XCUIApplication, overlapSearch: Bool = false) {
         boardEnabled(app.buttons["tab-menu"], timeout: 30); boardTap(app, "tab-menu")
         let settings = app.buttons["menu-settings"]
@@ -10198,7 +10200,7 @@ final class FoundationUITests: XCTestCase {
             let timeout = app.staticTexts["ai-summary-timeout"]
             task442Reveal(app, timeout, in: app.scrollViews["ai-summary-scroll"], requireEnabled: false)
             XCTAssertEqual(timeout.label, "\(seconds) seconds")
-            XCTAssertTrue(app.staticTexts["ai-summary-note"].label.contains("Saved settings only"))
+            XCTAssertTrue(app.staticTexts["ai-summary-note"].label.contains("AI requests are not available"))
             XCTAssertEqual(app.scrollViews["ai-summary-scroll"].switches.count, 0)
             XCTAssertEqual(app.scrollViews["ai-summary-scroll"].textFields.count, 0)
             XCTAssertFalse(app.staticTexts["ai-summary-error"].exists)
@@ -28780,4 +28782,160 @@ extension FoundationUITests {
         try task586CorruptCancellation("DENIED_CORRUPT", denied: true)
     }
 
+}
+
+// Task601 fixtures use the actual typed App route and externally staged offline libraries.
+extension FoundationUITests {
+    private func task601App(_ role: String, flags: [String] = [], largest: Bool = false) throws -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication(); task601Application = app
+        app.launchArguments = ["--native-ui-test-library", try task371Library(role, prefix: "MINDWTR_AI_TIMEOUT_UI_"),
+            "--native-ai-timeout-fixture", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"] + flags
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); task594OpenAI(app)
+        XCTAssertTrue(app.staticTexts["ai-summary-timeout"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["ai-timeout-choice-30"].exists, "Advanced defaults to collapsed")
+        return app
+    }
+    private func task601Advanced(_ app: XCUIApplication) {
+        task442Reveal(app, app.buttons["ai-timeout-advanced"], in: app.scrollViews["ai-summary-scroll"])
+        boardEnabled(app.buttons["ai-timeout-advanced"]); boardTap(app, "ai-timeout-advanced")
+    }
+    private func task601Choose(_ app: XCUIApplication, _ value: Int) {
+        let choice = app.buttons["ai-timeout-choice-" + String(value)]
+        task442Reveal(app, choice, in: app.scrollViews["ai-summary-scroll"])
+        boardEnabled(choice, timeout: 30); choice.tap()
+    }
+    private func task601Value(_ app: XCUIApplication, _ value: Int) {
+        let text = app.staticTexts["ai-summary-timeout"]
+        expectation(for: NSPredicate { _, _ in text.exists && text.label == "\(value) seconds" }, evaluatedWith: text)
+        waitForExpectations(timeout: 30)
+        boardEnabled(app.buttons["ai-timeout-choice-30"], timeout: 30)
+        XCTAssertTrue(app.buttons["ai-timeout-choice-" + String(value)].isSelected)
+    }
+    private func task601State(_ app: XCUIApplication, _ expected: String) {
+        let state = app.staticTexts["ai-timeout-fixture-state"]
+        expectation(for: NSPredicate { _, _ in state.exists && state.label == expected }, evaluatedWith: state)
+        waitForExpectations(timeout: 30)
+    }
+    private func task601Background(_ app: XCUIApplication) {
+        #if targetEnvironment(simulator)
+        XCUIDevice.shared.press(.home)
+        #else
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.995))
+            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
+        #endif
+        let background = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.state == .runningBackground || app.state == .runningBackgroundSuspended
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [background], timeout: 10), .completed)
+        app.activate()
+    }
+    func testNativeAITimeoutAllChoicesWhileAIDisabledAndColdSaved() throws {
+        let app = try task601App("CHOICES"); defer { app.terminate() }
+        XCTAssertEqual(app.staticTexts["ai-summary-enabled"].label, "Off")
+        task601Advanced(app)
+        for value in [30, 60, 120, 300] { task601Choose(app, value); task601Value(app, value) }
+        XCTAssertEqual(app.staticTexts["ai-summary-enabled"].label, "Off")
+        boardTap(app, "ai-summary-back"); task594EnterAI(app)
+        XCTAssertTrue(app.staticTexts["ai-summary-timeout"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.staticTexts["ai-summary-timeout"].label, "300 seconds")
+        XCTAssertFalse(app.buttons["ai-timeout-choice-30"].exists)
+        app.terminate(); app.launch(); task594OpenAI(app)
+        XCTAssertTrue(app.staticTexts["ai-summary-timeout"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.staticTexts["ai-summary-timeout"].label, "300 seconds")
+    }
+    func testNativeAITimeoutExplicitAbsentDefaultIsSaved() throws {
+        let app = try task601App("EXPLICIT_DEFAULT"); defer { app.terminate() }
+        task601Advanced(app); task601Choose(app, 30); task601Value(app, 30)
+    }
+    func testNativeAITimeoutSavedSameValueIsNoop() throws {
+        let app = try task601App("NOOP"); defer { app.terminate() }
+        task601Advanced(app); task601Choose(app, 30); task601Value(app, 30)
+    }
+    func testNativeAITimeoutSavedLargestTextAndCancelArePassive() throws {
+        let app = try task601App("CANCEL", largest: true); defer { app.terminate() }
+        XCTAssertEqual(app.staticTexts["ai-summary-timeout"].label, "120 seconds")
+        task601Advanced(app); boardEnabled(app.buttons["ai-timeout-choice-120"])
+        XCTAssertTrue(app.buttons["ai-timeout-choice-120"].isSelected)
+        task601Advanced(app); XCTAssertFalse(app.buttons["ai-timeout-choice-120"].exists)
+        boardTap(app, "ai-summary-back")
+        XCTAssertTrue(app.staticTexts["advanced-title"].exists)
+    }
+    func testNativeAITimeoutOptionsFailureRetriesReadOnly() throws {
+        let app = try task601App("OPTIONS_FAILURE", flags: ["--native-ai-timeout-options-failure-once"]); defer { app.terminate() }
+        task601Advanced(app)
+        XCTAssertTrue(app.staticTexts["ai-timeout-options-error"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["ai-timeout-choice-30"].exists)
+        boardTap(app, "ai-timeout-options-retry")
+        boardEnabled(app.buttons["ai-timeout-choice-30"], timeout: 30)
+        XCTAssertTrue(app.buttons["ai-timeout-choice-30"].isSelected)
+    }
+    private func task601CancelWrite(_ role: String, retirement: String) throws {
+        let app = try task601App(role, flags: ["--native-ai-timeout-readmission-hold-once"]); defer { app.terminate() }
+        task601Advanced(app); task601Choose(app, 60)
+        XCTAssertTrue(app.staticTexts["ai-timeout-test-held"].waitForExistence(timeout: 20))
+        if retirement == "back" { boardTap(app, "ai-summary-back") }
+        else if retirement == "background" { task601Background(app) }
+        else { boardTap(app, "ai-summary-test-" + retirement) }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["ai-summary-title"])
+        waitForExpectations(timeout: 20)
+        if retirement == "lock" { boardEnabled(app.buttons["app-lock-read-retry"], timeout: 20); boardTap(app, "app-lock-read-retry") }
+        if retirement == "host" {
+            let advanced = app.buttons["settings-advanced"]
+            task442Reveal(app, advanced, in: app.scrollViews["settings-scroll"]); boardEnabled(advanced, timeout: 30); advanced.tap()
+        }
+        XCTAssertTrue(app.staticTexts["advanced-title"].waitForExistence(timeout: 30))
+        task594EnterAI(app)
+        XCTAssertTrue(app.staticTexts["ai-summary-timeout"].waitForExistence(timeout: 30))
+        XCTAssertEqual(app.staticTexts["ai-summary-timeout"].label, "30 seconds")
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+    func testNativeAITimeoutBackCancelsBeforeCommit() throws { try task601CancelWrite("BACK", retirement: "back") }
+    func testNativeAITimeoutBackgroundCancelsBeforeCommit() throws { try task601CancelWrite("BACKGROUND", retirement: "background") }
+    func testNativeAITimeoutLockCancelsBeforeCommit() throws { try task601CancelWrite("LOCK", retirement: "lock") }
+    func testNativeAITimeoutHostReplacementCancelsBeforeCommit() throws { try task601CancelWrite("HOST", retirement: "host") }
+
+    private func task601Uncertain(_ role: String, retirement: String? = nil, refreshFailure: Bool = false) throws {
+        var flags = ["--native-ai-timeout-commit-failure-once"]
+        if refreshFailure { flags += ["--native-ai-timeout-refresh-failure-once"] }
+        let app = try task601App(role, flags: flags); defer { app.terminate() }
+        task601Advanced(app); task601Choose(app, 60)
+        XCTAssertTrue(app.staticTexts["ai-timeout-save-error"].waitForExistence(timeout: 20))
+        // The initial typed save exhausts five real SQL COMMIT attempts.
+        task601State(app, "failure=true;exact=false;commits=5;retired=false")
+        XCTAssertEqual(app.staticTexts["ai-summary-timeout"].label, "30 seconds")
+        if retirement == "background" { task601Background(app) }
+        if retirement != nil { XCTAssertFalse(app.staticTexts["ai-summary-title"].exists) }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); boardTap(app, "persistence-retry")
+        task601State(app, "failure=true;exact=true;commits=6;retired=true")
+        if refreshFailure {
+            XCTAssertTrue(app.staticTexts["ai-summary-error"].waitForExistence(timeout: 20))
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            boardTap(app, "ai-summary-retry")
+            task601State(app, "failure=true;exact=true;commits=6;retired=true")
+        }
+        task601Value(app, 60)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        app.launchArguments.removeAll { $0 == "--native-ai-timeout-commit-failure-once" }
+        app.terminate(); app.launch(); task594OpenAI(app)
+        XCTAssertTrue(app.staticTexts["ai-summary-timeout"].waitForExistence(timeout: 30))
+        XCTAssertEqual(app.staticTexts["ai-summary-timeout"].label, "60 seconds")
+    }
+    func testNativeAITimeoutRealCommitFailureExactWarmRetry() throws { try task601Uncertain("COMMIT") }
+    func testNativeAITimeoutBackgroundThenExplicitExactRetry() throws { try task601Uncertain("COMMIT_BACKGROUND", retirement: "background") }
+    func testNativeAITimeoutAcknowledgedRefreshFailureRetriesOnlyRead() throws { try task601Uncertain("REFRESH_FAILURE", refreshFailure: true) }
+    func testNativeAITimeoutReplacementHostCannotRetryUncertainOwner() throws {
+        let app = try task601App("COMMIT_HOST", flags: ["--native-ai-timeout-commit-failure-once"]); defer { app.terminate() }
+        task601Advanced(app); task601Choose(app, 60)
+        // The initial typed save exhausts five real SQL COMMIT attempts.
+        task601State(app, "failure=true;exact=false;commits=5;retired=false")
+        boardTap(app, "ai-summary-test-host")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["ai-summary-title"])
+        waitForExpectations(timeout: 30)
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); boardTap(app, "persistence-retry")
+        XCTAssertFalse(app.staticTexts["ai-summary-title"].exists)
+        XCTAssertTrue(app.buttons["persistence-retry"].exists)
+        XCTAssertTrue(app.staticTexts["persistence-error"].exists)
+    }
 }

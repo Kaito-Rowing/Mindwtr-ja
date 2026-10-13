@@ -1439,7 +1439,7 @@ export const ukOverrides: Record<string, string> = {
     "settings.advanced": "Просунутий",
     "settings.aiDesc": "Додаткова допомога для уточнення та розбивки завдань.",
     "settings.aiEnable": "Увімкніть помічник AI",
-    'settings.aiSummaryReadOnly': "Тут показано лише збережені налаштування. Їх не можна змінити, а запити до ШІ ще недоступні в цьому застосунку.",
+    'settings.aiSummaryReadOnly': "Запити до ШІ ще недоступні в цьому нативному застосунку.",
     "ai.appleClarification.stale": "Елемент або його доступні асоціації змінено. Попросіть свіжу пропозицію.",
     "ai.appleClarification.suggestionTitle": "Пропозиція на пристрої",
     "settings.appleClarification.title": "Уточнення в папці \"Вхідні\".",

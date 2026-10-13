@@ -354,12 +354,25 @@ final class CoreModel: ObservableObject {
     @Published private(set) var settingsAIProjection: NativeAISettingsProjection?
     @Published private(set) var settingsAILoading = false
     @Published private(set) var settingsAIReadFailed = false
+    @Published private(set) var settingsAIAdvanced = false
+    @Published private(set) var settingsAIOptions: NativeAIRequestTimeoutOptions?
+    @Published private(set) var settingsAIOptionsFailed = false
+    @Published private(set) var settingsAISaveFailed = false
+    private var settingsAITimeoutRequest: NativeAIRequestTimeoutRequest?
+    private var settingsAITimeoutHost: CoreHost?
+    private var settingsAITimeoutOperationID: UUID?
     private var settingsAISession = UUID()
     private var settingsAIReadID: UUID?
     @Published private var settingsAITask: Task<Void, Never>?
     #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
     private var settingsAITestDelayOnce = false
     private var settingsAITestFailureOnce = false
+    private var settingsAIOptionsTestFailureOnce = false
+    private var settingsAITimeoutTestHoldOnce = false
+    private var settingsAITimeoutRefreshTestFailureOnce = false
+    private var settingsAITimeoutFixtureConfigured = false
+    @Published private(set) var settingsAITimeoutTestHeld = false
+    @Published private(set) var settingsAITimeoutFixtureState = ""
     @Published private(set) var settingsAITestHeld = false
     @Published private(set) var settingsAIProofState = ""
     private var settingsAIProofTask: Task<Void, Never>?
@@ -5073,6 +5086,9 @@ final class CoreModel: ObservableObject {
                     #endif
                     settingsAITestDelayOnce = arguments.contains("--native-ai-summary-delay-once")
                     settingsAITestFailureOnce = arguments.contains("--native-ai-summary-read-failure-once")
+                    settingsAIOptionsTestFailureOnce = arguments.contains("--native-ai-timeout-options-failure-once")
+                    settingsAITimeoutTestHoldOnce = arguments.contains("--native-ai-timeout-readmission-hold-once")
+                    settingsAITimeoutRefreshTestFailureOnce = arguments.contains("--native-ai-timeout-refresh-failure-once")
                     settingsAboutTestUnavailable = arguments.contains("--native-about-lookup-unavailable")
                     settingsFeedbackTestUnavailable = arguments.contains("--native-feedback-unavailable")
                     settingsSyncTestThrowOnce = arguments.contains("--native-sync-command-throw-once")
@@ -5091,6 +5107,11 @@ final class CoreModel: ObservableObject {
                         isolatedTestID: identifier)
                     #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
                     if arguments.contains("--native-ai-summary-proof") { try await host!.configureIsolatedAISummaryCheckpoint() }
+                    if arguments.contains("--native-ai-timeout-fixture"), arguments.contains("--native-ai-timeout-commit-failure-once"),
+                       !settingsAITimeoutFixtureConfigured {
+                        try await host!.configureIsolatedAIRequestTimeoutCommitFailureOnce()
+                        settingsAITimeoutFixtureConfigured = true
+                    }
                     if arguments.contains("--native-pomodoro-alarm-fixture") {
                         pomodoroAlarmTestEnabled = true
                         try await host!.configureIsolatedPomodoroAlarmFixture(
@@ -5322,6 +5343,17 @@ final class CoreModel: ObservableObject {
                 taskRecoveryGateVisible = true
             }
             let recovery = startup.object("recovery")
+            if recovery.text("method") == "iosAIRequestTimeoutCommit" {
+                // CoreHost start validates the durable receipt and retires its journal.
+                let result = recovery.object("result")
+                guard Set(result.keys) == Set(["value", "changed"]),
+                      let value = result["value"] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
+                      [30, 60, 120, 300].contains(value.intValue), value.doubleValue == Double(value.intValue),
+                      let changed = result["changed"] as? NSNumber, CFGetTypeID(changed) == CFBooleanGetTypeID(), changed.boolValue else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                selectedSurface = .settings; settingsAdvancedPresented = true
+            }
             if recovery.text("method") == "checklistPreparedCommit", !recovery.object("result").object("cancellation").isEmpty {
                 selectedSurface = .history
                 historyTabs = ["tab": "archived"]
@@ -5461,7 +5493,8 @@ final class CoreModel: ObservableObject {
             if projectLifecycleRecoveredResult != nil { selectedSurface = .projects }
             try await readSelectedSurface()
             ready = true
-            retryNeeded = projectFileAddPending || projectFileAvailabilityPending
+            retryNeeded = projectFileAddPending || projectFileAvailabilityPending || settingsAITimeoutRequest != nil
+            if settingsAITimeoutRequest != nil { error = label("settings.feedback.actionFailed") }
             await reconcileTaskAttachmentPresentation()
             if let reply = backupDocumentRecoveredReply, let currentHost = host {
                 try await acceptBackupDocumentReply(reply, from: currentHost)
@@ -7315,7 +7348,13 @@ final class CoreModel: ObservableObject {
         catch { self.error = error.localizedDescription }
     }
 
-    var settingsAICanOpen: Bool { settingsAITask == nil }
+    var settingsAICanOpen: Bool { settingsAITask == nil && settingsAITimeoutRequest == nil }
+    var settingsAICanCancel: Bool { settingsAIPresented && settingsAITimeoutRequest != nil && !retryNeeded }
+    var settingsAITimeoutCanChoose: Bool {
+        guard let currentHost = host else { return false }
+        return settingsAIAdvanced && settingsAIOptions != nil && settingsAITask == nil
+            && settingsAITimeoutRequest == nil && !busy && aiSettingsSummaryCurrent(currentHost, session: settingsAISession)
+    }
 
     func openAISettingsSummary() {
         guard ready, selectedSurface == .settings, settingsAdvancedPresented, !settingsAIPresented,
@@ -7332,12 +7371,13 @@ final class CoreModel: ObservableObject {
     func retireAISettingsPage() {
         settingsAISession = UUID()
         settingsAITask?.cancel()
+        settingsAIAdvanced = false; settingsAIOptions = nil; settingsAIOptionsFailed = false; settingsAISaveFailed = false
         settingsAIPresented = false
         settingsAIProjection = nil
         settingsAIReadFailed = false
         settingsAILoading = false
         #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
-        settingsAITestHeld = false
+        settingsAITestHeld = false; settingsAITimeoutTestHeld = false; settingsAITimeoutFixtureState = ""
         #endif
         // Keep the task until its private read drains before admitting another page read.
     }
@@ -7349,7 +7389,7 @@ final class CoreModel: ObservableObject {
     }
 
     func retryAISettingsSummary() {
-        guard let currentHost = host, settingsAITask == nil, !busy,
+        guard let currentHost = host, settingsAITask == nil, settingsAITimeoutRequest == nil, !busy,
               aiSettingsSummaryCurrent(currentHost, session: settingsAISession) else { return }
         let session = settingsAISession, id = UUID()
         settingsAIReadID = id; settingsAILoading = true; settingsAIReadFailed = false
@@ -7383,11 +7423,169 @@ final class CoreModel: ObservableObject {
                     "Native iOS AI settings summary published",
                     #"{"releaseCheck":"v1.3.5/ios-ai-settings-summary","outcome":"confirmed"}"#,
                 ]))
+                if self.aiSettingsSummaryCurrent(currentHost, session: session), self.settingsAIAdvanced {
+                    await self.readAIRequestTimeoutOptions(currentHost, session: session)
+                }
             } catch {
                 guard self.aiSettingsSummaryCurrent(currentHost, session: session) else { return }
                 self.settingsAIReadFailed = true
             }
         }
+    }
+
+    func toggleAIAdvanced() {
+        guard settingsAITask == nil, settingsAITimeoutRequest == nil, !busy, !retryNeeded else { return }
+        settingsAIAdvanced.toggle()
+        settingsAIOptions = nil; settingsAIOptionsFailed = false
+        if settingsAIAdvanced { retryAIRequestTimeoutOptions() }
+    }
+
+    func retryAIRequestTimeoutOptions() {
+        guard let currentHost = host, settingsAIAdvanced, settingsAITask == nil,
+              settingsAITimeoutRequest == nil, !busy,
+              aiSettingsSummaryCurrent(currentHost, session: settingsAISession) else { return }
+        let session = settingsAISession, id = UUID()
+        settingsAIReadID = id; settingsAIOptions = nil; settingsAIOptionsFailed = false
+        settingsAITask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.settingsAIReadID == id { self.settingsAITask = nil; self.settingsAIReadID = nil }
+            }
+            await self.readAIRequestTimeoutOptions(currentHost, session: session)
+        }
+    }
+
+    private func readAIRequestTimeoutOptions(_ currentHost: CoreHost, session: UUID) async {
+        do {
+            let options = try await currentHost.readAIRequestTimeoutOptions()
+            #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+            if settingsAIOptionsTestFailureOnce {
+                settingsAIOptionsTestFailureOnce = false; throw CocoaError(.coderReadCorrupt)
+            }
+            #endif
+            guard aiSettingsSummaryCurrent(currentHost, session: session), settingsAIAdvanced else { return }
+            settingsAIOptions = options; settingsAIOptionsFailed = false
+        } catch {
+            guard aiSettingsSummaryCurrent(currentHost, session: session), settingsAIAdvanced else { return }
+            settingsAIOptions = nil; settingsAIOptionsFailed = true
+        }
+    }
+
+    func saveAIRequestTimeout(_ value: Int) {
+        guard settingsAITimeoutCanChoose, let currentHost = host, let options = settingsAIOptions,
+              [30, 60, 120, 300].contains(value) else { return }
+        settingsAITimeoutRequest = .init(requestId: UUID().uuidString.lowercased(), value: value, expected: options.expected)
+        settingsAITimeoutHost = currentHost
+        settingsAIOptions = nil
+        beginAIRequestTimeoutOperation()
+    }
+
+    private func beginAIRequestTimeoutOperation() {
+        guard !busy, settingsAITask == nil, settingsAITimeoutOperationID == nil,
+              let request = settingsAITimeoutRequest, let currentHost = settingsAITimeoutHost,
+              host === currentHost, ready, settingsAIPresented, selectedSurface == .settings,
+              !appLock.concealed, UIApplication.shared.applicationState == .active else { return }
+        let operation = UUID(), session = settingsAISession, wasUncertain = retryNeeded
+        settingsAITimeoutOperationID = operation; busy = true; settingsAISaveFailed = false
+        settingsAITask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.settingsAITimeoutOperationID == operation {
+                    self.settingsAITimeoutOperationID = nil; self.settingsAITask = nil
+                    self.finishOperation()
+                }
+            }
+            do {
+                let result = try await currentHost.setAIRequestTimeout(request, readmission: { [weak self] in
+                    guard let self else { return false }
+                    return await self.aiRequestTimeoutReadmission(currentHost, request: request, operation: operation, session: session)
+                })
+                guard self.settingsAITimeoutOperationID == operation,
+                      self.settingsAITimeoutRequest == request, self.settingsAITimeoutHost === currentHost,
+                      result.value == request.value else { throw CocoaError(.coderReadCorrupt) }
+                // A durable acknowledgment may win cancellation. Never publish into a retired page.
+                self.settingsAITimeoutRequest = nil; self.settingsAITimeoutHost = nil
+                self.retryNeeded = false; self.error = nil
+                #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                await self.readAIRequestTimeoutFixtureState(currentHost, session: session)
+                #endif
+                if self.aiSettingsSummaryCurrent(currentHost, session: session) {
+                    await self.refreshAISettingsAfterTimeout(currentHost, session: session)
+                }
+            } catch {
+                guard self.settingsAITimeoutOperationID == operation,
+                      self.settingsAITimeoutRequest == request, self.settingsAITimeoutHost === currentHost else { return }
+                // Existing rejection status can precede terminal retirement on a retry.
+                // Preserve an already-uncertain exact owner even for a typed rejection.
+                if self.isDefiniteRejection(error) && !wasUncertain {
+                    self.settingsAITimeoutRequest = nil; self.settingsAITimeoutHost = nil
+                    self.retryNeeded = false; self.error = nil
+                    if self.aiSettingsSummaryCurrent(currentHost, session: session) {
+                        self.settingsAISaveFailed = true
+                        await self.refreshAISettingsAfterTimeout(currentHost, session: session)
+                    }
+                } else {
+                    self.retryNeeded = true
+                    self.error = self.label("settings.feedback.actionFailed")
+                    #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                    await self.readAIRequestTimeoutFixtureState(currentHost, session: session)
+                    #endif
+                    if self.host === currentHost && self.settingsAISession == session && self.settingsAIPresented {
+                        self.settingsAISaveFailed = true
+                    }
+                }
+            }
+        }
+    }
+
+    private func aiRequestTimeoutReadmission(_ currentHost: CoreHost, request: NativeAIRequestTimeoutRequest,
+                                            operation: UUID, session: UUID) async -> Bool {
+        #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+        if settingsAITimeoutTestHoldOnce {
+            settingsAITimeoutTestHoldOnce = false; settingsAITimeoutTestHeld = true
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            settingsAITimeoutTestHeld = false
+        }
+        #endif
+        return host === currentHost && settingsAITimeoutHost === currentHost && settingsAITimeoutRequest == request
+            && settingsAITimeoutOperationID == operation && settingsAISession == session && ready
+            && settingsAIPresented && selectedSurface == .settings && !appLock.concealed && !Task.isCancelled
+            && UIApplication.shared.applicationState == .active
+    }
+
+    private func refreshAISettingsAfterTimeout(_ currentHost: CoreHost, session: UUID) async {
+        settingsAIProjection = nil; settingsAIOptions = nil; settingsAILoading = true; settingsAIReadFailed = false
+        defer { if settingsAISession == session { settingsAILoading = false } }
+        do {
+            let projection = try await currentHost.readAISettingsProjection()
+            #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+            if settingsAITimeoutRefreshTestFailureOnce {
+                settingsAITimeoutRefreshTestFailureOnce = false; throw CocoaError(.coderReadCorrupt)
+            }
+            #endif
+            guard aiSettingsSummaryCurrent(currentHost, session: session) else { return }
+            settingsAIProjection = projection
+        } catch {
+            guard aiSettingsSummaryCurrent(currentHost, session: session) else { return }
+            settingsAIReadFailed = true
+        }
+        if aiSettingsSummaryCurrent(currentHost, session: session), settingsAIAdvanced {
+            await readAIRequestTimeoutOptions(currentHost, session: session)
+        }
+    }
+
+    func retryAIRequestTimeout() {
+        guard !busy, settingsAITask == nil, settingsAITimeoutOperationID == nil,
+              settingsAITimeoutRequest != nil, let capturedHost = settingsAITimeoutHost,
+              host === capturedHost, ready, !appLock.concealed, UIApplication.shared.applicationState == .active,
+              !settingsSyncPresented, !settingsCalendarPresented, !settingsDataPresented,
+              !taskRecoveryGateVisible, !settingsSyncRestartRequired else { return }
+        // Explicit Retry restores only the retained owner's page. No read or fresh request.
+        if !settingsAIPresented {
+            selectedSurface = .settings; settingsAdvancedPresented = true
+            settingsAISession = UUID(); settingsAIPresented = true; settingsAIAdvanced = true
+        }
+        beginAIRequestTimeoutOperation()
     }
 
     #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
@@ -7403,6 +7601,7 @@ final class CoreModel: ObservableObject {
             && selectedSurface == .settings && settingsAdvancedPresented && !settingsAIPresented
             && operationContextClean && notificationResponseContextClean
             && settingsAITask == nil && settingsAIReadID == nil && !settingsAILoading
+            && settingsAITimeoutRequest == nil && settingsAITimeoutHost == nil && settingsAITimeoutOperationID == nil
             && foregroundSyncOwner == nil && foregroundSyncTask == nil
             && pomodoroWork == nil && pomodoroWorkHost == nil && pomodoroCommand == nil
             && reminderLifecycleTask == nil && reminderLifecycleOwner == nil && reminderDebounceTask == nil
@@ -7459,8 +7658,16 @@ final class CoreModel: ObservableObject {
         }
     }
 
+    private func readAIRequestTimeoutFixtureState(_ currentHost: CoreHost, session: UUID) async {
+        guard NativeAppLaunch.arguments.contains("--native-ai-timeout-fixture"),
+              let state = try? await currentHost.isolatedAIRequestTimeoutFixtureState(),
+              host === currentHost, settingsAISession == session, settingsAIPresented,
+              !appLock.concealed, UIApplication.shared.applicationState == .active else { return }
+        settingsAITimeoutFixtureState = "failure=\(state.failureInjected);exact=\(state.exactRequestRetried);commits=\(state.commitAttempts);retired=\(state.journalRetired)"
+    }
+
     func retireAISettingsSummaryFixture(_ reason: String) {
-        guard settingsAITestHeld, let selection = try? NativeAppLaunch.selection.get(),
+        guard settingsAITestHeld || settingsAITimeoutTestHeld || settingsAITimeoutRequest != nil, let selection = try? NativeAppLaunch.selection.get(),
               case .isolated = selection else { return }
         if reason == "lock" { appLock.readFailed() }
         else if reason == "host" {
@@ -10888,7 +11095,7 @@ final class CoreModel: ObservableObject {
                     "appLock.title", "appLock.description", "appLock.prompt", "appLock.enablePrompt", "appLock.unlock",
                     "appLock.authenticating", "appLock.useDevicePasscode", "appLock.unavailable", "appLock.cancelled", "appLock.failed",
                     "settings.ai", "settings.aiEnable", "settings.aiProvider", "settings.aiProviderOpenAI", "settings.aiProviderGemini", "settings.aiProviderAnthropic",
-                    "settings.aiRequestTimeout", "settings.aiRequestTimeoutSeconds", "settings.aiSummaryReadOnly", "settings.on", "settings.off",
+                    "settings.aiAdvanced", "settings.aiRequestTimeout", "settings.aiRequestTimeoutDesc", "settings.aiRequestTimeoutSeconds", "settings.aiSummaryReadOnly", "settings.on", "settings.off",
                     "settings.iosSearchLabel", "settings.iosSearchDesc", "settings.iosSearchPaused", "settings.iosSearchFailed",
                     "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading", "common.ok", "common.noMatches",
                     "common.play", "common.pause", "quickAdd.audioNoteTitle", "quickAdd.bulkCreateError", "audio.loading",
@@ -29405,6 +29612,7 @@ final class CoreModel: ObservableObject {
     }
 
     func retry() async {
+        if settingsAITimeoutRequest != nil { retryAIRequestTimeout(); return }
         if pomodoroCommand != nil { await retryPomodoro(); return }
         if appleRemindersNeedsRetry { retryAppleReminders(); return }
         if trashBulkRequest != nil { await retryTrashBulkRequest(); return }

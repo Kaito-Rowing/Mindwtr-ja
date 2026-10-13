@@ -1492,7 +1492,7 @@ export const jaOverrides: Record<string, string> = {
         'settings.advanced': '詳細設定',
         'settings.aiDesc': 'タスクを明確にしたり、手順に分解したりする補助機能です。使うかどうかは任意です。',
         'settings.aiEnable': 'AI アシスタントを有効にする',
-        'settings.aiSummaryReadOnly': "保存された設定の表示のみです。ここでは変更できません。このアプリではまだ AI へのリクエストを利用できません。",
+        'settings.aiSummaryReadOnly': "このネイティブアプリでは、AI リクエストはまだ利用できません。",
         "ai.appleClarification.stale": "項目または利用可能な関連項目が変更されました。新しい提案を取得してください。",
         "ai.appleClarification.suggestionTitle": "デバイス上の提案",
         "settings.appleClarification.title": "インボックスの明確化",

@@ -4378,7 +4378,39 @@ const poll = async (state, id) => {
     const swift = readFileSync(resolve(app, '../ios-native/Sources/MindwtrNativeCore/CoreHost.swift'), 'utf8');
     assert.match(swift, /guard !Engine\.aiRequestTimeoutMethods\.contains\(method\)/);
     assert.match(swift, /func setAIRequestTimeout\(_ request: NativeAIRequestTimeoutRequest,/);
-    assert.doesNotMatch(swift, /public func (?:setAIRequestTimeout|readAIRequestTimeoutOptions)/);
+    // Task601 exposes the existing typed timeout facade to App, never raw requests or private fields.
+    const requireTypedAITimeoutFacade = source => {
+        assert.match(source, /public func readAIRequestTimeoutOptions\(\) async throws -> NativeAIRequestTimeoutOptions/);
+        assert.match(source, /public func setAIRequestTimeout\(_ request: NativeAIRequestTimeoutRequest,\s*readmission:/);
+        assert.match(source, /public init\(requestId: String, value: Int, expected: NativeAIRequestTimeoutWitness\)/);
+        for (const name of ['Witness', 'Request', 'Options', 'Result'])
+            assert.match(source, new RegExp('public struct NativeAIRequestTimeout' + name + ':'));
+        for (const [name, fields] of [['Request', ['value']], ['Options', ['value', 'expected']], ['Result', ['value', 'changed']]]) {
+            const dto = new RegExp('public struct NativeAIRequestTimeout' + name + ':([\\s\\S]*?)\\n}').exec(source)?.[1];
+            assert(dto);
+            assert.deepEqual([...dto.matchAll(/\n    public (?:let|var) (\w+):/g)].map(match => match[1]), fields);
+            assert.doesNotMatch(dto, /public func (?:json|validated)/);
+        }
+        const witness = source.slice(source.indexOf('public struct NativeAIRequestTimeoutWitness:'), source.indexOf('public struct NativeAIRequestTimeoutRequest:'));
+        assert.match(witness, /^public struct NativeAIRequestTimeoutWitness: Sendable, Equatable \{/);
+        assert.doesNotMatch(witness, /public (?:let|var|func|init)/);
+        assert.doesNotMatch(source, /public func (?:probeAIRequestTimeoutOutcome|readAIProviderDeviceState|invokeAIRequestTimeoutRead)/);
+        assert.doesNotMatch(source, /public func (?:setAIRequestTimeout|readAIRequestTimeoutOptions)\([^)]*(?:requestJSON|argumentsJSON)/);
+        assert.match(source, /guard !Engine\.aiRequestTimeoutMethods\.contains\(method\)/);
+    };
+    requireTypedAITimeoutFacade(swift);
+    for (const [before, after] of [
+        ['public func readAIRequestTimeoutOptions()', 'func readAIRequestTimeoutOptions()'],
+        ['public func setAIRequestTimeout(_ request:', 'func setAIRequestTimeout(_ request:'],
+        ['public init(requestId: String, value: Int, expected:', 'init(requestId: String, value: Int, expected:'],
+        ['    let stamp: String?', '    public let stamp: String?'],
+        ['public struct NativeAIRequestTimeoutWitness: Sendable, Equatable', 'public struct NativeAIRequestTimeoutWitness: Decodable, Sendable, Equatable'],
+        ['    func probeAIRequestTimeoutOutcome(', '    public func probeAIRequestTimeoutOutcome('],
+        ['guard !Engine.aiRequestTimeoutMethods.contains(method)', 'guard true'],
+    ]) {
+        assert(swift.includes(before), 'Task601 gate mutation anchor exists: ' + before);
+        assert.throws(() => requireTypedAITimeoutFacade(swift.replace(before, after)));
+    }
     console.log('Task590: production private timeout invocation, exact arguments, owner refusal and receipt registration passed; Apple execution pending');
 }
 // Task592: actual private route and real selected-provider helper; device metadata

@@ -419,4 +419,42 @@ final class NativeAIRequestTimeoutTests: XCTestCase {
         throw XCTSkip("Requires the entitled physical iPhone12 test host")
         #endif
     }
+    #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    func testAppCommitFaultSeamRefusesForeignLibraryWithoutReplacingExistingFaultAndLateArm() async throws {
+        let faults = HostIOFaults(), io = AIRequestTimeoutIO()
+        faults.beforeSQL = { try io.beforeSQL($0) }
+        let core = host(faults)
+        await failure { try await core.configureIsolatedAIRequestTimeoutCommitFailureOnce() }
+        _ = try await core.start()
+        io.reset()
+        _ = try await core.readAIRequestTimeoutOptions()
+        XCTAssertGreaterThan(io.counts[0], 0, "Rejected arming must preserve the original SQL callback")
+        await failure { try await core.configureIsolatedAIRequestTimeoutCommitFailureOnce() }
+        await failure { _ = try await core.isolatedAIRequestTimeoutFixtureState() }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+    #endif
+
+    func testAppProjectionOptionsWriteAndRefreshSequenceUsesSameHost() async throws {
+        try await seed(configured())
+        let core = host(); _ = try await core.start()
+        let original = try await core.readAISettingsProjection()
+        XCTAssertEqual(original.aiRequestTimeoutSeconds, 120)
+        let options = try await core.readAIRequestTimeoutOptions()
+        let edit = NativeAIRequestTimeoutRequest(requestId: UUID().uuidString.lowercased(), value: 60, expected: options.expected)
+        let saved = try await core.setAIRequestTimeout(edit, readmission: { true })
+        XCTAssertEqual(saved.value, 60); XCTAssertTrue(saved.changed)
+        let refreshed = try await core.readAISettingsProjection()
+        XCTAssertEqual(refreshed.aiRequestTimeoutSeconds, 60)
+        XCTAssertEqual(refreshed.aiProvider, original.aiProvider); XCTAssertEqual(refreshed.aiEnabled, original.aiEnabled)
+        let freshOptions = try await core.readAIRequestTimeoutOptions()
+        XCTAssertEqual(freshOptions.value, 60)
+        let noop = NativeAIRequestTimeoutRequest(requestId: UUID().uuidString.lowercased(), value: 60, expected: freshOptions.expected)
+        let unchanged = try await core.setAIRequestTimeout(noop, readmission: { true })
+        XCTAssertFalse(unchanged.changed)
+        let reopened = try await core.readAISettingsProjection()
+        XCTAssertEqual(reopened, refreshed)
+        XCTAssertEqual(try markerCount(), 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
 }

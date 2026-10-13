@@ -59,7 +59,7 @@ struct SettingsScreen: View {
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(model.settingsSyncChecking || model.settingsSyncRestartRequired || (!model.settingsDataPresented && ((model.busy && !model.settingsAboutCanCancel && !model.settingsCalendarCanCancel) || model.retryNeeded || model.somedaySectionRenamePending
+                .disabled(model.settingsSyncChecking || model.settingsSyncRestartRequired || (!model.settingsDataPresented && ((model.busy && !model.settingsAboutCanCancel && !model.settingsCalendarCanCancel && !model.settingsAICanCancel) || model.retryNeeded || model.somedaySectionRenamePending
                           || model.somedaySectionRenameAwaitingRefresh
                           || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
                           || model.somedaySectionOrderActive || model.unassignedAreaColorActive
@@ -317,6 +317,11 @@ struct SettingsScreen: View {
             else if model.settingsFeedbackPresented { model.closeFeedbackSettings() }
             else if model.settingsAboutPresented { model.closeAboutSettings() }
             else if model.settingsNotificationsPresented { model.closeNotificationSettings() }
+            else if model.settingsAIPresented {
+                if !model.retryNeeded && !model.appLock.concealed && (!model.busy || model.settingsAICanCancel) {
+                    model.retireAISettingsPage()
+                }
+            }
             else if model.settingsCalendarPresented { calendarSubscriptionField = nil; model.closeCalendarSettings() }
             else if model.settingsGeneralPresented { model.closeGeneralSettings() }
             else if model.settingsManagePresented { model.closeManageSettings() }
@@ -1992,8 +1997,53 @@ struct SettingsScreen: View {
                         .frame(minHeight: 44).disabled(model.busy || model.retryNeeded)
                         .accessibilityIdentifier("ai-summary-retry")
                 }
+                Button { model.toggleAIAdvanced() } label: {
+                    HStack {
+                        Text(model.label("settings.aiAdvanced")).rnFont(15, .semibold)
+                        Spacer()
+                        Image(systemName: model.settingsAIAdvanced ? "chevron.up" : "chevron.down")
+                    }.frame(minHeight: 44).contentShape(Rectangle())
+                }.buttonStyle(.plain).foregroundStyle(palette.text)
+                    .disabled(model.busy || model.retryNeeded || !model.settingsAICanOpen || model.settingsAILoading || model.settingsAIReadFailed)
+                    .accessibilityValue(model.settingsAIAdvanced ? model.label("settings.on") : model.label("settings.off"))
+                    .accessibilityIdentifier("ai-timeout-advanced")
+                if model.settingsAIAdvanced {
+                    Text(model.label("settings.aiRequestTimeoutDesc")).rnFont(14).foregroundStyle(palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let options = model.settingsAIOptions {
+                        ForEach([30, 60, 120, 300], id: \.self) { seconds in
+                            Button { model.saveAIRequestTimeout(seconds) } label: {
+                                HStack {
+                                    Text(model.label("settings.aiRequestTimeoutSeconds")
+                                        .replacingOccurrences(of: "{{seconds}}", with: String(seconds))).rnFont(15)
+                                    Spacer()
+                                    if options.value == seconds { Image(systemName: "checkmark") }
+                                }.frame(minHeight: 44).contentShape(Rectangle())
+                            }.buttonStyle(.plain).foregroundStyle(palette.text)
+                                .disabled(!model.settingsAITimeoutCanChoose)
+                                .accessibilityAddTraits(options.value == seconds ? .isSelected : [])
+                                .accessibilityIdentifier("ai-timeout-choice-" + String(seconds))
+                        }
+                    } else if model.settingsAIOptionsFailed {
+                        Text(model.label("settings.feedback.actionFailed")).foregroundStyle(palette.danger)
+                            .accessibilityIdentifier("ai-timeout-options-error")
+                        Button(model.label("common.retry")) { model.retryAIRequestTimeoutOptions() }
+                            .frame(minHeight: 44).disabled(model.busy || model.retryNeeded)
+                            .accessibilityIdentifier("ai-timeout-options-retry")
+                    } else if !model.retryNeeded {
+                        ProgressView(model.label("common.loading")).accessibilityIdentifier("ai-timeout-loading")
+                    }
+                }
+                if model.settingsAISaveFailed {
+                    Text(model.label("settings.feedback.actionFailed")).foregroundStyle(palette.danger)
+                        .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("ai-timeout-save-error")
+                }
                 #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
-                if model.settingsAITestHeld {
+                if !model.settingsAITimeoutFixtureState.isEmpty {
+                    Text(model.settingsAITimeoutFixtureState).accessibilityIdentifier("ai-timeout-fixture-state")
+                }
+                if model.settingsAITestHeld || model.settingsAITimeoutTestHeld || model.settingsAISaveFailed {
+                    if model.settingsAITimeoutTestHeld { Text("held").accessibilityIdentifier("ai-timeout-test-held") }
                     Text("held").accessibilityIdentifier("ai-summary-test-held")
                     Button("Lock fixture") { model.retireAISettingsSummaryFixture("lock") }
                         .frame(minHeight: 44).accessibilityIdentifier("ai-summary-test-lock")
