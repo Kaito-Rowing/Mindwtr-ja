@@ -38,7 +38,16 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { strToU8, zipSync } from 'fflate';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { box, check, connect, evidenced, fail, hasText, inboxCount, Stopped, tab, tagged, withDescription } from './device.mjs';
+import { box, check, connect, evidenced, fail, hasText, inboxCount, mainList, Stopped, tab, tagged, withDescription } from './device.mjs';
+/** The tagged node, only once it sits wholly inside the main list (a row half under the gesture bar takes no tap). */
+const shown = (nodes, tag) => {
+    const node = tagged(nodes, tag);
+    const list = mainList(nodes);
+    if (!node || !list) return node;
+    const [, top, , bottom] = box(node);
+    const [, listTop, , listBottom] = box(list);
+    return top >= listTop && bottom <= listBottom ? node : undefined;
+};
 import { cleanupOnExit } from './check-net-device.mjs';
 
 const [serial] = process.argv.slice(2);
@@ -454,7 +463,7 @@ try {
 
     // ---- Sync › Recovery snapshots: RN's rows and question ----
     nodes = await openRow(en['settings.sync'], onSync, 'Sync');
-    for (let step = 0; step < 10 && !tagged(nodes, 'recovery-snapshots-disclosure'); step += 1) nodes = await device.swipe(nodes, 'down');
+    for (let step = 0; step < 10 && !shown(nodes, 'recovery-snapshots-disclosure'); step += 1) nodes = await device.swipe(nodes, 'down');
     nodes = await tapExpecting(tagged(nodes, 'recovery-snapshots-disclosure') ?? fail('no Recovery snapshots card'),
         (current) => current.some((node) => (node['resource-id'] ?? '').includes('recovery-snapshot-data.')), 'the snapshot rows');
     // A dump holds only the rows on screen: gather them while scrolling down, then come back to the newest (the first row).
@@ -608,7 +617,7 @@ try {
     const seededLines = (outcome) => allLogs().split('\n').filter((line) => line.includes('v1.3.6/native-getting-started') && line.includes(`"outcome":"${outcome}"`)).length;
     const gettingStartedRow = async () => {
         let nodes = await openData();
-        for (let step = 0; step < 6 && !tagged(nodes, 'add-getting-started-content'); step += 1) nodes = await device.swipe(nodes, 'down');
+        for (let step = 0; step < 6 && !shown(nodes, 'add-getting-started-content'); step += 1) nodes = await device.swipe(nodes, 'down');
         return tagged(nodes, 'add-getting-started-content') ?? fail('no Getting Started row');
     };
 
@@ -655,13 +664,13 @@ try {
     for (const item of imports) push(item.file);
     const openImports = async () => {
         let nodes = await openData();
-        for (let step = 0; step < 8 && !tagged(nodes, 'import-disclosure'); step += 1) nodes = await device.swipe(nodes, 'down');
+        for (let step = 0; step < 8 && !shown(nodes, 'import-disclosure'); step += 1) nodes = await device.swipe(nodes, 'down');
         if (tagged(nodes, 'import-guide-link')) return nodes;
         return tapExpecting(tagged(nodes, 'import-disclosure') ?? fail('no Import fold'), (current) => Boolean(tagged(current, 'import-guide-link')), 'the Import fold open');
     };
     const importRow = async (key) => {
         let nodes = await openImports();
-        for (let step = 0; step < 6 && !tagged(nodes, `data-transfer-import-${key}`); step += 1) nodes = await device.swipe(nodes, 'down');
+        for (let step = 0; step < 6 && !shown(nodes, `data-transfer-import-${key}`); step += 1) nodes = await device.swipe(nodes, 'down');
         return tagged(nodes, `data-transfer-import-${key}`) ?? fail(`no ${key} import row`);
     };
     const importPick = async (key, file) => {
