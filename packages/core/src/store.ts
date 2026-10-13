@@ -26,6 +26,7 @@ import { createArchiveRetentionActions, resetArchiveRetentionSyncForTests } from
 import { sleep } from './async-utils';
 import { instrumentStoreSubscribe } from './store-notify-profiler';
 import { runAfterStoreWriteLock } from './data-transfer-transaction';
+import { runStoreCommand } from './store-write-gate';
 
 export { applyTaskUpdates } from './store-helpers';
 
@@ -688,7 +689,7 @@ const wrapStoreWriteActions = (actions: TaskStore): TaskStore => {
     for (const key of STORE_WRITE_ACTION_KEYS) {
         const action = actions[key] as (...args: unknown[]) => Promise<unknown>;
         (wrapped as unknown as Record<string, unknown>)[key] = (...args: unknown[]) =>
-            runAfterStoreWriteLock(() => action(...args));
+            runAfterStoreWriteLock(() => runStoreCommand(() => action(...args)));
     }
     return wrapped;
 };

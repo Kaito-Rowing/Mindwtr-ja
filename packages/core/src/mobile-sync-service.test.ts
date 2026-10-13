@@ -321,7 +321,8 @@ describe('mobile sync service behind fake ports', () => {
 
     const stored = fake.saved.map((data) => data.settings);
     expect(stored.some((settings) => settings.lastSyncError?.includes('Authentication rejected'))).toBe(true);
-    const storeUpdates = vi.mocked(fake.host.core!.useTaskStore!.setState).mock.calls.map(([update]) => (typeof update === 'function' ? update({ settings: {} } as never) : update));
+    const storeUpdates = vi.mocked(fake.host.core!.useTaskStore!.setState).mock.calls.map(([update]) => (typeof update === 'function' ? update({ settings: {}, _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
+      _tasksById: new Map(), _projectsById: new Map(), _sectionsById: new Map(), _areasById: new Map(), _peopleById: new Map() } as never) : update));
     const text = JSON.stringify({ result, stored, storeUpdates, logs: fake.logs, syncErrors: fake.syncErrors, status: fake.values.get('@mindwtr_local_sync_status_v1') });
     expect(text).not.toContain(password);
   });

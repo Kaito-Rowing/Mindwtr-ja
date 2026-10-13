@@ -53,6 +53,7 @@ import { isWebdavInvalidJsonError } from './retry-utils';
 import { isRemoteSyncBackend } from './sync-service-utils';
 import { cloneAppData } from './sync-runtime-utils';
 import { traceSection, traceSectionAsync } from './perf-trace';
+import { runSyncStoreSave } from './store-write-gate';
 import { buildMergeSummaryLog, buildPendingAttachmentUploadLogExtra } from './sync-log-utils';
 import { CLOCK_SKEW_THRESHOLD_MS } from './sync-types';
 import { appendSyncHistory, mergeAppData, performSyncCycle } from './sync';
@@ -994,35 +995,54 @@ class SharedSyncRunMachine {
         return data;
     }
 
-    private async persistLocalDataWithTracking(data: AppData): Promise<AppData> {
+    /**
+     * One local save and its store publish, inside the store write gate (store-write-gate.ts): no
+     * command runs between the freshness check and the publish, so the store never lags what this
+     * save wrote. [data] is a builder when the document must be read from the store inside the gate.
+     */
+    private async persistLocalDataWithTracking(data: AppData | (() => AppData)): Promise<AppData> {
         await this.assertRemoteMutationFenceHeld();
-        const persisted = await traceSectionAsync('sync:saveData', () => this.storage.persistLocal(data)) ?? data;
-        this.ensureLocalSnapshotFresh(persisted);
-        // Disk has moved past the snapshot this cycle read, so it is no longer
-        // a baseline for the unchanged-write guard.
-        this.state.localSnapshotMatchesDisk = false;
-        if (this.storage.applyDataToStore) {
-            this.storage.applyDataToStore(persisted);
-            const currentChangeAt = this.store.getLastDataChangeAt();
-            this.state.localSnapshotChangeAt = currentChangeAt;
-            this.state.localDataCache = {
-                changeAt: currentChangeAt,
-                data: normalizeAppData(persisted),
-            };
-        }
-        this.state.wroteLocal = true;
-        return persisted;
+        return runSyncStoreSave(async () => {
+            // Pending store saves land first; a command they carry moved the change stamp, which the
+            // check below turns into a requeue before anything of this cycle is written.
+            await this.store.flushPendingSave();
+            const next = typeof data === 'function' ? data() : data;
+            this.ensureLocalSnapshotFresh(next);
+            const persisted = await traceSectionAsync('sync:saveData', () => this.storage.persistLocal(next)) ?? next;
+            this.ensureLocalSnapshotFresh(persisted);
+            // Disk has moved past the snapshot this cycle read, so it is no longer
+            // a baseline for the unchanged-write guard.
+            this.state.localSnapshotMatchesDisk = false;
+            if (this.storage.applyDataToStore) {
+                this.storage.applyDataToStore(persisted);
+                const currentChangeAt = this.store.getLastDataChangeAt();
+                this.state.localSnapshotChangeAt = currentChangeAt;
+                this.state.localDataCache = {
+                    changeAt: currentChangeAt,
+                    data: normalizeAppData(persisted),
+                };
+                if (!this.state.wroteLocal) {
+                    this.notifier.logInfo('Sync save published to the store', {
+                        backend: this.backend,
+                        step: this.state.step ?? '-',
+                        releaseCheck: 'v1.3.7/sync-write-gate',
+                    });
+                }
+            }
+            this.state.wroteLocal = true;
+            return persisted;
+        });
     }
 
     private async persistPreSyncedDataAfterAbort(): Promise<void> {
-        if (!this.state.preSyncedLocalData || this.state.wroteLocal) return;
-        this.state.localSnapshotChangeAt = this.store.getLastDataChangeAt();
-        const inMemorySnapshot = this.store.getInMemorySnapshot();
-        const reconciledData = restoreDeviceLocalAiSettings(
-            mergeAppData(this.state.preSyncedLocalData, inMemorySnapshot),
-            inMemorySnapshot,
-        );
-        await this.persistLocalDataWithTracking(reconciledData);
+        const preSynced = this.state.preSyncedLocalData;
+        if (!preSynced || this.state.wroteLocal) return;
+        // Built inside the gate: the store it merges with is the one the save lands on.
+        await this.persistLocalDataWithTracking(() => {
+            this.state.localSnapshotChangeAt = this.store.getLastDataChangeAt();
+            const inMemorySnapshot = this.store.getInMemorySnapshot();
+            return restoreDeviceLocalAiSettings(mergeAppData(preSynced, inMemorySnapshot), inMemorySnapshot);
+        });
     }
 
     private async readRemoteForCycle(requireMutationFence = false): Promise<AppData | null> {
@@ -1854,20 +1874,6 @@ class SharedSyncRunMachine {
                     return data;
                 }
                 return this.persistLocalDataWithTracking(data);
-            },
-            clearPendingRemoteWriteAfterLocalAbort: async (pendingAt) => {
-                if (this.options.activationProbe) return;
-                const current = this.store.getInMemorySnapshot();
-                if (current.settings.pendingRemoteWriteAt && current.settings.pendingRemoteWriteAt !== pendingAt) return;
-                await this.persistLocalDataWithTracking({
-                    ...current,
-                    settings: {
-                        ...current.settings,
-                        pendingRemoteWriteAt: undefined,
-                        pendingRemoteWriteRetryAt: undefined,
-                        pendingRemoteWriteAttempts: undefined,
-                    },
-                });
             },
             flushPendingLocalBeforeRetryRead: () => this.options.activationProbe
                 ? Promise.resolve()

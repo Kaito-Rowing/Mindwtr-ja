@@ -2,6 +2,8 @@ import { useTaskStore } from './store';
 import { CLOUD_PROVIDER_DROPBOX } from './sync-storage-keys';
 import { computeSyncChangeFingerprint } from './sync-helpers';
 import { cloneAppData } from './sync-runtime-utils';
+import { normalizeAppData } from './sync-normalization';
+import { reconcileEntityCollection, reuseSettingsIfEquivalent, stripSensitiveSettings } from './store-helpers';
 import type { AppData } from './types';
 
 export const DEFAULT_ATTACHMENT_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -61,6 +63,26 @@ export const getInMemoryAppDataSnapshot = (): AppData => {
         people: state._allPeople ?? state.people ?? [],
         settings: state.settings ?? {},
     });
+};
+
+/**
+ * Publish a document a sync save just wrote, inside the same store write gate hold
+ * (store-write-gate.ts), so the next command acts on what disk holds. Rows whose
+ * revision identity did not change keep their objects, as a load does (#766).
+ */
+export const applySyncedDataToStore = (
+    data: AppData,
+    store: Pick<typeof useTaskStore, 'setState'> = useTaskStore,
+): void => {
+    const next = normalizeAppData(data);
+    store.setState((state) => ({
+        _allTasks: reconcileEntityCollection(state._allTasks, state._tasksById, next.tasks).items,
+        _allProjects: reconcileEntityCollection(state._allProjects, state._projectsById, next.projects).items,
+        _allSections: reconcileEntityCollection(state._allSections, state._sectionsById, next.sections).items,
+        _allAreas: reconcileEntityCollection(state._allAreas, state._areasById, next.areas).items,
+        _allPeople: reconcileEntityCollection(state._allPeople, state._peopleById, next.people ?? []).items,
+        settings: reuseSettingsIfEquivalent(state.settings, stripSensitiveSettings(next.settings ?? state.settings)),
+    }));
 };
 
 /**

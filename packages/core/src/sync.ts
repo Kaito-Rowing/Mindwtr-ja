@@ -1598,10 +1598,8 @@ async function performSyncCycleUnlocked(io: SyncCycleIO): Promise<SyncCycleResul
     try {
         await io.writeRemote(persistedFinalData);
     } catch (error) {
-        if (isLocalSyncAbortError(error)) {
-            await io.clearPendingRemoteWriteAfterLocalAbort?.(finalDataWithPendingRemoteWrite.settings.pendingRemoteWriteAt as string);
-            throw error;
-        }
+        // A stale exit keeps the pending remote-write marker: the next cycle publishes and clears it.
+        if (isLocalSyncAbortError(error)) throw error;
         const localDataWithRetry = withPendingRemoteWriteRetry(canonicalWithPendingRemoteWrite, nowIso, error);
         io.onStep?.('write-local');
         await yieldToUi();
@@ -1611,20 +1609,14 @@ async function performSyncCycleUnlocked(io: SyncCycleIO): Promise<SyncCycleResul
 
     io.onStep?.('write-local');
     await yieldToUi();
-    try {
-        const canonicalPersistedData = await io.writeLocal(persistedFinalData) ?? persistedFinalData;
-        return {
-            data: canonicalPersistedData,
-            stats: mergeResult.stats,
-            status: nextSyncStatus,
-            clockSkewWarning: mergeResult.clockSkewWarning,
-        };
-    } catch (error) {
-        if (isLocalSyncAbortError(error)) {
-            await io.clearPendingRemoteWriteAfterLocalAbort?.(finalDataWithPendingRemoteWrite.settings.pendingRemoteWriteAt as string);
-        }
-        throw error;
-    }
+    // A stale exit here also keeps the marker.
+    const canonicalPersistedData = await io.writeLocal(persistedFinalData) ?? persistedFinalData;
+    return {
+        data: canonicalPersistedData,
+        stats: mergeResult.stats,
+        status: nextSyncStatus,
+        clockSkewWarning: mergeResult.clockSkewWarning,
+    };
 }
 
 export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult> {

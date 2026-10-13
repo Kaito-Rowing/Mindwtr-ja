@@ -18,6 +18,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'allowWrite', 'allowArchive', 'allowDelete', 'port', 'category',
     // mcp-codex-copy reuses releaseCheck, operation, outcome, backend below.
     // linux-task-link-launcher reuses releaseCheck and outcome below; no executable paths.
+    // sync-write-gate reuses backend below; step is the sync step name.
+    'step',
     // linux-quick-add-focus reuses backend and outcome below; no window or input content.
     // inactive-sync-credential: fixed service category only; no endpoint or secret.
     'service',

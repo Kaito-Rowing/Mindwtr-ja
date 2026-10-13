@@ -2162,7 +2162,7 @@ describe('runSharedSyncCycle', () => {
         expect(io.writeRemote).toHaveBeenCalledTimes(1);
     });
 
-    it('requeues on a remote write conflict and clears the pending-remote-write flag', async () => {
+    it('requeues on a remote write conflict and keeps the pending-remote-write flag', async () => {
         const { harness, hooks, run } = createHarness({
             remote: createData([createTask('t-remote', 'Remote task')]),
             io: {
@@ -2178,7 +2178,8 @@ describe('runSharedSyncCycle', () => {
 
         expect(result).toMatchObject({ success: true, skipped: 'requeued' });
         expect(hooks.requestFollowUp).toHaveBeenCalled();
-        expect(harness.persisted.settings.pendingRemoteWriteAt).toBeUndefined();
+        // A stale exit writes nothing more: the follow-up cycle publishes and clears the marker.
+        expect(harness.persisted.settings.pendingRemoteWriteAt).toBeTruthy();
         expect(harness.diagnosticEvents).toContainEqual(expect.objectContaining({
             event: 'follow-up-requested', followUpReason: 'remote-conflict',
         }));

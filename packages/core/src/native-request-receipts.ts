@@ -9,6 +9,7 @@ import { taskEditValuesEqual } from './json-value-equality';
 import { strToU8 } from 'fflate';
 import { logInfo } from './logger';
 import { stripSensitiveSettings } from './store-helpers';
+import { runStoreCommand } from './store-write-gate';
 
 /**
  * Exact-retry bookkeeping for native host writes, shared by every contract write
@@ -726,7 +727,9 @@ export function createNativeRequestReceipts(options: {
         return { ok: true, value: null };
     };
 
-    const save = async (requestId: string, receipt: Receipt): Promise<NativeHostResult<unknown>> => {
+    // A receipt's save is a store command for the sync gate (store-write-gate.ts): no sync save and
+    // store publish lands inside it. Its write already ran as store actions, which hold the same gate.
+    const save = (requestId: string, receipt: Receipt): Promise<NativeHostResult<unknown>> => runStoreCommand(async () => {
         // A successful save stores the whole snapshot, so every write that landed before it
         // began is durable too. A write that lands while it runs waits for its own save.
         const covered = Array.from(receipts.values()).filter((entry) => entry.written);
@@ -752,7 +755,7 @@ export function createNativeRequestReceipts(options: {
         }
         for (const entry of covered) entry.saved = true;
         return { ok: true, value: receipt.value };
-    };
+    });
 
     const makeRoom = (): boolean => {
         if (receipts.size < limit) return true;
