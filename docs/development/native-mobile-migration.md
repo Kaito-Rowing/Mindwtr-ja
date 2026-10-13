@@ -379,3 +379,12 @@ Task282 Project file Add (2026-10-06): Project Details now imports one file with
 
 
 Native saved-WebDAV Enable, Unlock, Change passphrase, Disable and bounded interrupted recovery are integrated (2026-10-07, Tasks379–382), reusing RN encryption policy. Twenty-five selected native-host cases and isolated iPhone input, lifecycle, conversion and cold-reopening checks passed. Change and Disable preserve remote plaintext and all 21 local tables; shared Recheck restores document discovery after quarantine. Physical Abandon/Recheck, broader provider and signed replacement acceptance remain open. See the [scope and evidence](native-mobile-parity.md#ios-saved-webdav-change-and-disable-2026-10-07-task382).
+
+
+### Real iPhone reminder completion (Task718, 2026-10-13)
+
+Two fresh isolated libraries passed actual OS due-reminder delivery while the native app was suspended, expansion of the matching notification, and its visible Complete action on iPhone 12 / iOS 17.5.1. Notification permission was granted through the OS prompt. Each original isolated process remained alive through its callback. Each task changed from Next revision 2 to Done revision 3 with one successful matching receipt, an empty active response inbox and its matching terminal tombstone. Unrelated saved tables and earlier receipts stayed unchanged. Explicit same-library cold restarts retained the exact completion revision, receipt and tombstone without duplicate completion.
+
+The stopped-app final capture preserved ordinary storage and all 147 prior isolated libraries byte-for-byte, including the three known pending journals. The first reminder library also stayed unchanged during the second run; 149 libraries are retained. The accepted App714 and runner727 were unchanged. The owned WDA session was deliberately stopped after acceptance; its host exit 75 is that shutdown, not a failed reminder test. Setup, transient UI lookup and pre-admission capture failures remain archived.
+
+This establishes the two background Complete flows only. It does not establish genuine OS cold callbacks, Snooze/Open/Dismiss delivery, permission revocation, protected-data behavior, full foreign notification inventory, legacy RN ownership migration or signed production replacement. Intermediate byte preservation of all 147 old libraries is unclaimed; their final comparison passed.
