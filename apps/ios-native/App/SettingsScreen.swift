@@ -1985,6 +1985,9 @@ struct SettingsScreen: View {
                     aiSummaryRow("settings.aiEnable", value: model.label(projection.aiEnabled ? "settings.on" : "settings.off"), id: "enabled")
                     aiSummaryRow("settings.aiProvider", value: model.label(projection.aiProvider == .openai ? "settings.aiProviderOpenAI"
                         : projection.aiProvider == .gemini ? "settings.aiProviderGemini" : "settings.aiProviderAnthropic"), id: "provider")
+                    if projection.aiProvider == .gemini {
+                        aiSummaryRow("settings.aiThinkingBudget", value: model.aiGeminiThinkingBudgetLabel(projection.aiThinkingBudgetSavedValue), id: "gemini-budget")
+                    }
                     aiSummaryRow("settings.aiReasoning", value: model.aiReasoningEffortLabel(projection.aiReasoningEffortSavedValue), id: "effort")
                     aiSummaryRow("settings.aiRequestTimeout", value: model.label("settings.aiRequestTimeoutSeconds")
                         .replacingOccurrences(of: "{{seconds}}", with: String(projection.aiRequestTimeoutSeconds)), id: "timeout")
@@ -2023,6 +2026,32 @@ struct SettingsScreen: View {
                             .accessibilityIdentifier("ai-effort-options-retry")
                     } else if !model.retryNeeded {
                         ProgressView(model.label("common.loading")).accessibilityIdentifier("ai-effort-loading")
+                    }
+                }
+                if model.settingsAIProjection?.aiProvider == .gemini {
+                    Text(model.label("settings.aiThinkingHint")).rnFont(14).foregroundStyle(palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let options = model.settingsAIGeminiOptions {
+                        ForEach([NativeAIGeminiThinkingBudgetValue.off, .low, .medium, .high], id: \.rawValue) { value in
+                            Button { model.saveAIGeminiThinkingBudget(value) } label: {
+                                HStack {
+                                    Text(model.aiGeminiThinkingBudgetLabel(value.rawValue)).rnFont(15)
+                                    Spacer()
+                                    if options.value == value.rawValue { Image(systemName: "checkmark") }
+                                }.frame(minHeight: 44).contentShape(Rectangle())
+                            }.buttonStyle(.plain).foregroundStyle(palette.text)
+                                .disabled(!model.settingsAIGeminiCanChoose)
+                                .accessibilityAddTraits(options.value == value.rawValue ? .isSelected : [])
+                                .accessibilityIdentifier("ai-gemini-choice-" + String(value.rawValue))
+                        }
+                    } else if model.settingsAIGeminiOptionsFailed {
+                        Text(model.label("settings.feedback.actionFailed")).foregroundStyle(palette.danger)
+                            .accessibilityIdentifier("ai-gemini-options-error")
+                        Button(model.label("common.retry")) { model.retryAIGeminiThinkingBudgetOptions() }
+                            .frame(minHeight: 44).disabled(model.busy || model.retryNeeded || !model.settingsAICanOpen)
+                            .accessibilityIdentifier("ai-gemini-options-retry")
+                    } else if !model.retryNeeded {
+                        ProgressView(model.label("common.loading")).accessibilityIdentifier("ai-gemini-loading")
                     }
                 }
                 Button { model.toggleAIAdvanced() } label: {
@@ -2070,7 +2099,14 @@ struct SettingsScreen: View {
                     Text(model.label("settings.feedback.actionFailed")).foregroundStyle(palette.danger)
                         .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("ai-effort-save-error")
                 }
+                if model.settingsAIGeminiSaveFailed {
+                    Text(model.label("settings.feedback.actionFailed")).foregroundStyle(palette.danger)
+                        .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("ai-gemini-save-error")
+                }
                 #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                if !model.settingsAIGeminiFixtureState.isEmpty {
+                    Text(model.settingsAIGeminiFixtureState).accessibilityIdentifier("ai-gemini-fixture-state")
+                }
                 if !model.settingsAIEffortFixtureState.isEmpty {
                     Text(model.settingsAIEffortFixtureState).accessibilityIdentifier("ai-effort-fixture-state")
                 }
@@ -2078,9 +2114,11 @@ struct SettingsScreen: View {
                     Text(model.settingsAITimeoutFixtureState).accessibilityIdentifier("ai-timeout-fixture-state")
                 }
                 if model.settingsAITestHeld || model.settingsAITimeoutTestHeld || model.settingsAISaveFailed
-                    || model.settingsAIEffortTestHeld || model.settingsAIEffortSaveFailed {
+                    || model.settingsAIEffortTestHeld || model.settingsAIEffortSaveFailed
+                    || model.settingsAIGeminiTestHeld || model.settingsAIGeminiSaveFailed {
                     if model.settingsAITimeoutTestHeld { Text("held").accessibilityIdentifier("ai-timeout-test-held") }
                     if model.settingsAIEffortTestHeld { Text("held").accessibilityIdentifier("ai-effort-test-held") }
+                    if model.settingsAIGeminiTestHeld { Text("held").accessibilityIdentifier("ai-gemini-test-held") }
                     Text("held").accessibilityIdentifier("ai-summary-test-held")
                     Button("Lock fixture") { model.retireAISettingsSummaryFixture("lock") }
                         .frame(minHeight: 44).accessibilityIdentifier("ai-summary-test-lock")

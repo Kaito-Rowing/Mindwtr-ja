@@ -4,6 +4,7 @@ final class FoundationUITests: XCTestCase {
     private var task586Application: XCUIApplication?
     private var task601Application: XCUIApplication?
     private var task680Application: XCUIApplication?
+    private var task701Application: XCUIApplication?
 
     private func task578App(_ suffix: String, flags: [String] = [], largest: Bool = false) throws -> XCUIApplication {
         continueAfterFailure = false
@@ -2843,6 +2844,7 @@ final class FoundationUITests: XCTestCase {
         }
         task601Application?.terminate(); task601Application = nil
         task680Application?.terminate(); task680Application = nil
+        task701Application?.terminate(); task701Application = nil
         task586Application?.terminate()
         task586Application = nil
         try super.tearDownWithError()
@@ -28821,16 +28823,14 @@ extension FoundationUITests {
         waitForExpectations(timeout: 30)
     }
     private func task601Background(_ app: XCUIApplication) {
-        #if targetEnvironment(simulator)
-        XCUIDevice.shared.press(.home)
-        #else
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.995))
-            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
-        #endif
+        let before = app.state.rawValue
+        XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
+        let after = app.state.rawValue
         let background = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             app.state == .runningBackground || app.state == .runningBackgroundSuspended
         }, object: app)
-        XCTAssertEqual(XCTWaiter.wait(for: [background], timeout: 10), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [background], timeout: 10), .completed,
+            "Background transition states: before=\(before), after=\(after), final=\(app.state.rawValue)")
         app.activate()
     }
     func testNativeAITimeoutAllChoicesWhileAIDisabledAndColdSaved() throws {
@@ -29067,6 +29067,161 @@ extension FoundationUITests {
         let app = try task680App("COMMIT_HOST", flags: ["--native-ai-reasoning-commit-failure-once"]); defer { app.terminate() }
         task680Choose(app, "medium")
         task680State(app, "failure=true;exact=false;commits=5;retired=false")
+        boardTap(app, "ai-summary-test-host")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["ai-summary-title"])
+        waitForExpectations(timeout: 30)
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); boardTap(app, "persistence-retry")
+        XCTAssertFalse(app.staticTexts["ai-summary-title"].exists)
+        XCTAssertTrue(app.buttons["persistence-retry"].exists)
+        XCTAssertTrue(app.staticTexts["persistence-error"].exists)
+    }
+
+    private func task701App(_ role: String, flags: [String] = [], largest: Bool = false) throws -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication(); task701Application = app
+        let language = role == "CUSTOM" ? "ar" : "en"
+        app.launchArguments = ["--native-ui-test-library", try task371Library(role, prefix: "MINDWTR_AI_GEMINI_UI_"),
+            "--native-ai-gemini-fixture", "-AppleLanguages", "(" + language + ")", "-AppleLocale", language == "ar" ? "ar_SA" : "en_US"] + flags
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); task594OpenAI(app)
+        XCTAssertTrue(app.staticTexts["ai-summary-provider"].waitForExistence(timeout: 20))
+        if !["ABSENT_PROVIDER", "OPENAI", "ANTHROPIC"].contains(role) {
+            XCTAssertTrue(app.staticTexts["ai-summary-gemini-budget"].waitForExistence(timeout: 20))
+        }
+        XCTAssertFalse(app.buttons["ai-timeout-choice-30"].exists, "Advanced defaults to collapsed")
+        return app
+    }
+    private func task701Choose(_ app: XCUIApplication, _ value: Int) {
+        let choice = app.buttons["ai-gemini-choice-" + String(value)]
+        task442Reveal(app, choice, in: app.scrollViews["ai-summary-scroll"])
+        boardEnabled(choice, timeout: 30); choice.tap()
+    }
+    private func task701Value(_ app: XCUIApplication, _ value: Int) {
+        let text = app.staticTexts["ai-summary-gemini-budget"]
+        let labels = app.launchArguments.contains("(ar)")
+            ? [0: "عن", 128: "قليل", 256: "واسطة", 512: "عالي"]
+            : [0: "Off", 128: "Low", 256: "Medium", 512: "High"]
+        expectation(for: NSPredicate { _, _ in text.exists && text.label == labels[value] }, evaluatedWith: text)
+        waitForExpectations(timeout: 30)
+        boardEnabled(app.buttons["ai-gemini-choice-0"], timeout: 30)
+        XCTAssertTrue(app.buttons["ai-gemini-choice-" + String(value)].isSelected)
+    }
+    private func task701State(_ app: XCUIApplication, _ expected: String) {
+        let state = app.staticTexts["ai-gemini-fixture-state"]
+        let match = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in state.exists && state.label == expected }, object: state)
+        if XCTWaiter.wait(for: [match], timeout: 30) != .completed {
+            let retry = app.buttons["persistence-retry"]
+            let admission = retry.exists ? retry.value as? String ?? "value-unavailable" : "retry-control-absent"
+            XCTFail("Gemini fixture state wait failed; initial retry admission: " + admission)
+        }
+    }
+    func testNativeAIGeminiFourChoicesWhileDisabledAndColdSaved() throws {
+        let app = try task701App("CHOICES"); defer { app.terminate() }
+        XCTAssertEqual(app.staticTexts["ai-summary-enabled"].label, "Off")
+        for value in [0, 128, 256, 512] { task701Choose(app, value); task701Value(app, value) }
+        XCTAssertEqual(app.staticTexts["ai-summary-enabled"].label, "Off")
+        XCTAssertEqual(app.staticTexts["ai-summary-provider"].label, "Gemini")
+        XCTAssertEqual(app.staticTexts["ai-summary-timeout"].label, "30 seconds")
+        app.terminate(); app.launch(); task594OpenAI(app)
+        task701Value(app, 512)
+    }
+    func testNativeAIGeminiSavedCustomLargestRTLThenExplicitMedium() throws {
+        let app = try task701App("CUSTOM", largest: true); defer { app.terminate() }
+        XCTAssertEqual(app.staticTexts["ai-summary-gemini-budget"].label, "123")
+        for value in [0, 128, 256, 512] {
+            let choice = app.buttons["ai-gemini-choice-" + String(value)]
+            task442Reveal(app, choice, in: app.scrollViews["ai-summary-scroll"])
+            boardEnabled(choice, timeout: 30)
+            XCTAssertFalse(choice.isSelected)
+            XCTAssertGreaterThanOrEqual(choice.frame.height, 44 - 0.001)
+        }
+        XCTAssertEqual(app.buttons["ai-gemini-choice-256"].label, "واسطة")
+        task701Choose(app, 256); task701Value(app, 256)
+        app.terminate(); app.launch(); task594OpenAI(app)
+        task701Value(app, 256)
+    }
+    func testNativeAIGeminiExplicitAbsentOffAndSavedOffNoop() throws {
+        for role in ["EXPLICIT_DEFAULT", "NOOP"] {
+            let app = try task701App(role); defer { app.terminate() }
+            task701Choose(app, 0); task701Value(app, 0)
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            app.terminate(); app.launch(); task594OpenAI(app); task701Value(app, 0)
+            app.terminate()
+        }
+    }
+    func testNativeAIGeminiNonGeminiHasNoActions() throws {
+        for role in ["ABSENT_PROVIDER", "OPENAI", "ANTHROPIC"] {
+            let app = try task701App(role); defer { app.terminate() }
+            XCTAssertEqual(app.staticTexts["ai-summary-provider"].label, role == "ANTHROPIC" ? "Anthropic (Claude)" : "OpenAI")
+            for value in [0, 128, 256, 512] { XCTAssertFalse(app.buttons["ai-gemini-choice-" + String(value)].exists) }
+            XCTAssertFalse(app.staticTexts["ai-summary-gemini-budget"].exists)
+            XCTAssertFalse(app.buttons["ai-gemini-options-retry"].exists)
+            app.terminate()
+        }
+    }
+    func testNativeAIGeminiOptionsFailureRetriesOnlyRead() throws {
+        let app = try task701App("OPTIONS_FAILURE", flags: ["--native-ai-gemini-options-failure-once"]); defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["ai-gemini-options-error"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["ai-gemini-choice-0"].exists)
+        boardTap(app, "ai-gemini-options-retry")
+        boardEnabled(app.buttons["ai-gemini-choice-0"], timeout: 30)
+        XCTAssertTrue(app.buttons["ai-gemini-choice-0"].isSelected)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+    private func task701CancelWrite(_ role: String, retirement: String) throws {
+        let app = try task701App(role, flags: ["--native-ai-gemini-readmission-hold-once"]); defer { app.terminate() }
+        task701Choose(app, 256)
+        XCTAssertTrue(app.staticTexts["ai-gemini-test-held"].waitForExistence(timeout: 20))
+        if retirement == "back" { boardTap(app, "ai-summary-back") }
+        else if retirement == "background" { task601Background(app) }
+        else { boardTap(app, "ai-summary-test-" + retirement) }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["ai-summary-title"])
+        waitForExpectations(timeout: 20)
+        if retirement == "lock" { boardEnabled(app.buttons["app-lock-read-retry"], timeout: 20); boardTap(app, "app-lock-read-retry") }
+        if retirement == "host" {
+            let advanced = app.buttons["settings-advanced"]
+            task442Reveal(app, advanced, in: app.scrollViews["settings-scroll"]); boardEnabled(advanced, timeout: 30); advanced.tap()
+        }
+        XCTAssertTrue(app.staticTexts["advanced-title"].waitForExistence(timeout: 30))
+        task594EnterAI(app); task701Value(app, 128)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+    func testNativeAIGeminiBackCancelsBeforeCommit() throws { try task701CancelWrite("BACK", retirement: "back") }
+    func testNativeAIGeminiBackgroundCancelsBeforeCommit() throws { try task701CancelWrite("BACKGROUND", retirement: "background") }
+    func testNativeAIGeminiLockCancelsBeforeCommit() throws { try task701CancelWrite("LOCK", retirement: "lock") }
+    func testNativeAIGeminiHostReplacementCancelsBeforeCommit() throws { try task701CancelWrite("HOST", retirement: "host") }
+    private func task701Uncertain(_ role: String, retirement: String? = nil, refreshFailure: Bool = false) throws {
+        var flags = ["--native-ai-gemini-commit-failure-once"]
+        if refreshFailure { flags += ["--native-ai-gemini-refresh-failure-once"] }
+        let app = try task701App(role, flags: flags); defer { app.terminate() }
+        task701Choose(app, 256)
+        XCTAssertTrue(app.staticTexts["ai-gemini-save-error"].waitForExistence(timeout: 20))
+        task701State(app, "failure=true;exact=false;commits=5;retired=false")
+        XCTAssertEqual(app.staticTexts["ai-summary-gemini-budget"].label, "Low")
+        if retirement == "background" { task601Background(app) }
+        if retirement != nil { XCTAssertFalse(app.staticTexts["ai-summary-title"].exists) }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); boardTap(app, "persistence-retry")
+        task701State(app, "failure=true;exact=true;commits=6;retired=true")
+        if refreshFailure {
+            XCTAssertTrue(app.staticTexts["ai-summary-error"].waitForExistence(timeout: 20))
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            boardTap(app, "ai-summary-retry")
+            task701State(app, "failure=true;exact=true;commits=6;retired=true")
+        }
+        task701Value(app, 256)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        app.launchArguments.removeAll { $0 == "--native-ai-gemini-commit-failure-once" }
+        app.terminate(); app.launch(); task594OpenAI(app)
+        task701Value(app, 256)
+    }
+    func testNativeAIGeminiRealCommitFailureExactWarmRetry() throws { try task701Uncertain("COMMIT") }
+    func testNativeAIGeminiBackgroundThenExplicitExactRetry() throws { try task701Uncertain("COMMIT_BACKGROUND", retirement: "background") }
+    func testNativeAIGeminiAcknowledgedRefreshFailureRetriesOnlyRead() throws { try task701Uncertain("REFRESH_FAILURE", refreshFailure: true) }
+    func testNativeAIGeminiReplacementHostCannotRetryUncertainOwner() throws {
+        let app = try task701App("COMMIT_HOST", flags: ["--native-ai-gemini-commit-failure-once"]); defer { app.terminate() }
+        task701Choose(app, 256)
+        task701State(app, "failure=true;exact=false;commits=5;retired=false")
+        task442Reveal(app, app.buttons["ai-summary-test-host"], in: app.scrollViews["ai-summary-scroll"])
         boardTap(app, "ai-summary-test-host")
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["ai-summary-title"])
         waitForExpectations(timeout: 30)

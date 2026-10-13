@@ -812,6 +812,10 @@ export interface TaskStore {
     applyPreparedAIReasoningEffort: (request: import('./native-ai-reasoning-effort').AIReasoningEffortRequest,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     retryPreparedAIReasoningEffortSnapshot: (authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Private Gemini thinking budget against raw saved authority; preserves custom saved values until explicit choice. */
+    applyPreparedAIGeminiThinkingBudget: (request: import('./native-ai-gemini-thinking-budget').AIGeminiThinkingBudgetRequest,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    retryPreparedAIGeminiThinkingBudgetSnapshot: (authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Existing subscription metadata, saved only in canonical synced SQL settings. */
     commitPreparedCalendarSubscriptionSetting: (prepared: import('./native-host-contract-calendar-subscription-settings').PreparedCalendarSubscriptionSetting,
         authority: PreparedAreaAuthority, legacyRaw: string | null) => Promise<PreparedTaskEditResult>;

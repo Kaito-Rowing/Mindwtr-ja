@@ -580,7 +580,7 @@ assert.match(hostEntry, /createNativeSync\(nativeSyncBindings\)/);
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -3711,6 +3711,22 @@ export function createNativeAIReasoningEffortMethods(deps) {
     outcome: input => { const ready = deps.readiness(); if (!ready.ok) return ready; globalThis.aiReasoningInputs.push(['outcome', JSON.stringify(input)]); return globalThis.aiReasoningReplies.outcome; },
   };
 }
+export function createNativeAIGeminiThinkingBudgetMethods(deps) {
+  globalThis.aiGeminiDeps = deps;
+  const read = async (kind, input, current) => {
+    current(); const ready = deps.readiness(); if (!ready.ok) return ready;
+    await globalThis.aiGeminiHold; current();
+    globalThis.aiGeminiInputs.push([kind, JSON.stringify(input)]);
+    return globalThis.aiGeminiReplies[kind];
+  };
+  return {
+    options: (input, current) => read('options', input, current),
+    prepare: (input, current) => read('prepare', input, current),
+    commit: (input, current) => read('commit', input, current),
+    validate: input => { globalThis.aiGeminiInputs.push(['validate', JSON.stringify(input)]); return globalThis.aiGeminiReplies.validate; },
+    outcome: input => { const ready = deps.readiness(); if (!ready.ok) return ready; globalThis.aiGeminiInputs.push(['outcome', JSON.stringify(input)]); return globalThis.aiGeminiReplies.outcome; },
+  };
+}
 export function setLogger(logger) { globalThis.coreLogger = logger; setRealLogger(logger); }
 export function consoleLogger() {}
 export class SqliteAdapter {
@@ -4180,6 +4196,7 @@ const built = await build({
         plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'test' }));
         plugin.onResolve({ filter: /packages\/core\/src\/native-ai-request-timeout$/ }, () => ({ path: 'core', namespace: 'test' }));
         plugin.onResolve({ filter: /packages\/core\/src\/native-ai-reasoning-effort$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-gemini-thinking-budget$/ }, () => ({ path: 'core', namespace: 'test' }));
         plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
     } }],
 });
@@ -4264,6 +4281,7 @@ const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined, c
     };
     state.aiTimeoutInputs = []; state.aiTimeoutReplies = {};
     state.aiReasoningInputs = []; state.aiReasoningReplies = {};
+    state.aiGeminiInputs = []; state.aiGeminiReplies = {};
     configure(state);
     vm.runInNewContext(source, state);
     assert.equal(state.contractBindings.reminderPlatform, hostPlatform === 'ios' ? 'ios' : 'android');
@@ -4426,8 +4444,11 @@ const poll = async (state, id) => {
         ['    func probeAIRequestTimeoutOutcome(', '    public func probeAIRequestTimeoutOutcome('],
         ['guard !Engine.aiRequestTimeoutMethods.contains(method)', 'guard true'],
     ]) {
-        assert(swift.includes(before), 'Task601 gate mutation anchor exists: ' + before);
-        assert.throws(() => requireTypedAITimeoutFacade(swift.replace(before, after)));
+        const target = before === '    let stamp: String?'
+            ? swift.slice(swift.indexOf('public struct NativeAIRequestTimeoutWitness:'), swift.indexOf('public struct NativeAIRequestTimeoutRequest:')) : swift;
+        assert(target.includes(before), 'Task601 gate mutation anchor exists: ' + before);
+        const changed = target === swift ? swift.replace(before, after) : swift.replace(target, target.replace(before, after));
+        assert.throws(() => requireTypedAITimeoutFacade(changed));
     }
     console.log('Task590: production private timeout invocation, exact arguments, owner refusal and receipt registration passed; Apple execution pending');
 }
@@ -4522,6 +4543,107 @@ const poll = async (state, id) => {
     const count = state.logText.split('\n').filter(line => line.includes(marker)).length;
     assert.equal(count, 1, 'generic route cannot emit marker');
     console.log('Task678: private reasoning routing, saved minimal, choices, bounds, platform/owner/cancellation, receipts and fixed acknowledgment gates passed; Swift/Apple pending');
+}
+// Task698: production private Gemini thinking budget routes; shared real-module/SQLite
+// tests own state semantics. This VM proves wiring, owner fences and receipt scope.
+{
+    const ready = async (platform = 'ios') => {
+        const state = makeState(0, [], platform);
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        return state;
+    };
+    const state = await ready();
+    assert.equal(typeof state.MindwtrHost.iosAIGeminiThinkingBudgetOptions, 'function', 'actual private Gemini thinking budget route missing');
+    assert(state.receiptScope.includes('aiGeminiThinkingBudget'), 'Gemini receipts survive restart independently of timeout and effort');
+    assert(state.receiptScope.includes('aiRequestTimeout') && state.receiptScope.includes('aiReasoningEffort'));
+    const rawSentinel = JSON.stringify({ ai: { enabled: false, provider: 'gemini', thinkingBudget: 123, model: 'PRIVATE698-MODEL', baseUrl: 'https://PRIVATE698-URL', reasoningEffort: 'high' }, security: { mobileAppLockEnabled: false } });
+    state.fakeData.settings = JSON.parse(rawSentinel);
+    const expected = { aiPresent: true, budgetPresent: true, budget: 123, providerPresent: true, provider: 'gemini', stampPresent: false, stamp: null };
+    const request = { requestId: '00000000-0000-4000-8000-000000000698', value: 256, expected };
+    const prepared = { version: 1, request }, envelope = { request, prepared }, reply = { value: 256, changed: true };
+    state.aiGeminiReplies = {
+        options: { ok: true, value: { value: 123, expected } }, prepare: { ok: true, value: { kind: 'prepared', prepared } },
+        validate: { ok: true, value: reply }, commit: { ok: true, value: reply }, outcome: { ok: true, value: reply },
+    };
+    const routes = [['iosAIGeminiThinkingBudgetOptions', 'options', {}], ['iosAIGeminiThinkingBudgetPrepare', 'prepare', request],
+        ['iosAIGeminiThinkingBudgetValidate', 'validate', envelope], ['iosAIGeminiThinkingBudgetCommit', 'commit', envelope],
+        ['iosAIGeminiThinkingBudgetRetryOutcome', 'outcome', request]];
+    const invoke = (route, input, owner = () => '') => poll(state, state.MindwtrHost[route](JSON.stringify(input), owner));
+    for (const [route, kind, input] of routes) {
+        assert.equal(typeof state.MindwtrHost[route], 'function');
+        const before = state.aiGeminiInputs.length;
+        assert.deepEqual(await invoke(route, input), state.aiGeminiReplies[kind]);
+        assert.deepEqual(JSON.parse(JSON.stringify(state.aiGeminiInputs.at(-1))), [kind, JSON.stringify(input)]);
+        assert.equal(state.aiGeminiInputs.length, before + 1);
+    }
+    await invoke('iosAIGeminiThinkingBudgetCommit', envelope);
+    assert.deepEqual(JSON.parse(JSON.stringify(state.aiGeminiInputs.at(-1))), ['commit', JSON.stringify(envelope)], 'exact retry forwards the retained request/prepared envelope unchanged');
+    for (const value of [0, 128, 256, 512]) {
+        const input = { ...request, value };
+        await invoke('iosAIGeminiThinkingBudgetPrepare', input);
+        assert.equal(JSON.parse(state.aiGeminiInputs.at(-1)[1]).value, value);
+    }
+    for (const route of ['iosAIGeminiThinkingBudgetOptions', 'iosAIGeminiThinkingBudgetPrepare', 'iosAIGeminiThinkingBudgetCommit']) {
+        const before = state.aiGeminiInputs.length;
+        assert.equal((await invoke(route, {}, null)).ok, false);
+        assert.equal((await invoke(route, {}, () => 'retired')).ok, false);
+        for (const raw of ['{', ' '.repeat(route.endsWith('Options') ? 257 : route.endsWith('Prepare') ? 2049 : 8193) + '{}'])
+            assert.equal((await poll(state, state.MindwtrHost[route](raw, () => ''))).ok, false);
+        assert.equal(state.aiGeminiInputs.length, before);
+        let release; state.aiGeminiHold = new Promise(resolve => { release = resolve; });
+        const ticket = state.MindwtrHost[route]('{}', () => '');
+        state.MindwtrHost.abort(ticket); release();
+        assert.equal((await poll(state, ticket)).ok, false);
+        assert.equal(state.aiGeminiInputs.length, before, 'cancelled route does not reach contract');
+        state.aiGeminiHold = undefined;
+        let active = true;
+        state.aiGeminiHold = new Promise(resolve => { release = resolve; });
+        const changed = state.MindwtrHost[route]('{}', () => active ? '' : 'retired');
+        active = false; release();
+        assert.equal((await poll(state, changed)).ok, false);
+        assert.equal(state.aiGeminiInputs.length, before, 'late owner refuses');
+        state.aiGeminiHold = undefined;
+    }
+    for (const [route, , input] of routes.filter(([route]) => route.endsWith('Validate') || route.endsWith('RetryOutcome'))) {
+        const before = state.aiGeminiInputs.length;
+        for (const raw of ['{', ' '.repeat(route.endsWith('Validate') ? 8193 : 2049) + '{}'])
+            assert.equal((await poll(state, state.MindwtrHost[route](raw))).ok, false);
+        assert.equal(state.aiGeminiInputs.length, before);
+    }
+    for (const flag of ['sandbox', 'workspaceTransition', 'linesUnguarded']) {
+        state[flag] = true;
+        assert.equal((await invoke('iosAIGeminiThinkingBudgetOptions', {})).ok, false);
+        assert.equal((await invoke('iosAIGeminiThinkingBudgetRetryOutcome', request)).ok, false);
+        state[flag] = false;
+    }
+    const adapter = state.adapter; state.adapter = {};
+    assert.equal((await invoke('iosAIGeminiThinkingBudgetOptions', {})).ok, false); state.adapter = adapter;
+    const android = await ready('android');
+    assert.equal((await poll(android, android.MindwtrHost.iosAIGeminiThinkingBudgetOptions('{}', () => ''))).ok, false);
+    assert.equal((await poll(android, android.MindwtrHost.iosAIGeminiThinkingBudgetAcknowledged())).ok, true);
+    assert(!(android.logText ?? '').includes('v1.3.5/ios-ai-gemini-thinking-budget'));
+    assert.equal((await state.aiGeminiDeps.save()).ok, true);
+    state.flushError = 'PRIVATE698-FAILURE';
+    assert.equal((await state.aiGeminiDeps.save()).ok, false); state.flushError = undefined;
+    state.aiGeminiReplies.options = { ok: false, error: { code: 'ACTION_FAILED', message: 'Thinking budget is available for explicit Gemini only' } };
+    const providerRefusal = await invoke('iosAIGeminiThinkingBudgetOptions', {});
+    assert.equal(providerRefusal.ok, false);
+    assert.equal(providerRefusal.error, 'ACTION_FAILED: Thinking budget is available for explicit Gemini only', 'shared provider refusal stays a refusal at the private bridge');
+    const marker = 'v1.3.5/ios-ai-gemini-thinking-budget';
+    assert(!(state.logText ?? '').includes(marker), 'route replies do not claim native acknowledgment');
+    assert.equal((await poll(state, state.MindwtrHost.iosAIGeminiThinkingBudgetAcknowledged())).ok, true);
+    const lines = state.logText.split('\n').filter(line => line.includes(marker));
+    assert.equal(lines.length, 1);
+    assert.deepEqual(JSON.parse(lines[0]).context, { releaseCheck: marker, outcome: 'saved' });
+    assert(!lines[0].includes(request.requestId) && !lines[0].includes('123') && !lines[0].includes('256') && !lines[0].includes('PRIVATE698'));
+    assert.equal(JSON.stringify(state.fakeData.settings), rawSentinel, 'bridge routing never rewrites saved private neighbors');
+    for (const dispatch of ['menuRead', 'menuCommand']) {
+        for (const route of ['iosAIGeminiThinkingBudget', ...routes.map(([route]) => route), 'iosAIGeminiThinkingBudgetAcknowledged'])
+            assert.equal((await poll(state, state.MindwtrHost[dispatch](route, '{}'))).ok, false);
+    }
+    const count = state.logText.split('\n').filter(line => line.includes(marker)).length;
+    assert.equal(count, 1, 'generic route cannot emit marker');
+    console.log('Task698: private Gemini thinking budget routing, saved custom123, four presets, bounds, platform/owner/cancellation, receipts and fixed acknowledgment gates passed; Swift/Apple pending');
 }
 // Task592: actual private route and real selected-provider helper; device metadata
 // is a native stand-in here. Apple tests own actual Keychain/KV/SQLite evidence.
@@ -5367,6 +5489,7 @@ export function createNativeSync() {
             plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'test' }));
         plugin.onResolve({ filter: /packages\/core\/src\/native-ai-request-timeout$/ }, () => ({ path: 'core', namespace: 'test' }));
         plugin.onResolve({ filter: /packages\/core\/src\/native-ai-reasoning-effort$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-gemini-thinking-budget$/ }, () => ({ path: 'core', namespace: 'test' }));
             plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
         } }],
     });
@@ -7831,7 +7954,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);

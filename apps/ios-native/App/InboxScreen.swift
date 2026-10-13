@@ -1496,6 +1496,9 @@ struct FailureBanner: View {
             }
             .disabled(model.busy)
             .accessibilityIdentifier("persistence-retry")
+            #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+            .accessibilityValue(model.settingsAIGeminiRetryFixtureValue)
+            #endif
             DiagnosticsFailureAction(model: model, palette: palette)
         }
         .frame(maxWidth: .infinity, alignment: .leading).padding(16)
