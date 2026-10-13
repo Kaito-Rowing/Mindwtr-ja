@@ -2,11 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 
 import { createMobileSyncService, type MobileSyncServiceHost } from './mobile-sync-service';
-import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import { flushPendingSave, resetForTests, setStorageAdapter, STORE_NON_COMMAND_KEYS, useTaskStore } from './store';
 import { getInMemoryAppDataSnapshot } from './sync-client-helpers';
 import { SqliteAdapter, type SqliteClient } from './sqlite-adapter';
 import { performSyncCycle } from './sync';
-import { createNativeHostContract, NATIVE_CONTRACT_UNGATED_METHODS } from './native-host-contract';
+import { createNativeHostContract, NATIVE_CONTRACT_NETWORK_READS, NATIVE_CONTRACT_SYNC_SCREEN_METHODS, NATIVE_CONTRACT_UNGATED_METHODS } from './native-host-contract';
+import { createCalendarSubscriptionAddMethods } from './native-host-contract-calendar-subscription-add';
+import { createCalendarSubscriptionSettingsMethods } from './native-host-contract-calendar-subscription-settings';
+import { createDeviceCalendarSettingsMethods } from './native-host-contract-device-calendar-settings';
+import { createPreparedProjectAvailabilityMethods, createProjectAvailabilityMethods } from './native-host-contract-project-availability';
 import { isStoreCommand } from './store-write-gate';
 import { NativeReceiptSqliteAdapter, resetNativeRequestReceipts, revisionOf } from './native-request-receipts';
 import { CLOUD_PROVIDER_KEY, CLOUD_TOKEN_KEY, CLOUD_URL_KEY, SYNC_BACKEND_KEY } from './sync-storage-keys';
@@ -274,6 +278,36 @@ describe.each([false, true])('a command during the remote write (guarded adapter
         }
     });
 
+    it('drops a preloaded snapshot that waited behind a sync save, so the publication of the save stands', async () => {
+        const adapter = await openStore(guarded);
+        const old = getInMemoryAppDataSnapshot();
+        const fake = createHost(adapter, winner());
+        let load: Promise<void> | null = null;
+        let afterLoad: { title?: string; saved?: Task } = {};
+        fake.put.mockImplementation(async () => {
+            // The remote write follows the save's release of the gate, before the cycle's own end-of-cycle load.
+            await load;
+            const title = useTaskStore.getState()._tasksById.get('shared')?.title;
+            await useTaskStore.getState().updateTask('shared', { status: 'done' });
+            await flushPendingSave();
+            afterLoad = { title, saved: (await adapter.getData()).tasks.find((row) => row.id === 'shared') };
+            return { fingerprint: 'remote-after-put' };
+        });
+        fake.host.localData.saveData = async (data: AppData) => {
+            await adapter.saveData(data);
+            // A reconciliation took this snapshot before the save; its load queues behind the save's hold of the gate.
+            load ??= useTaskStore.getState().fetchData({ silent: true, preloadedData: old });
+        };
+        const service = createMobileSyncService(fake.host);
+        try {
+            await runCycle(service);
+            expect(afterLoad.title).toBe('winner');
+            expect(afterLoad.saved).toMatchObject({ title: 'winner', status: 'done' });
+        } finally {
+            service.__mobileSyncTestUtils.reset();
+        }
+    });
+
     it('publishes nothing when the save fails before its commit', async () => {
         const adapter = await openStore(guarded);
         const fake = createHost(adapter, winner());
@@ -367,6 +401,10 @@ describe('a native command during the sync save', () => {
         expect(saved.tasks.find((row) => row.id === 'shared')?.title).toBe('winner');
     });
 
+    // A method outside the gate may still answer: its own body reads only the published store and writes none.
+    const directStoreWrites = /receipts\.run\(|setState\(|readAreaDurableData|\.getData\(|\.saveData\(|flushPendingSave/;
+    const storeActionsNamed = (body: string) => [...body.matchAll(/useTaskStore\.getState\(\)\.(\w+)\(/g)].map((match) => match[1]);
+
     it('runs every asynchronous contract method as a gated store command', () => {
         const contract = createNativeHostContract() as unknown as Record<string, unknown>;
         const functions = Object.entries(contract).filter(([, value]) => typeof value === 'function');
@@ -379,6 +417,52 @@ describe('a native command during the sync save', () => {
         expect(isStoreCommand(contract.setProjectFocus)).toBe(true);
         expect(isStoreCommand(contract.updateTask)).toBe(true);
         expect(isStoreCommand(contract.setFocusGroupBy)).toBe(true);
+        // Add writes the subscriptions to settings; the heartbeat only sends a request.
+        expect(isStoreCommand(contract.addCalendarFeed)).toBe(true);
+        expect(isStoreCommand(contract.sendAboutHeartbeat)).toBe(false);
         expect(isStoreCommand(contract.syncNow)).toBe(false);
+    });
+
+    it('lets only network reads and Settings › Sync bypass the gate, and neither writes the store itself', () => {
+        const contract = createNativeHostContract() as unknown as Record<string, unknown>;
+        const store = useTaskStore.getState() as unknown as Record<string, unknown>;
+        expect([...NATIVE_CONTRACT_UNGATED_METHODS].sort())
+            .toEqual([...NATIVE_CONTRACT_NETWORK_READS, ...NATIVE_CONTRACT_SYNC_SCREEN_METHODS].sort());
+        for (const name of NATIVE_CONTRACT_UNGATED_METHODS) {
+            const body = Function.prototype.toString.call(contract[name]);
+            expect(isStoreCommand(contract[name]), name).toBe(false);
+            expect(directStoreWrites.test(body), name).toBe(false);
+            for (const action of storeActionsNamed(body)) {
+                // A network read calls no store writer; the sync screen's writers are store commands.
+                if (NATIVE_CONTRACT_NETWORK_READS.has(name)) expect(STORE_NON_COMMAND_KEYS.has(action), `${name} calls ${action}`).toBe(true);
+                else expect(STORE_NON_COMMAND_KEYS.has(action) || isStoreCommand(store[action]), `${name} calls ${action}`).toBe(true);
+            }
+        }
+        // The sync screen writes the store through these actions and its receipts' saves, each gated on its own.
+        expect(isStoreCommand(store.updateSettings)).toBe(true);
+        expect(isStoreCommand(contract.setSyncPreference)).toBe(true);
+    });
+
+    it('gates the calendar and Project availability helpers the bridge builds outside the contract', () => {
+        const ready = () => ({ ok: true as const, value: null });
+        const save = async () => ready();
+        const helpers: Record<string, Record<string, unknown>> = {
+            deviceCalendar: createDeviceCalendarSettingsMethods({ readiness: ready, storage: () => null }),
+            calendarSubscription: createCalendarSubscriptionSettingsMethods({ readiness: ready, save, storage: () => null, model: () => { throw new Error('unused'); } }),
+            calendarSubscriptionAdd: createCalendarSubscriptionAddMethods({ readiness: ready, save, storage: () => null }),
+            projectAvailability: createProjectAvailabilityMethods({ readiness: ready, revision: () => '', save, host: () => null }),
+            preparedProjectAvailability: createPreparedProjectAvailabilityMethods({ readiness: ready, revision: () => '', save }),
+        };
+        for (const [helper, methods] of Object.entries(helpers)) {
+            for (const [name, method] of Object.entries(methods)) {
+                if (typeof method !== 'function' || isStoreCommand(method)) continue;
+                expect(method.constructor.name, `${helper}.${name}`).not.toBe('AsyncFunction');
+                expect(/receipts\.run\(|await /.test(Function.prototype.toString.call(method)), `${helper}.${name}`).toBe(false);
+            }
+        }
+        expect(isStoreCommand(helpers.calendarSubscription.prepareCalendarSubscriptionSetting)).toBe(true);
+        expect(isStoreCommand(helpers.deviceCalendar.prepareDeviceCalendarSetting)).toBe(true);
+        expect(isStoreCommand(helpers.calendarSubscriptionAdd.commitPreparedCalendarSubscriptionAdd)).toBe(true);
+        expect(isStoreCommand(helpers.preparedProjectAvailability.commitPreparedProjectFileAvailability)).toBe(true);
     });
 });

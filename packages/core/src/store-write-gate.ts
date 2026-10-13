@@ -42,6 +42,25 @@ export const runStoreCommand = <T>(command: () => Promise<T>): Promise<T> => {
     });
 };
 
+/**
+ * Gate an object's methods as store commands, in place: every `async` method and every name in
+ * [promiseCommands], except [ungated]. A native command then holds the gate from its first durable read
+ * through its no-op decision, its writes, its save and its receipt. Outside it, a read on the shared SQLite
+ * connection could see a sync save's uncommitted rows.
+ */
+export const gateStoreCommands = <T extends object>(methods: T, options: {
+    ungated?: ReadonlySet<string>; promiseCommands?: ReadonlySet<string>;
+} = {}): T => {
+    const target = methods as Record<string, unknown>;
+    for (const [name, method] of Object.entries(target)) {
+        if (typeof method !== 'function' || options.ungated?.has(name)) continue;
+        if (method.constructor.name !== 'AsyncFunction' && !options.promiseCommands?.has(name)) continue;
+        const command = method as (...args: unknown[]) => Promise<unknown>;
+        target[name] = markStoreCommand((...args: unknown[]) => runStoreCommand(() => command.apply(methods, args)));
+    }
+    return methods;
+};
+
 /** Run a sync save and its store publish with no command in between. It must not call a store command. */
 export const runSyncStoreSave = async <T>(save: () => Promise<T>): Promise<T> => {
     while (syncSave) await syncSave;

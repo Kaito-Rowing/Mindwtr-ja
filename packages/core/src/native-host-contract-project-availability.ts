@@ -5,6 +5,7 @@ import { readAreaDurableData, createAreaSaveGuard } from './native-host-contract
 import { detach, exact, iso, record } from './native-host-contract-project-shared';
 import { getAttachmentDownloadFileName } from './mobile-attachment-availability';
 import { getStorageAdapter, getPersistenceStatus, useTaskStore } from './store';
+import { gateStoreCommands } from './store-write-gate';
 import { rawReadProjectSnapshot, rawReadRow, rememberRawReadRow } from './sqlite-raw-snapshot';
 import { PROJECT_SQLITE_COLUMNS, projectFromSqliteRow, projectToSqliteRow } from './project-sync-schema';
 import { ensureDeviceId } from './store-helpers';
@@ -85,7 +86,8 @@ export function createProjectAvailabilityMethods(deps: Deps, mode: 'relocated' |
         const value = { revision: input.revision, project: { id: before.id, ...projectAttachmentWriteToken(before) }, targetURI };
         return isNativeJsonWithinBytes(value) ? { ok: true as const, value: { read: read.value, before, attachment, value } } : invalid();
     };
-    return {
+    // The bridge calls these outside the contract: each async method is a store command (store-write-gate.ts).
+    return gateStoreCommands({
         async getProjectAttachmentAvailabilityPreflight(raw: Request) {
             const input = readRequest(raw);
             if (!input) return invalid();
@@ -149,7 +151,7 @@ export function createProjectAvailabilityMethods(deps: Deps, mode: 'relocated' |
                 || !idle()) return savedFailure();
             return { ok: true, value: { status: 'available', message: null, update: null } };
         },
-    };
+    });
 }
 
 export type NativeProjectFileAvailabilitySelection = Request & { version: 1; requestId: string };
@@ -304,7 +306,8 @@ export function createPreparedProjectAvailabilityMethods(deps: Pick<Deps, 'readi
         return { ok: true as const, value: { before, rawBefore, attachment, targetURI, deviceIdBefore,
             settings: read.value.authority.snapshot.settings } };
     };
-    return {
+    // The bridge calls these outside the contract: each async method is a store command (store-write-gate.ts).
+    return gateStoreCommands({
         async getProjectFileAvailabilityPreflight(raw: unknown): Promise<NativeHostResult<NativeProjectFileAvailabilityPreflight>> {
             const input = readFileAvailabilityRequest(raw, false); if (!input) return invalidFileAvailability();
             const selected = await select(input); if (!selected.ok) return selected;
@@ -377,5 +380,5 @@ export function createPreparedProjectAvailabilityMethods(deps: Pick<Deps, 'readi
                 && (after.value.authority.snapshot.settings.deviceId ?? null) === (effect.deviceIdBefore ?? effect.deviceIdToInitialize)
                 && idle() ? { ok: true, value: envelope.prepared.result } : savedFailure();
         },
-    };
+    });
 }

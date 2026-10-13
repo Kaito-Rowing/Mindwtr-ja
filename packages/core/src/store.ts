@@ -638,6 +638,23 @@ export const STORE_NON_COMMAND_KEYS: ReadonlySet<string> = new Set([
     'lockEditing', 'unlockEditing', 'setError', 'setHighlightTask',
 ]);
 
+type FetchDataOptions = Parameters<TaskStore['fetchData']>[0];
+const storeDataOf = (state: TaskStore) => [state._allTasks, state._allProjects, state._allSections, state._allAreas,
+    state._allPeople, state.settings, state.lastDataChangeAt] as const;
+
+/**
+ * A preloaded snapshot is current only for the store its caller saw. A load waits for a sync save that holds
+ * the gate, and that save publishes newer committed data; so the snapshot stays relevant only while the store
+ * still holds the data the load was called against.
+ */
+const preloadedLoadOptions = (options: FetchDataOptions): FetchDataOptions => {
+    if (!options?.preloadedData) return options;
+    const calledAgainst = storeDataOf(useTaskStore.getState());
+    const stillRelevant = options.isResultStillRelevant;
+    return { ...options, isResultStillRelevant: () => storeDataOf(useTaskStore.getState())
+        .every((value, index) => value === calledAgainst[index]) && (stillRelevant?.() ?? true) };
+};
+
 const wrapStoreWriteActions = (actions: TaskStore): TaskStore => {
     const wrapped = { ...actions } as unknown as Record<string, unknown>;
     for (const [key, value] of Object.entries(actions)) {
@@ -647,7 +664,10 @@ const wrapStoreWriteActions = (actions: TaskStore): TaskStore => {
         // publishes between its read and its publish. It skips the data transfer's write lock, because a
         // transfer refreshes the store through it while holding that lock.
         wrapped[key] = markStoreCommand(key === 'fetchData'
-            ? (...args: unknown[]) => runStoreCommand(() => action(...args))
+            ? (options?: unknown) => {
+                const admitted = preloadedLoadOptions(options as FetchDataOptions);
+                return runStoreCommand(() => action(admitted));
+            }
             : (...args: unknown[]) => runAfterStoreWriteLock(() => runStoreCommand(() => action(...args))));
     }
     return wrapped as unknown as TaskStore;
