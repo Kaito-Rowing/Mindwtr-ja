@@ -10,6 +10,7 @@ import type { AreaOrderIntent } from './area-ordering';
 import type { ProjectTaskOrderAnchor, ProjectTaskOrderIdentity } from './project-task-reorder';
 import type { FocusControlState } from './focus-controls';
 import type { PreparedProjectToSection, ProjectToSectionReceipt } from './project-to-section';
+import type { FocusDateProjection } from './task-utils';
 
 /** Per-call saved authority for the three prepared Area commands; never journaled. */
 export type PreparedNativeSaveBoundary = { taskReference: Task[]; lastDataChangeAt: number;
@@ -453,9 +454,21 @@ export type PreparedTaxonomy = {
         action: import('./taxonomy-policy').TaxonomyAction; name: string; to: string | null };
 };
 
+/** Frozen dependencies for the bounded nonterminal Board one-row move. */
+export type PreparedBoardMove = {
+    deviceIdBefore: string;
+    clock: { preparedLocalDay: string; preparedOffsetMinutes: number; boundaryOffsetMinutes: number;
+        futureBoundary: string; dates: FocusDateProjection[] };
+    scope: { projects: Project[]; sections: Section[]; areas: Area[];
+        focused: TaskFocusWitnessRow[]; focusLimit: number };
+};
+
 /** Internal native Board journal: before is the source guard, after the sole written row. */
 export type PreparedBoardTask = {
-    kind: 'duplicateTask' | 'trashTask' | 'restoreTask';
+    kind: 'duplicateTask' | 'trashTask' | 'restoreTask' | 'moveCard';
+    move?: PreparedBoardMove;
+    /** Invocation-local displayed-card admission, after exact durable replay. Never journaled. */
+    admitMove?: () => boolean;
     before: Task;
     after: Task;
     /** Restore binds the device stamp captured when its prepared effect was planned. */

@@ -131,6 +131,7 @@ struct BoardScreen: View {
         let card = item.object("card")
         let id = row.text("id")
         let swipes = model.boardView.object("cardActions").object("swipes")
+        let moveTo = model.boardView.object("cardActions").object("moveTo")
         return SwipeActionCard(
             palette: palette, enabled: model.boardActionsEnabled, id: "board-task-" + id,
             leftLabel: model.boardSwipeAction("left") == nil ? "" : swipes.object("left").text("label"),
@@ -138,6 +139,8 @@ struct BoardScreen: View {
             leftSystemImage: "doc.on.doc",
             open: { endInput(); Task { await model.openTask(id) } },
             swipe: { side in endInput(); Task { await model.performBoardSwipe(side, taskID: id) } },
+            moveLabel: moveTo.text("label"), moveDestinations: model.boardMoveDestinations(item),
+            move: { status in endInput(); Task { await model.moveBoardCard(item, status: status) } },
             content: VStack(alignment: .leading, spacing: 8) {
                 Text(row.text("title")).rnFont(14, .medium).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -203,6 +206,9 @@ struct SwipeActionCard<Content: View>: View {
     let leftSystemImage: String
     let open: () -> Void
     let swipe: (String) -> Void
+    var moveLabel: String = ""
+    var moveDestinations: [CoreObject] = []
+    var move: (String) -> Void = { _ in }
     let content: Content
     @GestureState private var offset: CGFloat = 0
 
@@ -220,11 +226,28 @@ struct SwipeActionCard<Content: View>: View {
             .accessibilityActions {
                 if !leftLabel.isEmpty { Button(leftLabel) { swipe("left") }.disabled(!enabled) }
                 if !rightLabel.isEmpty { Button(rightLabel) { swipe("right") }.disabled(!enabled) }
+                ForEach(moveDestinations.indices, id: \.self) { index in
+                    let destination = moveDestinations[index]
+                    Button(moveLabel + " " + destination.text("label")) { move(destination.text("status")) }
+                        .disabled(!enabled)
+                }
             }
             .contextMenu {
                 if !leftLabel.isEmpty { Button(leftLabel, systemImage: leftSystemImage) { swipe("left") }.disabled(!enabled) }
                 if !rightLabel.isEmpty {
                     Button(rightLabel, systemImage: "trash", role: .destructive) { swipe("right") }.disabled(!enabled)
+                }
+                if !moveDestinations.isEmpty {
+                    Menu(moveLabel) {
+                        ForEach(moveDestinations.indices, id: \.self) { index in
+                            let destination = moveDestinations[index]
+                            Button(destination.text("label")) { move(destination.text("status")) }
+                                .accessibilityIdentifier("board-move-" + destination.text("status"))
+                                .disabled(!enabled)
+                        }
+                    }
+                    .accessibilityIdentifier("board-move-menu-" + id)
+                    .disabled(!enabled)
                 }
             }
             .offset(x: offset)

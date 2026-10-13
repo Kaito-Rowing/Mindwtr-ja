@@ -1204,6 +1204,9 @@ public final class CoreHost: @unchecked Sendable {
     }
     #endif
     #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    public func configureIsolatedBoardMoveCommitFailureOnce() async throws {
+        try await perform { try $0.configureIsolatedBoardMoveCommitFailureOnce() }
+    }
     public func configureIsolatedAIRequestTimeoutCommitFailureOnce() async throws {
         try await perform { try $0.configureIsolatedAIRequestTimeoutCommitFailureOnce() }
     }
@@ -2887,6 +2890,12 @@ private final class Engine: @unchecked Sendable {
     private var confirmedSomedaySectionUndoEnvelope: String?
     private var boardReadLogged = false
     private var boardActionLogged = false
+    private var boardMoveLogged = false
+    #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    private var boardMoveFixtureArmed = false
+    private var boardMoveFixtureOriginal: String?
+    private var boardMoveFixtureRetry = false
+    #endif
     // Only an unpresented validated acknowledgment survives automatic runtime
     // teardown; this CoreHost's databaseURL is immutable. Shutdown clears it.
     private var startupAttachmentSaveResult: (method: String, resultJSON: String, requestId: String?)?
@@ -13727,6 +13736,10 @@ private final class Engine: @unchecked Sendable {
         }
         guard calendarAccessTurn == nil else { throw CoreHostRejection(message: "NOT_READY: Calendar access is still awaiting its owner") }
         guard notificationSettingTurn == nil, deviceCalendarSettingTurn == nil, calendarSubscriptionSettingTurn == nil else { throw CoreHostRejection(message: "NOT_READY: Settings edit is still awaiting its owner") }
+        #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+        if boardMoveFixtureArmed, let command = pending, command.method == "boardCommit",
+           command.argumentsJSON == boardMoveFixtureOriginal { boardMoveFixtureRetry = true }
+        #endif
         let command = pending
         let method = command?.method
         let terminal = try resolvePending()
@@ -14765,7 +14778,26 @@ private final class Engine: @unchecked Sendable {
 #endif
             NSLog("Native iOS Task duplicated releaseCheck=v1.3.4/ios-task-duplicate outcome=confirmed")
         }
-        if command.method == "boardCommit", case .success = terminal, !boardActionLogged {
+        var isBoardMove = false
+        if command.method == "boardCommit",
+           let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+           let json = args.first, let envelope = try? NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] {
+            isBoardMove = ((envelope["request"] as? [String: Any])?["action"] as? [String: Any])?["type"] as? String == "moveCard"
+        }
+        if isBoardMove, case .success = terminal, !boardMoveLogged {
+            #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+            if boardMoveFixtureArmed, command.argumentsJSON == boardMoveFixtureOriginal {
+                faults?.beforeSQL = nil
+                boardMoveFixtureArmed = false
+            }
+            #endif
+            boardMoveLogged = true
+#if DEBUG
+            faults?.commandDiagnostic?("boardMove")
+#endif
+            _ = try? invoke("iosBoardMoveAcknowledged", arguments: [])
+        }
+        if command.method == "boardCommit", case .success = terminal, !boardActionLogged, !isBoardMove {
             boardActionLogged = true
 #if DEBUG
             faults?.commandDiagnostic?("boardAction")
@@ -20236,7 +20268,9 @@ private final class Engine: @unchecked Sendable {
                   let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
                   Set(input.keys) == Set(["request", "prepared"]), let request = input["request"] as? [String: Any],
                   let prepared = input["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
-                  Set(prepared.keys) == Set(["version", "request", "before", "after", "deviceIdToInitialize", "result"]),
+                  Set(prepared.keys) == (((request["action"] as? [String: Any])?["type"] as? String == "moveCard")
+                      ? Set(["version", "request", "before", "after", "deviceIdToInitialize", "result", "move"])
+                      : Set(["version", "request", "before", "after", "deviceIdToInitialize", "result"])),
                   let before = prepared["before"] as? [String: Any], let after = prepared["after"] as? [String: Any],
                   [before, after].allSatisfy({ row in
                       ["id", "title", "status", "createdAt", "updatedAt"].allSatisfy { row[$0] is String }
@@ -20247,6 +20281,16 @@ private final class Engine: @unchecked Sendable {
                   let preparedRequest = prepared["request"] as? [String: Any],
                   try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: preparedRequest, options: [.sortedKeys]) else {
                 throw HostFailure("Malformed prepared Board journal")
+            }
+            if (request["action"] as? [String: Any])?["type"] as? String == "moveCard" {
+                guard prepared["deviceIdToInitialize"] is NSNull,
+                      let move = prepared["move"] as? [String: Any],
+                      Set(move.keys) == Set(["deviceIdBefore", "clock", "scope"]),
+                      let device = move["deviceIdBefore"] as? String, !device.isEmpty,
+                      move["clock"] is [String: Any], move["scope"] is [String: Any] else {
+                    throw HostFailure("Malformed prepared Board Move journal")
+                }
+                // Shared boardValidate recomputes this opaque frozen one-row effect.
             }
             let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
             let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self)
@@ -22462,13 +22506,22 @@ private final class Engine: @unchecked Sendable {
             }
         }
         if method == "boardAction" {
-            guard let json = args.first as? String, json.utf8.count <= 4_096,
+            guard let json = args.first as? String, json.utf8.count <= 1_048_576,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any],
                   Set(input.keys) == Set(["requestId", "action"]), let id = input["requestId"] as? String, UUID(uuidString: id) != nil,
-                  let action = input["action"] as? [String: Any], Set(action.keys) == Set(["type", "taskId"]),
-                  let type = action["type"] as? String, ["duplicateTask", "trashTask"].contains(type),
+                  let action = input["action"] as? [String: Any], let type = action["type"] as? String,
                   let taskID = action["taskId"] as? String, !taskID.isEmpty, taskID.count <= 500 else {
                 throw HostFailure("Unsupported native Board action")
+            }
+            if type == "moveCard" {
+                guard Set(action.keys) == Set(["type", "taskId", "status", "taskRevision", "filters"]),
+                      let status = action["status"] as? String, ["inbox", "next", "waiting", "someday"].contains(status),
+                      let revision = action["taskRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 4096,
+                      let filters = action["filters"] else { throw HostFailure("Unsupported native Board Move") }
+                try Self.validateBoardFilters(filters)
+            } else {
+                guard json.utf8.count <= 4_096, Set(action.keys) == Set(["type", "taskId"]),
+                      ["duplicateTask", "trashTask"].contains(type) else { throw HostFailure("Unsupported native Board action") }
             }
         }
     }
@@ -22505,6 +22558,23 @@ private final class Engine: @unchecked Sendable {
               (state["selectedDate"] is NSNull ? state["viewMode"] as? String == "month"
                 : (state["selectedDate"] as? String).map({ $0.utf16.count <= 64 }) == true) else {
             throw HostFailure("INVALID_INPUT: Unsupported native Calendar event projection")
+        }
+    }
+
+    private static func validateBoardFilters(_ value: Any) throws {
+        let filterFields: Set<String> = ["searchQuery", "tokens", "excludedTokens", "projects", "contextMatchMode", "tagMatchMode", "duePreset"]
+        guard let filters = value as? [String: Any], Set(filters.keys).isSubset(of: filterFields) else {
+            throw HostFailure("Unsupported native Board filters")
+        }
+        for (field, value) in filters {
+            if ["tokens", "excludedTokens", "projects"].contains(field) {
+                guard let values = value as? [String], values.count <= 100,
+                      values.allSatisfy({ $0.utf16.count <= 500 }) else { throw HostFailure("Unsupported native Board filters") }
+            } else if field != "duePreset" || !(value is NSNull) {
+                guard let text = value as? String, text.utf16.count <= (field == "searchQuery" ? 2000 : 500) else {
+                    throw HostFailure("Unsupported native Board filters")
+                }
+            }
         }
     }
 
@@ -22750,22 +22820,7 @@ private final class Engine: @unchecked Sendable {
                       (1.0...100.0).contains(limit.doubleValue) else {
                     throw HostFailure("Unsupported native Board browsing input")
                 }
-                if let value = input["filters"] {
-                    let filterFields: Set<String> = ["searchQuery", "tokens", "excludedTokens", "projects", "contextMatchMode", "tagMatchMode", "duePreset"]
-                    guard let filters = value as? [String: Any], Set(filters.keys).isSubset(of: filterFields) else {
-                        throw HostFailure("Unsupported native Board filters")
-                    }
-                    for (field, value) in filters {
-                        if ["tokens", "excludedTokens", "projects"].contains(field) {
-                            guard let values = value as? [String], values.count <= 100,
-                                  values.allSatisfy({ $0.utf16.count <= 500 }) else { throw HostFailure("Unsupported native Board filters") }
-                        } else if field != "duePreset" || !(value is NSNull) {
-                            guard let text = value as? String, text.utf16.count <= (field == "searchQuery" ? 2000 : 500) else {
-                                throw HostFailure("Unsupported native Board filters")
-                            }
-                        }
-                    }
-                }
+                if let value = input["filters"] { try Self.validateBoardFilters(value) }
                 if let value = input["filterEdit"] {
                     guard let edit = value as? [String: Any], edit["type"] is String,
                           Set(edit.keys).isSubset(of: ["type", "value", "kind", "preset"]),
@@ -23808,6 +23863,42 @@ private final class Engine: @unchecked Sendable {
     #endif
 
     #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    func configureIsolatedBoardMoveCommitFailureOnce() throws {
+        let directory = databaseURL.deletingLastPathComponent(), identifier = directory.lastPathComponent
+        let arguments = ProcessInfo.processInfo.arguments
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+        let selection = try NativeLaunchSelection.resolve(arguments: arguments, bundleIdentifier: Bundle.main.bundleIdentifier,
+            supportURL: support, homeURL: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true), mode: .deviceTest)
+        guard Bundle.main.bundleIdentifier == "tech.dongdongbh.mindwtr.native.dev",
+              arguments.contains("--native-board-move-commit-failure-once"),
+              case let .isolated(selectedDatabase, selectedContainer, namespace, selectedID) = selection,
+              selectedID.uuidString.lowercased() == identifier,
+              selectedDatabase.resolvingSymlinksInPath() == databaseURL.resolvingSymlinksInPath(),
+              selectedContainer.resolvingSymlinksInPath() == directory.resolvingSymlinksInPath(),
+              databaseURL.lastPathComponent == "mindwtr.sqlite",
+              directory.deletingLastPathComponent().lastPathComponent == "NativeUITests",
+              Self.ownedDiscardUUID(identifier) == identifier,
+              deviceStorageLocation?.bundleIdentifier == namespace,
+              faults?.secretService == "mindwtr.native-keychain.fixture." + identifier,
+              !started, !closed, !invoking, pending == nil, !boardMoveFixtureArmed,
+              let faults, faults.beforeSQL == nil, faults.afterSQL == nil,
+              try mixedSaveFileBinding(journalURL, maximumBytes: Self.ownedSaveMaximumBytes) == nil else {
+            throw HostFailure("Isolated Board Move fixture is unavailable")
+        }
+        boardMoveFixtureArmed = true
+        faults.beforeSQL = { [weak self] sql in
+            guard let self else { throw HostFailure("Isolated Board Move COMMIT interrupted") }
+            guard sql == "COMMIT", let command = self.pending, command.method == "boardCommit",
+                  let raw = try self.journalArguments(command).first as? String,
+                  let envelope = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+                  ((envelope["request"] as? [String: Any])?["action"] as? [String: Any])?["type"] as? String == "moveCard" else { return }
+            if let original = self.boardMoveFixtureOriginal {
+                guard command.argumentsJSON == original else { throw HostFailure("Isolated Board Move COMMIT interrupted") }
+            } else { self.boardMoveFixtureOriginal = command.argumentsJSON }
+            guard self.boardMoveFixtureRetry else { throw HostFailure("Isolated Board Move COMMIT interrupted") }
+        }
+    }
+
     private func requireIsolatedAIRequestTimeoutFixture() throws {
         let directory = databaseURL.deletingLastPathComponent(), identifier = directory.lastPathComponent
         let arguments = ProcessInfo.processInfo.arguments

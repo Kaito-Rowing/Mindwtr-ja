@@ -17,7 +17,7 @@ import type { NativePreparedArchivedTaskRestore } from './native-host-contract-a
 import { settingsWithPurgedParentAttachmentDeletes } from './attachment-cleanup';
 import type { StorageAdapter, TaskQueryOptions } from './storage';
 import { taskMatchesQuery } from './task-query';
-import type { PreparedAreaAuthority, PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedChecklistWriteOptions, PreparedFocusOrder, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, PreparedTaskFocus, PreparedTaskPromotion, StoreActionResult, TaskFocusWitnessRow, TaskStore } from './store-types';
+import type { PreparedAreaAuthority, PreparedBoardMove, PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedChecklistWriteOptions, PreparedFocusOrder, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, PreparedTaskFocus, PreparedTaskPromotion, StoreActionResult, TaskFocusWitnessRow, TaskStore } from './store-types';
 import { buildFocusControlsModel } from './focus-controls';
 import {
     applyTaskProjectReactivationTransition,
@@ -749,6 +749,49 @@ export const taskFocusScope = (state: TaskStore, task: Task): PreparedTaskFocus[
     };
 };
 
+/** Freeze only containers and compact Focus rows consumed by a status move. */
+export const boardMoveScope = (state: TaskStore, task: Task): PreparedBoardMove['scope'] => {
+    const section = state._allSections.find(row => row.id === task.sectionId);
+    const projectIds = new Set([task.projectId, section?.projectId]);
+    const sorted = <T extends { id: string }>(rows: T[]) => rows.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    return {
+        projects: sorted(state._allProjects.filter(row => projectIds.has(row.id))),
+        sections: section ? [section] : [],
+        areas: state._allAreas.filter(row => row.id === task.areaId),
+        focused: sorted(state._allTasks.filter(row => !row.deletedAt && row.isFocusedToday === true).map(taskFocusWitnessRow)),
+        focusLimit: normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit),
+    };
+};
+
+/** The RN normalizer/planner is the sole source of the complete Move receipt. */
+export const boardMoveEffect = (before: Task, status: Task['status'], move: PreparedBoardMove, at: string): Task => {
+    if (!['inbox', 'next', 'waiting', 'someday'].includes(before.status)
+        || !['inbox', 'next', 'waiting', 'someday'].includes(status)
+        || before.status === status || before.deletedAt || before.purgedAt
+        || !move.deviceIdBefore || isStatusListTaskReadOnly(before, move.scope.projects)) {
+        throw new Error('Board Move needs a writable nonterminal card and existing device identity');
+    }
+    const dates = new Map(move.clock.dates.map(row => [row.value, row]));
+    const normalized = prepareTaskUpdatesForStore({ task: before, updates: { status },
+        allProjects: move.scope.projects, allSections: move.scope.sections, allAreas: move.scope.areas,
+        futureBoundary: move.clock.futureBoundary, futureDates: dates, nowMs: Date.parse(at) });
+    if (!normalized.ok) throw new Error(normalized.error);
+    const fills = countFocusedTasksBeforeBoundary([before], move.clock.futureBoundary, dates) === 0
+        && countFocusedTasksBeforeBoundary([{ ...before, ...normalized.updates }], move.clock.futureBoundary, dates) === 1;
+    if (fills && countFocusedTasksBeforeBoundary(move.scope.focused.map(asFocusTask), move.clock.futureBoundary, dates) >= move.scope.focusLimit)
+        throw new Error('Focus limit reached; free a Focus slot before moving this card');
+    const plan = planTaskUpdateEffects({ task: before, preparedUpdates: normalized.updates,
+        allTasks: [before], allProjects: move.scope.projects, allSections: move.scope.sections, now: at,
+        deviceId: move.deviceIdBefore, createId: () => { throw new Error('Board Move cannot allocate an entity'); } });
+    if (plan.recurringCandidateTask || plan.recurringDuplicateTask || plan.recurringFollowUpTask
+        || plan.reactivatedProjectIds.length || plan.tasks.length !== 1
+        || !taskEditValuesEqual(plan.projects, move.scope.projects) || !taskEditValuesEqual(plan.sections, move.scope.sections)
+        || plan.updatedTask.id !== before.id || plan.updatedTask.status !== status) {
+        throw new Error('This Board Move requires multirow lifecycle effects; only one task is supported');
+    }
+    return plan.updatedTask;
+};
+
 /** Re-evaluate the RN star policy against the frozen local day and compact rows. */
 export const taskFocusAction = (scope: PreparedTaskFocus['scope'], preparedAt: string,
     futureBoundary: string, dates: FocusDateLookup): FocusStarAction => resolveFocusStarAction(scope.task, {
@@ -1349,7 +1392,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
     },
 
     // The contract validates action authority before this guarded one-row commit.
-    commitPreparedBoardTask: async ({ kind, before, after, deviceIdBefore, deviceIdToInitialize, respectReadOnly, strictBefore }) => {
+    commitPreparedBoardTask: async ({ kind, before, after, move, admitMove, deviceIdBefore, deviceIdToInitialize, respectReadOnly, strictBefore }) => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Board action conflicts with current data' };
         const persisted = (task: Task) => {
             // Normal loading adds pushCount: 0 without saving it. A raw recovery
@@ -1371,6 +1414,16 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 || (kind === 'restoreTask' ? !source.deletedAt : Boolean(source.deletedAt))
                 || (kind === 'restoreTask' && (state.settings.deviceId ?? null) !== deviceIdBefore)
                 || (kind === 'duplicateTask' && target)) return state;
+            if (kind === 'moveCard') {
+                if (!move || deviceIdToInitialize !== null || state.settings.deviceId !== move.deviceIdBefore
+                    || !taskEditValuesEqual(boardMoveScope(state, source), move.scope) || !admitMove?.()) return state;
+                try {
+                    if (!matches(boardMoveEffect(source, after.status, move, after.updatedAt), after)) return state;
+                } catch (error) {
+                    result = { success: false, reason: 'invalid', error: error instanceof Error ? error.message : 'Board Move scope refused' };
+                    return state;
+                }
+            }
             if (respectReadOnly && kind === 'trashTask' && isStatusListTaskReadOnly(source, state._allProjects)) return state;
             if (kind === 'restoreTask') {
                 const sanitized = sanitizeRestoredTaskContainerReferences(source, state);

@@ -3657,7 +3657,19 @@ globalThis.MindwtrHost = {
     boardValidate(json: string): string {
         return submit(async () => unwrap(contract.validatePreparedBoardAction(JSON.parse(json))));
     },
-    /** Only the exact frozen Trash/Duplicate envelope is replayable. */
+    /** Private Swift acknowledgement after durable Board Move journal retirement. */
+    iosBoardMoveAcknowledged(): string {
+        return submit(async () => {
+            if (globalThis.__mindwtrHostPlatform !== 'ios') return null;
+            try {
+                logInfo('Native iOS Board move saved', { scope: 'native-ios', force: true,
+                    context: { releaseCheck: 'v1.3.5/ios-board-move', outcome: 'saved' } });
+                await diagnosticsLog.serialize(async () => undefined);
+            } catch { /* Diagnostics cannot change a verified durable reply. */ }
+            return null;
+        });
+    },
+    /** Only the exact frozen Trash/Duplicate/Move envelope is replayable. */
     boardCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedBoardAction(JSON.parse(json))));
     },

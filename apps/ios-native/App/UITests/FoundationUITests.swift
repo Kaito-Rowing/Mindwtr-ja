@@ -5815,6 +5815,137 @@ final class FoundationUITests: XCTestCase {
         XCTAssertEqual(cards.count, 1)
     }
 
+    func testBoardMoveToNonterminalDestinationsAndColdRead() throws {
+        try task730MoveRoundTrip("NORMAL")
+    }
+
+    func testBoardMoveToLargestTextAndColdRead() throws {
+        try task730MoveRoundTrip("LARGEST", largest: true)
+    }
+
+    func testBoardMoveToFailedCommitExactRetry() throws { try task730MoveRetry(cold: false) }
+    func testBoardMoveToFailedCommitColdRecovery() throws { try task730MoveRetry(cold: true) }
+
+    // Fresh libraries reuse the ordinary n-draft Board recorder row and a saved deviceId.
+    private func task730App(_ role: String, largest: Bool = false, flags: [String] = []) throws -> XCUIApplication {
+        let name = "MINDWTR_BOARD_MOVE_UI_" + role + "_LIBRARY"
+        guard let library = ProcessInfo.processInfo.environment[name] else {
+            throw XCTSkip("An externally staged isolated Board library is required")
+        }
+        guard let id = UUID(uuidString: library), id.uuidString.lowercased() == library else {
+            XCTFail("The Board library must be a canonical lowercase UUID")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US"] + flags
+        if largest {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-AppleInterfaceStyle", "Dark"]
+        }
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardSelectAllAreas(app); boardOpen(app); if !largest { task730Search(app) }
+        task730AssertStatus(app, "next")
+        return app
+    }
+
+    private func task730Search(_ app: XCUIApplication) {
+        if app.buttons["board-search-clear"].exists { boardTap(app, "board-search-clear") }
+        let query = app.textFields["board-search"]; boardEnabled(query)
+        XCTAssertTrue(query.isHittable)
+        let frame = query.frame
+        func captureFocus(_ stage: String) {
+            guard app.launchArguments.contains("UICTContentSizeCategoryAccessibilityXXXL") else { return }
+            let exists = query.exists
+            let queryFrame = exists ? query.frame : .zero
+            let frames = app.keyboards.allElementsBoundByIndex.map { String(describing: $0.frame) }
+            let area = app.staticTexts["area-title"], dismiss = app.buttons["area-dismiss"]
+            print("Task730 Largest search focus stage=\(stage) queryFrame=\(queryFrame) appFrame=\(app.frame)"
+                + " queryExists=\(exists) queryEnabled=\(exists && query.isEnabled) queryHittable=\(exists && query.isHittable)"
+                + " keyboardFrames=\(frames) areaTitleVisible=\(area.exists && area.isHittable)"
+                + " areaDismissVisible=\(dismiss.exists && dismiss.isHittable)")
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task730 Largest search focus " + stage
+            shot.lifetime = .keepAlways; add(shot)
+        }
+        captureFocus("before-tap")
+        let appFrame = app.frame
+        XCTAssertGreaterThan(appFrame.width, 0); XCTAssertGreaterThan(appFrame.height, 0)
+        app.coordinate(withNormalizedOffset: CGVector(dx: (frame.minX + frame.width * 0.15 - appFrame.minX) / appFrame.width,
+            dy: (frame.midY - appFrame.minY) / appFrame.height)).tap()
+        let keyboardAppeared = app.keyboards.firstMatch.waitForExistence(timeout: 10)
+        captureFocus("after-keyboard-wait")
+        XCTAssertTrue(keyboardAppeared)
+        query.typeText("Draft launch post\n")
+        boardEnabled(app.buttons["board-filter-open"])
+    }
+
+    private func task730AssertStatus(_ app: XCUIApplication, _ status: String) {
+        boardEnabled(app.buttons["board-filter-open"], timeout: 30)
+        for column in ["inbox", "next", "waiting", "someday", "done"] {
+            let count = app.staticTexts["board-count-" + column]
+            expectation(for: NSPredicate(format: "label == %@", column == status ? "1" : "0"), evaluatedWith: count)
+        }
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "board-task-")).count, 1)
+        XCTAssertTrue(app.buttons["board-task-n-draft"].exists, "Move preserves the original task identity")
+        XCTAssertFalse(app.buttons["task-view-close"].exists, "Move does not open an editor")
+    }
+
+    private func task730Choose(_ app: XCUIApplication, from source: String, to target: String) {
+        let row = app.buttons["board-task-n-draft"]
+        revealPagedElement(app, row, in: app.scrollViews["board-scroll"]); boardEnabled(row)
+        XCTAssertGreaterThanOrEqual(row.frame.height, 44 - 0.001)
+        row.press(forDuration: 1)
+        let menus = app.collectionViews.buttons.matching(NSPredicate(format: "label == %@", "Move to…"))
+        let menu = menus.firstMatch
+        boardEnabled(menu); XCTAssertEqual(menus.count, 1)
+        XCTAssertEqual(menu.label, "Move to…"); menu.tap()
+        for status in ["inbox", "next", "waiting", "someday"] where status != source {
+            let choice = app.buttons["board-move-" + status]
+            boardEnabled(choice); XCTAssertFalse(choice.label.isEmpty)
+            XCTAssertTrue(choice.isHittable); XCTAssertTrue(app.frame.contains(choice.frame))
+        }
+        XCTAssertFalse(app.buttons["board-move-" + source].exists)
+        XCTAssertFalse(app.buttons["board-move-done"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Board Move to destinations"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "board-move-" + target)
+    }
+
+    private func task730MoveRoundTrip(_ role: String, largest: Bool = false) throws {
+        let app = try task730App(role, largest: largest); defer { app.terminate() }
+        var source = "next"
+        for target in ["waiting", "someday", "inbox", "next"] {
+            task730Choose(app, from: source, to: target)
+            task730AssertStatus(app, target); source = target
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        }
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); if !largest { task730Search(app) }; task730AssertStatus(app, "next")
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+
+    private func task730MoveRetry(cold: Bool) throws {
+        let flag = "--native-board-move-commit-failure-once"
+        let app = try task730App(cold ? "COLD" : "RETRY", flags: [flag]); defer { app.terminate() }
+        task730Choose(app, from: "next", to: "waiting")
+        let retry = app.buttons["persistence-retry"]; boardEnabled(retry, timeout: 30)
+        XCTAssertEqual(app.staticTexts["board-count-next"].label, "1")
+        XCTAssertEqual(app.staticTexts["board-count-waiting"].label, "0")
+        XCTAssertFalse(app.textFields["board-search"].isEnabled)
+        XCTAssertFalse(app.buttons["board-task-n-draft"].isEnabled)
+        if cold {
+            app.terminate(); app.launchArguments.removeAll { $0 == flag }; app.launch()
+            boardEnabled(app.buttons["tab-menu"], timeout: 40)
+            boardOpen(app); task730Search(app)
+        } else {
+            boardTap(app, "persistence-retry")
+        }
+        task730AssertStatus(app, "waiting")
+        XCTAssertFalse(retry.exists)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); task730Search(app); task730AssertStatus(app, "waiting")
+        XCTAssertFalse(retry.exists)
+    }
+
     func testBoardSearchFiltersEditorDiscardAndReturn() {
         let app = XCUIApplication()
         app.launch()

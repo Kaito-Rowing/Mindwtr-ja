@@ -1805,6 +1805,9 @@ final class CoreModel: ObservableObject {
     private var boardFilters: CoreObject = [:]
     private var boardPendingEdit: CoreObject?
     @Published private var boardActionRequest: String?
+    #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+    private var boardMoveFixtureConfigured = false
+    #endif
     private var boardRecoveredResult: CoreObject?
     private var taskPromotionRecoveredResult: CoreObject?
     private var projectDuplicateRecoveredResult: CoreObject?
@@ -5143,6 +5146,10 @@ final class CoreModel: ObservableObject {
                         deviceStorage: (directory, namespace),
                         isolatedTestID: identifier)
                     #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
+                    if arguments.contains("--native-board-move-commit-failure-once"), !boardMoveFixtureConfigured {
+                        try await host!.configureIsolatedBoardMoveCommitFailureOnce()
+                        boardMoveFixtureConfigured = true
+                    }
                     if arguments.contains("--native-ai-summary-proof") { try await host!.configureIsolatedAISummaryCheckpoint() }
                     if arguments.contains("--native-ai-timeout-fixture"), arguments.contains("--native-ai-timeout-commit-failure-once"),
                        !settingsAITimeoutFixtureConfigured {
@@ -17031,6 +17038,40 @@ final class CoreModel: ObservableObject {
             request = try json(["requestId": UUID().uuidString,
                                 "action": ["type": action, "taskId": taskID]])
         } catch { self.error = error.localizedDescription; return }
+        await performBoardAction(request)
+    }
+
+    func boardMoveDestinations(_ displayed: CoreObject) -> [CoreObject] {
+        let row = displayed.object("row")
+        guard boardActionsEnabled, !morePresented, !capturePresented, !boardActionPending,
+              displayed.flag("moveAllowed"), ["inbox", "next", "waiting", "someday"].contains(row.text("status")),
+              !row.text("id").isEmpty, !row.text("taskRevision").isEmpty,
+              boardView.objects("columns").contains(where: { column in
+                  column.objects("cards").contains(where: {
+                      let current = $0.object("row")
+                      return $0.flag("moveAllowed") && current.text("id") == row.text("id")
+                          && current.text("taskRevision") == row.text("taskRevision") && current.text("status") == row.text("status")
+                  })
+              }) else { return [] }
+        return boardView.object("cardActions").object("moveTo").objects("destinations").filter {
+            ["inbox", "next", "waiting", "someday"].contains($0.text("status"))
+                && $0.text("status") != row.text("status") && !$0.text("label").isEmpty
+        }
+    }
+
+    func moveBoardCard(_ displayed: CoreObject, status: String) async {
+        guard boardMoveDestinations(displayed).contains(where: { $0.text("status") == status }) else { return }
+        let row = displayed.object("row")
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString,
+                "action": ["type": "moveCard", "taskId": row.text("id"), "status": status,
+                           "taskRevision": row.text("taskRevision"), "filters": boardFilters]])
+        } catch { self.error = error.localizedDescription; return }
+        await performBoardAction(request)
+    }
+
+    private func performBoardAction(_ request: String) async {
         boardActionRequest = request
         busy = true
         error = nil
