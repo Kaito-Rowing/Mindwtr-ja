@@ -996,9 +996,10 @@ class SharedSyncRunMachine {
     }
 
     /**
-     * One local save and its store publish, inside the store write gate (store-write-gate.ts): no
-     * command runs between the freshness check and the publish, so the store never lags what this
-     * save wrote. [data] is a builder when the document must be read from the store inside the gate.
+     * One local save and its store publish, inside the store write gate (store-write-gate.ts). The store
+     * takes the document in the same turn as the freshness check, before the commit: any command that
+     * reads while the save runs reads what disk is about to hold, and its write waits for the commit.
+     * [data] is a builder when the document must be read from the store inside the gate.
      */
     private async persistLocalDataWithTracking(data: AppData | (() => AppData)): Promise<AppData> {
         await this.assertRemoteMutationFenceHeld();
@@ -1008,30 +1009,51 @@ class SharedSyncRunMachine {
             await this.store.flushPendingSave();
             const next = typeof data === 'function' ? data() : data;
             this.ensureLocalSnapshotFresh(next);
-            const persisted = await traceSectionAsync('sync:saveData', () => this.storage.persistLocal(next)) ?? next;
-            this.ensureLocalSnapshotFresh(persisted);
+            this.publishToStore(next);
+            let persisted: AppData;
+            try {
+                persisted = await traceSectionAsync('sync:saveData', () => this.storage.persistLocal(next)) ?? next;
+            } catch (error) {
+                // The rows may or may not have landed (a check after the commit, File Sync's lease, can
+                // fail the save): the store takes what disk holds now, before the gate lets a command in.
+                await this.publishDiskAfterFailedSave();
+                throw error;
+            }
+            if (persisted !== next) this.publishToStore(persisted);
             // Disk has moved past the snapshot this cycle read, so it is no longer
             // a baseline for the unchanged-write guard.
             this.state.localSnapshotMatchesDisk = false;
-            if (this.storage.applyDataToStore) {
-                this.storage.applyDataToStore(persisted);
-                const currentChangeAt = this.store.getLastDataChangeAt();
-                this.state.localSnapshotChangeAt = currentChangeAt;
-                this.state.localDataCache = {
-                    changeAt: currentChangeAt,
-                    data: normalizeAppData(persisted),
-                };
-                if (!this.state.wroteLocal) {
-                    this.notifier.logInfo('Sync save published to the store', {
-                        backend: this.backend,
-                        step: this.state.step ?? '-',
-                        releaseCheck: 'v1.3.7/sync-write-gate',
-                    });
-                }
-            }
             this.state.wroteLocal = true;
+            this.ensureLocalSnapshotFresh(persisted);
             return persisted;
         });
+    }
+
+    private publishToStore(data: AppData): void {
+        if (!this.storage.applyDataToStore) return;
+        this.storage.applyDataToStore(data);
+        const currentChangeAt = this.store.getLastDataChangeAt();
+        this.state.localSnapshotChangeAt = currentChangeAt;
+        this.state.localDataCache = {
+            changeAt: currentChangeAt,
+            data: normalizeAppData(data),
+        };
+        if (!this.state.wroteLocal) {
+            this.notifier.logInfo('Sync save published to the store', {
+                backend: this.backend,
+                step: this.state.step ?? '-',
+                releaseCheck: 'v1.3.7/sync-write-gate',
+            });
+        }
+    }
+
+    private async publishDiskAfterFailedSave(): Promise<void> {
+        if (!this.storage.applyDataToStore) return;
+        try {
+            this.storage.applyDataToStore(await this.storage.readPersistedLocal());
+        } catch (error) {
+            this.notifier.logWarning('Sync could not reload the store after a failed save', error);
+        }
     }
 
     private async persistPreSyncedDataAfterAbort(): Promise<void> {

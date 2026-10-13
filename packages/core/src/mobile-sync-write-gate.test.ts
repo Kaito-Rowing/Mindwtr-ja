@@ -6,8 +6,10 @@ import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from
 import { getInMemoryAppDataSnapshot } from './sync-client-helpers';
 import { SqliteAdapter, type SqliteClient } from './sqlite-adapter';
 import { performSyncCycle } from './sync';
+import { createNativeHostContract } from './native-host-contract';
+import { NativeReceiptSqliteAdapter, resetNativeRequestReceipts, revisionOf } from './native-request-receipts';
 import { CLOUD_PROVIDER_KEY, CLOUD_TOKEN_KEY, CLOUD_URL_KEY, SYNC_BACKEND_KEY } from './sync-storage-keys';
-import type { AppData, Task } from './types';
+import type { AppData, Project, Task } from './types';
 
 // A command that lands while a sync cycle waits on the network, after its first local save,
 // must act on what that save wrote: the store must not lag the disk (D9b change 0).
@@ -23,12 +25,16 @@ const task = (extra: Partial<Task>): Task => ({
     id: 'shared', title: 'old', status: 'next', tags: [], contexts: [], createdAt: OLD, updatedAt: OLD, rev: 1, revBy: 'this-device',
     ...extra,
 } as Task);
-const doc = (tasks: Task[], settings: AppData['settings'] = {}): AppData => ({ tasks, projects: [], sections: [], areas: [], people: [], settings });
+const project = (extra: Partial<Project>): Project => ({
+    id: 'starred', title: 'Project', status: 'active', color: '#94a3b8', order: 0, tagIds: [], isFocused: false,
+    createdAt: OLD, updatedAt: OLD, rev: 1, revBy: 'this-device', ...extra,
+} as Project);
+const doc = (tasks: Task[], settings: AppData['settings'] = {}, projects: Project[] = []): AppData => ({ tasks, projects, sections: [], areas: [], people: [], settings });
 
 const databases: Database[] = [];
 
-async function openStore(guarded: boolean) {
-    await flushPendingSave(); resetForTests();
+async function openStore(guarded: boolean, receipts = false) {
+    await flushPendingSave(); resetForTests(); resetNativeRequestReceipts();
     const db = new DatabaseSync(':memory:'); databases.push(db);
     const client: SqliteClient = {
         run: async (sql, params = []) => { db.prepare(sql).run(...params); },
@@ -36,8 +42,9 @@ async function openStore(guarded: boolean) {
         get: async <T,>(sql: string, params: unknown[] = []) => db.prepare(sql).all(...params)[0] as T | undefined,
         exec: async (sql) => { db.exec(sql); },
     };
-    await new SqliteAdapter(client).saveData(doc([task({})], { deviceId: 'this-device' }));
-    const adapter = new SqliteAdapter(client, guarded ? { rejectConcurrentWrites: true } : {});
+    await new SqliteAdapter(client).saveData(doc([task({})], { deviceId: 'this-device' }, [project({})]));
+    const options = guarded ? { rejectConcurrentWrites: true } : {};
+    const adapter = receipts ? new NativeReceiptSqliteAdapter(client, options) : new SqliteAdapter(client, options);
     setStorageAdapter(adapter);
     await useTaskStore.getState().fetchData({ silent: true });
     return adapter;
@@ -102,7 +109,8 @@ const runCycle = async (service: ReturnType<typeof createMobileSyncService>) => 
     return result;
 };
 
-const winner = () => doc([task({ title: 'winner', rev: 2, revBy: 'other-device', updatedAt: NEWER })]);
+const winner = () => doc([task({ title: 'winner', rev: 2, revBy: 'other-device', updatedAt: NEWER })], {},
+    [project({ isFocused: true, rev: 2, revBy: 'other-device', updatedAt: NEWER })]);
 
 describe.each([false, true])('a command during the remote write (guarded adapter: %s)', (guarded) => {
     beforeEach(() => { vi.useRealTimers(); });
@@ -164,7 +172,7 @@ describe.each([false, true])('a command during the remote write (guarded adapter
     it('defers a command that arrives between the first save commit and its store publish', async () => {
         const adapter = await openStore(guarded);
         const fake = createHost(adapter, winner());
-        fake.releasePut();
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
         let command: Promise<unknown> | null = null;
         fake.host.localData.saveData = async (data: AppData) => {
             await adapter.saveData(data);
@@ -173,8 +181,6 @@ describe.each([false, true])('a command during the remote write (guarded adapter
         };
         const service = createMobileSyncService(fake.host);
         try {
-            const put = fake.put;
-            put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
             await runCycle(service);
             await command;
             await flushPendingSave();
@@ -182,6 +188,84 @@ describe.each([false, true])('a command during the remote write (guarded adapter
             expect(saved?.status).toBe('done');
             expect(saved?.title).toBe('winner');
             expect((await adapter.getData()).settings.pendingRemoteWriteAt).toBeTruthy();
+        } finally {
+            service.__mobileSyncTestUtils.reset();
+        }
+    });
+
+    it('publishes what disk holds when the save fails after its commit', async () => {
+        const adapter = await openStore(guarded);
+        const fake = createHost(adapter, winner());
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
+        let failed = false;
+        fake.host.localData.saveData = async (data: AppData) => {
+            await adapter.saveData(data);
+            if (!failed) {
+                failed = true;
+                // A post-save check (the File Sync lease) refuses after the rows are committed.
+                throw new Error('lease lost after commit');
+            }
+        };
+        const service = createMobileSyncService(fake.host);
+        try {
+            await runCycle(service);
+            await useTaskStore.getState().updateTask('shared', { status: 'done' });
+            await useTaskStore.getState().updateSettings({ theme: 'dark' });
+            await flushPendingSave();
+            const saved = await adapter.getData();
+            expect(saved.tasks.find((row) => row.id === 'shared')).toMatchObject({ title: 'winner', status: 'done' });
+            expect(saved.settings.pendingRemoteWriteAt).toBeTruthy();
+        } finally {
+            service.__mobileSyncTestUtils.reset();
+        }
+    });
+
+    it('takes back the published document when the save fails before its commit', async () => {
+        const adapter = await openStore(guarded);
+        const fake = createHost(adapter, winner());
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
+        fake.host.localData.saveData = async () => { throw new Error('disk full before commit'); };
+        const service = createMobileSyncService(fake.host);
+        try {
+            await runCycle(service);
+            // Nothing landed, so the store shows the disk again, not the merge it was handed first.
+            expect(useTaskStore.getState()._tasksById.get('shared')?.title).toBe('old');
+            expect(useTaskStore.getState().settings.pendingRemoteWriteAt).toBeUndefined();
+        } finally {
+            service.__mobileSyncTestUtils.reset();
+        }
+    });
+});
+
+describe('a native command during the sync save', () => {
+    afterEach(async () => {
+        await flushPendingSave(); resetForTests();
+        for (const db of databases.splice(0)) db.close();
+    });
+
+    it('reads, checks and writes the project star on the published store, never the one the save replaced', async () => {
+        const adapter = await openStore(true, true);
+        await flushPendingSave();
+        const contract = createNativeHostContract();
+        const activated = await contract.activate({ writeSafetyReady: true });
+        expect(activated).toEqual({ ok: true, value: null });
+        await flushPendingSave();
+        const shown = revisionOf(useTaskStore.getState()._projectsById.get('starred')!);
+        const fake = createHost(adapter, winner());
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
+        let command: Promise<unknown> | null = null;
+        fake.host.localData.saveData = async (data: AppData) => {
+            await adapter.saveData(data);
+            // The first save has committed the other device's star, inside the sync's hold of the gate.
+            command ??= contract.setProjectFocus({ id: 'starred', focused: true, projectRevision: shown });
+        };
+        const service = createMobileSyncService(fake.host);
+        try {
+            await runCycle(service);
+            await command;
+            await flushPendingSave();
+            expect((await adapter.getData()).projects.find((row) => row.id === 'starred')?.isFocused).toBe(true);
+            expect(useTaskStore.getState()._projectsById.get('starred')?.isFocused).toBe(true);
         } finally {
             service.__mobileSyncTestUtils.reset();
         }

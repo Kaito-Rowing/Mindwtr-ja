@@ -26,7 +26,7 @@ import { createArchiveRetentionActions, resetArchiveRetentionSyncForTests } from
 import { sleep } from './async-utils';
 import { instrumentStoreSubscribe } from './store-notify-profiler';
 import { runAfterStoreWriteLock } from './data-transfer-transaction';
-import { runStoreCommand } from './store-write-gate';
+import { markStoreCommand, runStoreCommand } from './store-write-gate';
 
 export { applyTaskUpdates } from './store-helpers';
 
@@ -626,72 +626,26 @@ const retryPendingPersistence = (): Promise<void> => {
     return retry;
 };
 
-const STORE_WRITE_ACTION_KEYS = [
-    'seedGettingStarted',
-    'addTask',
-    'addTasks',
-    'updateTask',
-    'deleteTask',
-    'restoreTask',
-    'restoreTasks',
-    'purgeTask',
-    'purgeTasks',
-    'purgeDeletedTasks',
-    'duplicateTask',
-    'promoteTaskToProject',
-    'convertChecklistToProject',
-    'undoChecklistToProject',
-    'resetTaskChecklist',
-    'moveTask',
-    'batchUpdateTasks',
-    'batchMoveTasks',
-    'batchDeleteTasks',
-    'reorderFocusedTasks',
-    'addProject',
-    'updateProject',
-    'deleteProject',
-    'restoreProject',
-    'purgeProject',
-    'purgeDeletedProjects',
-    'duplicateProject',
-    'toggleProjectFocus',
-    'convertProjectToSection',
-    'undoProjectToSection',
-    'addSection',
-    'updateSection',
-    'deleteSection',
-    'reorderSections',
-    'addArea',
-    'updateArea',
-    'deleteArea',
-    'restoreArea',
-    'reorderAreas',
-    'reorderProjects',
-    'reorderProjectTasks',
-    'reorderBoardTasks',
-    'addPerson',
-    'updatePerson',
-    'renamePerson',
-    'deletePerson',
-    'restorePerson',
-    'deleteTag',
-    'renameTag',
-    'deleteContext',
-    'renameContext',
-    'updateSettings',
-    'setArchiveRetentionDays',
-    'runArchiveRetention',
-    'persistSnapshot',
-] as const satisfies readonly (keyof TaskStore)[];
+/**
+ * Store functions that are not commands: reads, view state, and the load itself. Every other function on
+ * the store writes data and runs as a store command: behind a data transfer's write lock, and inside the
+ * sync write gate (store-write-gate.ts), so no command lands between a sync save and its store publish.
+ * A new action is a command by default; adding one here needs it to be a read (store-write-gate.test.ts).
+ */
+export const STORE_NON_COMMAND_KEYS: ReadonlySet<string> = new Set([
+    'fetchData', 'getDerivedState', 'getFocusStarAction', 'getFocusedCount', 'queryTasks',
+    'lockEditing', 'unlockEditing', 'setError', 'setHighlightTask',
+]);
 
 const wrapStoreWriteActions = (actions: TaskStore): TaskStore => {
-    const wrapped = { ...actions };
-    for (const key of STORE_WRITE_ACTION_KEYS) {
-        const action = actions[key] as (...args: unknown[]) => Promise<unknown>;
-        (wrapped as unknown as Record<string, unknown>)[key] = (...args: unknown[]) =>
-            runAfterStoreWriteLock(() => runStoreCommand(() => action(...args)));
+    const wrapped = { ...actions } as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(actions)) {
+        if (typeof value !== 'function' || STORE_NON_COMMAND_KEYS.has(key)) continue;
+        const action = value as (...args: unknown[]) => Promise<unknown>;
+        wrapped[key] = markStoreCommand((...args: unknown[]) =>
+            runAfterStoreWriteLock(() => runStoreCommand(() => action(...args))));
     }
-    return wrapped;
+    return wrapped as unknown as TaskStore;
 };
 
 export const useTaskStore = createWithEqualityFn<TaskStore>()(subscribeWithSelector((rawSet, get, api) => {

@@ -12,6 +12,16 @@
  * finish, and commands that arrive meanwhile wait for the save.
  */
 let commands = 0;
+const storeCommands = new WeakSet<object>();
+
+/** Mark a function as a gated store command (store.ts wraps every writing action). */
+export const markStoreCommand = <T extends object>(command: T): T => {
+    storeCommands.add(command);
+    return command;
+};
+
+/** Whether [fn] runs inside the gate as a store command. */
+export const isStoreCommand = (fn: unknown): boolean => typeof fn === 'function' && storeCommands.has(fn);
 let syncSave: Promise<void> | null = null;
 let onCommandsDrained: (() => void) | null = null;
 
