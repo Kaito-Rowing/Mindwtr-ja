@@ -1175,7 +1175,7 @@ export function createSettingsMethods(deps: SettingsDeps) {
             });
             // A receipt's answer ran nothing and logs nothing; the line follows the save that committed the seed.
             if (result.ok && outcome) {
-                logInfo('Native Getting Started seeded', { scope: 'onboarding', context: { releaseCheck: 'v1.3.6/native-getting-started', outcome } });
+                logInfo('Native Getting Started seeded', { scope: 'onboarding', context: { releaseCheck: 'v1.3.7/native-getting-started', outcome } });
             }
             return result;
         },

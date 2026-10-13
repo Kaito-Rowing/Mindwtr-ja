@@ -94,8 +94,8 @@ describe('native Getting Started: one transaction for the seed and its receipt',
         await env.replay((host) => host.seedGettingStarted(input));
         const seeded = lines.filter((line) => line.message === 'Native Getting Started seeded');
         expect(seeded.map((line) => line.context)).toEqual([
-            { releaseCheck: 'v1.3.6/native-getting-started', outcome: 'created' },
-            { releaseCheck: 'v1.3.6/native-getting-started', outcome: 'unchanged' },
+            { releaseCheck: 'v1.3.7/native-getting-started', outcome: 'created' },
+            { releaseCheck: 'v1.3.7/native-getting-started', outcome: 'unchanged' },
         ]);
         expect(useTaskStore.getState()._allTasks.filter((task) => !task.deletedAt)).toHaveLength(9);
     });

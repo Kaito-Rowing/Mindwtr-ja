@@ -625,7 +625,7 @@ try {
             samples: tasks.filter((row) => !row.projectId && row.status === 'inbox' && [en['starter.sampleBuyMilk'], en['starter.sampleReplySam']].includes(row.title)).length,
         };
     };
-    const seededLines = (outcome) => allLogs().split('\n').filter((line) => line.includes('v1.3.6/native-getting-started') && line.includes(`"outcome":"${outcome}"`)).length;
+    const seededLines = (outcome) => allLogs().split('\n').filter((line) => line.includes('v1.3.7/native-getting-started') && line.includes(`"outcome":"${outcome}"`)).length;
     const gettingStartedRow = async () => {
         let nodes = await openData();
         for (let step = 0; step < 6 && !shown(nodes, 'add-getting-started-content'); step += 1) nodes = await device.swipe(nodes, 'down');
