@@ -449,6 +449,36 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         return drag(Math.round(x1 + (x2 - x1) * 0.8));
     };
     const signature = (nodes) => nodes.map((node) => `${node.text}|${node['content-desc']}|${node.bounds}`).join('\n');
+    /**
+     * Scrolls the app's list until [find] picks a node fully inside it (40 px clear of its bottom): from the top unless
+     * [fromTop] is false, then down. A node already partly on screen comes in with one short, slow drag to the list's
+     * middle: a full swipe flings past a field just under the fold (Sync's Username, once settings rows grew to RN's height).
+     */
+    const revealNode = async (find, description, fromTop = true) => {
+        let nodes = fromTop ? await toTop() : await screen();
+        const inView = (current) => {
+            const node = find(current);
+            const list = mainList(current);
+            return node && (!list || (box(node)[1] >= box(list)[1] && box(node)[3] <= box(list)[3] - 40)) ? node : null;
+        };
+        for (let step = 0; step < 20 && !inView(nodes); step += 1) {
+            const partly = find(nodes);
+            const list = mainList(nodes);
+            if (!partly || !list) {
+                nodes = await swipe(nodes, 'down');
+                continue;
+            }
+            const [x1, y1, x2, y2] = box(list);
+            const [, top, , bottom] = box(partly);
+            const middle = Math.round((y1 + y2) / 2);
+            const to = Math.min(y2 - 20, Math.max(y1 + 20, middle - Math.round((top + bottom) / 2 - middle)));
+            requireAppFront();
+            sh(`input swipe ${Math.round((x1 + x2) / 2)} ${middle} ${Math.round((x1 + x2) / 2)} ${to} 1500`);
+            await sleep(500);
+            nodes = await screen();
+        }
+        return inView(nodes) ?? fail(`no ${description} on screen`);
+    };
     /** Scrolls the list to its first item (the Inbox's Process button is a list item). */
     const toTop = async () => {
         let nodes = await screen();
@@ -564,5 +594,5 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         return execFileSync('magick', [file, '-format', points.map(([x, y]) => `%[hex:p{${x},${y}}]`).join(' '), 'info:'], { encoding: 'utf8' })
             .trim().split(' ').map((hex) => hex.slice(0, 6).toUpperCase());
     };
-    return { adbRaw, sh, home, front, requireAppFront, launch, pid, stopApp, tapExpecting, focusAtEnd, logs, screen, waitFor, tap, openCapture, type, swipe, signature, toTop, settle, reveal, pull, colors, revealAction, swipeDone, completeUntil };
+    return { adbRaw, sh, home, front, requireAppFront, launch, pid, stopApp, tapExpecting, focusAtEnd, logs, screen, waitFor, tap, openCapture, type, swipe, signature, toTop, settle, reveal, revealNode, pull, colors, revealAction, swipeDone, completeUntil };
 }

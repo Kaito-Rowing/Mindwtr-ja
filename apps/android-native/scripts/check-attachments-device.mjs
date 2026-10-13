@@ -27,7 +27,7 @@ import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { box, button, check, connect, evidenced, fail, inboxCount, inEditor, inList, isOn, linesAfter, logStamp, mainList, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
+import { box, button, check, connect, evidenced, fail, inboxCount, inEditor, inList, isOn, linesAfter, logStamp, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
 import { cleanupOnExit } from './check-net-device.mjs';
 import { hostDevice, serveWebdav } from './sync-harness.mjs';
 
@@ -146,16 +146,7 @@ const toInbox = async () => {
     return waitFor('the Inbox', onInbox, 30_000);
 };
 /** The node [find] picks, scrolled into the screen's main list (from the top, then down). */
-const reveal = async (find, description, fromTop = true) => {
-    let nodes = fromTop ? await device.toTop() : await screen();
-    const inView = (current) => {
-        const node = find(current);
-        const list = mainList(current);
-        return node && (!list || (box(node)[1] >= box(list)[1] && box(node)[3] <= box(list)[3] - 40)) ? node : null;
-    };
-    for (let step = 0; step < 14 && !inView(nodes); step += 1) nodes = await device.swipe(nodes, 'down');
-    return inView(nodes) ?? fail(`no ${description} on screen`);
-};
+const reveal = (find, description, fromTop = true) => device.revealNode(find, description, fromTop);
 const openSync = async () => {
     const nodes = await screen();
     if (onSync(nodes)) return nodes;

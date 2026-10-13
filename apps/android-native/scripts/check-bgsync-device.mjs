@@ -32,7 +32,7 @@ import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { box, check, connect, evidenced, fail, inboxCount, inEditor, mainList, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
+import { check, connect, evidenced, fail, inboxCount, inEditor, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
 import { cleanupOnExit } from './check-net-device.mjs';
 import { hostDevice, serveWebdav, webdavDocument } from './sync-harness.mjs';
 
@@ -181,16 +181,7 @@ const toTabs = async () => {
     }
     return fail('the tabs did not come back');
 };
-const reveal = async (find, description) => {
-    let nodes = await device.toTop();
-    const inView = (current) => {
-        const node = find(current);
-        const list = mainList(current);
-        return node && (!list || (box(node)[1] >= box(list)[1] && box(node)[3] <= box(list)[3] - 40)) ? node : null;
-    };
-    for (let step = 0; step < 14 && !inView(nodes); step += 1) nodes = await device.swipe(nodes, 'down');
-    return inView(nodes) ?? fail(`no ${description} on screen`);
-};
+const reveal = (find, description) => device.revealNode(find, description);
 const openSync = async () => {
     const nodes = await screen();
     if (onSync(nodes)) return nodes;
