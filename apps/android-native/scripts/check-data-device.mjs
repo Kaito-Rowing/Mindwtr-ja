@@ -72,7 +72,11 @@ const TREE = 'content://com.android.externalstorage.documents/document/primary%3
 const DB = 'files/SQLite/mindwtr.db';
 const PROPS = ['backup_stop', 'journal_stop', 'commit_stop', 'delay_before_ms', 'export_tree', 'language', 'transfer_limit_mb'];
 const work = resolve(app, 'android/build/data-check');
-const { en } = await import(resolve(repo, 'packages/core/src/i18n/locales/en.ts'));
+const { en: localeEn } = await import(resolve(repo, 'packages/core/src/i18n/locales/en.ts'));
+// The starter.* strings live in their own generated module (getting-started-seed.ts reads them), not in en.ts.
+const { STARTER_SEED_STRINGS } = await import(resolve(repo, 'packages/core/src/i18n/starter-seed-strings.ts'));
+const en = { ...localeEn, ...STARTER_SEED_STRINGS.en };
+for (const key of ['starter.projectTitle', 'starter.sampleBuyMilk', 'starter.sampleReplySam']) if (!en[key]) throw new Error(`no English string for ${key}`);
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
 
 // ---- The test backups (RN's backup format: serializeBackupData's pretty JSON of the library) ----
