@@ -195,7 +195,8 @@ const saveWebdav = async (port) => {
     await fillTag('sync-username', USER);
     await fillTag('sync-password', PASSWORD);
     const before = commands('saveSyncBackend');
-    await tapNode((current) => tagged(current, 'sync-save'), () => commands('saveSyncBackend') > before, 'Save', 90_000);
+    // A Save runs a verification sync and then a normal sync; on the test phone's ~5,600-task library that measured ~95 s (10-13).
+    await tapNode((current) => tagged(current, 'sync-save'), () => commands('saveSyncBackend') > before, 'Save', 240_000);
 };
 /**
  * A change an earlier run left unfinished (its server stopped for good) pauses sync everywhere: take "Abandon setup" when the

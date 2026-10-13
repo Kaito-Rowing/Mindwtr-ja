@@ -220,7 +220,8 @@ const commands = (operation, outcome = 'saved') => logs().replace(/\\/g, '').spl
  * Taps the control [tag] and waits for its command's answer in the log (a toast shows for 3.2 s only, so it is evidence, not
  * the wait); [toast] seen on screen meanwhile is printed.
  */
-const runCommand = async (tag, operation, description, toast, timeoutMs = 90_000) => {
+// A Save runs a verification sync and then a normal sync; on the test phone's ~5,600-task library that measured ~95 s (10-13).
+const runCommand = async (tag, operation, description, toast, timeoutMs = 240_000) => {
     const before = commands(operation);
     let seen = false;
     await tapTag(tag, (current) => {

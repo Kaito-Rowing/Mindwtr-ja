@@ -188,7 +188,8 @@ const insecureOn = async () => {
 /** How many times [operation] answered (host-entry.ts taskResult's line; its context's quotes arrive escaped). */
 const commands = (operation, outcome = 'saved') => logs().replace(/\\/g, '').split('\n')
     .filter((line) => line.includes(`"operation":"${operation}"`) && line.includes(`"outcome":"${outcome}"`)).length;
-const runCommand = async (tag, operation, description, timeoutMs = 120_000) => {
+// A Save runs a verification sync and then a normal sync; on the test phone's ~5,600-task library that measured ~95 s (10-13).
+const runCommand = async (tag, operation, description, timeoutMs = 240_000) => {
     const before = commands(operation);
     await tapTag(tag, () => commands(operation) > before, description, timeoutMs);
 };
