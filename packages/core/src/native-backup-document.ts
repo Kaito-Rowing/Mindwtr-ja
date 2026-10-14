@@ -280,6 +280,9 @@ const completeDocument = (value: unknown): value is AppData => record(value)
  * exact text the reply would carry, so the plan's bytes and hash do not depend on the host.
  */
 export type NativeBackupPrepareSink = { recovery(text: string): void; plan(part: string): void };
+/** A sink's own failure (a host's file limit or write error): prepare answers it as the sink worded it. */
+class SinkFailure extends Error { constructor(readonly failure: unknown) { super('Prepare sink failed'); } }
+const sinkCall = (work: () => void): void => { try { work(); } catch (error) { throw new SinkFailure(error); } };
 /** The plan's text in parts: its fields, then each large document stringified on its own, never the whole plan at once. */
 function* planParts(plan: Plan): Generator<string> {
     yield `{"version":${JSON.stringify(plan.version)},"requestId":${JSON.stringify(plan.requestId)},"mode":${JSON.stringify(plan.mode)},"preparedAt":${JSON.stringify(plan.preparedAt)},"expectedCurrent":`;
@@ -405,13 +408,13 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
                 plan.maxLibraryBytes = input.admission.maxTransferBytes;
             }
             // A sink takes the recovery text before the plan is stringified, and this frame lets it go.
-            if (sink && recoveryJSON !== null) { sink.recovery(recoveryJSON); recoveryJSON = null; }
+            if (sink && recoveryJSON !== null) { const text = recoveryJSON; sinkCall(() => sink.recovery(text)); recoveryJSON = null; }
             let planJSON = '';
             let planBytes = 0;
             for (const part of planParts(plan)) {
                 planBytes += utf8Bytes(part, MAX_NATIVE_BACKUP_PLAN_BYTES - planBytes);
                 if (planBytes > MAX_NATIVE_BACKUP_PLAN_BYTES) invalid('Prepared backup plan exceeds 512 MiB');
-                if (sink) sink.plan(part); else planJSON += part;
+                if (sink) sinkCall(() => sink.plan(part)); else planJSON += part;
             }
             const diagnostics = createImportDiagnostics(rawWarnings, 'warning');
             if (diagnostics.some((diagnostic) => diagnostic.code === 'renamed-container')) {
@@ -421,6 +424,7 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
         });
     } catch (error) {
         if (error instanceof BackupInputError) throw error;
+        if (error instanceof SinkFailure) throw error.failure;
         return saveFailed();
     }
 }

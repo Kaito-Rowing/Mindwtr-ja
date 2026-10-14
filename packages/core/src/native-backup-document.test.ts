@@ -1343,6 +1343,14 @@ describe('native backup prepare and commit let their documents go (D1c)', () => 
         expect(kept.text).toBe(input().text);
     });
 
+    it('a sink\'s own failure is the answer, word for word', async () => {
+        const refusal = new Error('TOO_LARGE: The prepared plan exceeds the transfer limit');
+        await expect(prepareNativeBackupDocument((await open()).adapter, input(), { recovery: () => undefined, plan: () => { throw refusal; } }))
+            .rejects.toBe(refusal);
+        await expect(prepareNativeBackupDocument((await open()).adapter, input(), { recovery: () => { throw refusal; }, plan: () => undefined }))
+            .rejects.toBe(refusal);
+    });
+
     it('a plan source is read once, and the plan, its baseline and the stale check\'s read are gone before the reload', async () => {
         const env = await open();
         const prepared = await prepareNativeBackupDocument(env.adapter, input());
