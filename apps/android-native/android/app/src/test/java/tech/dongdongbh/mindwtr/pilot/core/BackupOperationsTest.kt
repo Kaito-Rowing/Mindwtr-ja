@@ -91,9 +91,11 @@ class BackupOperationsTest {
         assertEquals("{\"plan\":1}", ops().planText(ref, name))
     }
 
-    @Test fun aPlanPastTheLimitIsNeverRead() {
+    // D1c code review P2: a plan admitted when it was published (here under a raised limit) is replayed after the limit fell:
+    // the size cap is admission's, before the journal; a replay checks only the manifest's size and hashes.
+    @Test fun aJournaledPlanIsReadWhateverTodaysLimit() {
         val ref = ops().publishText(a, "merge", "x".repeat(100), name, recovery = null)
-        assertTrue(refused { ops(maxPlanBytes = 50).plan(ref, name) })
+        assertEquals("x".repeat(100), ops(maxPlanBytes = 50).planText(ref, name))
     }
 
     @Test fun cleanupKeepsOnlyTheJournalsOperations() {

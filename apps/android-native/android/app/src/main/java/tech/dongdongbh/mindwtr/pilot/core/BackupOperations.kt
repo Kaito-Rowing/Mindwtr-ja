@@ -42,11 +42,14 @@ class BackupOperations(
     private val root: File,
     private val snapshots: File,
     private val syncDirectory: (File) -> Unit = ::syncDirectory,
-    /** The largest plan read back (the measured transfer limit's plan share). */
+    /**
+     * The largest plan [publish] admits (the measured transfer limit's plan share). Only admission applies it: a journaled plan
+     * is replayed whatever the limit is by then (pass D1c code review).
+     */
     private val maxPlanBytes: Long = Long.MAX_VALUE,
 ) {
     class Mismatch(message: String) : IllegalStateException(message)
-    /** A plan over the limit [plan] reads back: refused before anything is written, so no journal entry is ever set aside for its size. */
+    /** A plan over the limit: refused at [publish], before its journal entry exists, so no journaled plan is ever refused for its size. */
     class PlanTooLarge : java.io.IOException("The prepared plan exceeds the transfer limit")
     /** An operation whose time budget passes [BackupBudget.MAX_MS]: refused at publish, before its journal entry exists. */
     class BudgetTooLarge : java.io.IOException("The operation would take too long")
@@ -149,7 +152,6 @@ class BackupOperations(
         val planFile = File(File(root, manifest.getString("id")), PLAN)
         val size = planFile.length()
         if (!planFile.isFile || size != manifest.getLong("planBytes")) throw Mismatch("The backup plan is missing or changed")
-        if (size > maxPlanBytes) throw Mismatch("The backup plan exceeds the transfer limit")
         val planSha256 = manifest.getString("planSha256")
         if (sha256(planFile) != planSha256) throw Mismatch("The backup plan changed")
         if (manifest.has("snapshotSha256")) {
