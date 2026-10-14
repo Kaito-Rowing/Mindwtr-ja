@@ -1359,7 +1359,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         }
         val fresh = {
             val taken = runtime.createQuickCaptureSnapshot().optJSONObject("snapshot")
-            val written = taken?.let { RecoverySnapshots.write(snapshots, it.getString("fileName"), it.getString("contents"), menu.settings.transfer.operations.protectedNames()) }
+            val written = taken?.let { RecoverySnapshots.write(snapshots, it.getString("fileName"), it.getString("contents"), menu.settings.transfer.operations::protectedNames) }
             onMain { capture?.let { keepCapture(it.copy(snapshot = written, snapshotTaken = true)) } }
             submit(written)
         }

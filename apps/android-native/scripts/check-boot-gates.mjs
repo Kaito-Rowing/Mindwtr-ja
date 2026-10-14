@@ -1035,7 +1035,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 42, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch, secret and sync crypto calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls, the background sync\'s schedule, and the device calendar call: each guarded');
+assert.equal(bridgeCallbacks.length, 45, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch, secret and sync crypto calls, logFile, the key-value calls, hostEvent, the queue\'s file calls, Settings › Data\'s three channel calls (D1c), the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls, the background sync\'s schedule, and the device calendar call: each guarded');
 // C3: the device calendar call only starts on the engine thread; HostIo's calendar thread runs it (a prompt answers later).
 assert(bridgeCallbacks.includes('bridge.setProperty("calendarCall", guarded { args -> io.calendar(args[0] as String, device::call) }) }'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));
@@ -1242,7 +1242,8 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     const backupCommit = 'backupDocumentCommit';
     assert.deepEqual(shapes[backupCommit], ['{id,sha256}', 'id'], 'the backup commit journals its reference and snapshot name');
     assert.match(host, /\n    backupDocumentCommit\(referenceJSON: string, planJSON: string, snapshotName: string\): string \{/);
-    assert.match(coreHost, /else arrayOf\(args\[0\], checkNotNull\(backups\)\.plan\(args\[0\] as String, args\[1\] as String\), args\[1\]\)/);
+    // D1c: the checked plan goes as a read handle whose close checks the same hash again.
+    assert.match(coreHost, /val \(plan, sha256\) = checkNotNull\(backups\)\.plan\(args\[0\] as String, args\[1\] as String\)\s+return arrayOf\(args\[0\], data\.openRead\(plan, expectedSha256 = sha256\), args\[1\]\)/);
     assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes.filter((name) => name !== backupCommit), 'the journal\'s write list is host-entry\'s task commands');
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
     const called = (text) => [...text.matchAll(/contract\.(\w+)\(/g)].map((m) => m[1]);
@@ -2138,7 +2139,7 @@ assert.match(model, /CaptureStore\(File\(app\.noBackupFilesDir, "capture"\)\)/);
 assert.match(captureUi, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(state\.toString\(\)\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
 // Several lines: core's snapshot is written as mobile writes it (a temporary file, a clash number, the 5 newest) before the batch.
 // An open backup operation's snapshot and the last result's Undo snapshot are never pruned by it (pass D1a).
-assert.match(model, /RecoverySnapshots\.write\(snapshots, it\.getString\("fileName"\), it\.getString\("contents"\), menu\.settings\.transfer\.operations\.protectedNames\(\)\)/);
+assert.match(model, /RecoverySnapshots\.write\(snapshots, it\.getString\("fileName"\), it\.getString\("contents"\), menu\.settings\.transfer\.operations::protectedNames\)/);
 assert.match(model, /private val snapshots = File\(app\.filesDir, "snapshots"\)/);
 assert.match(snapshotsKt, /private const val MAX_SNAPSHOTS = 5/);
 assert.match(snapshotsKt, /name = fileName\.removeSuffix\(SUFFIX\) \+ "\.\$clash\$SUFFIX"/);
@@ -2158,7 +2159,7 @@ assert.match(captureUi, /if \(landscape\) footer\(\)\s+\}\s+if \(!landscape\) fo
 assert.match(model, /storedCapture\?\.takeIf \{ saved\.get<Boolean>\("capturing"\) == true \|\| it\.pending != null \}/);
 assert.match(model, /keepCapture\(current\.copy\(requests = current\.requests \+ JSONObject\(\)\.put\("edit", edit\)\)\)\n/, 'an edit is persisted before it is sent');
 assert.match(captureUi, /\.put\("edits", /);
-assert.match(model, /val written = taken\?\.let \{ RecoverySnapshots\.write\(snapshots, it\.getString\("fileName"\), it\.getString\("contents"\), menu\.settings\.transfer\.operations\.protectedNames\(\)\) \}\s+onMain \{ capture\?\.let \{ keepCapture\(it\.copy\(snapshot = written, snapshotTaken = true\)\) \} \}\s+submit\(written\)/);
+assert.match(model, /val written = taken\?\.let \{ RecoverySnapshots\.write\(snapshots, it\.getString\("fileName"\), it\.getString\("contents"\), menu\.settings\.transfer\.operations::protectedNames\) \}\s+onMain \{ capture\?\.let \{ keepCapture\(it\.copy\(snapshot = written, snapshotTaken = true\)\) \} \}\s+submit\(written\)/);
 assert.equal(code(model).match(/snapshotFileName/g).length, 1);
 assert.match(model, /\.put\("snapshotFileName", name \?: JSONObject\.NULL\)/);
 assert.match(model, /if \(!taken\) fresh\(\) else try \{ submit\(name\) \} catch \(failure: Exception\) \{\s+if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure\s+fresh\(\)/,

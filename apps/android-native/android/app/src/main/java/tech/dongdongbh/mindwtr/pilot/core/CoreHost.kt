@@ -263,10 +263,23 @@ class CoreHost(
     private fun pendingBackupIds(): Set<String> = checkNotNull(journal).pending().filter { it.method == BackupOperations.METHOD }
         .mapNotNull { runCatching { JSONObject(it.args[0] as String).getString("id") }.getOrNull() }.toSet()
 
-    /** The arguments host-entry takes for [method]: a backup commit's journaled reference and name, with its checked plan between. */
-    private fun sendArgs(method: String, args: Array<out Any?>): Array<out Any?> =
-        if (method != BackupOperations.METHOD) args
-        else arrayOf(args[0], checkNotNull(backups).plan(args[0] as String, args[1] as String), args[1])
+    /**
+     * The arguments host-entry takes for [method]: a backup commit's journaled reference and name, with a read handle over its
+     * checked plan between (pass D1c: core reads the plan through the data channel, which checks the same hash again).
+     */
+    private fun sendArgs(method: String, args: Array<out Any?>): Array<out Any?> {
+        if (method != BackupOperations.METHOD) return args
+        val (plan, sha256) = checkNotNull(backups).plan(args[0] as String, args[1] as String)
+        return arrayOf(args[0], data.openRead(plan, expectedSha256 = sha256), args[1])
+    }
+
+    /**
+     * A sent backup commit's plan handle ends with its answer (core closes it once read, the channel drops it on a read failure;
+     * this frees one core never read, as when the commit was refused before it). A call past its deadline leaves its handle.
+     */
+    private fun dropSent(method: String, sent: Array<out Any?>) {
+        if (method == BackupOperations.METHOD) (sent.getOrNull(1) as? String)?.let(data::drop)
+    }
 
     /** [method]'s reply, or a refusal (never sent) when its backup files fail their identity check. */
     private fun answerChecked(method: String, args: Array<out Any?>, deadlineMs: Long): JSONObject {
@@ -274,7 +287,7 @@ class CoreHost(
             Log.w(TAG, "Native Android backup operation refused before send: ${mismatch.message}")
             return JSONObject().put("ok", false).put("error", "INVALID_INPUT: Backup operation files do not match")
         }
-        return answer(method, sent, deadlineMs)
+        return try { answer(method, sent, deadlineMs) } finally { dropSent(method, sent) }
     }
 
     /**
@@ -456,6 +469,10 @@ class CoreHost(
         bridge.setProperty("fileList", guarded { args -> files.list(args[0] as String) })
         bridge.setProperty("fileRead", guarded { args -> files.readText(args[0] as String) })
         bridge.setProperty("fileDelete", guarded { args -> queueStop(); files.delete(args[0] as String); null })
+        // Settings › Data's files by handle (DataChannel, pass D1c): Kotlin made every handle; core never names a path.
+        bridge.setProperty("dataRead", guarded { args -> data.read(args[0] as String) })
+        bridge.setProperty("dataWrite", guarded { args -> data.write(args[0] as String, args[1] as String); null })
+        bridge.setProperty("dataClose", guarded { args -> data.close(args[0] as String).let { JSONObject().put("bytes", it.bytes).put("sha256", it.sha256).toString() } })
         // Core's attachment file port (bundle/host-attachments.ts): each call only starts here; HostIo runs it on its files
         // thread and the pump settles it, as a fetch. The folders are named as expo-file-system names them.
         bridge.setProperty("fileCall", guarded { args -> io.file(args[0] as String, files::call) })
@@ -719,12 +736,33 @@ class CoreHost(
     /** Core's failure toast (`{ title, message }`) for a Data operation in [operation] mode that did not land with [error]. */
     fun backupFailureModel(operation: String, error: String, limitMb: Long): JSONObject = callAsync("backupDocumentFailureModel", operation, error, limitMb)
 
-    /** Settings › Data: core's preview of a picked file ([format] "json", "json-restore", or an importer's), which writes nothing. */
-    fun backupInspect(text: String, metadataJson: String, format: String): JSONObject =
-        callAsync("backupDocumentInspect", text, metadataJson, format, deadlineMs = BACKUP_DEADLINE_MS)
+    /** Settings › Data's files between this host and core, by handle (pass D1c). */
+    val data = DataChannel()
 
-    /** Core's frozen plan for [inputJson] (`{ requestId, mode, snapshotName, text, metadata }`): `{ planJSON, recoveryJSON }`; no write. */
-    fun backupPrepare(inputJson: String): JSONObject = callAsync("backupDocumentPrepare", inputJson, deadlineMs = BACKUP_DEADLINE_MS)
+    /**
+     * Settings › Data: core's preview of the staged copy [file] ([format] "json", "json-restore", or an importer's, whose bytes
+     * go as base64 [base64]), read through the data channel; it writes nothing.
+     */
+    fun backupInspect(file: File, base64: Boolean, metadataJson: String, format: String): JSONObject {
+        val handle = data.openRead(file, base64)
+        try { return callAsync("backupDocumentInspectFile", handle, metadataJson, format, deadlineMs = BACKUP_DEADLINE_MS) }
+        finally { data.drop(handle) }
+    }
+
+    /**
+     * Core's frozen plan for [inputJson] (`{ requestId, mode, snapshotName, metadata, admission }`) from [source]: core writes
+     * the recovery snapshot into [recovery] (null for a snapshot restore) and the plan into [plan], at most [maxPlanBytes], through
+     * the data channel, and answers `{ plan: { bytes, sha256 }, recovery: { bytes, sha256 } | null }`. A failure leaves neither file.
+     */
+    fun backupPrepare(source: File, base64: Boolean, inputJson: String, recovery: File?, plan: File, maxPlanBytes: Long, maxRecoveryBytes: Long): JSONObject {
+        val handles = ArrayList<String>()
+        try {
+            val sourceHandle = data.openRead(source, base64).also(handles::add)
+            val recoveryHandle = recovery?.let { data.openWrite(it, capBytes = maxRecoveryBytes) }?.also(handles::add) ?: ""
+            val planHandle = data.openWrite(plan, capBytes = maxPlanBytes).also(handles::add)
+            return callAsync("backupDocumentPrepareFile", sourceHandle, inputJson, recoveryHandle, planHandle, deadlineMs = BACKUP_DEADLINE_MS)
+        } finally { handles.forEach(data::drop) }
+    }
 
     /** The journaled commit of a published plan ([BackupOperations.publish]'s reference); core's reply. */
     fun backupCommit(referenceJson: String, snapshotName: String): JSONObject = callAsync("backupDocumentCommit", referenceJson, snapshotName)
@@ -901,6 +939,8 @@ class CoreHost(
         var deadlineAt = 0L
         /** Its deadline check, cancelled once it is answered (D9 review: no check outlives its call). */
         var deadlineCheck: ScheduledFuture<*>? = null
+        /** The arguments as sent (a backup commit's carry its plan handle, which ends with the call). */
+        var sent: Array<out Any?> = emptyArray()
     }
 
     /** Calls whose operation has not answered yet, in start order; engine thread only. */
@@ -944,6 +984,7 @@ class CoreHost(
         try {
             if (call.method == BackupOperations.METHOD) backupFinish(call.entry, call.args.toList(), result, replay = false)
             else if (call.method in WriteJournal.WRITES) settle(call.entry, result, replay = false)
+            dropSent(call.method, call.sent)
             if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
             call.done.complete(result.getJSONObject("value"))
         } catch (failure: Throwable) {
@@ -963,6 +1004,7 @@ class CoreHost(
             finish(call, JSONObject().put("ok", false).put("error", "INVALID_INPUT: Backup operation files do not match"))
             return@traced
         }
+        call.sent = sent
         call.id = call(call.method, *sent) as String
         call.deadlineAt = SystemClock.uptimeMillis() + call.deadlineMs
         val answer = call("poll", call.id) as String?

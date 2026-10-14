@@ -17,16 +17,13 @@ import androidx.lifecycle.SavedStateHandle
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.BackupOperations
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
+import tech.dongdongbh.mindwtr.pilot.core.DataChannel
 import tech.dongdongbh.mindwtr.pilot.core.RecoverySnapshots
 import tech.dongdongbh.mindwtr.pilot.core.debugProperty
-import tech.dongdongbh.mindwtr.pilot.core.syncDirectory
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
-import java.nio.ByteBuffer
-import java.nio.charset.CharacterCodingException
-import java.nio.charset.CodingErrorAction
 import java.util.Base64
 import java.util.Date
 import java.util.UUID
@@ -247,15 +244,15 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 return@whenHosted
             }
             val kind = importMode ?: if (mode == "restore") "json-restore" else "json"
-            val (text, preview) = try {
-                previewStaged(stage.file, runtime.databaseBytes(), base64 = importMode != null) { runtime.backupInspect(it, stage.metadata.toString(), kind) }
+            val preview = try {
+                previewStaged(stage.file, runtime.databaseBytes()) { runtime.backupInspect(it, importMode != null, stage.metadata.toString(), kind) }
             } catch (failure: Throwable) {
                 Log.w(CoreHost.TAG, "Backup preview failed ${failureForLog(failure)}")
                 fail(runtime, operation, failure)
                 return@whenHosted
             }
             shell.ui {
-                if (!preview.getBoolean("valid") || text == null) {
+                if (!preview.getBoolean("valid")) {
                     finish()
                     // RN's showSettingsWarning (4.2 s).
                     shell.showToast(preview.getString("errorTitle"), preview.getString("errorMessage"), "warning", durationMs = 4_200)
@@ -283,19 +280,13 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 val file = File(staging, open.getString("stage"))
                 val importMode = open.optString("importMode").takeIf { it.isNotEmpty() }
                 val mode = importMode ?: if (open.getString("mode") == "restore") "replace" else "merge"
-                run(open.getString("mode"), mode, null, open.getJSONObject("metadata"), file.length(), staged = file) {
-                    if (importMode != null) base64(file) else utf8(file)
-                }
+                run(open.getString("mode"), mode, null, open.getJSONObject("metadata"), file, base64 = importMode != null, staged = file)
             }
             "snapshot" -> {
                 val name = open.getString("name")
                 action = "snapshot:$name"
-                val file = File(snapshots, name)
-                run("snapshot:$name", "restore", name, JSONObject().put("fileName", name).put("lastModified", 0).put("appVersion", BuildConfig.VERSION_NAME), file.length()) {
-                    check(file.isFile) { "Snapshot file not found." }
-                    if (file.length() > DataTransferLimits.MAX_BACKUP_SOURCE_BYTES) throw TransferTooLarge()
-                    utf8(file)
-                }
+                run("snapshot:$name", "restore", name, JSONObject().put("fileName", name).put("lastModified", 0).put("appVersion", BuildConfig.VERSION_NAME),
+                    File(snapshots, name), base64 = false)
             }
         }
     }
@@ -315,37 +306,53 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 
     /**
      * Prepare, recovery snapshot, plan, journaled commit (design §4.2), then RN's result toast with Undo. [running] is RN's
-     * backupAction; [snapshot] the snapshot a `restore` reads (null: a new one is named now). Debug builds only:
-     * `debug.mindwtr.native.backup_stop` = `after-snapshot` or `mid-plan` ends the process at that step.
+     * backupAction; [snapshot] the snapshot a `restore` reads (null: a new one is named now); [source] the file core reads
+     * through the data channel (pass D1c), as base64 for an import ([base64]); [staged] the pick's copy, released once read.
+     * Debug builds only: `debug.mindwtr.native.backup_stop` = `after-snapshot` or `mid-plan` ends the process at that step.
      */
-    private fun run(running: String, mode: String, snapshot: String?, metadata: JSONObject, sourceBytes: Long, staged: File? = null, text: () -> String?) {
+    private fun run(running: String, mode: String, snapshot: String?, metadata: JSONObject, source: File, base64: Boolean, staged: File? = null) {
         action = running
         whenHosted { runtime ->
             val ops = operations
             val requestId = UUID.randomUUID().toString()
+            var journaled = false
             try {
-                val source = admittedText(sourceBytes, runtime.databaseBytes(), staged, text)
+                check(source.isFile) { "Snapshot file not found." }
+                if (!base64 && source.length() > DataTransferLimits.MAX_BACKUP_SOURCE_BYTES) throw TransferTooLarge()
+                val sourceBytes = source.length()
+                admitTransfer(sourceBytes, runtime.databaseBytes())
                 val name = snapshot ?: RecoverySnapshots.nextName(snapshots, Date())
-                // Core admits the source with the library's SQLite bytes again and freezes how far the library may grow while
-                // its Undo still fits (D1b §0 fix 2).
-                val prepared = runtime.backupPrepare(JSONObject().put("requestId", requestId).put("mode", mode).put("snapshotName", name)
-                    .put("text", source).put("metadata", metadata)
-                    .put("admission", JSONObject().put("sourceBytes", sourceBytes).put("maxTransferBytes", DataTransferLimits.MAX_DATA_TRANSFER_BYTES)).toString())
-                val recovery = prepared.opt("recoveryJSON") as? String
-                if (recovery != null) writeOperationSnapshot(snapshots, name, recovery)
+                // The name is protected from every prune before any of this operation's files exist.
+                ops.reserve(requestId, name)
+                val recoveryFile = if (mode == "restore") null else ops.pendingSnapshot(requestId)
+                // Core admits the source with the library's SQLite bytes again, inside its document lane, and freezes how far the
+                // library may grow while its Undo still fits (D1b §0 fix 2, D1c change 1).
+                val prepared = try {
+                    runtime.backupPrepare(source, base64, JSONObject().put("requestId", requestId).put("mode", mode).put("snapshotName", name)
+                        .put("metadata", metadata)
+                        .put("admission", JSONObject().put("sourceBytes", sourceBytes).put("maxTransferBytes", DataTransferLimits.MAX_DATA_TRANSFER_BYTES)).toString(),
+                        recoveryFile, ops.pendingPlan(requestId), DataTransferLimits.MAX_PLAN_BYTES, DataTransferLimits.MAX_BACKUP_SOURCE_BYTES)
+                } finally { staged?.let(StagedCopies::release) }
+                val recovery = prepared.optJSONObject("recovery")?.let(::closed)
+                if (recovery != null) RecoverySnapshots.publish(snapshots, recoveryFile!!, name, recovery.bytes, recovery.sha256)
                 stop("after-snapshot")
-                val reference = ops.publish(requestId, mode, prepared.getString("planJSON"), name, recovery) { stop("mid-plan") }
+                val reference = ops.publish(requestId, mode, closed(prepared.getJSONObject("plan")), name, recovery) { stop("mid-plan") }
+                journaled = true
                 val reply = runtime.backupCommit(reference, name)
                 val result = runtime.backupResultModel(reply.toString())
-                RecoverySnapshots.prune(snapshots, ops.protectedNames())
+                RecoverySnapshots.prune(snapshots, ops::protectedNames)
                 shell.ui { finish(); showResult(result, if (mode == "restore") null else name) { ops.clearResult(requestId) } }
             } catch (failure: Throwable) {
                 staged?.let(StagedCopies::release)
+                // Never journaled: its folder (reservation, plan) and any unpublished snapshot go now, not at the next start.
+                if (!journaled) runCatching { ops.discard(requestId); ops.pendingSnapshot(requestId).delete() }
                 Log.w(CoreHost.TAG, "Backup operation failed mode=$mode ${failureForLog(failure)}")
                 fail(runtime, mode, failure)
             }
         }
     }
+
+    private fun closed(json: JSONObject) = DataChannel.Closed(json.getLong("bytes"), json.getString("sha256"))
 
     /** RN's result toast (core's words and duration), with Undo; [shown] (the result record goes) runs once it shows (design §4.3). */
     private fun showResult(result: JSONObject, undo: String?, shown: () -> Unit) {
@@ -574,18 +581,6 @@ internal fun admitTransfer(sourceBytes: Long, libraryBytes: Long) {
     if (sourceBytes + libraryBytes > DataTransferLimits.MAX_DATA_TRANSFER_BYTES) throw TransferTooLarge()
 }
 
-/**
- * A staged copy's text once admitted with the library ([admitTransfer] first: an oversized copy is never decoded): strict UTF-8
- * (null: not UTF-8), or an import's bytes as base64 ([base64]).
- */
-internal fun readStaged(file: File, libraryBytes: Long, base64: Boolean = false): String? {
-    admitTransfer(file.length(), libraryBytes)
-    return if (base64) base64(file) else utf8(file)
-}
-
-/** An import's staged bytes for core's binary transport (native-backup-document.ts decodes and bounds them). */
-internal fun base64(file: File): String = Base64.getEncoder().encodeToString(file.readBytes())
-
 /** The staged copy's own bound: the transfer limit, and core's source limit for a JSON backup. */
 internal fun stageLimit(): Long = minOf(DataTransferLimits.MAX_DATA_TRANSFER_BYTES, DataTransferLimits.MAX_BACKUP_SOURCE_BYTES)
 
@@ -634,33 +629,20 @@ internal fun takeLeftover(ops: BackupOperations, snapshots: File, resultModel: (
     present(Leftover.Result(model, record.optString("undoSnapshot").takeIf { it.isNotEmpty() && File(snapshots, it).isFile }), shown)
 }
 
-/** A backup operation's recovery snapshot, before its plan and its journaled commit: never pruned there, so an operation that never commits costs no older recovery point. */
-internal fun writeOperationSnapshot(dir: File, name: String, recovery: String, syncDirectory: (File) -> Unit = ::syncDirectory): String =
-    RecoverySnapshots.write(dir, name, recovery, exact = true, prune = false, syncDirectory = syncDirectory)
-
 /**
- * A staged pick to its question: admitted with the library first (an oversized copy is never decoded), strict UTF-8, then core's
- * preview ([inspect]). The copy stays only for a valid preview; a refusal, an invalid file or a failure releases it.
+ * A staged pick to its question: admitted with the library first (an oversized copy is never read), then core's preview
+ * ([inspect], which reads the copy through the data channel). The copy stays only for a valid preview; a refusal, an invalid
+ * file or a failure releases it.
  */
-internal fun previewStaged(file: File, libraryBytes: Long, base64: Boolean = false, inspect: (String) -> JSONObject): Pair<String?, JSONObject> {
+internal fun previewStaged(file: File, libraryBytes: Long, inspect: (File) -> JSONObject): JSONObject {
     try {
-        val text = readStaged(file, libraryBytes, base64)
-        val preview = inspect(text ?: "")
-        if (!preview.optBoolean("valid") || text == null) StagedCopies.release(file)
-        return text to preview
+        admitTransfer(file.length(), libraryBytes)
+        val preview = inspect(file)
+        if (!preview.optBoolean("valid")) StagedCopies.release(file)
+        return preview
     } catch (failure: Throwable) {
         StagedCopies.release(file)
         throw failure
-    }
-}
-
-/** An operation's source text: admitted with the library before [text] reads it; the staged copy goes once read or refused. */
-internal fun admittedText(sourceBytes: Long, libraryBytes: Long, staged: File?, text: () -> String?): String {
-    try {
-        admitTransfer(sourceBytes, libraryBytes)
-        return text() ?: throw IllegalStateException("INVALID_INPUT: Backup file is not valid UTF-8")
-    } finally {
-        staged?.let(StagedCopies::release)
     }
 }
 
@@ -682,9 +664,3 @@ internal fun copyBounded(input: InputStream, file: File, limit: Long) {
         out.fd.sync()
     }
 }
-
-/** [file]'s text as strict UTF-8 (iOS refuses invalid bytes too); null when it is not. */
-internal fun utf8(file: File): String? = try {
-    Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
-        .decode(ByteBuffer.wrap(file.readBytes())).toString()
-} catch (_: CharacterCodingException) { null }

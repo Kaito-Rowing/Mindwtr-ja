@@ -180,6 +180,13 @@ type NativeBridge = {
     widgetAppState?(): string;
     /** Android only (BackgroundSync.kt): the background sync job kept scheduled (true) or cancelled (false), as core decides. */
     bgSyncSchedule?(on: boolean): string | null;
+    /**
+     * Android only (DataChannel.kt, pass D1c): Settings › Data's files by handle, about 1 MiB per call. A read answers "D" and a
+     * chunk, or "E" at the end; a close answers `{ bytes, sha256 }`. A failure is one of DataChannel's fixed codes.
+     */
+    dataRead?(handle: string): string;
+    dataWrite?(handle: string, chunk: string): string | null;
+    dataClose?(handle: string): string;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown; fetch: typeof fetch };
@@ -196,6 +203,36 @@ const checked = <T,>(value: T): T => {
     if (typeof value === 'string' && value.startsWith(NATIVE_ERROR)) throw new Error(value.slice(NATIVE_ERROR.length));
     return value;
 };
+
+// Settings › Data's file channel (Android, pass D1c design §3.1). A data reply is tagged "D", so a chunk that starts with the
+// error marker is still data; the pieces are joined once.
+const channelRead = (handle: string): string => {
+    const bridge = native();
+    const parts: string[] = [];
+    for (;;) {
+        const reply = checked(bridge.dataRead!(handle));
+        if (reply === 'E') return parts.join('');
+        if (reply[0] !== 'D') throw new Error('DATA_IO');
+        parts.push(reply.slice(1));
+    }
+};
+const channelClose = (handle: string): { bytes: number; sha256: string } => JSON.parse(checked(native().dataClose!(handle))) as { bytes: number; sha256: string };
+/** UTF-16 units per write: at most 1.5 MiB of UTF-8. */
+const CHANNEL_UNITS = 512 * 1024;
+/** [text] in pieces that never split a surrogate pair, so each piece crosses the bridge as whole characters. */
+const channelWrite = (handle: string, text: string): void => {
+    const bridge = native();
+    for (let start = 0; start < text.length;) {
+        let end = Math.min(text.length, start + CHANNEL_UNITS);
+        const last = text.charCodeAt(end - 1);
+        if (end < text.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+        checked(bridge.dataWrite!(handle, text.slice(start, end)));
+        start = end;
+    }
+};
+/** A channel failure's code, or null for any other error. */
+const channelCode = (error: unknown): string | null =>
+    error instanceof Error && /^DATA_[A-Z0-9]+$/u.test(error.message) ? error.message : null;
 
 /**
  * Boot steps as trace sections for startup profiling (Perfetto): each call closes the step before it and opens `name`
@@ -1371,6 +1408,16 @@ const backupAdapter = (newWork = false) => {
 const backupJson = (json: string): unknown => {
     try { return JSON.parse(json) as unknown; }
     catch { throw new Error('INVALID_INPUT: Invalid backup document input'); }
+};
+/** RN's preview of a picked file whose text [read] gives; it writes nothing. */
+const inspectBackup = (read: () => string, metadataJSON: string, format: string) => {
+    backupAdapter(true);
+    const pending = getPersistenceStatus();
+    if (pending.queued || pending.inFlight || pending.immediate || pending.retrying || pending.failed) {
+        throw new Error('NOT_READY: Backup inspection is unavailable while saving is pending');
+    }
+    if (format !== 'json' && format !== 'json-restore' && format !== 'csv' && format !== 'todoist' && format !== 'ticktick' && format !== 'dgt' && format !== 'omnifocus') throw new Error('INVALID_INPUT: Invalid backup document input');
+    return inspectNativeBackupDocument(read(), backupJson(metadataJSON) as Parameters<typeof inspectNativeBackupDocument>[1], backupTranslate, format);
 };
 const backupTranslate = (key: string, values?: Record<string, number | string>): string => {
     const template = unwrap(contract.getStrings({ keys: [key] })).strings[key];
@@ -4154,21 +4201,95 @@ globalThis.MindwtrHost = {
         });
     },
     backupDocumentInspect(text: string, metadataJSON: string, format = 'json'): string {
-        return submit(async () => {
-            backupAdapter(true);
-            const pending = getPersistenceStatus();
-            if (pending.queued || pending.inFlight || pending.immediate || pending.retrying || pending.failed) {
-                throw new Error('NOT_READY: Backup inspection is unavailable while saving is pending');
+        return submit(async () => inspectBackup(() => text, metadataJSON, format));
+    },
+    /**
+     * Android (pass D1c): the inspection of the staged copy behind read [handle]; a file that is not strict UTF-8 is RN's
+     * invalid file, as before.
+     */
+    backupDocumentInspectFile(handle: string, metadataJSON: string, format = 'json'): string {
+        return submit(async () => inspectBackup(() => {
+            try {
+                const text = channelRead(handle);
+                channelClose(handle);
+                return text;
+            } catch (error) {
+                if (channelCode(error) === 'DATA_UTF8') return '';
+                if (channelCode(error)) throw new Error('SAVE_FAILED: The selected file could not be read');
+                throw error;
             }
-            if (format !== 'json' && format !== 'json-restore' && format !== 'csv' && format !== 'todoist' && format !== 'ticktick' && format !== 'dgt' && format !== 'omnifocus') throw new Error('INVALID_INPUT: Invalid backup document input');
-            return inspectNativeBackupDocument(text, backupJson(metadataJSON) as Parameters<typeof inspectNativeBackupDocument>[1], backupTranslate, format);
+        }, metadataJSON, format));
+    },
+    /**
+     * Android (pass D1c): prepare from the staged copy behind [sourceHandle], writing the recovery snapshot through
+     * [recoveryHandle] ("" for a snapshot restore) and the plan through [planHandle]; answers each file's `{ bytes, sha256 }`.
+     * The admitted source size is the channel's count of the bytes core parsed.
+     */
+    backupDocumentPrepareFile(sourceHandle: string, inputJSON: string, recoveryHandle: string, planHandle: string): string {
+        return submit(async () => {
+            const input = backupJson(inputJSON) as Parameters<typeof prepareNativeBackupDocument>[1];
+            let text: string;
+            let sourceBytes: number;
+            try {
+                text = channelRead(sourceHandle);
+                sourceBytes = channelClose(sourceHandle).bytes;
+            } catch (error) {
+                if (channelCode(error) === 'DATA_UTF8') throw new Error('INVALID_INPUT: Backup file is not valid UTF-8');
+                if (channelCode(error)) throw new Error('SAVE_FAILED: The selected file could not be read');
+                throw error;
+            }
+            if (input && typeof input === 'object' && input.admission && input.admission.sourceBytes !== sourceBytes) {
+                throw new Error('INVALID_INPUT: Invalid backup document input');
+            }
+            const written = (write: () => void) => {
+                try { write(); } catch (error) {
+                    if (channelCode(error) === 'DATA_CAP') throw new Error('TOO_LARGE: The prepared backup exceeds the transfer limit');
+                    if (channelCode(error)) throw new Error('SAVE_FAILED: The prepared backup could not be written');
+                    throw error;
+                }
+            };
+            // Core takes the text from here (its sink form): nothing else keeps it.
+            const owned = { ...input, text };
+            text = '';
+            const result = await prepareNativeBackupDocument(backupAdapter(true), owned, {
+                recovery: (recovery) => written(() => {
+                    if (!recoveryHandle) throw new Error('INVALID_INPUT: Invalid backup document input');
+                    channelWrite(recoveryHandle, recovery);
+                }),
+                plan: (part) => written(() => channelWrite(planHandle, part)),
+            });
+            let plan: { bytes: number; sha256: string } | undefined;
+            let recovery: { bytes: number; sha256: string } | null = null;
+            written(() => {
+                plan = channelClose(planHandle);
+                if (result.recovery) recovery = channelClose(recoveryHandle);
+            });
+            return { plan: plan!, recovery };
         });
     },
     backupDocumentPrepare(inputJSON: string): string {
         return submit(async () => prepareNativeBackupDocument(backupAdapter(true), backupJson(inputJSON) as Parameters<typeof prepareNativeBackupDocument>[1]));
     },
+    /**
+     * [planJSON] is the plan's text from iOS, and on Android (pass D1c) a read handle over the checked plan file: core takes its
+     * text once. A plan that cannot be read keeps the journal entry (SAVE_FAILED: a later start retries, or answers from the
+     * receipt); one whose bytes changed after the check is refused like any mismatched operation file.
+     */
     backupDocumentCommit(referenceJSON: string, planJSON: string, snapshotName: string): string {
-        return submit(async () => commitNativeBackupDocument(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof commitNativeBackupDocument>[1], planJSON, snapshotName));
+        return submit(async () => {
+            const source = globalThis.__mindwtrHostPlatform === 'android' ? { take: () => {
+                try {
+                    const text = channelRead(planJSON);
+                    channelClose(planJSON);
+                    return text;
+                } catch (error) {
+                    if (channelCode(error) === 'DATA_MISMATCH') throw new Error('INVALID_INPUT: Backup operation files do not match');
+                    if (channelCode(error)) throw new Error('SAVE_FAILED: Backup plan could not be read');
+                    throw error;
+                }
+            } } : planJSON;
+            return commitNativeBackupDocument(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof commitNativeBackupDocument>[1], source, snapshotName);
+        });
     },
     backupDocumentOutcome(referenceJSON: string, planJSON: string, snapshotName: string): string {
         return submit(async () => readNativeBackupDocumentOutcome(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof readNativeBackupDocumentOutcome>[1], planJSON, snapshotName));

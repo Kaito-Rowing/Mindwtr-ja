@@ -9,7 +9,8 @@ import java.security.MessageDigest
  * A restore, merge or import's files between core's prepare and its journaled commit (design D1 §4), under the app's no-backup
  * `backup-operations` folder:
  *
- * - `<uuid>/plan.json`: core's frozen plan, then `<uuid>/manifest.json`: the uuid, the operation's mode, the plan's SHA-256 and
+ * - `<uuid>/reservation.json` (pass D1c): the snapshot name, written first, so no prune removes it before the manifest names it.
+ * - `<uuid>/plan.json`: core's frozen plan (written by core through the data channel into `plan.json.pending`), then `<uuid>/manifest.json`: the uuid, the operation's mode, the plan's SHA-256 and
  *   size, and the recovery snapshot's name (with its SHA-256 and size when this operation wrote it). Each is written to a
  *   pending file, synced and renamed, then the folder is synced. The journal entry (`backupDocumentCommit`) holds only the
  *   reference: the uuid and the manifest's SHA-256 and size.
@@ -37,6 +38,9 @@ class BackupOperations(
         private const val MANIFEST = "manifest.json"
         private const val RESULT = "result.json"
         private const val PENDING = ".pending"
+        private const val RESERVATION = "reservation.json"
+        private const val RECOVERY_PENDING = ".recovery.pending"
+        private val RECOVERY_PENDING_NAME = Regex("^\\.([0-9a-f-]{36})\\.recovery\\.pending$")
         private const val MAX_MANIFEST_BYTES = 8192
         private const val MAX_RESULT_BYTES = 128 * 1024
         private val UUID = Regex("^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
@@ -47,28 +51,62 @@ class BackupOperations(
         @Volatile internal var clearPause: () -> Unit = {}
 
         fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+        /** [file]'s SHA-256, read in 64 KiB pieces. */
+        fun sha256(file: File): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) { val read = input.read(buffer); if (read < 0) break; digest.update(buffer, 0, read) }
+            }
+            return DataChannel.hex(digest.digest())
+        }
+    }
+
+    /** Where prepare writes operation [id]'s plan through the data channel (pass D1c); [publish] renames it. */
+    fun pendingPlan(id: String): File {
+        require(UUID.matches(id)) { "Invalid backup operation id" }
+        return File(File(root, id).apply { mkdirs() }, PLAN + PENDING)
+    }
+
+    /** Where prepare writes operation [id]'s recovery snapshot: the snapshots folder, under a name RN's pattern never matches. */
+    fun pendingSnapshot(id: String): File {
+        require(UUID.matches(id)) { "Invalid backup operation id" }
+        return File(snapshots.apply { mkdirs() }, ".$id$RECOVERY_PENDING")
     }
 
     /**
-     * The plan and manifest for operation [id] in [mode], on disk and synced; the journal's reference JSON. [snapshotName] is the
-     * snapshot the plan's reply names; [recovery] is the text this operation wrote there (null: it wrote none). The file must
-     * still hold exactly that text, or nothing is published ([Mismatch]); its hash is then checked before every send.
+     * Before anything of operation [id] is written: the snapshot name it will publish or restore, synced, so every prune spares
+     * it from now on ([protectedNames]) until the operation's folder goes.
      */
-    fun publish(id: String, mode: String, planJson: String, snapshotName: String, recovery: String?, beforeManifest: () -> Unit = {}): String {
+    fun reserve(id: String, snapshotName: String) {
         require(UUID.matches(id)) { "Invalid backup operation id" }
-        val plan = planJson.toByteArray()
+        val dir = File(root, id).apply { mkdirs() }
+        writeSynced(dir, RESERVATION, JSONObject().put("snapshotName", snapshotName).toString().toByteArray())
+        syncDirectory(root)
+    }
+
+    /**
+     * The plan and manifest for operation [id] in [mode], on disk and synced; the journal's reference JSON. Core wrote the plan
+     * through the data channel into [pendingPlan] ([plan]: the bytes and hash the channel counted); [snapshotName] is the
+     * snapshot the plan's reply names, and [recovery] the bytes and hash of the one this operation published there (null: it
+     * wrote none). A file on disk that differs from what the channel wrote publishes nothing ([Mismatch]).
+     */
+    fun publish(id: String, mode: String, plan: DataChannel.Closed, snapshotName: String, recovery: DataChannel.Closed?, beforeManifest: () -> Unit = {}): String {
+        val pending = pendingPlan(id)
         // An import can grow far past its file (100 000 short rows): a plan [plan] would refuse at its identity check is refused here.
-        if (plan.size > maxPlanBytes) throw PlanTooLarge()
-        val dir = File(root, id)
-        dir.mkdirs()
-        writeSynced(dir, PLAN, plan)
+        if (plan.bytes > maxPlanBytes) { pending.delete(); throw PlanTooLarge() }
+        if (!pending.isFile || pending.length() != plan.bytes || sha256(pending) != plan.sha256) throw Mismatch("The prepared plan changed")
+        val dir = pending.parentFile!!
+        check(pending.renameTo(File(dir, PLAN))) { "Cannot save $PLAN" }
+        syncDirectory(dir)
         beforeManifest()
         val manifest = JSONObject().put("version", 1).put("id", id).put("mode", mode)
-            .put("planSha256", sha256(plan)).put("planBytes", plan.size.toLong()).put("snapshotName", snapshotName)
+            .put("planSha256", plan.sha256).put("planBytes", plan.bytes).put("snapshotName", snapshotName)
         if (recovery != null) {
-            val snapshot = File(snapshots, snapshotName).takeIf { it.isFile }?.readBytes()
-            if (snapshot == null || !snapshot.contentEquals(recovery.toByteArray())) throw Mismatch("The recovery snapshot is missing or changed")
-            manifest.put("snapshotSha256", sha256(snapshot)).put("snapshotBytes", snapshot.size.toLong())
+            val snapshot = File(snapshots, snapshotName)
+            if (!snapshot.isFile || snapshot.length() != recovery.bytes || sha256(snapshot) != recovery.sha256) throw Mismatch("The recovery snapshot is missing or changed")
+            manifest.put("snapshotSha256", recovery.sha256).put("snapshotBytes", recovery.bytes)
         }
         val manifestBytes = manifest.toString().toByteArray()
         check(manifestBytes.size <= MAX_MANIFEST_BYTES) { "Backup manifest too large" }
@@ -77,23 +115,26 @@ class BackupOperations(
         return JSONObject().put("id", id).put("sha256", sha256(manifestBytes)).put("byteCount", manifestBytes.size).toString()
     }
 
-    /** Operation [referenceJson]'s plan text, after every identity check; throws [Mismatch] otherwise. */
-    fun plan(referenceJson: String, snapshotName: String): String {
+    /**
+     * Operation [referenceJson]'s plan file and its SHA-256, after every identity check (each file hashed as it streams, never
+     * read whole); throws [Mismatch] otherwise. The data channel's read handle checks the same hash again as core reads it.
+     */
+    fun plan(referenceJson: String, snapshotName: String): Pair<File, String> {
         val manifest = manifest(referenceJson)
         if (manifest.getString("snapshotName") != snapshotName) throw Mismatch("The journal names another snapshot")
         val planFile = File(File(root, manifest.getString("id")), PLAN)
         val size = planFile.length()
         if (!planFile.isFile || size != manifest.getLong("planBytes")) throw Mismatch("The backup plan is missing or changed")
         if (size > maxPlanBytes) throw Mismatch("The backup plan exceeds the transfer limit")
-        val plan = planFile.readBytes()
-        if (sha256(plan) != manifest.getString("planSha256")) throw Mismatch("The backup plan changed")
+        val planSha256 = manifest.getString("planSha256")
+        if (sha256(planFile) != planSha256) throw Mismatch("The backup plan changed")
         if (manifest.has("snapshotSha256")) {
             val snapshot = File(snapshots, snapshotName)
-            if (!snapshot.isFile || snapshot.length() != manifest.getLong("snapshotBytes") || sha256(snapshot.readBytes()) != manifest.getString("snapshotSha256")) {
+            if (!snapshot.isFile || snapshot.length() != manifest.getLong("snapshotBytes") || sha256(snapshot) != manifest.getString("snapshotSha256")) {
                 throw Mismatch("The recovery snapshot is missing or changed")
             }
         }
-        return String(plan, Charsets.UTF_8)
+        return planFile to planSha256
     }
 
     /** The operation's mode from its manifest (for the result record when its plan cannot be sent); null when unreadable. */
@@ -126,13 +167,18 @@ class BackupOperations(
     fun cleanup(retaining: Set<String>) {
         root.listFiles().orEmpty().filter { it.isDirectory && it.name !in retaining }.forEach { discard(it.name) }
         root.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(PENDING) }.forEach { it.delete() }
+        // A recovery snapshot core was still writing, or that never published, when the process died.
+        snapshots.listFiles().orEmpty().filter { file -> RECOVERY_PENDING_NAME.matchEntire(file.name)?.groupValues?.get(1)?.let { it !in retaining } == true }
+            .forEach { it.delete() }
     }
 
-    /** The snapshot names no prune may remove: each open operation's, and the result record's Undo snapshot. */
+    /** The snapshot names no prune may remove: each open operation's (reserved or in its manifest), and the result record's Undo snapshot. */
     fun protectedNames(): Set<String> {
         val names = HashSet<String>()
         root.listFiles().orEmpty().filter { it.isDirectory }.forEach { dir ->
-            runCatching { JSONObject(File(dir, MANIFEST).readText()).getString("snapshotName") }.getOrNull()?.let(names::add)
+            for (file in listOf(MANIFEST, RESERVATION)) {
+                runCatching { JSONObject(File(dir, file).readText()).getString("snapshotName") }.getOrNull()?.let(names::add)
+            }
         }
         result()?.optString("undoSnapshot")?.takeIf { it.isNotEmpty() }?.let(names::add)
         return names
