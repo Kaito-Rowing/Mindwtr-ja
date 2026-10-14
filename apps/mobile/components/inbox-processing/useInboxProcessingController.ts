@@ -43,6 +43,7 @@ import {
   resolveProcessInboxPlan,
   resolveProcessInboxProjectSearchSubmit,
   resolveProcessInboxStep,
+  restoreTaskSnapshot,
   safeFormatDate,
   safeParseDate,
   selectProcessInboxProject,
@@ -52,6 +53,7 @@ import {
   tFallback,
   toggleProcessInboxToken,
   undoTaskCompletion,
+  updateTaskFromLatest,
   resolveAutoTextDirection,
   useTaskStore,
   type AIProviderId,
@@ -679,6 +681,18 @@ export function useInboxProcessingController({
       if (projectConversionInFlightRef.current) return false;
       projectConversionInFlightRef.current = true;
     }
+    // The title's /link: commands append to the task's attachments, a list core built from the task on screen.
+    // Rebuild it on the row as stored when the write is admitted, so an attachment a sync save brought stays.
+    const knownAttachmentIds = new Set((currentTask.attachments ?? []).map((attachment) => attachment.id));
+    const updateTaskKeepingAttachments: typeof updateTask = (id, updates) => (updates.attachments
+      ? updateTaskFromLatest(id, (latest) => ({
+        ...updates,
+        attachments: [
+          ...(latest.attachments ?? []),
+          ...updates.attachments!.filter((attachment) => !knownAttachmentIds.has(attachment.id)),
+        ],
+      }))
+      : updateTask(id, updates));
     try {
       const result = await commitProcessInboxDecision(kind, {
         task: currentTask,
@@ -689,7 +703,7 @@ export function useInboxProcessingController({
         parseTitle: parseProcessingTitle,
         session: processingSession,
         candidates: inboxTasks,
-        actions: { updateTask, deleteTask, addTask, addProject },
+        actions: { updateTask: updateTaskKeepingAttachments, deleteTask, addTask, addProject },
         t,
       });
       if (!result.ok) {
@@ -764,16 +778,18 @@ export function useInboxProcessingController({
         );
         return;
       }
+      // Refused (STALE_REVISION) when another device changed the task since; the toast says so.
       const result = receipt.kind === 'discarded'
         ? await restoreTask(receipt.taskId)
-        : await updateTask(receipt.taskId, receipt.restoreUpdates);
+        : await restoreTaskSnapshot(receipt.taskId, receipt.restoreUpdates);
       if (isActionFailure(result)) {
         showProcessingError(getActionFailureMessage(result));
       }
     } catch (error) {
+      // undoTaskCompletion throws its STALE_REVISION refusal.
       showProcessingError(getUnknownErrorMessage(error));
     }
-  }, [restoreTask, showProcessingError, updateTask]);
+  }, [restoreTask, showProcessingError]);
 
   const handleSendDelegateRequest = useCallback(async () => {
     if (!currentTask) return;
