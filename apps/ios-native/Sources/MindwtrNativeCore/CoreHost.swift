@@ -2891,6 +2891,7 @@ private final class Engine: @unchecked Sendable {
     private var boardReadLogged = false
     private var boardActionLogged = false
     private var boardMoveLogged = false
+    private var boardReactivateLogged = false
     #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
     private var boardMoveFixtureArmed = false
     private var boardMoveFixtureOriginal: String?
@@ -14179,7 +14180,14 @@ private final class Engine: @unchecked Sendable {
         }
         if command.method == "boardCommit" {
             _ = try invoke("boardValidate", arguments: journalArguments(command))
-            if case .success(let value) = terminal { try validateBoardAcknowledgment(command, value: value) }
+            if case .success(let value) = terminal {
+                if isBoardReactivation(command) {
+                    let probed = try invoke("boardMoveOutcome", arguments: journalArguments(command))
+                    guard probed != "null" else { throw HostFailure("SAVE_FAILED: Board reactivation has no exact saved effect") }
+                    try validateBoardAcknowledgment(command, value: probed)
+                }
+                try validateBoardAcknowledgment(command, value: value)
+            }
         }
         if command.method == "taskDeleteCommit" {
             _ = try invoke("taskDeleteValidate", arguments: journalArguments(command))
@@ -14811,7 +14819,14 @@ private final class Engine: @unchecked Sendable {
            let json = args.first, let envelope = try? NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] {
             isBoardMove = ((envelope["request"] as? [String: Any])?["action"] as? [String: Any])?["type"] as? String == "moveCard"
         }
-        if isBoardMove, case .success = terminal, !boardMoveLogged {
+        if isBoardMove, isBoardReactivation(command), case .success = terminal, !boardReactivateLogged {
+            boardReactivateLogged = true
+#if DEBUG
+            faults?.commandDiagnostic?("boardReactivate")
+#endif
+            _ = try? invoke("iosBoardReactivateAcknowledged", arguments: [])
+        }
+        if isBoardMove, !isBoardReactivation(command), case .success = terminal, !boardMoveLogged {
             #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
             if boardMoveFixtureArmed, command.argumentsJSON == boardMoveFixtureOriginal {
                 faults?.beforeSQL = nil
@@ -15271,6 +15286,15 @@ private final class Engine: @unchecked Sendable {
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionOrderWrite", "backupDocumentCommit", "captureLinesCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+    }
+
+    private func isBoardReactivation(_ command: PendingCommand) -> Bool {
+        guard command.method == "boardCommit", let args = try? journalArguments(command),
+              let encoded = args.first as? String,
+              let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any], let action = request["action"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any], let before = prepared["before"] as? [String: Any] else { return false }
+        return action["type"] as? String == "moveCard" && before["status"] as? String == "done"
     }
 
     private func validateBoardAcknowledgment(_ command: PendingCommand, value: String) throws {

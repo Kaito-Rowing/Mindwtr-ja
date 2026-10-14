@@ -5857,6 +5857,51 @@ final class FoundationUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["persistence-error"].exists)
     }
 
+    func testBoardDoneReactivateAndColdRead() throws {
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_BOARD_REACTIVATE_UI_NORMAL_LIBRARY"] else {
+            throw XCTSkip("An externally staged isolated Board Reactivate library is required")
+        }
+        guard let id = UUID(uuidString: library), id.uuidString.lowercased() == library else {
+            XCTFail("The Board Reactivate library must be a canonical lowercase UUID")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US"]
+        app.launch(); defer { app.terminate() }
+        boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardSelectAllAreas(app); boardOpen(app); task730AssertStatus(app, "done")
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        XCTAssertFalse(app.staticTexts["task-completion-notice"].exists)
+        let card = app.buttons["board-task-n-draft"]
+        revealPagedElement(app, card, in: app.scrollViews["board-scroll"]); boardEnabled(card)
+        XCTAssertGreaterThanOrEqual(card.frame.height, 44 - 0.001)
+        card.press(forDuration: 1)
+        XCTAssertFalse(app.collectionViews.buttons.matching(NSPredicate(format: "label == %@", "Done")).firstMatch.exists)
+        let menus = app.collectionViews.buttons.matching(NSPredicate(format: "label == %@", "Move to…"))
+        let menu = menus.firstMatch
+        boardEnabled(menu); XCTAssertEqual(menus.count, 1)
+        XCTAssertTrue(app.frame.contains(menu.frame)); menu.tap()
+        for status in ["inbox", "next", "waiting", "someday"] {
+            let choice = app.buttons["board-move-" + status]
+            boardEnabled(choice); XCTAssertFalse(choice.label.isEmpty)
+            XCTAssertTrue(choice.isHittable); XCTAssertTrue(app.frame.contains(choice.frame))
+        }
+        for status in ["done", "reference", "archived"] {
+            XCTAssertFalse(app.buttons["board-move-" + status].exists)
+        }
+        boardTap(app, "board-move-next"); task730AssertStatus(app, "next")
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        XCTAssertFalse(app.staticTexts["task-completion-notice"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); task730AssertStatus(app, "next")
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        XCTAssertFalse(app.staticTexts["task-completion-notice"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+    }
+
     func testBoardMoveToNonterminalDestinationsAndColdRead() throws {
         try task730MoveRoundTrip("NORMAL")
     }

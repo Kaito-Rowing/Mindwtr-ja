@@ -44,11 +44,11 @@ import {
 import { canCompleteNativeBoardTask } from './native-host-contract-task-checklist';
 import { matchesPickerQuery } from './native-host-contract-menu-views';
 import { createProjectOrderReserver, ensureDeviceId, matchesDuplicateSource, nextRevision } from './store-helpers';
-import { boardMoveEffect, boardMoveScope, buildDuplicateTask, sanitizeRestoredTaskContainerReferences, taskEditValuesEqual } from './store-tasks';
+import { boardMoveEffect, boardMoveScope, boardReactivationContainerAllowed, samePreparedTask, buildDuplicateTask, sanitizeRestoredTaskContainerReferences, taskEditValuesEqual } from './store-tasks';
 import { TASK_SYNC_FIELD_SCHEMA } from './task-sync-schema';
 import { boardOrderForDuplicate, projectFocusDateValues } from './task-utils';
 import { validFrozenFocusDate } from './native-host-contract-task-focus';
-import type { PreparedBoardMove } from './store-types';
+import type { PreparedAreaAuthority, PreparedBoardMove, PreparedNativeSaveBoundary, TaskStore } from './store-types';
 import { PROJECT_SYNC_FIELD_SCHEMA } from './project-sync-schema';
 import { SECTION_SYNC_FIELD_SCHEMA } from './section-sync-schema';
 import { AREA_SYNC_FIELD_SCHEMA } from './area-sync-schema';
@@ -60,13 +60,14 @@ import {
     type NativeHostResult,
     type NativeTaskRow,
 } from './native-host-contract';
-import { createNativeRequestReceipts, isRevision, refuseStale, runStoreWrite, settleWrite, taskRevisionOf, type NativeUnsavedWrite } from './native-request-receipts';
+import { createNativeRequestReceipts, isRevision, refuseStale, runStoreWrite, settleWrite, taskRevisionOf, NativeReceiptSqliteAdapter, isNativeRequestReceiptDurable, type NativeUnsavedWrite } from './native-request-receipts';
 import { isProjectedRecurringTaskId } from './recurrence';
 import { isStatusListTaskReadOnly } from './menu-views-model';
 import { resolveFeatureFlags } from './resolve-feature-flags';
-import { useTaskStore } from './store';
+import { getPersistenceStatus, getStorageAdapter, useTaskStore } from './store';
+import { createAreaSaveGuard, readAreaDurableData } from './native-host-contract-area-durable';
 import { validRawTask } from './native-host-contract-task-save';
-import type { Area, Project, Section, Task } from './types';
+import type { AppData, Area, Project, Section, Task } from './types';
 import { resolveI18nText } from './i18n';
 import { logInfo } from './logger';
 
@@ -330,8 +331,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
     let cache: { key: string; value: ReturnType<typeof buildBoard> } | null = null;
 
     /** The Board for a filter state, as mobile derives it from the store. */
-    function buildBoard(input: BoardFilterState, now: Date) {
-        const state = useTaskStore.getState();
+    function buildBoard(input: BoardFilterState, now: Date, state = useTaskStore.getState()) {
         const t = deps.t();
         const areas = sortAreasForDisplay(state.areas);
         const areaById = new Map(areas.map((area) => [area.id, area]));
@@ -418,7 +418,9 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         const state = useTaskStore.getState();
         const inferred = task.projectId ?? state._sectionsById.get(task.sectionId ?? '')?.projectId;
         const parent = inferred ? state._projectsById.get(inferred) : undefined;
-        return ['inbox', 'next', 'waiting', 'someday'].includes(task.status) && !task.deletedAt && !task.purgedAt
+        return ['inbox', 'next', 'waiting', 'someday', 'done'].includes(task.status) && !task.deletedAt && !task.purgedAt
+            && (task.status !== 'done' || state._allTasks.filter(row => row.id === task.id).length === 1
+                && boardReactivationContainerAllowed(task, state._allProjects, state._allSections))
             && !isProjectedRecurringTaskId(task.id) && typeof state.settings.deviceId === 'string' && Boolean(state.settings.deviceId.trim())
             && !isStatusListTaskReadOnly({ ...task, projectId: inferred }, parent ? [parent] : []);
     };
@@ -897,6 +899,133 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         })
     );
 
+    // Done-only sibling to the existing history-row save owner. Retained for
+    // this contract's lifetime so exact warm Retry owns the failed raw overlay.
+    // The real native host creates its contract before boot installs SQLite.
+    // Bind only after activation validates storage; never rebind this owner.
+    let reactivationAdapter: NativeReceiptSqliteAdapter | null = null;
+    const boundReactivationAdapter = (): NativeReceiptSqliteAdapter | null => {
+        if (!deps.readiness().ok) return null;
+        const adapter = getStorageAdapter();
+        if (!(adapter instanceof NativeReceiptSqliteAdapter) || !adapter.concurrentWritesGuarded
+            || !isNativeRequestReceiptDurable('boardTaskReactivate')) return null;
+        if (reactivationAdapter === null) reactivationAdapter = adapter;
+        return reactivationAdapter === adapter ? adapter : null;
+    };
+    const reactivationSaves = createAreaSaveGuard(deps.save);
+    let pendingReactivation: { prepared: NativePreparedBoardAction; adapter: ReturnType<typeof getStorageAdapter>;
+        boundary: PreparedNativeSaveBoundary | undefined } | null = null;
+    const reactivationPayload = (prepared: NativePreparedBoardAction) => canonicalJSON(['boardTaskReactivate', prepared]);
+    const reactivationState = (data: AppData): TaskStore => ({ ...useTaskStore.getState(),
+        _allTasks: data.tasks, _allProjects: data.projects, _allSections: data.sections ?? [], _allAreas: data.areas ?? [],
+        tasks: data.tasks.filter(row => !row.deletedAt && !row.purgedAt),
+        projects: data.projects.filter(row => !row.deletedAt && !row.purgedAt),
+        areas: (data.areas ?? []).filter(row => !row.deletedAt), settings: data.settings });
+    const checkReactivation = (prepared: NativePreparedBoardAction, authority: PreparedAreaAuthority): NativeHostResult<null> => {
+        const data = authority.snapshot; const source = data.tasks.filter(row => row.id === prepared.before.id);
+        const state = reactivationState(data); const move = prepared.move!;
+        if (source.length !== 1 || !samePreparedTask(source[0], prepared.before)
+            || data.settings.deviceId !== move.deviceIdBefore
+            || !boardReactivationContainerAllowed(source[0], data.projects, data.sections ?? [])
+            || !taskEditValuesEqual(boardMoveScope(state, source[0]), move.scope))
+            return fail('STALE_REVISION', 'Board reactivation source or dependencies changed');
+        const action = prepared.request.action as Extract<NativeBoardWriteRequest['action'], { type: 'moveCard' }>;
+        const shown = buildBoard({ ...EMPTY_BOARD_FILTER_STATE, ...action.filters }, new Date(prepared.after.updatedAt), state);
+        if (!shown.columns.some(column => column.tasks.some(row => row.id === source[0].id)))
+            return fail('STALE_REVISION', 'Board reactivation source is no longer visible');
+        try { return samePreparedTask(boardMoveEffect(source[0], action.status, move, prepared.after.updatedAt), prepared.after)
+            ? { ok: true, value: null } : fail('STALE_REVISION', 'Board reactivation effect changed'); }
+        catch { return fail('STALE_REVISION', 'Board reactivation dependencies refused'); }
+    };
+    const applyReactivation = (prepared: NativePreparedBoardAction, authority: PreparedAreaAuthority) =>
+        useTaskStore.getState().commitPreparedTaskDraftV2({ request: { id: prepared.before.id },
+            deviceIdBefore: prepared.move!.deviceIdBefore, deviceIdToInitialize: null,
+            effect: { task: { before: prepared.before, after: prepared.after } } }, authority);
+    const reactivationReceipts = createNativeRequestReceipts({ save: async requestId => {
+        const pending = pendingReactivation;
+        if (!pending || pending.prepared.request.requestId !== requestId)
+            return fail('SAVE_FAILED', 'Board reactivation has no owned raw save');
+        if (useTaskStore.getState().persistenceFailure) {
+            if (!reactivationSaves.mayApply(pending.prepared, pending.adapter))
+                return fail('SAVE_FAILED', 'Board reactivation has an unrelated persistence failure');
+            const read = await readAreaDurableData(true, true); if (!read.ok) return read;
+            if (read.value.adapter !== pending.adapter) return fail('STALE_REVISION', 'Board reactivation storage changed');
+            const checked = checkReactivation(pending.prepared, read.value.authority); if (!checked.ok) return checked;
+            const applied = await applyReactivation(pending.prepared, read.value.authority);
+            if (!applied.success || applied.outcome !== 'applied') return fail('STALE_REVISION', 'Board reactivation raw retry was superseded');
+            pending.boundary = read.value.authority.saveBoundary;
+        }
+        const saved = await reactivationSaves.finish(pending.prepared, pending.adapter, false, pending.boundary);
+        if (saved.ok) pendingReactivation = null;
+        return saved;
+    } });
+    const reactivationOutcome = async (prepared: NativePreparedBoardAction): Promise<NativeHostResult<NativeBoardActionResult | null>> => {
+        const ready = deps.readiness(); if (!ready.ok) return ready;
+        const adapter = boundReactivationAdapter(); const state = useTaskStore.getState(); const status = getPersistenceStatus();
+        const settled = () => {
+            const current = useTaskStore.getState(); const persistence = getPersistenceStatus();
+            return deps.readiness().ok && getStorageAdapter() === adapter && !current.persistenceFailure
+                && !persistence.queued && !persistence.inFlight && !persistence.immediate && !persistence.retrying
+                && persistence.generation === status.generation && current._allTasks === state._allTasks
+                && current._allProjects === state._allProjects && current._allSections === state._allSections
+                && current._allAreas === state._allAreas && current._allPeople === state._allPeople
+                && current.settings === state.settings && current.lastDataChangeAt === state.lastDataChangeAt;
+        };
+        // Readiness means this contract's activation initialized this exact
+        // adapter. A replacement must activate a new host before proof reads.
+        if (!adapter || !settled())
+            return fail('SAVE_FAILED', 'Board reactivation saved outcome is not available');
+        try {
+            // No flush/save/retry. getData and readRowBaseline refresh the
+            // existing read-baseline cache but never mutate domain rows.
+            const data = await adapter.getData({ rawTasks: true });
+            if (!settled()) return fail('STALE_REVISION', 'Board reactivation changed during saved outcome read');
+            const receipt = await adapter.readDurableReceipt(prepared.request.requestId, reactivationPayload(prepared), { committedOnly: true });
+            if (!receipt.ok) return receipt;
+            // This keeps the raw row and committed receipt in one accepted
+            // external epoch; a later read must not silently adopt a new one.
+            const baseline = await adapter.readRowBaseline();
+            if (!baseline || !settled()) return fail('STALE_REVISION', 'Board reactivation durable proof changed');
+            if (receipt.value === null) return { ok: true, value: null };
+            if (!taskEditValuesEqual(receipt.value, prepared.result)) return fail('INVALID_INPUT', 'Board reactivation saved receipt does not match');
+            const rows = data.tasks.filter(row => row.id === prepared.after.id);
+            return { ok: true, value: rows.length === 1 && samePreparedTask(rows[0], prepared.after) ? prepared.result : null };
+        } catch { return fail('SAVE_FAILED', 'Board reactivation saved outcome could not be read'); }
+    };
+    const commitReactivation = async (prepared: NativePreparedBoardAction): Promise<NativeHostResult<NativeBoardActionResult>> => {
+        const adapter = boundReactivationAdapter();
+        if (!adapter) return fail('SAVE_FAILED', 'Board reactivation requires guarded receipt ownership');
+        const payload = reactivationPayload(prepared);
+        const saved = reactivationReceipts.saved<NativeBoardActionResult>(prepared.request.requestId, payload);
+        if (saved) {
+            if (!saved.ok) return saved;
+            const outcome = await reactivationOutcome(prepared);
+            return !outcome.ok ? outcome : outcome.value === null
+                ? fail('STALE_REVISION', 'Board reactivation saved row changed') : { ok: true, value: outcome.value };
+        }
+        let readFailure: NativeHostResult<never> | null = null;
+        const result = await reactivationReceipts.run(prepared.request.requestId, payload, async () => {
+            // SAVE_FAILED would mean an effect landed to the receipt engine.
+            // Remove a prewrite reservation through ACTION_FAILED instead.
+            if (useTaskStore.getState().persistenceFailure) {
+                readFailure = fail('SAVE_FAILED', 'Board reactivation has an unresolved persistence failure');
+                return fail('ACTION_FAILED', 'Board reactivation has an unresolved persistence failure');
+            }
+            const read = await readAreaDurableData(false, true);
+            if (!read.ok) {
+                if (read.error.code === 'SAVE_FAILED') { readFailure = read; return fail('ACTION_FAILED', read.error.message); }
+                return read;
+            }
+            if (read.value.adapter !== adapter) return fail('STALE_REVISION', 'Board reactivation storage changed');
+            const checked = checkReactivation(prepared, read.value.authority); if (!checked.ok) return checked;
+            const applied = await applyReactivation(prepared, read.value.authority);
+            if (!applied.success || applied.outcome !== 'applied') return fail('STALE_REVISION', 'Board reactivation raw write was superseded');
+            pendingReactivation = { prepared, adapter, boundary: read.value.authority.saveBoundary };
+            return { ok: true, value: prepared.result };
+        });
+        return readFailure ?? result;
+    };
+
     // Request IDs that entered the receipts, with their payloads, so a retry reaches its receipt first.
     const entered = new Map<string, string>();
 
@@ -981,12 +1110,20 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             return prepared ? { ok: true, value: prepared.result } : fail('INVALID_INPUT', 'Prepared Board request or journal does not match');
         },
 
+        /** Pure Done-only durable effect/owner proof for native terminal retirement. */
+        async boardMoveOutcome(input: { request: NativeBoardWriteRequest; prepared: NativePreparedBoardAction }): Promise<NativeHostResult<NativeBoardActionResult | null>> {
+            const prepared = readPreparedCommand(input);
+            return prepared && prepared.request.action.type === 'moveCard' && prepared.before.status === 'done'
+                ? reactivationOutcome(prepared) : fail('INVALID_INPUT', 'A prepared Done Board move is required');
+        },
+
         async commitPreparedBoardAction(input: { request: NativeBoardWriteRequest; prepared: NativePreparedBoardAction }): Promise<NativeHostResult<NativeBoardActionResult>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const prepared = readPreparedCommand(input);
             if (!prepared) return fail('INVALID_INPUT', 'Prepared Board request or journal does not match');
-            return commitPreparedBoard(prepared, 'preparedBoard');
+            return prepared.request.action.type === 'moveCard' && prepared.before.status === 'done'
+                ? commitReactivation(prepared) : commitPreparedBoard(prepared, 'preparedBoard');
         },
 
         /** Calendar's Delete uses the Board Trash journal, with a visible-row revision and read-only parent guard. */

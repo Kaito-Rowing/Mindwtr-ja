@@ -17083,7 +17083,7 @@ final class CoreModel: ObservableObject {
     func boardMoveDestinations(_ displayed: CoreObject) -> [CoreObject] {
         let row = displayed.object("row")
         guard boardActionsEnabled, !morePresented, !capturePresented, !boardActionPending,
-              displayed.flag("moveAllowed"), ["inbox", "next", "waiting", "someday"].contains(row.text("status")),
+              displayed.flag("moveAllowed"), ["inbox", "next", "waiting", "someday", "done"].contains(row.text("status")),
               !row.text("id").isEmpty, !row.text("taskRevision").isEmpty,
               boardView.objects("columns").contains(where: { column in
                   column.objects("cards").contains(where: {
@@ -17134,6 +17134,22 @@ final class CoreModel: ObservableObject {
     }
 
     private func acknowledgeBoardAction(_ result: CoreObject) async -> Bool {
+        // Only an acknowledged Move from this exact displayed Done row invalidates its completion notice.
+        if selectedSurface == .board, result.flag("changed"), taskActionUndoRequest == nil,
+           let request = boardActionRequest, let action = try? decode(request).object("action"),
+           action.text("type") == "moveCard", !action.text("taskId").isEmpty,
+           taskActionNotice.text("operation") == "completion",
+           taskActionNotice.text("id").utf8.elementsEqual(action.text("taskId").utf8),
+           boardView.objects("columns").contains(where: { column in
+               column.objects("cards").contains(where: {
+                   let row = $0.object("row")
+                   return row.text("status") == "done"
+                       && row.text("id").utf8.elementsEqual(action.text("taskId").utf8)
+                       && row.text("taskRevision").utf8.elementsEqual(action.text("taskRevision").utf8)
+               })
+           }) {
+            taskActionNotice = [:]
+        }
         boardActionRequest = nil
         retryNeeded = false
         error = nil

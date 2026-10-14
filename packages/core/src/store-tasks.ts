@@ -749,14 +749,31 @@ export const taskFocusScope = (state: TaskStore, task: Task): PreparedTaskFocus[
     };
 };
 
+/** Done reactivation needs an unambiguous live container; legacy Move is unchanged. */
+export const boardReactivationContainerAllowed = (task: Task, projects: readonly Project[], sections: readonly Section[]): boolean => {
+    const validId = (id: unknown): id is string => typeof id === 'string' && id.trim().length > 0 && id.length <= 500;
+    const sourceSections = sections.filter(row => row.id === task.sectionId);
+    if (task.sectionId !== undefined && (!validId(task.sectionId) || sourceSections.length !== 1
+        || sourceSections[0].deletedAt != null || !validId(sourceSections[0].projectId))) return false;
+    const inferred = sourceSections[0]?.projectId;
+    if (task.projectId !== undefined && (!validId(task.projectId) || inferred && inferred !== task.projectId)) return false;
+    const parentId = task.projectId ?? inferred;
+    if (!parentId) return true;
+    const parents = projects.filter(row => row.id === parentId);
+    return parents.length === 1 && ['active', 'waiting', 'someday'].includes(parents[0].status)
+        && parents[0].deletedAt == null && parents[0].purgedAt == null;
+};
+
 /** Freeze only containers and compact Focus rows consumed by a status move. */
 export const boardMoveScope = (state: TaskStore, task: Task): PreparedBoardMove['scope'] => {
     const section = state._allSections.find(row => row.id === task.sectionId);
-    const projectIds = new Set([task.projectId, section?.projectId]);
+    const sourceSections = task.status === 'done' ? state._allSections.filter(row => row.id === task.sectionId)
+        : section ? [section] : [];
+    const projectIds = new Set([task.projectId, ...sourceSections.map(row => row.projectId)]);
     const sorted = <T extends { id: string }>(rows: T[]) => rows.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
     return {
         projects: sorted(state._allProjects.filter(row => projectIds.has(row.id))),
-        sections: section ? [section] : [],
+        sections: sourceSections,
         areas: state._allAreas.filter(row => row.id === task.areaId),
         focused: sorted(state._allTasks.filter(row => !row.deletedAt && row.isFocusedToday === true).map(taskFocusWitnessRow)),
         focusLimit: normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit),
@@ -765,16 +782,18 @@ export const boardMoveScope = (state: TaskStore, task: Task): PreparedBoardMove[
 
 /** The RN normalizer/planner is the sole source of the complete Move receipt. */
 export const boardMoveEffect = (before: Task, status: Task['status'], move: PreparedBoardMove, at: string): Task => {
-    if (!['inbox', 'next', 'waiting', 'someday'].includes(before.status)
+    if (!['inbox', 'next', 'waiting', 'someday', 'done'].includes(before.status)
         || !['inbox', 'next', 'waiting', 'someday'].includes(status)
         || before.status === status || before.deletedAt || before.purgedAt
-        || !move.deviceIdBefore || isStatusListTaskReadOnly(before, move.scope.projects)) {
+        || !move.deviceIdBefore || isStatusListTaskReadOnly(before, move.scope.projects)
+        || before.status === 'done' && !boardReactivationContainerAllowed(before, move.scope.projects, move.scope.sections)) {
         throw new Error('Board Move needs a writable nonterminal card and existing device identity');
     }
     const dates = new Map(move.clock.dates.map(row => [row.value, row]));
     const normalized = prepareTaskUpdatesForStore({ task: before, updates: { status },
         allProjects: move.scope.projects, allSections: move.scope.sections, allAreas: move.scope.areas,
-        futureBoundary: move.clock.futureBoundary, futureDates: dates, nowMs: Date.parse(at) });
+        futureBoundary: move.clock.futureBoundary, futureDates: dates, nowMs: Date.parse(at),
+        ...(before.status === 'done' ? { reserveProjectOrder: false } : {}) });
     if (!normalized.ok) throw new Error(normalized.error);
     const fills = countFocusedTasksBeforeBoundary([before], move.clock.futureBoundary, dates) === 0
         && countFocusedTasksBeforeBoundary([{ ...before, ...normalized.updates }], move.clock.futureBoundary, dates) === 1;

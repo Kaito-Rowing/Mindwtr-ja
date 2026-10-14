@@ -536,4 +536,161 @@ final class NativeBoardMoveTests: XCTestCase {
         }
     }
 
+
+
+    private func seedBoardReactivationFixture() async throws -> String {
+        let id = try await seedBoardActionFixture(), sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        _ = try sqlite.execute("UPDATE tasks SET status = 'done', completedAt = ? WHERE id = ?",
+            parametersJSON: json([formatter.string(from: Date()), id]))
+        return id
+    }
+
+    func testPreparedBoardReactivationFourDestinationsAndColdRead() async throws {
+        for status in ["inbox", "next", "waiting", "someday"] {
+            let id = try await seedBoardReactivationFixture(), faults = HostIOFaults(), core = host(faults)
+            _ = try await core.start()
+            let before = try storedTask(id), protected = try storedTask(id + "-protected")
+            let settings = try calendarPreferenceSettings()
+            var markers = 0
+            faults.commandDiagnostic = { if $0 == "boardReactivate" { markers += 1 } }
+            let request = try await boardMovePayload(core, taskID: id, status: status)
+            let result = try object(await core.call("boardAction", argumentsJSON: request))
+            XCTAssertEqual(try json(result), try json(["changed": true, "open": NSNull()]))
+            let after = try storedTask(id)
+            XCTAssertEqual(after["status"] as? String, status)
+            XCTAssertTrue(after["completedAt"] is NSNull)
+            XCTAssertEqual(after["rev"] as? Int, try XCTUnwrap(before["rev"] as? Int) + 1)
+            for name in ["id", "title", "description", "projectId", "sectionId", "checklist", "tags", "contexts"] {
+                XCTAssertEqual(try json([XCTUnwrap(after[name])]), try json([XCTUnwrap(before[name])]), name)
+            }
+            let attachments = try XCTUnwrap(NativeJSON.jsonObject(with:
+                Data(try XCTUnwrap(after["attachments"] as? String).utf8)) as? [[String: Any]])
+            let beforeAttachments = try XCTUnwrap(NativeJSON.jsonObject(with:
+                Data(try XCTUnwrap(before["attachments"] as? String).utf8)) as? [[String: Any]])
+            XCTAssertEqual(try json(attachments), try json(beforeAttachments))
+            XCTAssertEqual(try json(storedTask(id + "-protected")), try json(protected))
+            XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+            XCTAssertEqual(markers, 1); XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await core.close()
+            let cold = host(); _ = try await cold.start()
+            XCTAssertEqual(try json(storedTask(id)), try json(after))
+            await cold.close()
+        }
+    }
+
+    func testPreparedBoardReactivationFailedCommitExactRetryAndStaleCompletionUndo() async throws {
+        let id = try await seedBoardCompletionFixture(), faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        let completion = try await boardCompletionRequest(core, taskID: id)
+        _ = try await core.call("taskCompletion", argumentsJSON: json([json(completion)]))
+        let request = try await boardMovePayload(core, taskID: id, status: "next"), before = try storedTask(id)
+        var markers = 0
+        faults.commandDiagnostic = { if $0 == "boardReactivate" { markers += 1 } }
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected reactivation COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("boardAction", argumentsJSON: request) }
+        let frozen = try completionJournalEnvelope()
+        XCTAssertEqual(try json(storedTask(id)), try json(before)); XCTAssertEqual(markers, 0)
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        XCTAssertEqual(try completionJournalEnvelope().encoded, frozen.encoded)
+        faults.beforeSQL = nil
+        _ = try await core.retryPending()
+        let after = try storedTask(id)
+        XCTAssertEqual(after["status"] as? String, "next"); XCTAssertEqual(markers, 1)
+        let undo: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "completionRequestId": try XCTUnwrap(completion["requestId"])]
+        await expectFailure { _ = try await core.call("taskCompletionUndo", argumentsJSON: json([json(undo)])) }
+        XCTAssertEqual(try json(storedTask(id)), try json(after))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testPreparedBoardReactivationColdRecoveryAndRetirementProof() async throws {
+        for afterCommit in [false, true] {
+            let id = try await seedBoardReactivationFixture(), faults = HostIOFaults(), core = host(faults)
+            _ = try await core.start()
+            let request = try await boardMovePayload(core, taskID: id, status: "waiting")
+            if afterCommit {
+                var saves = 0
+                faults.journalWrite = { saves += 1; if saves == 2 { throw HostFailure("Injected reactivation lost reply") } }
+            } else { faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected reactivation failed save") } } }
+            await expectFailure { _ = try await core.call("boardAction", argumentsJSON: request) }
+            let frozen = try completionJournalEnvelope()
+            await core.close()
+            let replayFaults = HostIOFaults(), replay = host(replayFaults)
+            var writes = 0, markers = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+tasks\b"#, options: .regularExpression) != nil { writes += 1 }
+            }
+            replayFaults.commandDiagnostic = { if $0 == "boardReactivate" { markers += 1 } }
+            replayFaults.journalRemove = { throw HostFailure("Injected reactivation retirement failure") }
+            await expectFailure("Injected reactivation retirement failure") { _ = try await replay.start() }
+            XCTAssertEqual(writes, afterCommit ? 0 : 1); XCTAssertEqual(markers, 0)
+            XCTAssertEqual(try completionJournalEnvelope().encoded, frozen.encoded)
+            let landed = try storedTask(id)
+            replayFaults.journalRemove = nil
+            let window = try object(await replay.start()), recovery = try XCTUnwrap(window["recovery"] as? [String: Any])
+            XCTAssertEqual(recovery["method"] as? String, "boardCommit")
+            XCTAssertEqual(try json(storedTask(id)), try json(landed))
+            XCTAssertEqual(writes, afterCommit ? 0 : 1); XCTAssertEqual(markers, 1)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await replay.close()
+        }
+    }
+
+    func testPreparedBoardReactivationWarmRetryPreservesArchivedParent() async throws {
+        let id = try await seedBoardReactivationFixture(), faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        let request = try await boardMovePayload(core, taskID: id, status: "next"), before = try storedTask(id)
+        var markers = 0
+        faults.commandDiagnostic = { if $0 == "boardReactivate" { markers += 1 } }
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected reactivation failed save") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("boardAction", argumentsJSON: request) }
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE projects SET status = 'archived' WHERE id = 'destination-project-a'")
+        let archived = try sqlite.execute("SELECT * FROM projects WHERE id = 'destination-project-a'")
+        sqlite.close()
+        faults.beforeSQL = nil
+        await expectFailure { _ = try await core.retryPending() }
+        XCTAssertEqual(try json(storedTask(id)), try json(before)); XCTAssertEqual(markers, 0)
+        let check = try SQLiteBridge(url: database); defer { check.close() }
+        let currentProject = try XCTUnwrap(NativeJSON.jsonObject(with: Data(try check.execute(
+            "SELECT * FROM projects WHERE id = 'destination-project-a'").utf8)) as? [[String: Any]])
+        let archivedProject = try XCTUnwrap(NativeJSON.jsonObject(with: Data(archived.utf8)) as? [[String: Any]])
+        XCTAssertEqual(try json(currentProject), try json(archivedProject))
+    }
+
+    func testPreparedBoardReactivationTerminalWithoutSavedEffectRetainsJournal() async throws {
+        let id = try await seedBoardReactivationFixture(), faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        let request = try await boardMovePayload(core, taskID: id, status: "next")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected reactivation failed save") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("boardAction", argumentsJSON: request) }
+        let frozen = try completionJournalEnvelope(), prepared = try XCTUnwrap(frozen.envelope["prepared"] as? [String: Any])
+        await core.close()
+        var command = frozen.command
+        command["terminal"] = ["success": ["_0": try json(XCTUnwrap(prepared["result"]))]]
+        let bytes = try JSONSerialization.data(withJSONObject: command, options: [.sortedKeys])
+        try bytes.write(to: journal)
+        do {
+            let sqlite = try SQLiteBridge(url: database); defer { sqlite.close() }
+            let rows = try XCTUnwrap(NativeJSON.jsonObject(with: Data(sqlite.execute(
+                "SELECT version FROM schema_migrations WHERE version = 1").utf8)) as? [[String: Any]])
+            XCTAssertEqual(rows.count, 1); XCTAssertEqual(rows.first?["version"] as? Int, 1)
+        }
+        let before = try Data(contentsOf: database), replayFaults = HostIOFaults(), replay = host(replayFaults)
+        var markers = 0, dml: [String] = []
+        replayFaults.commandDiagnostic = { if $0 == "boardReactivate" { markers += 1 } }
+        replayFaults.beforeSQL = { sql in
+            let statement = sql.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if ["INSERT", "UPDATE", "DELETE", "REPLACE"].contains(where: { statement.hasPrefix($0) }) { dml.append(statement) }
+        }
+        await expectFailure("no exact saved effect") { _ = try await replay.start() }
+        XCTAssertEqual(markers, 0)
+        XCTAssertEqual(dml, ["INSERT OR IGNORE INTO SCHEMA_MIGRATIONS (VERSION) VALUES (1)"])
+        XCTAssertEqual(try Data(contentsOf: journal), bytes)
+        await replay.close()
+        XCTAssertEqual(try Data(contentsOf: database), before)
+    }
+
 }
