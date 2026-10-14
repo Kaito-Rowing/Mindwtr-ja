@@ -20737,6 +20737,21 @@ private final class Engine: @unchecked Sendable {
         #endif
         case "Native iOS launch selection admitted":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-launch-selection", "outcome": "confirmed"])
+        case "Native iOS Board drag submitted":
+            valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-board-drag"])
+        case "Native iOS Board drag stage":
+            let reasons = [
+                "begin": ["scene", "admission", "geometry-missing", "geometry-ineligible", "ready"],
+                "cancel": ["new-drag", "model", "scene", "disappear", "geometry-missing", "geometry-viewport",
+                           "geometry-area", "geometry-rows", "geometry-other"],
+                "validate": ["scene", "capture", "column", "claimed", "stale", "geometry", "provider-count", "provider-types", "ready"],
+                "hover": ["position-rejected", "ready"],
+                "drop": ["provider-count", "provider-types", "scene", "capture", "column", "claimed", "stale", "geometry", "position-or-claim", "ready"],
+                "load": ["error", "payload", "claim", "scene", "geometry", "position", "nonce", "retain-rejected", "ready"],
+            ]
+            valid = Set(context.keys) == Set(["releaseCheck", "stage", "reason"])
+                && context["releaseCheck"] as? String == "v1.3.5/ios-board-drag-stage"
+                && reasons[context["stage"] as? String ?? ""]?.contains(context["reason"] as? String ?? "") == true
         case "Native iOS AI settings summary published":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-ai-settings-summary", "outcome": "confirmed"])
         case "Native iOS Pomodoro panel transition acknowledged":

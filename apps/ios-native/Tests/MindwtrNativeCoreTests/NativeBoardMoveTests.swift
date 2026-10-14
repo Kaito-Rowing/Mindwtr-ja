@@ -897,4 +897,81 @@ final class NativeBoardMoveTests: XCTestCase {
         XCTAssertThrowsError(try NativeBoardOrderJournalBudget.require(exact, acknowledged: excess))
     }
 
+    func testBoardDragSubmittedDiagnosticIsContentFreeAndDoesNotClaimSavedEffect() async throws {
+        let ids = try await seedBoardOrderFixture(), faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        _ = try await core.call("dataSetting", argumentsJSON: json([json([
+            "requestId": UUID().uuidString, "edit": ["type": "debugLogging", "value": true],
+        ])]))
+        let before = try boardOrderRows(ids), settings = try calendarPreferenceSettings()
+        let receipts = try boardOrderReceiptCount()
+        var writes = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let message = "Native iOS Board drag submitted", context = ["releaseCheck": "v1.3.5/ios-board-drag"]
+        let result = try await core.call("logLine", argumentsJSON: json([message, json(context)]))
+        XCTAssertEqual(result, "{}")
+        for extra in ["nonce", "taskId", "text", "providerBytes", "outcome"] {
+            var forged = context; forged[extra] = extra == "outcome" ? "saved" : "private"
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([message, json(forged)])) }
+        }
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("logLine", argumentsJSON: json([message, json(["releaseCheck": "v1.3.5/ios-board-order"])]))
+        }
+        let stageMessage = "Native iOS Board drag stage", stageTag = "v1.3.5/ios-board-drag-stage"
+        let stageReasons = [
+            "begin": ["scene", "admission", "geometry-missing", "geometry-ineligible", "ready"],
+            "cancel": ["new-drag", "model", "scene", "disappear", "geometry-missing", "geometry-viewport", "geometry-area", "geometry-rows", "geometry-other"],
+            "validate": ["scene", "capture", "column", "claimed", "stale", "geometry", "provider-count", "provider-types", "ready"],
+            "hover": ["position-rejected", "ready"],
+            "drop": ["provider-count", "provider-types", "scene", "capture", "column", "claimed", "stale", "geometry", "position-or-claim", "ready"],
+            "load": ["error", "payload", "claim", "scene", "geometry", "position", "nonce", "retain-rejected", "ready"],
+        ]
+        var stageContexts: [[String: String]] = []
+        for stage in stageReasons.keys.sorted() {
+            for reason in stageReasons[stage] ?? [] {
+                let value = ["releaseCheck": stageTag, "stage": stage, "reason": reason]
+                _ = try await core.call("logLine", argumentsJSON: json([stageMessage, json(value)]))
+                stageContexts.append(value)
+            }
+        }
+        let stageContext = ["releaseCheck": stageTag, "stage": "begin", "reason": "ready"]
+        for extra in ["nonce", "taskId", "text", "providerBytes", "geometry", "outcome"] {
+            var forged = stageContext; forged[extra] = extra == "outcome" ? "saved" : "private"
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([stageMessage, json(forged)])) }
+        }
+        for forged in [
+            ["releaseCheck": "v1.3.5/ios-board-drag", "stage": "begin", "reason": "ready"],
+            ["releaseCheck": stageTag, "stage": "unknown", "reason": "ready"],
+            ["releaseCheck": stageTag, "stage": "begin", "reason": "private"],
+            ["releaseCheck": stageTag, "stage": "begin", "reason": "provider-types"],
+            ["releaseCheck": stageTag, "stage": "begin"],
+        ] {
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([stageMessage, json(forged)])) }
+        }
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("logLine", argumentsJSON: json([stageMessage,
+                #"{"releaseCheck":"v1.3.5/ios-board-drag-stage","stage":"begin","reason":0}"#]))
+        }
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("logLine", argumentsJSON: json([stageMessage,
+                #"{"releaseCheck":"v1.3.5/ios-board-drag-stage","stage":"begin","reason":"ready","reason":"private"}"#]))
+        }
+        let shared = try object(await core.diagnosticsFileAction("logShare"))
+        let url = try await core.validatedDiagnosticsShareURL(XCTUnwrap(shared["path"] as? String))
+        let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map { try object(String($0)) }
+        let submitted = lines.filter { $0["message"] as? String == message }
+        XCTAssertEqual(submitted.count, 1)
+        XCTAssertEqual(try json(XCTUnwrap(submitted.first?["context"])), try json(context))
+        let stages = lines.filter { $0["message"] as? String == stageMessage }
+        XCTAssertEqual(stages.count, stageContexts.count)
+        XCTAssertEqual(try stages.map { try json(XCTUnwrap($0["context"])) }.sorted(), try stageContexts.map { try json($0) }.sorted())
+        XCTAssertFalse(lines.contains { $0["message"] as? String == "Native iOS Board order saved" })
+        XCTAssertEqual(writes, 0); XCTAssertEqual(try boardOrderRows(ids), before)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+        XCTAssertEqual(try boardOrderReceiptCount(), receipts)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
 }

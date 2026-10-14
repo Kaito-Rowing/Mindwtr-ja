@@ -1,12 +1,171 @@
 import SwiftUI
 import UIKit
+import Combine
+
+// MARK: Board drag geometry and claim (Foundation-only seam)
+struct BoardDragRowFrame: Equatable {
+    let status: String
+    let id: String
+    let frame: CGRect
+}
+
+struct BoardDragColumnFrame: Equatable {
+    let status: String
+    let frame: CGRect
+}
+
+struct BoardDragMeasurements: Equatable {
+    var viewports: [CGRect] = []
+    var columns: [BoardDragColumnFrame] = []
+    var rows: [BoardDragRowFrame] = []
+
+    func geometry(for capture: BoardOrderDragCapture) -> BoardDragGeometry? {
+        let areas = columns.filter { $0.status == capture.status }
+        guard viewports.count == 1, areas.count == 1 else { return nil }
+        return BoardDragGeometry(viewport: viewports[0], area: areas[0].frame,
+                                 rows: rows.filter { $0.status == capture.status })
+    }
+}
+
+struct BoardDropPosition: Equatable {
+    let afterID: String?
+    let y: CGFloat
+}
+
+struct BoardDragGeometry: Equatable {
+    let viewport: CGRect
+    let area: CGRect
+    let rows: [BoardDragRowFrame]
+
+    private func valid(_ frame: CGRect) -> Bool {
+        [frame.minX, frame.minY, frame.width, frame.height, frame.maxX, frame.maxY].allSatisfy { $0.isFinite }
+            && frame.size.width > 0 && frame.size.height > 0
+    }
+
+    private func visibleRows(_ capture: BoardOrderDragCapture) -> [BoardDragRowFrame]? {
+        guard valid(viewport), valid(area),
+              Set(capture.ids).count == capture.ids.count, rows.count == capture.ids.count,
+              Set(rows.map(\.id)).count == rows.count, Set(rows.map(\.id)) == Set(capture.ids),
+              rows.allSatisfy({ $0.status == capture.status && valid($0.frame)
+                  && CGRect(origin: .zero, size: area.size).contains($0.frame) }) else { return nil }
+        let ordered = rows.sorted { $0.frame.minY < $1.frame.minY }
+        guard ordered.map(\.id) == capture.ids else { return nil }
+        for pair in zip(ordered, ordered.dropFirst()) {
+            guard pair.0.frame.maxY <= pair.1.frame.minY else { return nil }
+        }
+        let visible = ordered.filter {
+            viewport.contains($0.frame.offsetBy(dx: area.minX, dy: area.minY))
+        }
+        guard visible.count > 1, visible.contains(where: { $0.id == capture.taskID }) else { return nil }
+        return visible
+    }
+
+    func canBegin(_ capture: BoardOrderDragCapture) -> Bool { visibleRows(capture) != nil }
+
+    func position(at point: CGPoint, capture: BoardOrderDragCapture) -> BoardDropPosition? {
+        guard point.x.isFinite, point.y.isFinite, let visible = visibleRows(capture),
+              let first = visible.first, let last = visible.last,
+              point.y >= first.frame.minY, point.y <= last.frame.maxY,
+              visible.allSatisfy({ point.x >= $0.frame.minX && point.x <= $0.frame.maxX }) else { return nil }
+        let others = visible.filter { $0.id != capture.taskID }
+        guard !others.isEmpty else { return nil }
+        if let preceding = others.last(where: { point.y > $0.frame.midY }) {
+            return BoardDropPosition(afterID: preceding.id, y: preceding.frame.maxY)
+        }
+        let remaining = capture.ids.filter { $0 != capture.taskID }
+        guard capture.headID == capture.ids.first, capture.headID != nil,
+              others.first?.id == remaining.first,
+              let head = rows.first(where: { $0.id == capture.headID }) else { return nil }
+        return BoardDropPosition(afterID: nil, y: head.frame.minY)
+    }
+}
+
+struct BoardDropClaim: Equatable {
+    let nonce: String
+    let epoch: UUID
+    let point: CGPoint
+    let position: BoardDropPosition
+}
+
+struct BoardDragState {
+    private(set) var epoch = UUID()
+    private(set) var capture: BoardOrderDragCapture?
+    private(set) var geometry: BoardDragGeometry?
+    private(set) var claim: BoardDropClaim?
+
+    mutating func invalidate() {
+        epoch = UUID(); capture = nil; geometry = nil; claim = nil
+    }
+
+    mutating func begin(_ capture: BoardOrderDragCapture, geometry: BoardDragGeometry) {
+        invalidate(); self.capture = capture; self.geometry = geometry
+    }
+
+    func reusableCapture(matching candidate: BoardOrderDragCapture, geometry: BoardDragGeometry) -> BoardOrderDragCapture? {
+        guard claim == nil, let capture, self.geometry == geometry,
+              capture.generation == candidate.generation,
+              capture.taskID.utf8.elementsEqual(candidate.taskID.utf8),
+              capture.status.utf8.elementsEqual(candidate.status.utf8),
+              capture.displayedJSON.utf8.elementsEqual(candidate.displayedJSON.utf8),
+              capture.columnJSON.utf8.elementsEqual(candidate.columnJSON.utf8),
+              capture.filtersJSON.utf8.elementsEqual(candidate.filtersJSON.utf8),
+              capture.ids.count == candidate.ids.count,
+              zip(capture.ids, candidate.ids).allSatisfy({ $0.0.utf8.elementsEqual($0.1.utf8) }),
+              capture.headID.map({ Array($0.utf8) }) == candidate.headID.map({ Array($0.utf8) }) else { return nil }
+        return capture
+    }
+
+    func position(at point: CGPoint, status: String) -> BoardDropPosition? {
+        guard claim == nil, let capture, capture.status == status else { return nil }
+        return geometry?.position(at: point, capture: capture)
+    }
+
+    mutating func claim(at point: CGPoint, status: String) -> BoardDropClaim? {
+        guard let position = position(at: point, status: status), let capture else { return nil }
+        let value = BoardDropClaim(nonce: capture.nonce, epoch: epoch, point: point, position: position)
+        claim = value
+        return value
+    }
+
+    func matches(_ value: BoardDropClaim) -> Bool {
+        claim == value && epoch == value.epoch && capture?.nonce == value.nonce
+    }
+
+    mutating func retire(_ value: BoardDropClaim) {
+        if matches(value) { invalidate() }
+    }
+
+    mutating func consume(_ value: BoardDropClaim, data: Data) -> Bool {
+        guard matches(value), data.count == 36, String(data: data, encoding: .utf8) == value.nonce else { return false }
+        invalidate()
+        return true
+    }
+}
+// MARK: End Board drag geometry and claim
+
+// Nonobservable, diagnostic-only slots; callbacks retain their original attempt.
+final class BoardDragDiagnostics {
+    enum Stage: String, CaseIterable { case begin, cancel, validate, hover, drop, load }
+    final class Attempt {
+        private var emitted = Set<Stage>()
+        func take(_ stage: Stage) -> Bool { emitted.insert(stage).inserted }
+    }
+    private(set) var attempt: Attempt?
+    func begin() { attempt = Attempt() }
+}
 
 /// RN Board stacks full-width columns in a single vertical scroll.
 struct BoardScreen: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     @FocusState private var searchFocused: Bool
+    @Environment(\.scenePhase) private var scenePhase
     @State private var trackingAnchor = false
+    @State private var drag = BoardDragState()
+    @State private var dragMeasurements = BoardDragMeasurements()
+    @State private var dropIndicator: BoardDropPosition?
+    @State private var dragDiagnostics = BoardDragDiagnostics()
+    private static let dragType = "tech.dongdongbh.mindwtr.board-order-drag"
     private var bar: CoreObject { model.boardView.object("bar") }
 
     var body: some View {
@@ -29,6 +188,12 @@ struct BoardScreen: View {
                 .coordinateSpace(name: "board-scroll")
                 .accessibilityIdentifier("board-scroll")
                 .scrollDismissesKeyboard(.interactively)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(key: BoardDragFrames.self,
+                            value: BoardDragMeasurements(viewports: [geometry.frame(in: .global)]))
+                    }
+                }
                 .refreshable { endInput(); await model.refresh() }
                 .onPreferenceChange(BoardRowFrames.self) { frames in
                     guard trackingAnchor, model.boardCurrent, !model.busy, !model.boardFiltersPresented,
@@ -55,7 +220,15 @@ struct BoardScreen: View {
         }
         .onChange(of: model.boardFiltersPresented) { if $0 { endInput() } }
         .onChange(of: model.areaPickerPresented) { if $0 { endInput() } }
-        .onDisappear { trackingAnchor = false }
+        .onPreferenceChange(BoardDragFrames.self) { value in
+            if dragMeasurements != value {
+                let reason = geometryCancellationReason(value)
+                dragMeasurements = value; cancelDrag(reason: reason)
+            }
+        }
+        .onReceive(dragInvalidations) { cancelDrag(reason: "model") }
+        .onChange(of: scenePhase) { if $0 != .active { cancelDrag(reason: "scene") } }
+        .onDisappear { trackingAnchor = false; cancelDrag(reason: "disappear") }
     }
 
     private var filterBar: some View {
@@ -124,6 +297,29 @@ struct BoardScreen: View {
                         .frame(maxWidth: .infinity).padding(.vertical, 16)
                 }
             }.padding(10)
+                .coordinateSpace(name: "board-drag-" + status)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(key: BoardDragFrames.self, value: BoardDragMeasurements(
+                            columns: [BoardDragColumnFrame(status: status, frame: geometry.frame(in: .global))]))
+                    }
+                }
+                .overlay(alignment: .topLeading) {
+                    if drag.capture?.status == status, let indicator = dropIndicator {
+                        Rectangle().fill(palette.tint).frame(height: 2).offset(y: indicator.y)
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }
+                .onDrop(of: [Self.dragType], delegate: BoardCardDropDelegate(
+                    type: Self.dragType, active: { acceptsDrag(status: status) },
+                    validated: { conforms, active in
+                        traceDrag(.validate, reason: !active ? dragAdmissionReason(status: status)
+                            : conforms ? "ready" : "provider-types")
+                    },
+                    target: { dragPosition($0, status: status) },
+                    hover: { dropIndicator = $0 },
+                    updated: { traceDrag(.hover, reason: $0 ? "ready" : "position-rejected") },
+                    perform: { performDrop($0, status: status) }))
         }
         .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
         .overlay(alignment: .top) { color.frame(height: 4).clipShape(RoundedRectangle(cornerRadius: 2)) }
@@ -138,7 +334,7 @@ struct BoardScreen: View {
         let complete = model.boardView.object("cardActions").object("complete")
         let filters = model.boardView.object("filters")
         let orderActions = model.boardOrderActions(item, column: column, filters: filters)
-        return SwipeActionCard(
+        let actionCard = SwipeActionCard(
             palette: palette, enabled: model.boardActionsEnabled, id: "board-task-" + id,
             leftLabel: model.boardSwipeAction("left") == nil ? "" : swipes.object("left").text("label"),
             rightLabel: model.boardSwipeAction("right") == nil ? "" : swipes.object("right").text("label"),
@@ -172,7 +368,165 @@ struct BoardScreen: View {
             .background(palette.row, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1)).contentShape(Rectangle())
         )
-        .id("board-task-" + id).background(anchor("board-task-" + id))
+        return HStack(spacing: 0) {
+            actionCard
+            dragHandle(item: item, column: column, filters: filters, available: orderActions.count == 2)
+        }
+            .frame(maxWidth: .infinity)
+            .id("board-task-" + id).background(anchor("board-task-" + id))
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(key: BoardDragFrames.self, value: BoardDragMeasurements(
+                        rows: [BoardDragRowFrame(status: column.text("status"), id: id,
+                                                frame: geometry.frame(in: .named("board-drag-" + column.text("status"))))]))
+                }
+            }
+    }
+
+    @ViewBuilder private func dragHandle(item: CoreObject, column: CoreObject, filters: CoreObject, available: Bool) -> some View {
+        let handle = Image(systemName: "line.3.horizontal")
+            .foregroundStyle(palette.secondary)
+            .frame(width: 44, height: 44).contentShape(Rectangle())
+            .accessibilityLabel(model.label("board.dragTask"))
+            .accessibilityIdentifier("board-drag-" + item.object("row").text("id"))
+        if available {
+            handle.onDrag { makeDragProvider(item: item, column: column, filters: filters) } preview: {
+                Image(systemName: "arrow.up.arrow.down").padding(12)
+                    .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+            }
+        } else { handle.disabled(true) }
+    }
+
+    private func makeDragProvider(item: CoreObject, column: CoreObject, filters: CoreObject) -> NSItemProvider {
+        // SwiftUI may ask for the same source again; never revoke an admitted load.
+        guard drag.claim == nil else { return NSItemProvider() }
+        func refuse(_ reason: String) -> NSItemProvider {
+            cancelDrag(reason: "new-drag"); dragDiagnostics.begin()
+            traceDrag(.begin, reason: reason)
+            return NSItemProvider()
+        }
+        guard scenePhase == .active else { return refuse("scene") }
+        guard let candidate = model.captureBoardOrderDrag(item, column: column, filters: filters)
+        else { return refuse("admission") }
+        guard let geometry = dragMeasurements.geometry(for: candidate)
+        else { return refuse("geometry-missing") }
+        guard geometry.canBegin(candidate) else { return refuse("geometry-ineligible") }
+        let capture: BoardOrderDragCapture
+        if let existing = drag.reusableCapture(matching: candidate, geometry: geometry) {
+            capture = existing
+        } else {
+            cancelDrag(reason: "new-drag"); dragDiagnostics.begin()
+            drag.begin(candidate, geometry: geometry)
+            capture = candidate
+        }
+        let provider = NSItemProvider()
+        let bytes = Data(capture.nonce.utf8)
+        provider.registerDataRepresentation(forTypeIdentifier: Self.dragType, visibility: .ownProcess) { completion in
+            completion(bytes, nil); return nil
+        }
+        traceDrag(.begin, reason: "ready")
+        return provider
+    }
+
+    private var dragInvalidations: AnyPublisher<Void, Never> {
+        Publishers.MergeMany([
+            model.$boardView.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            model.$boardCurrent.filter { !$0 }.map { _ in () }.eraseToAnyPublisher(),
+            model.$boardLoading.filter { $0 }.map { _ in () }.eraseToAnyPublisher(),
+            model.$busy.filter { $0 }.map { _ in () }.eraseToAnyPublisher(),
+            model.$retryNeeded.filter { $0 }.map { _ in () }.eraseToAnyPublisher(),
+            model.$ready.filter { !$0 }.map { _ in () }.eraseToAnyPublisher(),
+            model.$selectedSurface.filter { $0 != .board }.map { _ in () }.eraseToAnyPublisher(),
+            model.$taskPresented.filter { $0 }.map { _ in () }.eraseToAnyPublisher(),
+            model.$areaPickerPresented.filter { $0 }.map { _ in () }.eraseToAnyPublisher(),
+            model.$boardFiltersPresented.filter { $0 }.map { _ in () }.eraseToAnyPublisher(),
+            model.$morePresented.filter { $0 }.map { _ in () }.eraseToAnyPublisher(),
+            model.$capturePresented.filter { $0 }.map { _ in () }.eraseToAnyPublisher(),
+            NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification).map { _ in () }.eraseToAnyPublisher(),
+        ]).eraseToAnyPublisher()
+    }
+
+    private func traceDrag(_ stage: BoardDragDiagnostics.Stage, reason: @autoclosure () -> String,
+                           attempt: BoardDragDiagnostics.Attempt? = nil) {
+        guard let attempt = attempt ?? dragDiagnostics.attempt, attempt.take(stage) else { return }
+        model.logBoardDragStage(stage.rawValue, reason: reason())
+    }
+
+    private func geometryCancellationReason(_ next: BoardDragMeasurements) -> String {
+        guard let capture = drag.capture, let original = drag.geometry,
+              let current = next.geometry(for: capture) else { return "geometry-missing" }
+        if current.viewport != original.viewport { return "geometry-viewport" }
+        if current.area != original.area { return "geometry-area" }
+        if current.rows != original.rows { return "geometry-rows" }
+        return "geometry-other"
+    }
+
+    private func cancelDrag(reason: String) {
+        guard drag.capture != nil || drag.claim != nil || dropIndicator != nil else { return }
+        drag.invalidate(); dropIndicator = nil
+        traceDrag(.cancel, reason: reason)
+    }
+
+    private func dragPosition(_ point: CGPoint, status: String) -> BoardDropPosition? {
+        guard acceptsDrag(status: status) else { return nil }
+        return drag.position(at: point, status: status)
+    }
+
+    private func acceptsDrag(status: String) -> Bool {
+        guard scenePhase == .active, let capture = drag.capture, capture.status == status, drag.claim == nil,
+              model.boardOrderDragIsCurrent(capture), dragMeasurements.geometry(for: capture) == drag.geometry else { return false }
+        return true
+    }
+
+    private func dragAdmissionReason(status: String) -> String {
+        guard scenePhase == .active else { return "scene" }
+        guard let capture = drag.capture else { return "capture" }
+        guard capture.status == status else { return "column" }
+        guard drag.claim == nil else { return "claimed" }
+        guard model.boardOrderDragIsCurrent(capture) else { return "stale" }
+        guard dragMeasurements.geometry(for: capture) == drag.geometry else { return "geometry" }
+        return "ready"
+    }
+
+    private func performDrop(_ info: DropInfo, status: String) -> Bool {
+        let providers = info.itemProviders(for: [Self.dragType])
+        guard providers.count == 1, providers[0].registeredTypeIdentifiers == [Self.dragType],
+              dragPosition(info.location, status: status) != nil,
+              let claim = drag.claim(at: info.location, status: status), let capture = drag.capture else {
+            traceDrag(.drop, reason: providers.count != 1 ? "provider-count"
+                : providers[0].registeredTypeIdentifiers != [Self.dragType] ? "provider-types"
+                : !acceptsDrag(status: status) ? dragAdmissionReason(status: status) : "position-or-claim")
+            return false
+        }
+        let diagnosticAttempt = dragDiagnostics.attempt
+        dropIndicator = nil
+        // The load must begin inside performDrop; only its completion hops to MainActor.
+        providers[0].loadDataRepresentation(forTypeIdentifier: Self.dragType) { data, error in
+            Task { @MainActor in
+                guard error == nil, let data, data.count == 36, drag.matches(claim), scenePhase == .active,
+                      dragMeasurements.geometry(for: capture) == drag.geometry,
+                      drag.geometry?.position(at: claim.point, capture: capture) == claim.position else {
+                    let reason = error != nil ? "error" : data == nil || data?.count != 36 ? "payload"
+                        : !drag.matches(claim) ? "claim" : scenePhase != .active ? "scene"
+                        : dragMeasurements.geometry(for: capture) != drag.geometry ? "geometry" : "position"
+                    drag.retire(claim)
+                    traceDrag(.load, reason: reason, attempt: diagnosticAttempt)
+                    return
+                }
+                guard data == Data(claim.nonce.utf8) else {
+                    drag.retire(claim)
+                    traceDrag(.load, reason: "nonce", attempt: diagnosticAttempt)
+                    return
+                }
+                let submitted = model.orderBoardCard(capture, afterID: claim.position.afterID) {
+                    drag.consume(claim, data: data)
+                }
+                if submitted { endInput() } else { drag.retire(claim) }
+                traceDrag(.load, reason: submitted ? "ready" : "retain-rejected", attempt: diagnosticAttempt)
+            }
+        }
+        traceDrag(.drop, reason: "ready", attempt: diagnosticAttempt)
+        return true
     }
 
     private func badge(_ label: String, icon: String = "", color: Color? = nil) -> some View {
@@ -563,6 +917,42 @@ private struct BoardButton: View {
         }
         .buttonStyle(.plain).disabled(!enabled).accessibilityIdentifier(id)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+private struct BoardCardDropDelegate: DropDelegate {
+    let type: String
+    let active: () -> Bool
+    let validated: (Bool, Bool) -> Void
+    let target: (CGPoint) -> BoardDropPosition?
+    let hover: (BoardDropPosition?) -> Void
+    let updated: (Bool) -> Void
+    let perform: (DropInfo) -> Bool
+
+    func validateDrop(info: DropInfo) -> Bool {
+        // Item providers are available only during performDrop, not validation.
+        let conforms = info.hasItemsConforming(to: [type])
+        let admitted = active()
+        validated(conforms, admitted)
+        return admitted && conforms
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        let position = validateDrop(info: info) ? target(info.location) : nil
+        hover(position)
+        updated(position != nil)
+        return DropProposal(operation: position == nil ? .forbidden : .move)
+    }
+
+    func dropExited(info: DropInfo) { hover(nil) }
+    func performDrop(info: DropInfo) -> Bool { perform(info) }
+}
+
+private struct BoardDragFrames: PreferenceKey {
+    static var defaultValue = BoardDragMeasurements()
+    static func reduce(value: inout BoardDragMeasurements, nextValue: () -> BoardDragMeasurements) {
+        let next = nextValue()
+        value.viewports += next.viewports; value.columns += next.columns; value.rows += next.rows
     }
 }
 

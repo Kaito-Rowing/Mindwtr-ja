@@ -5815,6 +5815,344 @@ final class FoundationUITests: XCTestCase {
         XCTAssertEqual(cards.count, 1)
     }
 
+    func testBoardDragNormalRoundTripAndColdRead() throws {
+        try task735RoundTrip("NORMAL")
+    }
+
+    func testBoardDragLargestTextRoundTripAndColdRead() throws {
+        try task735RoundTrip("LARGEST", largest: true)
+    }
+
+    private let task735IDs = ["board-order-first", "board-order-middle", "board-order-last"]
+
+    private func task735App(_ role: String, largest: Bool = false) throws -> XCUIApplication {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_BOARD_DRAG_UI_" + role + "_LIBRARY"] else {
+            throw XCTSkip("An externally staged isolated Board drag library is required")
+        }
+        guard let uuid = UUID(uuidString: library), uuid.uuidString.lowercased() == library else {
+            XCTFail("The Board drag library must be a canonical lowercase UUID")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US",
+            "-AppleInterfaceStyle", "Light"]
+        if largest {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        }
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardSelectAllAreas(app); boardOpen(app)
+        try task735RevealGroup(app, task735IDs)
+        task735AssertOrder(app, task735IDs)
+        return app
+    }
+
+    private func task735AssertOrder(_ app: XCUIApplication, _ ids: [String]) {
+        task733AssertOrder(app, ids)
+        XCTAssertFalse(app.buttons["task-view-close"].exists, "A drag must not also open a task")
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+    }
+
+    private func task735VisibleFrame(_ app: XCUIApplication, _ element: XCUIElement) throws -> CGRect {
+        boardEnabled(element)
+        let frame = element.frame, viewport = app.frame.intersection(app.scrollViews["board-scroll"].frame)
+        guard [frame.minX, frame.minY, frame.width, frame.height,
+               viewport.minX, viewport.minY, viewport.width, viewport.height].allSatisfy({ $0.isFinite }),
+              frame.width > 0, frame.height > 0, viewport.width > 0, viewport.height > 0,
+              element.isHittable, viewport.contains(frame) else {
+            XCTFail("The measured drag source/target must be finite, hittable and fully inside the Board viewport: frame=\(frame), viewport=\(viewport), hittable=\(element.isHittable)")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        return frame
+    }
+
+    private func task735RevealGroup(_ app: XCUIApplication, _ ids: [String]) throws {
+        boardEnabled(app.buttons["board-filter-open"])
+        let first = try XCTUnwrap(ids.first), last = try XCTUnwrap(ids.last)
+        XCTAssertEqual(Set(ids).count, ids.count)
+        let scroll = app.scrollViews["board-scroll"]
+        // Revealing one card does not establish visibility of its whole group.
+        for id in [first, last] {
+            revealPagedElement(app, app.buttons["board-task-" + id], in: scroll, outerEdge: true)
+        }
+        let cards = ids.map { app.buttons["board-task-" + $0] }
+        for card in cards { boardEnabled(card) }
+        func finite(_ frame: CGRect) -> Bool {
+            [frame.minX, frame.minY, frame.width, frame.height].allSatisfy({ $0.isFinite }) && frame.width > 0 && frame.height > 0
+        }
+        for _ in 0..<8 {
+            let viewport = app.frame.intersection(scroll.frame), frames = cards.map(\.frame)
+            guard finite(viewport), frames.allSatisfy(finite) else {
+                XCTFail("The Board group requires finite positive frames: frames=\(frames), viewport=\(viewport)")
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let group = frames.dropFirst().reduce(frames[0]) { $0.union($1) }
+            guard group.height <= viewport.height, group.minX >= viewport.minX, group.maxX <= viewport.maxX else {
+                XCTFail("The required Board group must fit fully inside the viewport: frames=\(frames), viewport=\(viewport)")
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if viewport.contains(group) { break }
+            let shift = viewport.midY - group.midY, distance = min(abs(shift), viewport.height * 0.4)
+            // The leading gutter is outside the card and drag-handle recognizers.
+            let start = CGPoint(x: viewport.minX + 4, y: viewport.minY + viewport.height * (shift > 0 ? 0.3 : 0.7))
+            let end = CGPoint(x: start.x, y: start.y + (shift > 0 ? distance : -distance))
+            let origin = try task735Coordinate(app, start), destination = try task735Coordinate(app, end)
+            origin.press(forDuration: 0.05, thenDragTo: destination, withVelocity: .slow, thenHoldForDuration: 0.2)
+        }
+        var previousFrames: [CGRect] = []
+        var previousViewport: CGRect?
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let viewport = app.frame.intersection(scroll.frame), frames = cards.map(\.frame)
+            let stable = frames == previousFrames && viewport == previousViewport
+            previousFrames = frames; previousViewport = viewport
+            return stable && finite(viewport) && cards.allSatisfy({ $0.isHittable })
+                && frames.allSatisfy({ finite($0) && viewport.contains($0) })
+        }, object: nil)
+        guard XCTWaiter.wait(for: [settled], timeout: 10) == .completed else {
+            XCTFail("The Board group must settle fully inside the viewport: frames=\(cards.map(\.frame)), viewport=\(app.frame.intersection(scroll.frame))")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        for id in ids { _ = try task735VisibleFrame(app, app.buttons["board-task-" + id]) }
+    }
+
+    private func task735Coordinate(_ app: XCUIApplication, _ point: CGPoint) throws -> XCUICoordinate {
+        let frame = app.frame
+        guard [frame.minX, frame.minY, frame.width, frame.height, point.x, point.y].allSatisfy({ $0.isFinite }),
+              frame.width > 0, frame.height > 0, frame.contains(point) else {
+            XCTFail("The measured gesture point must be inside the application frame")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        return app.coordinate(withNormalizedOffset: CGVector(dx: (point.x - frame.minX) / frame.width,
+            dy: (point.y - frame.minY) / frame.height))
+    }
+
+    private func task735Drag(_ app: XCUIApplication, source: String, target: String, below: Bool) throws {
+        try task735Drag(app, source: source, target: target, below: below, measuredIDs: task735IDs)
+    }
+
+    private func task735Drag(_ app: XCUIApplication, source: String, target: String, below: Bool, measuredIDs: [String]) throws {
+        XCTAssertEqual(Set(measuredIDs).count, measuredIDs.count)
+        let frames = try measuredIDs.map { try task735VisibleFrame(app, app.buttons["board-task-" + $0]) }
+        XCTAssertTrue(frames.allSatisfy { $0.height >= 44 })
+        let sorted = frames.sorted { $0.minY < $1.minY }
+        XCTAssertTrue(zip(sorted, sorted.dropFirst()).allSatisfy { $0.0.maxY < $0.1.minY })
+        let sourceIndex = try XCTUnwrap(measuredIDs.firstIndex(of: source))
+        let targetIndex = try XCTUnwrap(measuredIDs.firstIndex(of: target))
+        XCTAssertNotEqual(sourceIndex, targetIndex)
+        let sourceFrame = try task735VisibleFrame(app, app.images["board-drag-" + source]), targetFrame = frames[targetIndex]
+        XCTAssertGreaterThanOrEqual(sourceFrame.width, 44); XCTAssertGreaterThanOrEqual(sourceFrame.height, 44)
+        let start = CGPoint(x: sourceFrame.midX, y: sourceFrame.midY)
+        let end = CGPoint(x: targetFrame.midX, y: targetFrame.minY + targetFrame.height * (below ? 0.75 : 0.25))
+        print("Task735 measured drag source=\(source) sourceFrame=\(sourceFrame) target=\(target) targetFrame=\(targetFrame) below=\(below) point=\(end)")
+        let origin = try task735Coordinate(app, start), destination = try task735Coordinate(app, end)
+        origin.press(forDuration: 0.8, thenDragTo: destination, withVelocity: .slow, thenHoldForDuration: 0.2)
+    }
+
+    private func task735RoundTrip(_ role: String, largest: Bool = false) throws {
+        let app = try task735App(role, largest: largest); defer { app.terminate() }
+        if largest {
+            let frames = try task735IDs.map { try task735VisibleFrame(app, app.buttons["board-task-" + $0]) }
+            XCTAssertTrue(frames.contains { abs($0.height - frames[0].height) > 1 }, "Largest fixture must exercise variable-height cards")
+        }
+        try task735Drag(app, source: task735IDs[2], target: task735IDs[0], below: false)
+        try task735RevealGroup(app, [task735IDs[2], task735IDs[0], task735IDs[1]])
+        task735AssertOrder(app, [task735IDs[2], task735IDs[0], task735IDs[1]])
+        try task735Drag(app, source: task735IDs[2], target: task735IDs[1], below: true)
+        try task735RevealGroup(app, task735IDs)
+        task735AssertOrder(app, task735IDs)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); try task735RevealGroup(app, task735IDs); task735AssertOrder(app, task735IDs)
+    }
+
+    func testBoardDragCancellationAndPassiveDrop() throws {
+        let app = try task735App("CANCEL"); defer { app.terminate() }
+        let source = try task735VisibleFrame(app, app.images["board-drag-" + task735IDs[2]])
+        XCTAssertGreaterThanOrEqual(source.width, 44); XCTAssertGreaterThanOrEqual(source.height, 44)
+        let header = try task735VisibleFrame(app, app.staticTexts["board-column-next"])
+        let start = try task735Coordinate(app, CGPoint(x: source.midX, y: source.midY))
+        let outside = try task735Coordinate(app, CGPoint(x: header.midX, y: header.midY))
+        print("Task735 cancellation before drop on measured column header")
+        start.press(forDuration: 0.8, thenDragTo: outside, withVelocity: .slow, thenHoldForDuration: 0.2)
+        task735AssertOrder(app, task735IDs)
+        print("Task735 cancelled drop settled; no ordering submission expected")
+        boardTap(app, "board-task-" + task735IDs[0])
+        boardEnabled(app.buttons["task-mode-view"]); XCTAssertTrue(app.buttons["task-mode-view"].isSelected)
+        boardTap(app, "task-view-close"); task735AssertOrder(app, task735IDs)
+        print("Task735 passive same-position drop begins; submission may be a no-op")
+        try task735Drag(app, source: task735IDs[1], target: task735IDs[0], below: true)
+        task735AssertOrder(app, task735IDs)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); task735AssertOrder(app, task735IDs)
+    }
+
+    private func task735DismissMenu(_ app: XCUIApplication, _ choice: XCUIElement) throws {
+        let title = app.staticTexts["board-title"], frame = title.frame
+        let point = CGPoint(x: frame.midX, y: frame.midY)
+        guard title.exists, [frame.minX, frame.minY, frame.width, frame.height].allSatisfy({ $0.isFinite }),
+              frame.width > 0, frame.height > 0, app.frame.contains(frame),
+              app.collectionViews.buttons.allElementsBoundByIndex.allSatisfy({ !$0.frame.contains(point) }) else {
+            XCTFail("Menu dismissal requires the measured Board title outside every menu choice")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        try task735Coordinate(app, point).tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: choice)
+        waitForExpectations(timeout: 10)
+    }
+
+    func testBoardDragExistingGestureInteractions() throws {
+        let app = try task735App("GESTURES"); defer { app.terminate() }
+        let first = app.buttons["board-task-" + task735IDs[0]], scroll = app.scrollViews["board-scroll"]
+        boardTap(app, first.identifier)
+        boardEnabled(app.buttons["task-mode-view"]); XCTAssertTrue(app.buttons["task-mode-view"].isSelected)
+        boardTap(app, "task-view-close"); task735AssertOrder(app, task735IDs)
+
+        let frame = try task735VisibleFrame(app, first), viewport = app.frame.intersection(scroll.frame)
+        XCTAssertGreaterThan(app.staticTexts["board-column-done"].frame.maxY, viewport.maxY, "Fixture must provide real vertical scroll range")
+        let start = CGPoint(x: frame.midX, y: frame.midY)
+        let end = CGPoint(x: frame.midX, y: viewport.minY + frame.height * 0.25)
+        XCTAssertLessThan(end.y, start.y)
+        let origin = try task735Coordinate(app, start), destination = try task735Coordinate(app, end)
+        origin.press(forDuration: 0.05, thenDragTo: destination, withVelocity: .slow, thenHoldForDuration: 0)
+        expectation(for: NSPredicate { _, _ in first.frame.minY < frame.minY - 1 }, evaluatedWith: first)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.buttons["task-view-close"].exists)
+        revealPagedElement(app, first, in: scroll); task735AssertOrder(app, task735IDs)
+
+        let stationary = task733OrderMenu(app, taskID: task735IDs[1], direction: "up", enabled: true)
+        try task735DismissMenu(app, stationary); task735AssertOrder(app, task735IDs)
+        task733OrderMenu(app, taskID: task735IDs[1], direction: "up", enabled: true).tap()
+        try task735RevealGroup(app, [task735IDs[1], task735IDs[0], task735IDs[2]])
+        task735AssertOrder(app, [task735IDs[1], task735IDs[0], task735IDs[2]])
+        task733OrderMenu(app, taskID: task735IDs[1], direction: "down", enabled: true).tap()
+        try task735RevealGroup(app, task735IDs)
+        task735AssertOrder(app, task735IDs)
+        for (id, direction) in [(task735IDs[0], "up"), (task735IDs[2], "down")] {
+            let boundary = task733OrderMenu(app, taskID: id, direction: direction, enabled: false)
+            try task735DismissMenu(app, boundary)
+        }
+
+        try task735RevealGroup(app, task735IDs)
+        let original = try task735VisibleFrame(app, first)
+        let duplicateStart = try task735Coordinate(app, CGPoint(x: original.minX + original.width * 0.2, y: original.midY))
+        let duplicateEnd = try task735Coordinate(app, CGPoint(x: original.minX + original.width * 0.8, y: original.midY))
+        duplicateStart.press(forDuration: 0.05, thenDragTo: duplicateEnd)
+        boardEnabled(app.buttons["task-mode-edit"]); XCTAssertTrue(app.buttons["task-mode-edit"].isSelected)
+        boardTap(app, "task-view-close")
+        boardEnabled(app.buttons["board-filter-open"])
+        let cards = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "board-task-"))
+        expectation(for: NSPredicate { _, _ in cards.count == 4 }, evaluatedWith: app); waitForExpectations(timeout: 10)
+        let originals = Set(task735IDs.map { "board-task-" + $0 })
+        let copies = cards.allElementsBoundByIndex.filter { !originals.contains($0.identifier) }
+        XCTAssertEqual(copies.count, 1)
+        let discoveredCopy = try XCTUnwrap(copies.first), copyID = String(discoveredCopy.identifier.dropFirst("board-task-".count))
+        XCTAssertNotNil(UUID(uuidString: copyID))
+        let copy = app.buttons["board-task-" + copyID]
+        let identity = XCTAttachment(string: copyID); identity.name = "Task735 swipe duplicate ID"; identity.lifetime = .keepAlways; add(identity)
+        revealPagedElement(app, copy, in: scroll); boardTap(app, copy.identifier)
+        boardEnabled(app.buttons["task-mode-view"]); XCTAssertTrue(app.buttons["task-mode-view"].isSelected)
+        boardTap(app, "task-view-close"); revealPagedElement(app, copy, in: scroll)
+        let copied = try task735VisibleFrame(app, copy)
+        let trashStart = try task735Coordinate(app, CGPoint(x: copied.minX + copied.width * 0.8, y: copied.midY))
+        let trashEnd = try task735Coordinate(app, CGPoint(x: copied.minX + copied.width * 0.2, y: copied.midY))
+        trashStart.press(forDuration: 0.05, thenDragTo: trashEnd)
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: copy); waitForExpectations(timeout: 10)
+        revealPagedElement(app, first, in: scroll); task735AssertOrder(app, task735IDs)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); task735AssertOrder(app, task735IDs); XCTAssertFalse(app.buttons["board-task-" + copyID].exists)
+    }
+
+    func testBoardDragFilteredPagedVisibleAnchorsAndColdRead() throws {
+        continueAfterFailure = false
+        let library = try task371Library("FILTERED", prefix: "MINDWTR_BOARD_DRAG_UI_")
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US",
+            "-AppleInterfaceStyle", "Light"]
+        app.launch(); defer { app.terminate() }
+        boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardSelectAllAreas(app); boardOpen(app)
+        let shown = (1...53).map { String(format: "drag-page-%03d", $0) }
+        let scroll = app.scrollViews["board-scroll"]
+        let cards = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "board-task-"))
+        func selectContext() {
+            boardTap(app, "board-filter-open"); boardTap(app, "board-picker-tokens")
+            let context = app.buttons["board-filter-token-@drag735"]
+            revealPagedElement(app, context, in: app.scrollViews["board-filter-scroll"])
+            if !context.isSelected { context.tap(); boardEnabled(context) }
+            XCTAssertTrue(context.isSelected)
+            boardTap(app, "board-filter-close"); boardEnabled(app.buttons["board-filter-open"])
+        }
+        func assertLoaded(_ expected: [String]) {
+            expectation(for: NSPredicate { _, _ in
+                cards.allElementsBoundByIndex.map(\.identifier) == expected.map { "board-task-" + $0 }
+            }, evaluatedWith: app)
+            waitForExpectations(timeout: 10)
+            XCTAssertEqual(app.staticTexts["board-count-next"].label, "53")
+            for status in ["inbox", "waiting", "someday", "done"] {
+                XCTAssertEqual(app.staticTexts["board-count-" + status].label, "0")
+            }
+            XCTAssertFalse(app.buttons["board-task-drag-hidden-before"].exists)
+            XCTAssertFalse(app.buttons["board-task-drag-hidden-after"].exists)
+            XCTAssertFalse(app.buttons["task-view-close"].exists)
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        }
+        func visibleOrder(_ ids: [String]) throws {
+            let frames = try ids.map { try task735VisibleFrame(app, app.buttons["board-task-" + $0]) }
+            XCTAssertTrue(zip(frames, frames.dropFirst()).allSatisfy { $0.0.maxY < $0.1.minY })
+        }
+        selectContext(); assertLoaded(Array(shown.prefix(50)))
+        XCTAssertTrue(app.buttons["board-more-next"].exists)
+        for id in shown.suffix(3) { XCTAssertFalse(app.buttons["board-task-" + id].exists) }
+        let moved = "drag-page-048", pageEnd = "drag-page-050", predecessor = "drag-page-047"
+        let firstGroup = [moved, "drag-page-049", pageEnd]
+        revealPagedElement(app, app.buttons["board-task-" + pageEnd], in: scroll)
+        try visibleOrder(firstGroup)
+        try task735Drag(app, source: moved, target: pageEnd, below: true, measuredIDs: firstGroup)
+        var reordered = shown.filter { $0 != moved }
+        reordered.insert(moved, at: try XCTUnwrap(reordered.firstIndex(of: pageEnd)) + 1)
+        assertLoaded(Array(reordered.prefix(50)))
+        XCTAssertTrue(app.buttons["board-more-next"].exists)
+        XCTAssertFalse(app.buttons["board-task-drag-page-051"].exists)
+
+        revealPagedElement(app, app.buttons["board-more-next"], in: scroll); boardTap(app, "board-more-next")
+        assertLoaded(reordered); XCTAssertFalse(app.buttons["board-more-next"].exists)
+        revealPagedElement(app, app.buttons["board-task-drag-page-053"], in: scroll)
+        try visibleOrder([moved, "drag-page-051", "drag-page-052", "drag-page-053"])
+        let viewport = app.frame.intersection(scroll.frame)
+        let visible = cards.allElementsBoundByIndex.filter { element in
+            let frame = element.frame
+            return element.isHittable && frame.width > 0 && frame.height > 0 && viewport.contains(frame)
+        }.sorted { $0.frame.minY < $1.frame.minY }
+        let firstVisible = try XCTUnwrap(visible.first)
+        let firstID = String(firstVisible.identifier.dropFirst("board-task-".count))
+        let firstIndex = try XCTUnwrap(reordered.firstIndex(of: firstID))
+        XCTAssertGreaterThan(firstIndex, 0, "Scrolled first-visible is not the complete shown head")
+        XCTAssertGreaterThan(visible.count, 1); XCTAssertNotEqual(firstID, "drag-page-053")
+        let clippedPredecessor = app.buttons["board-task-" + reordered[firstIndex - 1]]
+        let predecessorFrame = clippedPredecessor.frame
+        XCTAssertTrue(clippedPredecessor.exists)
+        XCTAssertTrue([predecessorFrame.minX, predecessorFrame.minY, predecessorFrame.width, predecessorFrame.height].allSatisfy({ $0.isFinite }))
+        XCTAssertGreaterThan(predecessorFrame.width, 0); XCTAssertGreaterThan(predecessorFrame.height, 0)
+        XCTAssertFalse(viewport.contains(predecessorFrame))
+        let visibleIDs = visible.map { String($0.identifier.dropFirst("board-task-".count)) }
+        XCTAssertTrue(visibleIDs.contains("drag-page-053"))
+        print("Task735 false-head refusal firstVisible=\(firstID) viewport=\(viewport)")
+        try task735Drag(app, source: "drag-page-053", target: firstID, below: false, measuredIDs: visibleIDs)
+        assertLoaded(reordered)
+
+        let reverseGroup = [predecessor, "drag-page-049", pageEnd, moved]
+        revealPagedElement(app, app.buttons["board-task-" + predecessor], in: scroll)
+        try visibleOrder(reverseGroup)
+        try task735Drag(app, source: moved, target: predecessor, below: true, measuredIDs: reverseGroup)
+        assertLoaded(shown)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); selectContext(); assertLoaded(Array(shown.prefix(50)))
+        XCTAssertTrue(app.buttons["board-more-next"].exists)
+        revealPagedElement(app, app.buttons["board-more-next"], in: scroll); boardTap(app, "board-more-next")
+        assertLoaded(shown); XCTAssertFalse(app.buttons["board-more-next"].exists)
+    }
+
     func testBoardOrderUpDownBoundariesAndColdRead() throws {
         guard let library = ProcessInfo.processInfo.environment["MINDWTR_BOARD_ORDER_UI_NORMAL_LIBRARY"] else {
             throw XCTSkip("An externally staged isolated Board order library is required")

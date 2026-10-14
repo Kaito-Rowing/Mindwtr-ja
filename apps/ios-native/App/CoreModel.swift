@@ -6,6 +6,20 @@ import UIKit
 import Combine
 import AVFoundation
 
+// MARK: Board drag capture (Foundation-only seam)
+struct BoardOrderDragCapture: Equatable {
+    let nonce: String
+    let generation: Int
+    let taskID: String
+    let status: String
+    let displayedJSON: String
+    let columnJSON: String
+    let filtersJSON: String
+    let ids: [String]
+    let headID: String?
+}
+// MARK: End Board drag capture
+
 #if DEBUG && targetEnvironment(simulator)
 private struct SimulatedSomedayDeleteRefusal: LocalizedError {
     var errorDescription: String? { "STALE_REVISION: Someday section changed; confirm again" }
@@ -11633,7 +11647,7 @@ final class CoreModel: ObservableObject {
                     "projects.sortByName", "projects.sortByColor", "projects.moveUp", "projects.moveDown", "projects.areaInUse",
                     "common.delete",
                     "projects.addToFocus", "projects.removeFromFocus", "projects.actionsLabel", "waiting.title",
-                    "someday.title", "common.search", "filters.contexts", "filters.projects", "filters.timeEstimate",
+                    "someday.title", "board.dragTask", "common.search", "filters.contexts", "filters.projects", "filters.timeEstimate",
                     "filters.more", "filters.priority", "filters.remove", "filters.active", "filters.clear", "taskEdit.energyLevel",
                     "taskEdit.locationLabel", "taskEdit.locationPlaceholder", "reference.title", "nav.history", "nav.trash",
                     "task.trashOutcomeUnknown", "task.updateFailed",
@@ -17171,10 +17185,80 @@ final class CoreModel: ObservableObject {
         await performBoardAction(request)
     }
 
-    private func performBoardAction(_ request: String) async {
+    func captureBoardOrderDrag(_ displayed: CoreObject, column: CoreObject, filters: CoreObject) -> BoardOrderDragCapture? {
+        guard boardOrderActions(displayed, column: column, filters: filters).count == 2,
+              let displayedJSON = try? json(displayed), let columnJSON = try? json(column),
+              let filtersJSON = try? json(filters) else { return nil }
+        let cards = column.objects("cards"), ids = cards.map { $0.object("row").text("id") }
+        guard !ids.contains(""), Set(ids).count == ids.count else { return nil }
+        let first = cards.first
+        let headID = first.flatMap { item -> String? in
+            guard item.object("orderActions")["up"] is NSNull,
+                  boardOrderActions(item, column: column, filters: filters).count == 2 else { return nil }
+            return item.object("row").text("id")
+        }
+        return BoardOrderDragCapture(nonce: UUID().uuidString, generation: boardGeneration,
+            taskID: displayed.object("row").text("id"), status: column.text("status"),
+            displayedJSON: displayedJSON, columnJSON: columnJSON, filtersJSON: filtersJSON, ids: ids, headID: headID)
+    }
+
+    func boardOrderDragIsCurrent(_ capture: BoardOrderDragCapture) -> Bool {
+        guard capture.generation == boardGeneration,
+              let displayed = try? decode(capture.displayedJSON), let column = try? decode(capture.columnJSON),
+              let filters = try? decode(capture.filtersJSON) else { return false }
+        return boardOrderActions(displayed, column: column, filters: filters).count == 2
+    }
+
+    /// Diagnostic-only: never enters the operation owner or changes published UI state.
+    func logBoardDragStage(_ stage: String, reason: String) {
+        let diagnosticHost = host
+        Task {
+            _ = try? await diagnosticHost?.call("logLine", argumentsJSON: json([
+                "Native iOS Board drag stage", json(["releaseCheck": "v1.3.5/ios-board-drag-stage",
+                                                     "stage": stage, "reason": reason])]))
+        }
+    }
+
+    /// Final claim consumption and command retention must remain synchronous.
+    @discardableResult
+    func orderBoardCard(_ capture: BoardOrderDragCapture, afterID: String?, consume: () -> Bool) -> Bool {
+        guard boardOrderDragIsCurrent(capture),
+              let displayed = try? decode(capture.displayedJSON), let column = try? decode(capture.columnJSON),
+              let filters = try? decode(capture.filtersJSON),
+              afterID.map({ $0 != capture.taskID && capture.ids.contains($0) }) ?? (capture.headID != nil) else { return false }
+        if let afterID {
+            let current = boardView.objects("columns").filter { $0.text("status") == capture.status }
+                .flatMap { $0.objects("cards") }.filter { $0.object("row").text("id") == afterID }
+            guard current.count == 1, current[0].object("row").text("status") == capture.status else { return false }
+        }
+        let row = displayed.object("row")
+        guard let request = try? json(["requestId": UUID().uuidString, "action": [
+            "type": "orderCard", "taskId": row.text("id"), "taskRevision": row.text("taskRevision"),
+            "status": column.text("status"), "afterId": afterID as Any? ?? NSNull(), "filters": filters,
+            "expectedOrder": column.object("order").text("expectedOrder")]]), consume() else { return false }
+        retainBoardAction(request)
+        let submittedHost = host
+        Task {
+            // This marker proves submission only, including a later core refusal/no-op.
+            _ = try? await submittedHost?.call("logLine", argumentsJSON: json([
+                "Native iOS Board drag submitted", #"{"releaseCheck":"v1.3.5/ios-board-drag"}"#]))
+            await runBoardAction(request)
+        }
+        return true
+    }
+
+    private func retainBoardAction(_ request: String) {
         boardActionRequest = request
         busy = true
         error = nil
+    }
+
+    private func performBoardAction(_ request: String) async {
+        retainBoardAction(request)
+        await runBoardAction(request)
+    }
+
+    private func runBoardAction(_ request: String) async {
         var boardTaskOpened = false
         defer {
             finishOperation()
