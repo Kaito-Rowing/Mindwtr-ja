@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DEFAULT_POMODORO_DURATIONS, getPomodoroLocalDayKey, type Task } from '@mindwtr/core';
+import { DEFAULT_POMODORO_DURATIONS, getPomodoroLocalDayKey, runStoreCommand, runSyncStoreSave, type Task } from '@mindwtr/core';
 
 vi.mock('./app-log', () => ({ logInfo: vi.fn(async () => undefined), logWarn: vi.fn(async () => undefined) }));
 
@@ -283,6 +283,26 @@ describe('Pomodoro task credit', () => {
     await second.ensureHydrated();
     await settle(second);
     expect(tasks[0].timeSpentMinutes).toBe(30);
+  });
+
+  it('checks a credit against the time a sync save published while the credit waited', async () => {
+    const tasks = makeTasks();
+    const device = new Map([[POMODORO_SESSION_STORAGE_KEY, stored]]);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    // Another device logged time on the task; the sync save publishes it.
+    const save = runSyncStoreSave(async () => { await held; tasks[0].timeSpentMinutes = 12; });
+    const controller = createMobilePomodoroController({
+      storage: { getItem: async (key) => device.get(key) ?? null, setItem: async (key, value) => { device.set(key, value); } },
+      // A store command, as the real updateTask is: it waits for the save.
+      getTaskStore: () => ({ tasks, updateTask: (_id, updates) => runStoreCommand(async () => { Object.assign(tasks[0], updates); return { success: true }; }) }),
+    });
+    await controller.ensureHydrated();
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    release();
+    await save;
+    await settle(controller);
+    expect(tasks[0].timeSpentMinutes).toBe(12);
   });
 
   it('credits two sessions of one task in a row', async () => {

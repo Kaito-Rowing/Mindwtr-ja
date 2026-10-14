@@ -4,6 +4,7 @@ import {
   createPomodoroState,
   DEFAULT_POMODORO_DURATIONS,
   resetPomodoroState,
+  runStoreCommand,
   sanitizePomodoroSessionHistory,
   type PomodoroAutoStartOptions,
   type PomodoroDurations,
@@ -137,13 +138,14 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
   const settleCredits = async (credits: PomodoroCredit[]): Promise<boolean> => {
     let settled = 0;
     for (const credit of credits) {
-      const task = getTaskStore().tasks.find((candidate) => candidate.id === credit.taskId);
-      let outcome = 'already-applied';
-      if (task && task.timeSpentMinutes === credit.from) {
+      // The from check and the write run as one command, so a time a sync save brought is never overwritten.
+      const outcome = await runStoreCommand(async () => {
+        const task = getTaskStore().tasks.find((candidate) => candidate.id === credit.taskId);
+        if (!task || task.timeSpentMinutes !== credit.from) return 'already-applied';
         const result = await getTaskStore().updateTask(credit.taskId, { timeSpentMinutes: credit.to }).catch(() => ({ success: false }));
-        if ((result as { success?: boolean } | undefined)?.success === false) break;
-        outcome = 'applied';
-      }
+        return (result as { success?: boolean } | undefined)?.success === false ? null : 'applied';
+      });
+      if (!outcome) break;
       settled += 1;
       if (loadedCredits.has(credit)) {
         void logInfo('Pomodoro credit replayed after a restart', {
