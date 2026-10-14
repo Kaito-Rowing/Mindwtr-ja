@@ -314,13 +314,11 @@ type LoadedData = Awaited<ReturnType<SqliteAdapter['getData']>>;
 const ENTITY_TABLES = ['tasks', 'projects', 'sections', 'areas', 'people'] as const;
 type EntityTable = typeof ENTITY_TABLES[number];
 // Core's receipt adapter: a write's request receipt commits in the same transaction as its data.
+// It caches no document: a cached read would keep a whole library alive past the store's own reload (pass D1c, cut i).
 class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter {
-    latestData: LoadedData | null = null;
-
     override async getData(options?: { rawTasks?: true }): Promise<LoadedData> {
         const data = await super.getData(options);
         await this.validate((table) => data[table].length, data.settings);
-        if (!options?.rawTasks) this.latestData = data;
         return data;
     }
 
@@ -705,9 +703,7 @@ type LegacyState = { jsonAhead: boolean; reconciled: boolean; backupVersion: str
  * edits could discard them. The next boot plans again, finds the import already
  * saved, writes nothing to SQLite, and retries only the RN state change.
  */
-const importLegacyJson = async (adapter: ValidatedSqliteAdapter, state: LegacyState, backup: string): Promise<void> => {
-    const loaded = adapter.latestData;
-    if (!loaded) throw new Error('Native storage load was not validated');
+const importLegacyJson = async (adapter: ValidatedSqliteAdapter, loaded: LoadedData, state: LegacyState, backup: string): Promise<void> => {
     const plan = planLegacyJsonImport({
         jsonAhead: state.jsonAhead,
         reconciled: state.reconciled,
@@ -1341,9 +1337,12 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
-    if (legacyState) await adapter.getData(); else await adapter.ensureSchema();
+    // The legacy import's validated read lives only in this branch: it goes before activation reads the library again.
+    let loaded: LoadedData | null = legacyState ? await adapter.getData() : null;
+    if (!legacyState) await adapter.ensureSchema();
     traceStep('');
-    if (legacyState) await importLegacyJson(adapter, JSON.parse(legacyState) as LegacyState, legacyBackup);
+    if (loaded) await importLegacyJson(adapter, loaded, JSON.parse(legacyState) as LegacyState, legacyBackup);
+    loaded = null;
     const result = await activateAndVerify(adapter, recoveryLoad);
     bootAdapter = adapter;
     return result;
