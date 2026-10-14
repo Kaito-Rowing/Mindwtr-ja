@@ -11,6 +11,7 @@ import {
     resolveFeatureFlags,
     shallow,
     tFallback,
+    updateTaskFromBase,
     useTaskStore,
     type Task,
     type TaskDraftSetter,
@@ -206,7 +207,9 @@ export function useTaskQuickActionMenuProps(
     }, [areas, projects, t, task.areaId, task.projectId]);
 
     const onUpdateTask = useCallback(
-        (updates: Partial<Task>) => useTaskStore.getState().updateTask(task.id, updates),
+        (updates: Partial<Task>, base?: Task) => (base
+            ? updateTaskFromBase(task.id, base, updates)
+            : useTaskStore.getState().updateTask(task.id, updates)),
         [task.id],
     );
 

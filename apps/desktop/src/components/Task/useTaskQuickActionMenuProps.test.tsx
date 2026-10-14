@@ -6,6 +6,7 @@ import { logInfo } from '../../lib/app-log';
 import { reportError } from '../../lib/report-error';
 import { useUiStore } from '../../store/ui-store';
 import { useTaskQuickActionMenuProps } from './useTaskQuickActionMenuProps';
+import { holdSyncSave } from '../../test/hold-sync-save';
 
 const createProjectMock = vi.hoisted(() => vi.fn());
 const logInfoMock = vi.hoisted(() => vi.fn());
@@ -101,6 +102,23 @@ describe('useTaskQuickActionMenuProps project creation', () => {
                 outcome: 'created',
             },
         });
+    });
+
+    it('refuses a contexts draft when a sync save changed the contexts since the panel opened', async () => {
+        const opened: Task = { ...task, rev: 1, contexts: ['@a'] };
+        act(() => useTaskStore.setState({ _allTasks: [opened] }));
+        const { result } = renderHook(() => useTaskQuickActionMenuProps(opened));
+
+        const finish = holdSyncSave(() => useTaskStore.setState({ _allTasks: [{ ...opened, rev: 3, contexts: ['@a', '@remote'] }] }));
+        let outcome: unknown;
+        await act(async () => {
+            const saving = result.current.onUpdateTask({ contexts: ['@a', '@new'] }, opened);
+            await finish();
+            outcome = await saving;
+        });
+
+        expect(outcome).toMatchObject({ success: false, error: expect.stringMatching(/^STALE_REVISION/) });
+        expect(useTaskStore.getState()._tasksById.get(opened.id)?.contexts).toEqual(['@a', '@remote']);
     });
 
     it('inherits a task area only when the task is not assigned to a project', async () => {

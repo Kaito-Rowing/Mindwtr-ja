@@ -85,7 +85,8 @@ export interface TaskQuickActionMenuProps {
     onStatusChange: (status: TaskStatus) => void;
     onCreateArea: (name: string) => Promise<string | null>;
     onCreateProject: (title: string) => Promise<string | null>;
-    onUpdateTask: (updates: Partial<Task>) => Promise<StoreActionResult>;
+    /** With [base], the row a draft was built on: the write is refused when a field it writes changed since. */
+    onUpdateTask: (updates: Partial<Task>, base?: Task) => Promise<StoreActionResult>;
     /** Extra entries rendered above Delete. Generic by design — the menu does not interpret them. */
     extraActions?: Array<{
         id: string;
@@ -651,7 +652,8 @@ export function TaskQuickActionMenu({
     const handleContextsSave = async () => {
         setSavingPanel('contexts');
         try {
-            const result = await onUpdateTask({ contexts: normalizedDraftContexts });
+            // The draft follows task.contexts, so [task] is its base: a list a sync save changed meanwhile refuses the save.
+            const result = await onUpdateTask({ contexts: normalizedDraftContexts }, task);
             if (!result.success) {
                 throw new Error(result.error || 'Failed to update task contexts');
             }
