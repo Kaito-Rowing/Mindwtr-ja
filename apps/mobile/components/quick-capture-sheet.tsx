@@ -476,6 +476,10 @@ export function QuickCaptureSheet({
   const restoredActivitySessionRef = useRef(false);
   const contextOptionsLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextOptionsRequestRef = useRef(0);
+  const modalShownRef = useRef(false);
+  const initialFocusPendingRef = useRef(false);
+  const focusSessionRef = useRef({ visible, openRequestId });
+  focusSessionRef.current = { visible, openRequestId };
   const initialFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusedCount = getFocusedCount();
   const labels = getQuickCaptureLabels(options, { projects, areas, settings, focusedCount, t, formatDate: safeFormatDate });
@@ -685,10 +689,28 @@ export function QuickCaptureSheet({
   }, []);
 
   const clearInitialFocusTimer = useCallback(() => {
+    initialFocusPendingRef.current = false;
     if (!initialFocusTimerRef.current) return;
     clearTimeout(initialFocusTimerRef.current);
     initialFocusTimerRef.current = null;
   }, []);
+
+  const scheduleInitialFocus = useCallback(() => {
+    clearInitialFocusTimer();
+    initialFocusTimerRef.current = setTimeout(() => {
+      initialFocusTimerRef.current = null;
+      if (!focusSessionRef.current.visible || focusSessionRef.current.openRequestId !== openRequestId) return;
+      onAutoFocusRequest(Platform.OS === 'android');
+      inputRef.current?.focus();
+    }, 120);
+  }, [clearInitialFocusTimer, onAutoFocusRequest, openRequestId]);
+
+  const handleModalShow = useCallback(() => {
+    if (!visible || !focusSessionRef.current.visible || focusSessionRef.current.openRequestId !== openRequestId) return;
+    onModalShow();
+    modalShownRef.current = true;
+    if (Platform.OS === 'android' && initialFocusPendingRef.current) scheduleInitialFocus();
+  }, [onModalShow, openRequestId, scheduleInitialFocus, visible]);
 
   const {
     clearAndroidOptionsExpand,
@@ -852,7 +874,10 @@ export function QuickCaptureSheet({
   }, [openRequestId, visible]);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      modalShownRef.current = false;
+      return;
+    }
     if (restoredActivitySessionRef.current) {
       restoredActivitySessionRef.current = false;
     } else {
@@ -866,13 +891,11 @@ export function QuickCaptureSheet({
     });
     if (autoRecord) return;
     clearInitialFocusTimer();
-    initialFocusTimerRef.current = setTimeout(() => {
-      initialFocusTimerRef.current = null;
-      onAutoFocusRequest();
-      inputRef.current?.focus();
-    }, 120);
+    // Android can accept JS focus before its modal window is ready for the IME.
+    initialFocusPendingRef.current = true;
+    if (Platform.OS !== 'android' || modalShownRef.current) scheduleInitialFocus();
     return clearInitialFocusTimer;
-  }, [autoRecord, onAutoFocusRequest, clearInitialFocusTimer, openRequestId, resetDraftState, visible]);
+  }, [autoRecord, scheduleInitialFocus, clearInitialFocusTimer, openRequestId, resetDraftState, visible]);
 
   useEffect(() => {
     if (prioritiesEnabled) return;
@@ -1406,7 +1429,7 @@ export function QuickCaptureSheet({
         }}
         insetsBottom={insets.bottom}
         inputRef={inputRef}
-        onModalShow={onModalShow}
+        onModalShow={handleModalShow}
         onInputFocus={onInputFocus}
         onInputBlur={onInputBlur}
         keyboardAvoidingEnabled={androidKeyboardAvoidingEnabled}
