@@ -69,7 +69,10 @@ import { createAreaSaveGuard, readAreaDurableData } from './native-host-contract
 import { validRawTask } from './native-host-contract-task-save';
 import type { AppData, Area, Project, Section, Task } from './types';
 import { resolveI18nText } from './i18n';
+import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { logInfo } from './logger';
+import { boardOrderWritability, createBoardOrderMethods,
+    type NativeBoardOrderRequest, type NativePreparedBoardOrder, type NativeBoardOrderActions, type NativeBoardColumnOrder } from './native-host-contract-board-order';
 
 type NativeHostErrorCode = Extract<NativeHostResult<never>, { ok: false }>['error']['code'];
 type Translate = (key: string) => string;
@@ -88,9 +91,10 @@ export type BoardViewDeps = {
 /** The Board's filter state; missing keys are the empty state's. */
 export type NativeBoardFilters = Partial<BoardFilterState>;
 export type NativeBoardWindow<T> = { total: number; items: T[] };
-export type NativeBoardCard = { row: NativeTaskRow; card: BoardCard; boardOrder: number | null; moveAllowed: boolean; completeAllowed: boolean };
+export type NativeBoardCard = { row: NativeTaskRow; card: BoardCard; boardOrder: number | null; moveAllowed: boolean; completeAllowed: boolean; orderActions?: NativeBoardOrderActions };
 export type NativeBoardColumn = {
     status: BoardStatus;
+    order?: NativeBoardColumnOrder;
     label: string;
     tone: BoardColumnTone;
     /** The header badge: every card in the column. */
@@ -331,7 +335,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
     let cache: { key: string; value: ReturnType<typeof buildBoard> } | null = null;
 
     /** The Board for a filter state, as mobile derives it from the store. */
-    function buildBoard(input: BoardFilterState, now: Date, state = useTaskStore.getState()) {
+    function buildBoard(input: BoardFilterState, now: Date, state = useTaskStore.getState(), includeOrdering = true) {
         const t = deps.t();
         const areas = sortAreasForDisplay(state.areas);
         const areaById = new Map(areas.map((area) => [area.id, area]));
@@ -397,8 +401,34 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                     .map(column => ({ status: column.status as NativeBoardMoveStatus, label: column.label })) },
             },
         };
-        return { view, columns, lists, search, badges, timeEstimatesEnabled };
+        const ordering = new Map<BoardStatus, { order: NativeBoardColumnOrder; actions: Map<string, NativeBoardOrderActions> }>();
+        if (includeOrdering) for (const column of columns) {
+            const actions = new Map<string, NativeBoardOrderActions>();
+            let token: string | null = null;
+            try {
+                const snapshot = orderMethods.snapshot(filters, column.status, now, state, { filters, columns });
+                const scope = snapshot?.scope;
+                // A complete snapshot is optional metadata; its failure never blocks browsing.
+                token = snapshot?.token ?? null;
+                if (token && scope && typeof state.settings.deviceId === 'string' && state.settings.deviceId.trim()) {
+                    const writable = boardOrderWritability(scope);
+                    for (let index = 0; index < column.tasks.length; index++) {
+                        const row = column.tasks[index];
+                        if (!writable(row)) continue;
+                        actions.set(row.id, { up: index === 0 ? null : { afterId: index === 1 ? null : column.tasks[index - 2].id },
+                            down: index === column.tasks.length - 1 ? null : { afterId: column.tasks[index + 1].id } });
+                    }
+                }
+            } catch { token = null; }
+            ordering.set(column.status, { order: { available: token !== null, expectedOrder: token,
+                moveUpLabel: resolveI18nText(t, 'projects.moveUp'), moveDownLabel: resolveI18nText(t, 'projects.moveDown') }, actions });
+        }
+        return { view, columns, lists, search, badges, timeEstimatesEnabled, ordering };
     }
+
+    const orderMethods = createBoardOrderMethods({ ...deps, readFilters,
+        snapshot: (filters, now, state) => { const board = buildBoard(filters, now, state, false);
+            return { filters: board.view.filters, columns: board.columns }; } });
 
     /** The Board for these filters (after an edit), with its revision; null for invalid input. */
     const readBoard = (input: Record<string, unknown>) => {
@@ -443,6 +473,8 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             boardOrder: Number.isFinite(task.boardOrder) ? task.boardOrder as number : null,
             moveAllowed: moveAllowed(task),
             completeAllowed: completeAllowed(task),
+            ...(board.ordering.get(task.status as BoardStatus)?.actions.has(task.id)
+                ? { orderActions: board.ordering.get(task.status as BoardStatus)!.actions.get(task.id)! } : {}),
         }));
     };
 
@@ -1041,9 +1073,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             if (!read) return fail('INVALID_INPUT', 'Valid filters, a filter edit and a bounded limit are required');
             const { now, board, revision } = read;
             const limit = input.limit;
-            return {
-                ok: true,
-                value: {
+            const value: NativeBoardView = {
                     version: NATIVE_HOST_CONTRACT_VERSION,
                     revision,
                     ...board.view,
@@ -1051,12 +1081,17 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                         status: column.status,
                         label: column.label,
                         tone: column.tone,
+                        order: board.ordering.get(column.status)?.order,
                         count: column.tasks.length,
                         cards: cards(board, column.tasks.slice(0, limit), now),
                         empty: column.empty,
                     })),
-                },
             };
+            if (!isNativeJsonWithinBytes(value)) for (const column of value.columns) {
+                delete column.order;
+                for (const card of column.cards) delete card.orderActions;
+            }
+            return { ok: true, value };
         },
 
         /**
@@ -1095,17 +1130,23 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 total = list.total;
                 items = list.page(input.offset, input.limit);
             }
-            return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: read.revision, list: input.list, total, items } };
+            const value = { version: NATIVE_HOST_CONTRACT_VERSION, revision: read.revision, list: input.list, total, items } as const;
+            if (input.list === 'cards' && !isNativeJsonWithinBytes(value)) for (const card of items as NativeBoardCard[]) delete card.orderActions;
+            return { ok: true, value };
         },
 
         /** Pure planning for the bounded native Trash/Duplicate journal. */
-        prepareBoardAction(input: NativeBoardWriteRequest): NativeHostResult<NativeBoardPrepareResult> {
-            return prepareBoardActionBody(input);
+        prepareBoardAction(input: NativeBoardWriteRequest | NativeBoardOrderRequest) {
+            return input?.action?.type === 'orderCard' ? orderMethods.prepare(input) : prepareBoardActionBody(input as NativeBoardWriteRequest);
         },
 
         /** Pure immutable authority check, including before activation/SQLite open.
          * Terminal cleanup must never rerun a mutation or mutable source checks. */
-        validatePreparedBoardAction(input: { request: NativeBoardWriteRequest; prepared: NativePreparedBoardAction }): NativeHostResult<NativeBoardActionResult> {
+        validatePreparedBoardAction(input: { request: NativeBoardWriteRequest; prepared: NativePreparedBoardAction } | { request: NativeBoardOrderRequest; prepared: NativePreparedBoardOrder }): NativeHostResult<NativeBoardActionResult> {
+            if (input?.request?.action?.type === 'orderCard') {
+                const envelope = orderMethods.readEnvelope(input);
+                return envelope ? { ok: true, value: envelope.prepared.result } : fail('INVALID_INPUT', 'Prepared Board order does not match');
+            }
             const prepared = readPreparedCommand(input);
             return prepared ? { ok: true, value: prepared.result } : fail('INVALID_INPUT', 'Prepared Board request or journal does not match');
         },
@@ -1117,7 +1158,12 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 ? reactivationOutcome(prepared) : fail('INVALID_INPUT', 'A prepared Done Board move is required');
         },
 
-        async commitPreparedBoardAction(input: { request: NativeBoardWriteRequest; prepared: NativePreparedBoardAction }): Promise<NativeHostResult<NativeBoardActionResult>> {
+        async boardOrderOutcome(input: { request: NativeBoardOrderRequest; prepared: NativePreparedBoardOrder }): Promise<NativeHostResult<NativeBoardActionResult | null>> {
+            return orderMethods.outcome(input);
+        },
+
+        async commitPreparedBoardAction(input: { request: NativeBoardWriteRequest; prepared: NativePreparedBoardAction } | { request: NativeBoardOrderRequest; prepared: NativePreparedBoardOrder }): Promise<NativeHostResult<NativeBoardActionResult>> {
+            if (input?.request?.action?.type === 'orderCard') return orderMethods.commit(input);
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const prepared = readPreparedCommand(input);

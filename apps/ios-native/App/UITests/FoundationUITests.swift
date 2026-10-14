@@ -5815,6 +5815,69 @@ final class FoundationUITests: XCTestCase {
         XCTAssertEqual(cards.count, 1)
     }
 
+    func testBoardOrderUpDownBoundariesAndColdRead() throws {
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_BOARD_ORDER_UI_NORMAL_LIBRARY"] else {
+            throw XCTSkip("An externally staged isolated Board order library is required")
+        }
+        guard let id = UUID(uuidString: library), id.uuidString.lowercased() == library else {
+            XCTFail("The Board order library must be a canonical lowercase UUID")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US"]
+        app.launch(); defer { app.terminate() }
+        boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardSelectAllAreas(app); boardOpen(app)
+        let first = "board-order-first", middle = "board-order-middle", last = "board-order-last"
+        task733AssertOrder(app, [first, middle, last])
+        task733OrderMenu(app, taskID: middle, direction: "up", enabled: true).tap()
+        task733AssertOrder(app, [middle, first, last])
+        task733OrderMenu(app, taskID: middle, direction: "down", enabled: true).tap()
+        task733AssertOrder(app, [first, middle, last])
+        for (taskID, direction) in [(first, "up"), (last, "down")] {
+            let boundary = task733OrderMenu(app, taskID: taskID, direction: direction, enabled: false)
+            XCTAssertFalse(boundary.isEnabled, "A boundary action must not issue an ordering request")
+            // Dismiss the system context menu outside its choices without tapping an action.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.95)).tap()
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: boundary)
+            waitForExpectations(timeout: 10)
+            task733AssertOrder(app, [first, middle, last])
+        }
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); task733AssertOrder(app, [first, middle, last])
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+    }
+
+    private func task733OrderMenu(_ app: XCUIApplication, taskID: String, direction: String, enabled: Bool) -> XCUIElement {
+        let card = app.buttons["board-task-" + taskID]
+        revealPagedElement(app, card, in: app.scrollViews["board-scroll"]); boardEnabled(card)
+        XCTAssertGreaterThanOrEqual(card.frame.height, 44 - 0.001)
+        card.press(forDuration: 1)
+        let choices = app.collectionViews.buttons.matching(NSPredicate(format: "label == %@", direction == "up" ? "Move up" : "Move down"))
+        let choice = choices.firstMatch
+        XCTAssertTrue(choice.waitForExistence(timeout: 10)); XCTAssertEqual(choices.count, 1)
+        XCTAssertEqual(choice.isEnabled, enabled)
+        if enabled { XCTAssertTrue(choice.isHittable); XCTAssertTrue(app.frame.contains(choice.frame)) }
+        return choice
+    }
+
+    private func task733AssertOrder(_ app: XCUIApplication, _ ids: [String]) {
+        let ordered = NSPredicate { _, _ in
+            let cards = ids.map { app.buttons["board-task-" + $0] }
+            guard cards.allSatisfy({ $0.exists && $0.isEnabled && $0.isHittable }) else { return false }
+            return zip(cards, cards.dropFirst()).allSatisfy { $0.0.frame.minY < $0.1.frame.minY }
+        }
+        expectation(for: ordered, evaluatedWith: app); waitForExpectations(timeout: 10)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "board-task-")).count, 3)
+        for status in ["inbox", "next", "waiting", "someday", "done"] {
+            XCTAssertEqual(app.staticTexts["board-count-" + status].label, status == "next" ? "3" : "0")
+        }
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+    }
+
     func testBoardCompletePublicUndoAndColdRead() throws {
         guard let library = ProcessInfo.processInfo.environment["MINDWTR_BOARD_COMPLETE_UI_NORMAL_LIBRARY"] else {
             throw XCTSkip("An externally staged isolated Board Complete library is required")

@@ -24,6 +24,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'retryCount',
     // ios-reminders-run: aggregate acknowledged items and failures, never reminder content.
     'importedCount', 'failedCount',
+    // ios-board-order: bounded aggregate affected rows, never identity/order/content.
+    'affectedCount',
     // deferred-attachment-pass: which pass owes the deferred pre-sync phase's work.
     'owed',
     // candidate-ciphertext-probe: what the activation candidate's folder held (plaintext, encrypted or mixed).

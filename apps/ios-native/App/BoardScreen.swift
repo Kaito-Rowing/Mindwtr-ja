@@ -110,7 +110,7 @@ struct BoardScreen: View {
             .id("board-column-" + status).background(anchor("board-column-" + status))
             VStack(alignment: .leading, spacing: 10) {
                 let cards = column.objects("cards")
-                ForEach(cards.indices, id: \.self) { index in card(cards[index]) }
+                ForEach(cards.indices, id: \.self) { index in card(cards[index], column: column) }
                 if cards.count < column.number("count") {
                     BoardButton(title: model.label("common.more"), palette: palette, enabled: model.boardActionsEnabled,
                                 id: "board-more-" + status) { endInput(); model.loadMoreBoard("cards", status: status) }
@@ -126,13 +126,15 @@ struct BoardScreen: View {
         .overlay(alignment: .top) { color.frame(height: 4).clipShape(RoundedRectangle(cornerRadius: 2)) }
     }
 
-    private func card(_ item: CoreObject) -> some View {
+    private func card(_ item: CoreObject, column: CoreObject) -> some View {
         let row = item.object("row")
         let card = item.object("card")
         let id = row.text("id")
         let swipes = model.boardView.object("cardActions").object("swipes")
         let moveTo = model.boardView.object("cardActions").object("moveTo")
         let complete = model.boardView.object("cardActions").object("complete")
+        let filters = model.boardView.object("filters")
+        let orderActions = model.boardOrderActions(item, column: column, filters: filters)
         return SwipeActionCard(
             palette: palette, enabled: model.boardActionsEnabled, id: "board-task-" + id,
             leftLabel: model.boardSwipeAction("left") == nil ? "" : swipes.object("left").text("label"),
@@ -144,6 +146,10 @@ struct BoardScreen: View {
             move: { status in endInput(); Task { await model.moveBoardCard(item, status: status) } },
             completeLabel: model.boardCardCanComplete(item) ? complete.text("label") : "",
             complete: { endInput(); Task { await model.completeBoardCard(item) } },
+            orderActions: orderActions,
+            order: { direction in
+                endInput(); Task { await model.orderBoardCard(item, column: column, filters: filters, direction: direction) }
+            },
             content: VStack(alignment: .leading, spacing: 8) {
                 Text(row.text("title")).rnFont(14, .medium).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -214,6 +220,8 @@ struct SwipeActionCard<Content: View>: View {
     var move: (String) -> Void = { _ in }
     var completeLabel: String = ""
     var complete: () -> Void = {}
+    var orderActions: [CoreObject] = []
+    var order: (String) -> Void = { _ in }
     let content: Content
     @GestureState private var offset: CGFloat = 0
 
@@ -230,6 +238,11 @@ struct SwipeActionCard<Content: View>: View {
             .accessibilityIdentifier(id)
             .accessibilityActions {
                 if !completeLabel.isEmpty { Button(completeLabel) { complete() }.disabled(!enabled) }
+                ForEach(orderActions.indices, id: \.self) { index in
+                    let action = orderActions[index]
+                    Button(action.text("label")) { order(action.text("direction")) }
+                        .disabled(!enabled || !action.flag("enabled"))
+                }
                 if !leftLabel.isEmpty { Button(leftLabel) { swipe("left") }.disabled(!enabled) }
                 if !rightLabel.isEmpty { Button(rightLabel) { swipe("right") }.disabled(!enabled) }
                 ForEach(moveDestinations.indices, id: \.self) { index in
@@ -239,6 +252,14 @@ struct SwipeActionCard<Content: View>: View {
                 }
             }
             .contextMenu {
+                ForEach(orderActions.indices, id: \.self) { index in
+                    let action = orderActions[index]
+                    Button(action.text("label"), systemImage: action.text("direction") == "up" ? "arrow.up" : "arrow.down") {
+                        order(action.text("direction"))
+                    }
+                    .accessibilityIdentifier("board-order-" + action.text("direction") + "-" + id)
+                    .disabled(!enabled || !action.flag("enabled"))
+                }
                 if !completeLabel.isEmpty {
                     Button(completeLabel, systemImage: "checkmark") { complete() }
                         .accessibilityIdentifier("board-complete-" + id).disabled(!enabled)

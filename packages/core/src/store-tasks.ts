@@ -101,6 +101,7 @@ type TaskActions = Pick<
     | 'commitPreparedTaskFocus'
     | 'commitPreparedFocusOrder'
     | 'commitPreparedBoardTask'
+    | 'commitPreparedBoardOrder'
     | 'commitPreparedCalendarTask'
     | 'commitPreparedCalendarCreate'
     | 'commitPreparedInboxEffect'
@@ -877,6 +878,20 @@ const taskJsonColumns = new Set(['relativeStartOffset', 'recurrence', 'tags', 'c
 const projectJsonColumns = new Set(['tagIds', 'attachments']);
 export const samePreparedTask = (left: Task, right: Task) => samePreparedSqliteRow(TASK_SQLITE_COLUMNS, taskJsonColumns,
     taskToSqliteRow(left), taskToSqliteRow(right));
+/** Board order preserves complete JSON cells as well as their stored scalar representation. */
+export const samePreparedBoardOrderTask = (left: Task, right: Task): boolean => samePreparedTask(left, right)
+    && sameSectionDeleteJson({ ...left, pushCount: left.pushCount ?? 0 }, { ...right, pushCount: right.pushCount ?? 0 });
+/** Accept only these lossless RN hydration forms for BEFORE; saved AFTER stays exact. */
+export const samePreparedBoardOrderBefore = (raw: Task, frozen: Task): boolean => {
+    const projected = { ...raw };
+    if (typeof raw.recurrence === 'string' && ['daily', 'weekly', 'monthly', 'yearly'].includes(raw.recurrence)) {
+        projected.recurrence = { rule: raw.recurrence };
+    }
+    if (raw.rev == null) projected.rev = 0;
+    if (raw.timeSpentMinutes === 0) delete projected.timeSpentMinutes;
+    if (raw.pushCount == null) projected.pushCount = 0;
+    return samePreparedBoardOrderTask(projected, frozen);
+};
 const samePreparedProject = (left: AppData['projects'][number], right: AppData['projects'][number]) =>
     samePreparedSqliteRow(PROJECT_SQLITE_COLUMNS, projectJsonColumns, projectToSqliteRow(left), projectToSqliteRow(right));
 const samePreparedSection = (left: Section, right: Section) =>
@@ -2155,6 +2170,40 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             result = { success: true, ids: input.before.map((row) => row.id), outcome: 'applied' };
             return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: durable.sections,
                 _allAreas: durable.areas, _allPeople: durable.people ?? [], settings, lastDataChangeAt };
+        });
+        return result;
+    },
+
+    commitPreparedBoardOrder: async (input, authority, admit): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Board order conflicts with saved data' };
+        set((memory) => {
+            const before = authority.state;
+            if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                || memory._allAreas !== before._allAreas || memory._allSections !== before._allSections
+                || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                || memory.lastDataChangeAt !== before.lastDataChangeAt || !admit()) return memory;
+            const durable = authority.snapshot;
+            if (durable.settings.deviceId !== input.deviceIdBefore || !input.effect.tasks.length) return memory;
+            const replacements = new Map<string, Task>();
+            for (const pair of input.effect.tasks) {
+                const rows = durable.tasks.filter(row => row.id === pair.before.id);
+                if (rows.length !== 1 || replacements.has(pair.before.id) || pair.after.id !== pair.before.id
+                    || !samePreparedBoardOrderBefore(rows[0], pair.before)) return memory;
+                replacements.set(pair.before.id, pair.after);
+            }
+            // Only a typed durable operation receipt can replay; AFTER equality never does.
+            const tasks = durable.tasks.map(row => replacements.get(row.id) ?? row);
+            const freshTasks = tasks.map(row => normalizeTaskForLoad(row));
+            const freshProjects = durable.projects.map(normalizeProjectLifecycleFields);
+            clearDerivedCache();
+            persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks, _allProjects: durable.projects,
+                _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [], settings: durable.settings },
+            { ...durable, tasks });
+            const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+            authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt, generation: getSaveGeneration(), failure: memory.persistenceFailure };
+            result = { success: true, ids: [...replacements.keys()], outcome: 'applied' };
+            return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: durable.sections ?? [],
+                _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [], settings: durable.settings, lastDataChangeAt };
         });
         return result;
     },

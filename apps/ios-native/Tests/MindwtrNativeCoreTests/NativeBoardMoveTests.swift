@@ -693,4 +693,208 @@ final class NativeBoardMoveTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: database), before)
     }
 
+
+    private func seedBoardOrderFixture(dense: Bool = false) async throws -> [String] {
+        let first = try await seedBoardActionFixture(), writer = host()
+        let ids = [first, UUID().uuidString.lowercased(), UUID().uuidString.lowercased()]
+        _ = try await writer.start()
+        for id in ids.dropFirst() {
+            _ = try await writer.call("captureSubmit", argumentsJSON: capture(writer, title: "Order peer", id: id))
+        }
+        await writer.close()
+        let sqlite = try SQLiteBridge(url: database); defer { sqlite.close() }
+        for (index, id) in ids.enumerated() {
+            _ = try sqlite.execute("UPDATE tasks SET status = 'next', boardOrder = ? WHERE id = ?",
+                parametersJSON: json([dense ? index : index * 1024, id]))
+        }
+        return ids
+    }
+
+    private func boardOrderPayload(_ core: CoreHost, taskID: String, afterID: String?) async throws -> String {
+        let view = try object(await core.call("menuRead", argumentsJSON: json(["board", json(["limit": 100])])))
+        let columns = try XCTUnwrap(view["columns"] as? [[String: Any]])
+        let column = try XCTUnwrap(columns.first { $0["status"] as? String == "next" })
+        let cards = try XCTUnwrap(column["cards"] as? [[String: Any]])
+        let row = try XCTUnwrap(cards.first { ($0["row"] as? [String: Any])?["id"] as? String == taskID }?["row"] as? [String: Any])
+        let order = try XCTUnwrap(column["order"] as? [String: Any]); XCTAssertEqual(order["available"] as? Bool, true)
+        return try json([json(["requestId": UUID().uuidString, "action": ["type": "orderCard", "taskId": taskID,
+            "taskRevision": try XCTUnwrap(row["taskRevision"]), "status": "next", "afterId": afterID as Any? ?? NSNull(),
+            "filters": try XCTUnwrap(view["filters"]), "expectedOrder": try XCTUnwrap(order["expectedOrder"])]])])
+    }
+
+    private func boardOrderRows(_ ids: [String]) throws -> String { try json(ids.map { try storedTask($0) }) }
+
+    private func boardOrderReceiptCount() throws -> Int {
+        let sqlite = try SQLiteBridge(url: database); defer { sqlite.close() }
+        let rows = try XCTUnwrap(NativeJSON.jsonObject(with: Data(sqlite.execute(
+            "SELECT COUNT(*) AS count FROM native_request_receipts WHERE method LIKE 'boardTaskOrder:%'").utf8)) as? [[String: Any]])
+        return try XCTUnwrap(rows.first?["count"] as? Int)
+    }
+
+    private func assertBoardOrderEffects(_ envelope: [String: Any], ids: [String], before: [[String: Any]]) throws {
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any]), effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        let pairs = try XCTUnwrap(effect["tasks"] as? [[String: Any]])
+        let changed = Set(try pairs.map { try XCTUnwrap(($0["after"] as? [String: Any])?["id"] as? String) })
+        for (index, id) in ids.enumerated() {
+            let after = try storedTask(id)
+            if let pair = pairs.first(where: { ($0["after"] as? [String: Any])?["id"] as? String == id }), let planned = pair["after"] as? [String: Any] {
+                for name in ["boardOrder", "rev", "revBy", "updatedAt"] {
+                    XCTAssertEqual(try json([XCTUnwrap(after[name])]), try json([XCTUnwrap(planned[name])]), name)
+                }
+            } else { XCTAssertEqual(try json(after), try json(before[index])) }
+            for name in ["id", "title", "status", "projectId", "sectionId", "areaId", "description", "orderNum", "dueDate", "startTime"] {
+                XCTAssertEqual(try json([XCTUnwrap(after[name])]), try json([XCTUnwrap(before[index][name])]), name)
+            }
+            for name in ["attachments", "checklist", "tags", "contexts"] {
+                let current = try XCTUnwrap(after[name]), original = try XCTUnwrap(before[index][name])
+                if let a = current as? String, let b = original as? String {
+                    XCTAssertEqual(try json(NativeJSON.jsonObject(with: Data(a.utf8))), try json(NativeJSON.jsonObject(with: Data(b.utf8))), name)
+                } else { XCTAssertEqual(try json([current]), try json([original]), name) }
+            }
+            XCTAssertEqual(after["rev"] as? Int, try XCTUnwrap(before[index]["rev"] as? Int) + (changed.contains(id) ? 1 : 0))
+        }
+    }
+
+    func testPreparedBoardOrderSparseNoopAndColdRead() async throws {
+        let ids = try await seedBoardOrderFixture(), faults = HostIOFaults(), core = host(faults)
+        var seededSettings = try calendarPreferenceSettings(); seededSettings["deviceId"] = "device-a"
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE settings SET data = ? WHERE id = 1", parametersJSON: json([json(seededSettings)])); sqlite.close()
+        _ = try await core.start()
+        let before = try boardOrderRows(ids), protected = try storedTask(ids[0] + "-protected"), settings = try calendarPreferenceSettings()
+        var markers = 0; faults.commandDiagnostic = { if $0 == "boardOrder" { markers += 1 } }
+        let noop = try object(await core.call("boardAction", argumentsJSON: boardOrderPayload(core, taskID: ids[2], afterID: ids[1])))
+        XCTAssertEqual(try json(noop), try json(["changed": false, "open": NSNull()]))
+        XCTAssertEqual(try boardOrderRows(ids), before); XCTAssertEqual(try boardOrderReceiptCount(), 0)
+        XCTAssertEqual(markers, 0); XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        faults.journalRemove = { throw HostFailure("Injected order retirement failure") }
+        await expectFailure("Injected order retirement failure") {
+            _ = try await core.call("boardAction", argumentsJSON: boardOrderPayload(core, taskID: ids[2], afterID: ids[0]))
+        }
+        let frozen = try completionJournalEnvelope()
+        XCTAssertEqual((frozen.envelope["prepared"] as? [String: Any])?["deviceIdBefore"] as? String, "device-a")
+        try assertBoardOrderEffects(frozen.envelope, ids: ids, before: XCTUnwrap(NativeJSON.jsonObject(with: Data(before.utf8)) as? [[String: Any]]))
+        XCTAssertEqual(try boardOrderReceiptCount(), 1); XCTAssertEqual(markers, 0)
+        faults.journalRemove = nil; _ = try await core.retryPending()
+        XCTAssertEqual(markers, 1); XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let landed = try boardOrderRows(ids)
+        XCTAssertEqual(try json(storedTask(ids[0] + "-protected")), try json(protected))
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings)); await core.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(try boardOrderRows(ids), landed); XCTAssertEqual(try boardOrderReceiptCount(), 1); await cold.close()
+    }
+
+    func testPreparedBoardOrderRebalanceFailedCommitExactRetry() async throws {
+        let ids = try await seedBoardOrderFixture(dense: true), faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        let before = try boardOrderRows(ids), protected = try storedTask(ids[0] + "-protected"); var markers = 0
+        faults.commandDiagnostic = { if $0 == "boardOrder" { markers += 1 } }
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected order COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("boardAction", argumentsJSON: boardOrderPayload(core, taskID: ids[2], afterID: ids[0])) }
+        let frozen = try completionJournalEnvelope(), prepared = try XCTUnwrap(frozen.envelope["prepared"] as? [String: Any])
+        let effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        XCTAssertGreaterThan(try XCTUnwrap(effect["tasks"] as? [[String: Any]]).count, 1)
+        XCTAssertEqual(try boardOrderRows(ids), before); XCTAssertEqual(try boardOrderReceiptCount(), 0); XCTAssertEqual(markers, 0)
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        XCTAssertEqual(try completionJournalEnvelope().encoded, frozen.encoded)
+        XCTAssertEqual(try boardOrderRows(ids), before); XCTAssertEqual(try boardOrderReceiptCount(), 0)
+        faults.beforeSQL = nil; _ = try await core.retryPending()
+        try assertBoardOrderEffects(frozen.envelope, ids: ids, before: XCTUnwrap(NativeJSON.jsonObject(with: Data(before.utf8)) as? [[String: Any]]))
+        XCTAssertEqual(try boardOrderReceiptCount(), 1); XCTAssertEqual(markers, 1)
+        XCTAssertEqual(try json(storedTask(ids[0] + "-protected")), try json(protected)); XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testPreparedBoardOrderColdLostReplyAndRetirementProof() async throws {
+        let ids = try await seedBoardOrderFixture(dense: true), faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start(); var saves = 0
+        faults.journalWrite = { saves += 1; if saves == 2 { throw HostFailure("Injected order lost reply") } }
+        await expectFailure { _ = try await core.call("boardAction", argumentsJSON: boardOrderPayload(core, taskID: ids[2], afterID: ids[0])) }
+        let frozen = try completionJournalEnvelope(), landed = try boardOrderRows(ids)
+        XCTAssertEqual(try boardOrderReceiptCount(), 1); await core.close()
+        let replayFaults = HostIOFaults(), replay = host(replayFaults); var writes = 0, markers = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+tasks\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        replayFaults.commandDiagnostic = { if $0 == "boardOrder" { markers += 1 } }
+        replayFaults.journalRemove = { throw HostFailure("Injected order retirement failure") }
+        await expectFailure("Injected order retirement failure") { _ = try await replay.start() }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(markers, 0); XCTAssertEqual(try completionJournalEnvelope().encoded, frozen.encoded)
+        XCTAssertEqual(try boardOrderRows(ids), landed); replayFaults.journalRemove = nil
+        let window = try object(await replay.start()), recovery = try XCTUnwrap(window["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "boardCommit")
+        XCTAssertEqual(writes, 0); XCTAssertEqual(markers, 1); XCTAssertEqual(try boardOrderRows(ids), landed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); await replay.close()
+        // A saved receipt alone cannot retire an old terminal after any affected row was edited.
+        let prepared = try XCTUnwrap(frozen.envelope["prepared"] as? [String: Any]), effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        let changed = try XCTUnwrap(effect["tasks"] as? [[String: Any]])
+        let editedID = try XCTUnwrap((changed.first?["after"] as? [String: Any])?["id"] as? String)
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE tasks SET description = 'Later order edit' WHERE id = ?", parametersJSON: json([editedID])); sqlite.close()
+        var terminal = frozen.command; terminal["terminal"] = ["success": ["_0": try json(XCTUnwrap(prepared["result"]))]]
+        let terminalBytes = try JSONSerialization.data(withJSONObject: terminal, options: [.sortedKeys]); try terminalBytes.write(to: journal)
+        let edited = try boardOrderRows(ids), staleFaults = HostIOFaults(), stale = host(staleFaults)
+        var staleMarkers = 0; staleFaults.commandDiagnostic = { if $0 == "boardOrder" { staleMarkers += 1 } }
+        await expectFailure("no exact saved effect") { _ = try await stale.start() }
+        XCTAssertEqual(staleMarkers, 0); XCTAssertEqual(try boardOrderReceiptCount(), 1)
+        XCTAssertEqual(try boardOrderRows(ids), edited); XCTAssertEqual(try Data(contentsOf: journal), terminalBytes)
+        await stale.close()
+    }
+
+    func testPreparedBoardOrderTerminalWithoutReceiptRetainsJournal() async throws {
+        let ids = try await seedBoardOrderFixture(dense: true), faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected order failed save") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("boardAction", argumentsJSON: boardOrderPayload(core, taskID: ids[2], afterID: ids[0])) }
+        let frozen = try completionJournalEnvelope(), prepared = try XCTUnwrap(frozen.envelope["prepared"] as? [String: Any]); await core.close()
+        var command = frozen.command; command["terminal"] = ["success": ["_0": try json(XCTUnwrap(prepared["result"]))]]
+        let bytes = try JSONSerialization.data(withJSONObject: command, options: [.sortedKeys]); try bytes.write(to: journal)
+        let sqlite = try SQLiteBridge(url: database)
+        let migrations = try XCTUnwrap(NativeJSON.jsonObject(with: Data(sqlite.execute("SELECT version FROM schema_migrations WHERE version = 1").utf8)) as? [[String: Any]])
+        XCTAssertEqual(migrations.count, 1); sqlite.close()
+        let before = try Data(contentsOf: database), replayFaults = HostIOFaults(), replay = host(replayFaults); var markers = 0, dml: [String] = []
+        replayFaults.commandDiagnostic = { if $0 == "boardOrder" { markers += 1 } }
+        replayFaults.beforeSQL = { sql in
+            let statement = sql.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if ["INSERT", "UPDATE", "DELETE", "REPLACE"].contains(where: { statement.hasPrefix($0) }) { dml.append(statement) }
+        }
+        await expectFailure("no exact saved effect") { _ = try await replay.start() }
+        XCTAssertEqual(markers, 0); XCTAssertEqual(try boardOrderReceiptCount(), 0)
+        XCTAssertEqual(dml, ["INSERT OR IGNORE INTO SCHEMA_MIGRATIONS (VERSION) VALUES (1)"])
+        XCTAssertEqual(try Data(contentsOf: journal), bytes); await replay.close(); XCTAssertEqual(try Data(contentsOf: database), before)
+    }
+
+    func testPreparedBoardOrderMalformedAndOversizedColdJournalBeforeSQL() async throws {
+        let ids = try await seedBoardOrderFixture(dense: true), faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected order failed save") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("boardAction", argumentsJSON: boardOrderPayload(core, taskID: ids[2], afterID: ids[0])) }
+        let frozen = try completionJournalEnvelope(); await core.close(); let before = try Data(contentsOf: database)
+        for malformed in ["duplicate", "effect", "unknown", "oversize"] {
+            var command = frozen.command, envelope = frozen.envelope, prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+            var effect = try XCTUnwrap(prepared["effect"] as? [String: Any]), pairs = try XCTUnwrap(effect["tasks"] as? [[String: Any]])
+            if malformed == "duplicate" { pairs.append(try XCTUnwrap(pairs.first)) }
+            if malformed == "effect" {
+                var pair = try XCTUnwrap(pairs.first), after = try XCTUnwrap(pair["after"] as? [String: Any])
+                after["boardOrder"] = 999999; pair["after"] = after; pairs[0] = pair
+            }
+            if malformed == "unknown" { prepared["untrusted"] = true }
+            effect["tasks"] = pairs; prepared["effect"] = effect; envelope["prepared"] = prepared; command["argumentsJSON"] = try json([json(envelope)])
+            var bytes = try JSONSerialization.data(withJSONObject: command, options: [.sortedKeys])
+            if malformed == "oversize" { bytes.append(Data(repeating: 0x20, count: NativeBoardOrderJournalBudget.maximumBytes + 1)) }
+            try bytes.write(to: journal)
+            let replayFaults = HostIOFaults(), replay = host(replayFaults); var statements = 0, markers = 0
+            replayFaults.beforeSQL = { _ in statements += 1 }; replayFaults.commandDiagnostic = { if $0 == "boardOrder" { markers += 1 } }
+            await expectFailure { _ = try await replay.start() }
+            XCTAssertEqual(statements, 0, malformed); XCTAssertEqual(markers, 0, malformed); XCTAssertEqual(try Data(contentsOf: journal), bytes, malformed)
+            await replay.close(); XCTAssertEqual(try Data(contentsOf: database), before, malformed)
+        }
+    }
+
+    func testPreparedBoardOrderExactInitialAndAcknowledgedJournalByteBoundary() throws {
+        let exact = Data(repeating: 0x20, count: NativeBoardOrderJournalBudget.maximumBytes)
+        let excess = Data(repeating: 0x20, count: NativeBoardOrderJournalBudget.maximumBytes + 1)
+        XCTAssertNoThrow(try NativeBoardOrderJournalBudget.require(exact, acknowledged: exact))
+        XCTAssertThrowsError(try NativeBoardOrderJournalBudget.require(excess, acknowledged: exact))
+        // Preflight the real success-terminal encoding before journaling, avoiding an unretirable accepted save.
+        XCTAssertThrowsError(try NativeBoardOrderJournalBudget.require(exact, acknowledged: excess))
+    }
+
 }

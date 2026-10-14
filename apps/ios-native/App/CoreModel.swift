@@ -17110,6 +17110,67 @@ final class CoreModel: ObservableObject {
         await performBoardAction(request)
     }
 
+    func boardOrderActions(_ displayed: CoreObject, column: CoreObject, filters: CoreObject) -> [CoreObject] {
+        let row = displayed.object("row"), order = column.object("order")
+        let status = column.text("status"), token = order.text("expectedOrder")
+        guard boardActionsEnabled, !morePresented, !capturePresented, !boardActionPending,
+              taskCompletionRequest == nil, taskActionUndoRequest == nil, !referenceProjectNextActionPending,
+              order.flag("available"), token.utf8.count == 75,
+              token.range(of: "^boardOrder:[0-9a-f]{64}$", options: .regularExpression) != nil, !filters.isEmpty,
+              ["inbox", "next", "waiting", "someday", "done"].contains(status),
+              row.text("status").utf8.elementsEqual(status.utf8),
+              !row.text("id").isEmpty, row.text("id").utf16.count <= 500,
+              !row.text("taskRevision").isEmpty, row.text("taskRevision").utf16.count <= 4096,
+              let capturedFilters = try? json(filters), let currentFilters = try? json(boardView.object("filters")),
+              capturedFilters.utf8.elementsEqual(currentFilters.utf8) else { return [] }
+        let columns = boardView.objects("columns").filter { $0.text("status").utf8.elementsEqual(status.utf8) }
+        guard columns.count == 1 else { return [] }
+        let currentOrder = columns[0].object("order")
+        let cards = columns[0].objects("cards").filter {
+            $0.object("row").text("id").utf8.elementsEqual(row.text("id").utf8)
+        }
+        guard currentOrder.flag("available"), currentOrder.text("expectedOrder").utf8.elementsEqual(token.utf8),
+              cards.count == 1,
+              cards[0].object("row").text("taskRevision").utf8.elementsEqual(row.text("taskRevision").utf8),
+              cards[0].object("row").text("status").utf8.elementsEqual(status.utf8),
+              let capturedActions = try? json(displayed.object("orderActions")),
+              let currentActions = try? json(cards[0].object("orderActions")),
+              capturedActions.utf8.elementsEqual(currentActions.utf8) else { return [] }
+        let intents = displayed.object("orderActions")
+        guard Set(intents.keys) == Set(["up", "down"]) else { return [] }
+        var actions: [CoreObject] = []
+        for direction in ["up", "down"] {
+            let label = order.text(direction == "up" ? "moveUpLabel" : "moveDownLabel")
+            guard !label.isEmpty else { return [] }
+            if intents[direction] is NSNull {
+                actions.append(["direction": direction, "label": label, "enabled": false])
+            } else {
+                guard let intent = intents[direction] as? CoreObject, Set(intent.keys) == Set(["afterId"]),
+                      let after = intent["afterId"], after is NSNull || (after as? String).map({
+                          !$0.isEmpty && $0.utf16.count <= 500 && !$0.utf8.elementsEqual(row.text("id").utf8)
+                      }) == true else { return [] }
+                // The anchor may be beyond the loaded page. Only core supplies it.
+                actions.append(["direction": direction, "label": label, "enabled": true, "afterId": after])
+            }
+        }
+        return actions
+    }
+
+    func orderBoardCard(_ displayed: CoreObject, column: CoreObject, filters: CoreObject, direction: String) async {
+        guard let choice = boardOrderActions(displayed, column: column, filters: filters).first(where: {
+            $0.text("direction") == direction && $0.flag("enabled")
+        }), let after = choice["afterId"] else { return }
+        let row = displayed.object("row")
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString, "action": [
+                "type": "orderCard", "taskId": row.text("id"), "taskRevision": row.text("taskRevision"),
+                "status": column.text("status"), "afterId": after, "filters": filters,
+                "expectedOrder": column.object("order").text("expectedOrder")]])
+        } catch { self.error = error.localizedDescription; return }
+        await performBoardAction(request)
+    }
+
     private func performBoardAction(_ request: String) async {
         boardActionRequest = request
         busy = true

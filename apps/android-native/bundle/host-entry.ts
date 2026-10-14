@@ -1217,7 +1217,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -3650,7 +3650,7 @@ globalThis.MindwtrHost = {
     boardPrepare(json: string): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(contract.prepareBoardAction(JSON.parse(json)));
+            return unwrap<Extract<ReturnType<typeof contract.prepareBoardAction>, { ok: true }>['value']>(contract.prepareBoardAction(JSON.parse(json)));
         });
     },
     /** Private immutable journal check; safe before boot and during terminal cleanup. */
@@ -3694,10 +3694,27 @@ globalThis.MindwtrHost = {
             return null;
         });
     },
+    /** Private acknowledgement: exact receipt/all-after proof and journal retirement already completed. */
+    iosBoardOrderAcknowledged(outcome: string, affectedCount: number): string {
+        return submit(async () => {
+            if (outcome !== 'saved' || !Number.isSafeInteger(affectedCount) || affectedCount < 1 || affectedCount > 100_000)
+                throw new Error('INVALID_INPUT: Invalid Board order acknowledgement');
+            if (globalThis.__mindwtrHostPlatform !== 'ios') return null;
+            try {
+                logInfo('Native iOS Board order saved', { scope: 'native-ios', force: true,
+                    context: { releaseCheck: 'v1.3.5/ios-board-order', outcome, affectedCount } });
+                await diagnosticsLog.serialize(async () => undefined);
+            } catch { /* Diagnostics cannot change the verified durable reply. */ }
+            return null;
+        });
+    },
+    boardOrderOutcome(json: string): string {
+        return submit(async () => unwrap(await contract.boardOrderOutcome(editorJson(json) as Parameters<typeof contract.boardOrderOutcome>[0])));
+    },
     boardMoveOutcome(json: string): string {
         return submit(async () => unwrap(await contract.boardMoveOutcome(editorJson(json) as Parameters<typeof contract.boardMoveOutcome>[0])));
     },
-    /** Only the exact frozen Trash/Duplicate/Move envelope is replayable. */
+    /** Only the exact frozen Trash/Duplicate/Move/Order envelope is replayable. */
     boardCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedBoardAction(JSON.parse(json))));
     },

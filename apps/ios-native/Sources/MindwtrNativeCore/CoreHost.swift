@@ -2892,6 +2892,8 @@ private final class Engine: @unchecked Sendable {
     private var boardActionLogged = false
     private var boardMoveLogged = false
     private var boardReactivateLogged = false
+    private var boardOrderLastDiagnosticID: String?
+    private static let boardOrderJournalLimit = NativeBoardOrderJournalBudget.maximumBytes
     #if DEBUG && os(iOS) && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
     private var boardMoveFixtureArmed = false
     private var boardMoveFixtureOriginal: String?
@@ -3140,6 +3142,18 @@ private final class Engine: @unchecked Sendable {
             throw HostFailure("Invalid pending command journal")
         }
         guard saved.version == 2 else { throw HostFailure("Unsupported pending command journal; raw captures cannot be safely replanned") }
+        if boardOrderEnvelope(saved) != nil {
+            guard journalData.count <= Self.boardOrderJournalLimit,
+                  try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)) else {
+                throw HostFailure("INVALID_INPUT: Malformed prepared Board order journal")
+            }
+            if let terminal = raw["terminal"] {
+                guard let encoded = terminal as? [String: Any], encoded.count == 1,
+                      let name = encoded.keys.first, ["success", "rejected"].contains(name),
+                      let payload = encoded[name] as? [String: Any], Set(payload.keys) == Set(["_0"]),
+                      payload["_0"] is String else { throw HostFailure("INVALID_INPUT: Malformed Board order terminal") }
+            }
+        }
         if saved.method == "calendarEventTaskCommit" || raw["method"] as? String == "calendarEventTaskCommit" {
             guard try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)) else {
                 throw HostFailure("INVALID_INPUT: Malformed prepared Calendar event task journal")
@@ -13618,6 +13632,9 @@ private final class Engine: @unchecked Sendable {
                 command = PendingCommand(version: 2, method: "boardCommit", argumentsJSON: encoded,
                                          editorDraft: editorAttempt)
                 _ = try journalArguments(command)
+                if boardOrderEnvelope(command) != nil {
+                    _ = try invoke("boardValidate", arguments: journalArguments(command))
+                }
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "captureLinesSubmit" {
             return try submitCaptureLines(args)
@@ -14181,7 +14198,11 @@ private final class Engine: @unchecked Sendable {
         if command.method == "boardCommit" {
             _ = try invoke("boardValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal {
-                if isBoardReactivation(command) {
+                if boardOrderEnvelope(command) != nil {
+                    let probed = try invoke("boardOrderOutcome", arguments: journalArguments(command))
+                    guard probed != "null" else { throw HostFailure("SAVE_FAILED: Board order has no exact saved effect") }
+                    try validateBoardAcknowledgment(command, value: probed)
+                } else if isBoardReactivation(command) {
                     let probed = try invoke("boardMoveOutcome", arguments: journalArguments(command))
                     guard probed != "null" else { throw HostFailure("SAVE_FAILED: Board reactivation has no exact saved effect") }
                     try validateBoardAcknowledgment(command, value: probed)
@@ -14807,7 +14828,8 @@ private final class Engine: @unchecked Sendable {
            (envelope["request"] as? [String: Any])?["intent"] as? String == "skip" {
             NSLog("Native iOS recurring occurrence skipped releaseCheck=v1.3.4/ios-skip-occurrence outcome=confirmed")
         }
-        if command.method == "boardCommit", command.editorDraft?.method == "boardAction", case .success = terminal {
+        if command.method == "boardCommit", command.editorDraft?.method == "boardAction",
+           boardOrderEnvelope(command) == nil, case .success = terminal {
 #if DEBUG
             faults?.commandDiagnostic?("taskDuplicate")
 #endif
@@ -14839,7 +14861,18 @@ private final class Engine: @unchecked Sendable {
 #endif
             _ = try? invoke("iosBoardMoveAcknowledged", arguments: [])
         }
-        if command.method == "boardCommit", case .success = terminal, !boardActionLogged, !isBoardMove {
+        if let order = boardOrderEnvelope(command), case .success = terminal,
+           let request = order["request"] as? [String: Any], let id = request["requestId"] as? String,
+           let prepared = order["prepared"] as? [String: Any], let effect = prepared["effect"] as? [String: Any],
+           let rows = effect["tasks"] as? [[String: Any]], boardOrderLastDiagnosticID != id {
+            boardOrderLastDiagnosticID = id
+#if DEBUG
+            faults?.commandDiagnostic?("boardOrder")
+#endif
+            _ = try? invoke("iosBoardOrderAcknowledged", arguments: ["saved", rows.count])
+        }
+        if command.method == "boardCommit", case .success = terminal, !boardActionLogged, !isBoardMove,
+           boardOrderEnvelope(command) == nil {
             boardActionLogged = true
 #if DEBUG
             faults?.commandDiagnostic?("boardAction")
@@ -15286,6 +15319,74 @@ private final class Engine: @unchecked Sendable {
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionOrderWrite", "backupDocumentCommit", "captureLinesCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+    }
+
+    // Classification only; callers validate the separate branch before it grants authority.
+    private func boardOrderEnvelope(_ command: PendingCommand) -> [String: Any]? {
+        guard command.method == "boardCommit",
+              let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+              let envelope = try? NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any], let action = request["action"] as? [String: Any],
+              action["type"] as? String == "orderCard" else { return nil }
+        return envelope
+    }
+
+    private func requireBoardOrderEncodedSize(_ command: PendingCommand) throws {
+        guard let envelope = boardOrderEnvelope(command), let prepared = envelope["prepared"] as? [String: Any],
+              let result = prepared["result"] as? [String: Any] else { return }
+        let bytes = try JSONEncoder().encode(command)
+        var acknowledged = command
+        // The known exact success DTO must also fit BEFORE accepting the first journal.
+        if acknowledged.terminal == nil {
+            acknowledged.terminal = .success(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
+        }
+        try NativeBoardOrderJournalBudget.require(bytes, acknowledged: JSONEncoder().encode(acknowledged))
+    }
+
+    private func boardOrderJournalArguments(_ command: PendingCommand) throws -> [Any] {
+        guard let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+              args[0].utf8.count <= Self.boardOrderJournalLimit,
+              try NativeJSON.hasUniqueObjectKeys(command.argumentsJSON), try NativeJSON.hasUniqueObjectKeys(args[0]),
+              let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any], Set(input.keys) == Set(["request", "prepared"]),
+              let request = input["request"] as? [String: Any], let prepared = input["prepared"] as? [String: Any],
+              Set(prepared.keys) == Set(["version", "request", "scope", "effect", "deviceIdBefore", "preparedAt", "result"]),
+              Self.isInteger(prepared["version"], equalTo: 1), let original = prepared["request"] as? [String: Any],
+              try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]),
+              let scope = prepared["scope"] as? [String: Any], Set(scope.keys) == Set(["columnTasks", "shownIds", "areaFilter", "projects", "sections", "areas"]),
+              let tasks = scope["columnTasks"] as? [[String: Any]], !tasks.isEmpty, tasks.count <= 100_000,
+              let shown = scope["shownIds"] as? [String], Set(shown).count == shown.count,
+              let area = scope["areaFilter"] as? [String: Any], Set(area.keys) == Set(["included", "excluded"]),
+              area["included"] is [String], area["excluded"] is [String],
+              let effect = prepared["effect"] as? [String: Any], Set(effect.keys) == Set(["tasks"]),
+              let pairs = effect["tasks"] as? [[String: Any]], !pairs.isEmpty, pairs.count <= tasks.count,
+              let device = prepared["deviceIdBefore"] as? String, !device.isEmpty, device.utf16.count <= 500,
+              !device.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let at = prepared["preparedAt"] as? String,
+              let result = prepared["result"] as? [String: Any], Set(result.keys) == Set(["changed", "open"]),
+              Self.isBoolean(result["changed"]), result["changed"] as? Bool == true, result["open"] is NSNull else {
+            throw HostFailure("INVALID_INPUT: Malformed prepared Board order journal")
+        }
+        let ids = tasks.compactMap { $0["id"] as? String }
+        let idSet = Set(ids)
+        guard ids.count == tasks.count, idSet.count == ids.count else { throw HostFailure("INVALID_INPUT: Duplicate Board order scope") }
+        for name in ["projects", "sections", "areas"] {
+            guard let rows = scope[name] as? [[String: Any]] else { throw HostFailure("INVALID_INPUT: Malformed Board order authority") }
+            let ids = rows.compactMap { $0["id"] as? String }
+            guard ids.count == rows.count, Set(ids).count == ids.count else { throw HostFailure("INVALID_INPUT: Duplicate Board order authority") }
+        }
+        var changed: Set<String> = []
+        for pair in pairs {
+            guard Set(pair.keys) == Set(["before", "after"]), let before = pair["before"] as? [String: Any],
+                  let after = pair["after"] as? [String: Any], let id = before["id"] as? String, idSet.contains(id),
+                  after["id"] as? String == id, changed.insert(id).inserted,
+                  Self.isInteger(after["rev"]), after["revBy"] as? String == device, after["updatedAt"] as? String == at,
+                  Self.isInteger(after["boardOrder"]) else { throw HostFailure("INVALID_INPUT: Malformed Board order effect") }
+        }
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
+        _ = try arguments("boardAction", String(decoding: try JSONSerialization.data(withJSONObject: [json]), as: UTF8.self))
+        try requireBoardOrderEncodedSize(command)
+        // Shared boardValidate verifies full record grammar, snapshot hash and every RN effect BEFORE SQL.
+        return args
     }
 
     private func isBoardReactivation(_ command: PendingCommand) -> Bool {
@@ -20334,6 +20435,7 @@ private final class Engine: @unchecked Sendable {
             return args
         }
         if command.method == "boardCommit" {
+            if boardOrderEnvelope(command) != nil { return try boardOrderJournalArguments(command) }
             guard let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
                   let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
                   Set(input.keys) == Set(["request", "prepared"]), let request = input["request"] as? [String: Any],
@@ -22584,7 +22686,19 @@ private final class Engine: @unchecked Sendable {
                   let taskID = action["taskId"] as? String, !taskID.isEmpty, taskID.count <= 500 else {
                 throw HostFailure("Unsupported native Board action")
             }
-            if type == "moveCard" {
+            if type == "orderCard" {
+                guard try NativeJSON.hasUniqueObjectKeys(json),
+                      Set(action.keys) == Set(["type", "taskId", "taskRevision", "status", "afterId", "filters", "expectedOrder"]),
+                      taskID.utf16.count <= 500, UUID(uuidString: id)?.uuidString.caseInsensitiveCompare(id) == .orderedSame,
+                      let status = action["status"] as? String, ["inbox", "next", "waiting", "someday", "done"].contains(status),
+                      let revision = action["taskRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 4096,
+                      let token = action["expectedOrder"] as? String,
+                      token.range(of: #"^boardOrder:[0-9a-f]{64}$"#, options: .regularExpression) != nil,
+                      let filters = action["filters"], action["afterId"] is NSNull || (action["afterId"] as? String).map({
+                          !$0.isEmpty && $0.utf16.count <= 500 && $0 != taskID
+                      }) == true else { throw HostFailure("INVALID_INPUT: Unsupported native Board order") }
+                try Self.validateBoardFilters(filters)
+            } else if type == "moveCard" {
                 guard Set(action.keys) == Set(["type", "taskId", "status", "taskRevision", "filters"]),
                       let status = action["status"] as? String, ["inbox", "next", "waiting", "someday"].contains(status),
                       let revision = action["taskRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 4096,
@@ -25599,11 +25713,15 @@ private final class Engine: @unchecked Sendable {
             _ = try ordinaryJournalArguments(command)
             guard let expected = turn.command, Self.retainedCommandMatches(expected, command) else { throw Self.retainedOrdinaryFailure }
         }
+        try requireBoardOrderEncodedSize(command)
         #if DEBUG
         try faults?.journalWrite?()
         #endif
         try requireRetainedOrdinaryTurn(requirePreparation: true)
         let bytes = try JSONEncoder().encode(command)
+        if boardOrderEnvelope(command) != nil {
+            guard bytes.count <= Self.boardOrderJournalLimit else { throw HostFailure("INVALID_INPUT: Board order journal exceeds native byte budget") }
+        }
         do { try DurableFile.write(bytes, to: journalURL) }
         catch {
             // Only this exact attempted write may have become visible before a
@@ -27050,5 +27168,15 @@ private final class Engine: @unchecked Sendable {
         database?.close()
         database = nil
         if lockFD >= 0 { flock(lockFD, LOCK_UN); Darwin.close(lockFD); lockFD = -1 }
+    }
+}
+
+/// Exact data bounds used by the order-only coordinator, including its truthful success variant.
+enum NativeBoardOrderJournalBudget {
+    static let maximumBytes = 2_000_000
+    static func require(_ initial: Data, acknowledged: Data) throws {
+        guard initial.count <= maximumBytes, acknowledged.count <= maximumBytes else {
+            throw HostFailure("INVALID_INPUT: Board order journal exceeds native byte budget")
+        }
     }
 }

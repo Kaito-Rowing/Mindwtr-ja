@@ -706,6 +706,9 @@ export interface TaskStore {
     commitPreparedSavedSearchWrite: (input: PreparedSavedSearchWrite) => Promise<PreparedTaskEditResult>;
     /** Native validates the action-specific envelope before this atomic guarded write. */
     commitPreparedBoardTask: (input: PreparedBoardTask) => Promise<PreparedTaskEditResult>;
+    /** Exact before-only Board batch; receipt replay is owned by the native contract. */
+    commitPreparedBoardOrder: (input: import('./native-host-contract-board-order').NativePreparedBoardOrder,
+        authority: PreparedAreaAuthority, admit: () => boolean) => Promise<PreparedTaskEditResult>;
     commitPreparedCalendarTask: (input: PreparedCalendarTask) => Promise<PreparedTaskEditResult>;
     commitPreparedCalendarCreate: (input: PreparedCalendarCreate) => Promise<PreparedTaskEditResult>;
     commitPreparedInboxEffect: (input: PreparedInboxEffect) => Promise<PreparedTaskEditResult>;
