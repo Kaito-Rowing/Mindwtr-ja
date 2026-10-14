@@ -321,6 +321,8 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
         else { const validation = parseSource(input.text, input.metadata); if (!validation.valid || !validation.data) invalid(); parsed = validation.data; }
     }
     catch (error) { if (error instanceof BackupInputError) throw error; return invalid(); }
+    // A host with a sink hands its input over: the source text goes once parsed, so it is not kept through the lane.
+    if (sink) (input as { text: string }).text = '';
     const { requestId, mode: operation, snapshotName } = input;
     const appVersion = input.metadata.appVersion;
     try {
@@ -343,6 +345,8 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
             const dgtApplied = operation === 'dgt' ? applyImportSource('dgt', current, dgt!) : null;
             const omnifocusApplied = operation === 'omnifocus' ? applyImportSource('omnifocus', current, omnifocus!) : null;
             const appliedData = omnifocusApplied?.data ?? dgtApplied?.data ?? ticktickApplied?.data ?? todoistApplied?.data ?? csvApplied?.data ?? applied?.data ?? applyImportSource('backup', current, parsed!).data;
+            // The parsed source is applied: its objects go before the recovery snapshot and the plan are stringified.
+            parsed = csv = ticktick = dgt = omnifocus = null; todoist = undefined;
             // A key inside the picked file (an older export) is never planned or saved either.
             const data: AppData = { ...appliedData, settings: stripSensitiveSettings(appliedData.settings) };
             const counts = applied ? summarizeBackupMerge(applied.result) : { added: 0, updated: 0 };
@@ -457,8 +461,8 @@ const readPlan = (reference: NativeBackupOperationReference, planJSON: string, s
     // An older plan's warnings (sentences) are committed, compared and answered as codes and counts.
     return { ...(value as Plan), reply: storedReply((value as Plan).reply) };
 };
-const payload = (reference: NativeBackupOperationReference, plan: Plan) => JSON.stringify(['backupDocument', plan.mode, reference.id, reference.sha256]);
-const matchedReply = (reply: unknown, plan: Plan): NativeBackupDocumentReply => {
+const payload = (reference: NativeBackupOperationReference, plan: Pick<Plan, 'mode'>) => JSON.stringify(['backupDocument', plan.mode, reference.id, reference.sha256]);
+const matchedReply = (reply: unknown, plan: Pick<Plan, 'mode' | 'reply'>): NativeBackupDocumentReply => {
     try {
         const validated = storedReply(validateReply(reply, plan.reply.snapshotName, plan.mode));
         if (!taskEditValuesEqual(validated, plan.reply)) saveFailed();
@@ -477,7 +481,9 @@ export async function readNativeBackupDocumentOutcome(adapter: NativeReceiptSqli
 }
 
 /** Commit only the frozen plan, or reload after an exact durable replay. */
-export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, reference: NativeBackupOperationReference, planJSON: string, snapshotName: string): Promise<NativeBackupDocumentReply> {
+/** A host's plan text, handed over once (Android's file channel): no caller's frame keeps the text while the commit runs. */
+export type NativeBackupPlanSource = { take(): string };
+export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, reference: NativeBackupOperationReference, planJSON: string | NativeBackupPlanSource, snapshotName: string): Promise<NativeBackupDocumentReply> {
     try {
         return await commitPlan(adapter, reference, planJSON, snapshotName);
     } catch (error) {
@@ -487,25 +493,30 @@ export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAda
     }
 }
 
-async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: NativeBackupOperationReference, planJSON: string, snapshotName: string): Promise<NativeBackupDocumentReply> {
-    const plan = readPlan(reference, planJSON, snapshotName);
+async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: NativeBackupOperationReference, planJSON: string | NativeBackupPlanSource, snapshotName: string): Promise<NativeBackupDocumentReply> {
+    // The plan's two documents are held only until the adapter took them (cut g, pass D1c); its small fields stay.
+    let plan: Plan | null = readPlan(reference, typeof planJSON === 'string' ? planJSON : planJSON.take(), snapshotName);
+    const kept = { mode: plan.mode, reply: plan.reply, maxLibraryBytes: plan.maxLibraryBytes };
     const ownedReference = { ...reference };
     try {
         return await runSerializedSyncDocumentWriteOperation(async () => {
             await flush();
             let result;
             try {
-                result = await adapter.saveDocumentWithReceipt({ requestId: ownedReference.id, payload: payload(ownedReference, plan),
-                    expectedCurrent: plan.expectedCurrent, data: plan.data, reply: plan.reply,
-                    ...(plan.maxLibraryBytes === undefined ? {} : { maxLibraryBytes: plan.maxLibraryBytes }) });
+                // This plan was parsed here and nobody else holds it, so the adapter may keep its objects without a copy.
+                const saving = adapter.saveDocumentWithReceipt({ requestId: ownedReference.id, payload: payload(ownedReference, kept),
+                    expectedCurrent: plan!.expectedCurrent, data: plan!.data, reply: kept.reply, owned: true,
+                    ...(kept.maxLibraryBytes === undefined ? {} : { maxLibraryBytes: kept.maxLibraryBytes }) });
+                plan = null;
+                result = await saving;
             } catch (error) {
                 if (error instanceof Error && error.message === 'Stale document receipt baseline') {
                     throw new Error('STALE_REVISION: Local data changed after backup preparation');
                 }
-                if (error instanceof Error && error.message === UNDO_LIMIT_EXCEEDED) throw new Error(plan.mode === 'restore' ? RESTORE_TOO_LARGE : UNDO_TOO_LARGE);
+                if (error instanceof Error && error.message === UNDO_LIMIT_EXCEEDED) throw new Error(kept.mode === 'restore' ? RESTORE_TOO_LARGE : UNDO_TOO_LARGE);
                 return saveFailed();
             }
-            const reply = matchedReply(result.reply, plan);
+            const reply = matchedReply(result.reply, kept);
             try {
                 markNextLoadAsDocumentReplacement();
                 // Maintenance resumes only after the native journal has been cleared.

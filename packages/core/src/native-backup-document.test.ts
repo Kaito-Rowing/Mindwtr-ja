@@ -3,6 +3,8 @@ import { strToU8, zipSync } from 'fflate';
 import { bytesToBase64 } from './base64-bytes';
 import { createImportDiagnostics, formatImportDiagnostic } from './import-diagnostics';
 import { createHash } from 'node:crypto';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1325,4 +1327,56 @@ describe('native backup prepare output stays byte-identical (D1c parity fixture)
             }
         } finally { vi.useRealTimers(); }
     }, 120_000);
+});
+
+/** Pass D1c cuts a and f-h: what the native transfer hands over is not kept alive by core while the commit writes and reloads. */
+describe('native backup prepare and commit let their documents go (D1c)', () => {
+    setFlagsFromString('--expose_gc');
+    const gc = runInNewContext('gc') as () => void;
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+    it('a sink takes the source text once parsed; without a sink the input is untouched', async () => {
+        const handed = input(); const kept = input();
+        await prepareNativeBackupDocument((await open()).adapter, handed, { recovery: () => undefined, plan: () => undefined });
+        expect(handed.text).toBe('');
+        await prepareNativeBackupDocument((await open()).adapter, kept);
+        expect(kept.text).toBe(input().text);
+    });
+
+    it('a plan source is read once, and the plan, its baseline and the stale check\'s read are gone before the reload', async () => {
+        const env = await open();
+        const prepared = await prepareNativeBackupDocument(env.adapter, input());
+        const source = { taken: 0, take() { this.taken += 1; return prepared.planJSON; } };
+        const refs: Record<string, WeakRef<object>> = {};
+        const save = env.adapter.saveDocumentWithReceipt.bind(env.adapter);
+        // Plain wrappers, not spies: a spy records its calls' arguments and results, which would keep them alive.
+        env.adapter.saveDocumentWithReceipt = async (document) => {
+            refs.expected = new WeakRef(document.expectedCurrent); refs.data = new WeakRef(document.data);
+            return save(document);
+        };
+        const read = env.adapter.getData.bind(env.adapter);
+        let reads = 0; let alive: Record<string, boolean> | null = null;
+        env.adapter.getData = async (options) => {
+            reads += 1;
+            if (reads === 2) {
+                // The reload's read: before it builds the new library, nothing of the old operation may still be reachable.
+                await settle(); gc(); await settle(); gc();
+                alive = Object.fromEntries(Object.entries(refs).map(([name, ref]) => [name, ref.deref() !== undefined]));
+            }
+            const data = await read(options);
+            if (reads === 1) refs.current = new WeakRef(data);
+            return data;
+        };
+        // While the document is written (at its COMMIT), both baselines are already gone; the data being written is not.
+        let writing: Record<string, boolean> | null = null;
+        env.hooks.run = async (statement) => {
+            if (statement !== 'COMMIT' || writing) return;
+            await settle(); gc(); await settle(); gc();
+            writing = Object.fromEntries(Object.entries(refs).map(([name, ref]) => [name, ref.deref() !== undefined]));
+        };
+        await commitNativeBackupDocument(env.adapter, reference, source, NAME);
+        expect(source.taken).toBe(1);
+        expect(writing).toEqual({ expected: false, data: true, current: false });
+        expect(alive).toEqual({ expected: false, data: false, current: false });
+    });
 });

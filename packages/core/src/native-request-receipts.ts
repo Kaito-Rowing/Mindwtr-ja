@@ -281,6 +281,11 @@ export type NativeDocumentReceiptInput = {
      * before COMMIT, so a refusal ([UNDO_LIMIT_EXCEEDED]) rolls back the data and the receipt together.
      */
     maxLibraryBytes?: number;
+    /**
+     * The caller hands both documents over (core's native backup commit, which parsed them itself and keeps no reference): no
+     * detaching copy is made, and the baseline goes once the stale check has read it.
+     */
+    owned?: true;
 };
 export const UNDO_LIMIT_EXCEEDED = 'Document library exceeds the undo limit';
 export type NativeDocumentReceiptResult = { reply: unknown; replayed: boolean };
@@ -523,12 +528,12 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
         }
         const owner = requestPayloads.get(requestId);
         if (owner !== undefined && owner !== payload) throw new Error('Document receipt identity belongs to another action');
-        let expectedCurrent: AppData;
+        let expectedCurrent: AppData | null;
         let data: AppData;
         let replyJson: string;
         try {
-            expectedCurrent = JSON.parse(JSON.stringify(input.expectedCurrent)) as AppData;
-            data = JSON.parse(JSON.stringify(input.data)) as AppData;
+            expectedCurrent = input.owned === true ? input.expectedCurrent : JSON.parse(JSON.stringify(input.expectedCurrent)) as AppData;
+            data = input.owned === true ? input.data : JSON.parse(JSON.stringify(input.data)) as AppData;
             replyJson = documentReplyJson(input.reply);
             if (!expectedCurrent || !data) throw new Error('Invalid document');
         } catch {
@@ -551,10 +556,13 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             }
             // Prior success cannot authorize another application after its durable proof disappears.
             if (durableReceipts.has(requestId)) throw new Error('Saved document receipt is missing');
-            const current = await this.getData();
+            let current: AppData | null = await this.getData();
             // A legacy settings.ai.apiKey left in the row is not part of the baseline (native-backup-document.ts never plans it).
             const withoutKey = (document: AppData): AppData => ({ ...document, settings: stripSensitiveSettings(document.settings) });
-            if (!taskEditValuesEqual(withoutKey(current), withoutKey(expectedCurrent))) throw new Error('Stale document receipt baseline');
+            if (!taskEditValuesEqual(withoutKey(current), withoutKey(expectedCurrent!))) throw new Error('Stale document receipt baseline');
+            // Both baselines are compared: neither is needed while the document is written.
+            current = null; expectedCurrent = null;
+            if (input.owned === true) (input as { expectedCurrent: AppData | null }).expectedCurrent = null;
             if (pendingReceipts.size > 0 || receiptedWritesRunning > 0 || hasPendingDocumentStoreWork()) throw new Error('Document receipt write is busy');
             const context = { requestId, payload, data, replyJson, savedAt: new Date().toISOString(), maxLibraryBytes };
             this.documentReceipt = context;
