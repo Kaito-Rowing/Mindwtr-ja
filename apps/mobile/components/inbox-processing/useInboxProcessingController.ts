@@ -53,7 +53,7 @@ import {
   tFallback,
   toggleProcessInboxToken,
   undoTaskCompletion,
-  updateTaskFromLatest,
+  updateTaskAppendingAttachments,
   resolveAutoTextDirection,
   useTaskStore,
   type AIProviderId,
@@ -683,16 +683,7 @@ export function useInboxProcessingController({
     }
     // The title's /link: commands append to the task's attachments, a list core built from the task on screen.
     // Rebuild it on the row as stored when the write is admitted, so an attachment a sync save brought stays.
-    const knownAttachmentIds = new Set((currentTask.attachments ?? []).map((attachment) => attachment.id));
-    const updateTaskKeepingAttachments: typeof updateTask = (id, updates) => (updates.attachments
-      ? updateTaskFromLatest(id, (latest) => ({
-        ...updates,
-        attachments: [
-          ...(latest.attachments ?? []),
-          ...updates.attachments!.filter((attachment) => !knownAttachmentIds.has(attachment.id)),
-        ],
-      }))
-      : updateTask(id, updates));
+    const updateTaskKeepingAttachments: typeof updateTask = updateTaskAppendingAttachments(currentTask.attachments, updateTask);
     try {
       const result = await commitProcessInboxDecision(kind, {
         task: currentTask,

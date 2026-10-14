@@ -1,8 +1,9 @@
 import { taskEditValuesEqual } from './json-value-equality';
+import { logWarn } from './logger';
 import { useTaskStore } from './store';
 import type { StoreActionResult } from './store-types';
 import { runStoreCommand } from './store-write-gate';
-import type { Project, Task } from './types';
+import type { Attachment, Project, Task } from './types';
 
 /**
  * Writes that build a whole field (an attachment list, a checklist, tags) from the row as it is when the write is
@@ -11,6 +12,16 @@ import type { Project, Task } from './types';
  * [build] answers the updates for the latest row, or null to write nothing.
  */
 const missing = (kind: string): StoreActionResult => ({ success: false, error: `${kind} not found` });
+
+/** The one diagnostic line for a write refused because its row changed elsewhere (no task content). */
+export const logStaleWriteRefused = (operation: string): void => {
+    try {
+        logWarn('Store write refused: the row changed on another device', {
+            scope: 'store', category: 'sync',
+            context: { releaseCheck: 'v1.3.7/sync-write-gate', outcome: 'stale-refused', operation },
+        });
+    } catch { /* a diagnostic line never fails its write */ }
+};
 
 export const updateTaskFromLatest = (
     id: string,
@@ -61,6 +72,27 @@ export const updateTaskFromBase = (
     const conflict = (Object.keys(updates) as Array<keyof Task>).some((key) => (
         !taskEditValuesEqual(task[key], base[key]) && !taskEditValuesEqual(updates[key], task[key])
     ));
-    if (conflict) return { success: false, error: 'STALE_REVISION: The task changed on another device; reopen it to edit' };
+    if (conflict) {
+        logStaleWriteRefused('draft-save');
+        return { success: false, error: 'STALE_REVISION: The task changed on another device; reopen it to edit' };
+    }
     return useTaskStore.getState().updateTask(id, updates);
 });
+
+/**
+ * An updateTask for a write whose `attachments` is the shown task's list plus new ones (Process Inbox's /link
+ * commands): the new ones are appended to the latest row's list instead, so an attachment a sync save brought stays.
+ * Writes without attachments go to [updateTask] as they are.
+ */
+export const updateTaskAppendingAttachments = (
+    shown: readonly Attachment[] | undefined,
+    updateTask: (id: string, updates: Partial<Task>) => Promise<StoreActionResult>,
+) => {
+    const shownIds = new Set((shown ?? []).map((attachment) => attachment.id));
+    return (id: string, updates: Partial<Task>): Promise<StoreActionResult> => (updates.attachments
+        ? updateTaskFromLatest(id, (latest) => ({
+            ...updates,
+            attachments: [...(latest.attachments ?? []), ...updates.attachments!.filter((attachment) => !shownIds.has(attachment.id))],
+        }))
+        : updateTask(id, updates));
+};

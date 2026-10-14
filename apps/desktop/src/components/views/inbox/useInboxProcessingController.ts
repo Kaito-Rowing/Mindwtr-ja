@@ -15,6 +15,7 @@ import {
     isProcessInboxReturningTask,
     parseProcessInboxTitleInput,
     prepareProcessInboxCommit,
+    updateTaskAppendingAttachments,
     setTaskViewSectionId,
     startProcessInboxSession,
     tFallback,
@@ -328,11 +329,13 @@ export function useInboxProcessingController({
             return false;
         }
         try {
+            // The title's /link commands append to the task on screen's attachments: appended to the row as stored
+            // when the write is admitted instead, so an attachment a sync save brought stays.
             const outcome = await commitProcessInboxWorkflowEvent(
                 processingSession,
                 eligibleInboxTasks,
                 prepared.event,
-                { deleteTask, updateTask },
+                { deleteTask, updateTask: updateTaskAppendingAttachments(processingTask.attachments, updateTask) },
                 {
                     entryStep: 'refine',
                     taskUpdates: prepared.taskUpdates,
