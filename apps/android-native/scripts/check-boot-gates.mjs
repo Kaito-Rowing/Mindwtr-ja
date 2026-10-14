@@ -3139,6 +3139,14 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         assert.match(gradle, /val verifyBundle = [^\n]*verify-bundle\.mjs[\s\S]{0,300}?tasks\.withType<com\.android\.build\.gradle\.tasks\.MergeSourceSetFolders>\(\)\.configureEach \{\s+if \(name\.startsWith\("merge"\) && name\.endsWith\("Assets"\) && !name\.contains\("Test"\)\) \{[\s\S]{0,300}?commandLine\(listOfNotNull\("node", verifyBundle, outputDir\.get\(\)\.asFile\.resolve\("core-host\.js"\)\.path, traced\)\)\s*\}\.result\.get\(\)\.assertNormalExitValue\(\)/, 'every variant\'s merged assets are verified and a mismatch fails the build');
         assert.match(buildBundle, /renameSync\(/, 'the bundle is written under a temporary name and renamed into place');
     }
+    // The store write gate (store-write-gate.ts gateStoreCommands) wraps a contract method when its constructor is named
+    // AsyncFunction. A bundle that lowers async functions (an older target or another minifier) would ship every native
+    // command ungated, with no error: the shipped bundle keeps saveTaskDraft an async method and the name check intact.
+    {
+        const shipped = readFileSync(resolve(app, 'android/app/src/main/assets/core-host.js'), 'utf8');
+        assert.match(shipped, /async saveTaskDraft\(/, 'saveTaskDraft stays an async method in the shipped bundle, so the write gate wraps it');
+        assert.match(shipped, /constructor\.name\s*!==\s*["']AsyncFunction["']/, 'the write gate still tells a command by its AsyncFunction constructor');
+    }
     // Module instrumentation (build-bundle.mjs --trace-modules) is a measurement build's only: its own output, merged only
     // into the benchmarkTrace variant. The bundle every other variant ships has no module hook, and no environment variable
     // can turn one on.
