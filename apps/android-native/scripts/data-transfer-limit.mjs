@@ -7,10 +7,12 @@ export const MEASURE_WORKLOADS = ['restore-fresh', 'merge-over', 'restore-over',
 export const MEASURE_SHAPES = ['rows', 'notes'];
 
 /**
- * A row's size in MiB: the file and the library it went over, or the library it left, whichever is larger. An import counts
- * the library it left (its file is compressed and expands); an export, a capture or a start counts the library it read.
+ * A row's size in MiB. An import counts the library it left, alone (its file is compressed and expands, and a duplicate adds
+ * nothing: code review 2); an export, a capture or a start the library it read; a restore, merge or Undo the file and the
+ * library it went over, or the library it left, whichever is larger.
  */
-export const rowBound = (row) => Math.max((row.sourceMiB ?? 0) + (row.libraryBeforeMiB ?? 0), row.libraryAfterMiB ?? 0);
+export const rowBound = (row) => row.workload?.startsWith('import-') ? row.libraryAfterMiB ?? 0
+    : Math.max((row.sourceMiB ?? 0) + (row.libraryBeforeMiB ?? 0), row.libraryAfterMiB ?? 0);
 
 /** The largest size below a workload's first failure: a failing smaller row caps it, whatever larger rows passed. */
 const workloadBound = (rows) => {
@@ -41,10 +43,26 @@ export function proposeTransferLimit(rows, { shapes = MEASURE_SHAPES, workloads 
     return { limitMiB: Math.floor(smallestMiB / 2), smallestMiB, missing: [], bounds: sizes };
 }
 
+/** How close a boundary row must come: within 15 % of the limit, or of a refused attempt just above it. */
+export const BOUNDARY_SLACK = 0.15;
+
+/**
+ * Whether a boundary row ran at its admitted boundary, by its bytes (code review 2): its size is within [BOUNDARY_SLACK] of
+ * the limit, or the app refused an attempt ([row.refusedAboveMiB]) at most that much larger, so nothing larger is admitted.
+ */
+export const atBoundary = (row, limitMiB) => {
+    const bound = rowBound(row);
+    if (bound >= limitMiB * (1 - BOUNDARY_SLACK)) return true;
+    return typeof row.refusedAboveMiB === 'number' && row.refusedAboveMiB > bound && row.refusedAboveMiB <= bound * (1 + BOUNDARY_SLACK) + 0.5;
+};
+
 /** Whether every workload and shape passed again at the proposed limit's admitted boundary ([row.boundary] rows). */
 export function boundaryVerdict(rows, limitMiB, { shapes = MEASURE_SHAPES, workloads = MEASURE_WORKLOADS } = {}) {
-    const boundary = rows.filter((row) => row.boundary);
+    // An attempt the app refused for its size is the boundary's evidence (refusedAboveMiB), not a failure.
+    const boundary = rows.filter((row) => row.boundary && !row.refused);
     const missing = cells(shapes, workloads).filter((cell) => !boundary.some((row) => key(row) === cell));
     const failed = cells(shapes, workloads).filter((cell) => boundary.some((row) => key(row) === cell && !row.pass));
-    return { established: missing.length === 0 && failed.length === 0, limitMiB, missing, failed };
+    const belowBoundary = cells(shapes, workloads).filter((cell) => boundary.some((row) => key(row) === cell && row.pass)
+        && !boundary.some((row) => key(row) === cell && row.pass && atBoundary(row, limitMiB)));
+    return { established: missing.length === 0 && failed.length === 0 && belowBoundary.length === 0, limitMiB, missing, failed, belowBoundary };
 }
