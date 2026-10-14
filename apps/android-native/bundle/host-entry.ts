@@ -71,6 +71,7 @@ import {
     diagnosticsEntryFromLogPayload,
     getGeneralSettingsDeviceWrites,
     getPersistenceStatus,
+    runSerializedSyncDocumentWriteOperation,
     getNextFutureStartRevealAt,
     compareAppVersions,
     fetchAppStoreInfo,
@@ -229,6 +230,11 @@ const channelWrite = (handle: string, text: string): void => {
         checked(bridge.dataWrite!(handle, text.slice(start, end)));
         start = end;
     }
+};
+/** Base64 [text] in pieces of whole 4-character groups, so each piece decodes alone (a TaskNotes ZIP). */
+const channelWriteBase64 = (handle: string, text: string): void => {
+    const bridge = native();
+    for (let start = 0; start < text.length; start += 4 * 256 * 1024) checked(bridge.dataWrite!(handle, text.slice(start, start + 4 * 256 * 1024)));
 };
 /** A channel failure's code, or null for any other error. */
 const channelCode = (error: unknown): string | null =>
@@ -1045,23 +1051,6 @@ const logEntryPoint = (input: { kind?: unknown }, result: Reply): Reply => {
  * Board from native-host-contract-calendar.ts and native-host-contract-board.ts; Settings from native-host-contract-settings.ts):
  * each passes Kotlin's input to the contract method unchanged. The composer's open and edit write nothing, so they are reads.
  */
-/** An export's file, refused when its bytes exceed the host's `maxBytes` (none: no host limit). Its text is never counted twice. */
-const boundedExport = (result: Reply, input: unknown): Reply => {
-    const maxBytes = (input as { maxBytes?: unknown } | null)?.maxBytes;
-    if (!result.ok || typeof maxBytes !== 'number') return result;
-    const { content, encoding } = result.value as { content: string; encoding: string };
-    let bytes = encoding === 'base64' ? Math.floor(content.length * 3 / 4) : 0;
-    if (encoding === 'utf8') {
-        for (let index = 0; index < content.length && bytes <= maxBytes; index += 1) {
-            const code = content.charCodeAt(index);
-            if (code < 0x80) bytes += 1;
-            else if (code < 0x800) bytes += 2;
-            else if (code >= 0xd800 && code <= 0xdbff) { bytes += 4; index += 1; }
-            else bytes += 3;
-        }
-    }
-    return bytes > maxBytes ? { ok: false, error: { code: 'INVALID_INPUT', message: 'Export exceeds the transfer limit' } } : result;
-};
 const MENU_READS: Record<string, (input: never) => Reply> = {
     more: () => contract.getMoreMenu(),
     projects: (input) => contract.getFilteredProjects(input),
@@ -1138,10 +1127,10 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     // Settings › Notifications, and the persistent capture notification to post again at start and on every resume.
     notificationsSettings: () => contract.getNotificationsSettings(),
     persistentCaptureNotification: () => contract.getPersistentCaptureNotification(),
-    // `maxBytes` (Android's measured transfer limit): a larger file is refused here, before its text crosses into Kotlin.
-    dataBackup: (input) => boundedExport(contract.getDataBackup(), input),
-    dataCsvExport: (input) => boundedExport(contract.getDataBackup('csv'), input),
-    dataTaskNotesExport: (input) => boundedExport(contract.getDataBackup('tasknotes'), input),
+    // iOS's exports; Android writes its file through the data channel (dataExportFile).
+    dataBackup: () => contract.getDataBackup(),
+    dataCsvExport: () => contract.getDataBackup('csv'),
+    dataTaskNotesExport: () => contract.getDataBackup('tasknotes'),
     // Settings › Sync's view (native-host-contract-settings-sync.ts) for the form's typed URL and token.
     syncSettings: (input) => contract.getSyncSettings(input),
     // Settings › Calendar's view for this visit with the name and URL fields as typed, and its close (none writes).
@@ -4089,6 +4078,62 @@ globalThis.MindwtrHost = {
     /** The recovery snapshot before a several-lines capture; `{ snapshot: null }` in sandbox mode. */
     captureSnapshot(): string {
         return submit(async () => ({ snapshot: unwrap(await contract.createQuickCaptureSnapshot()) }));
+    },
+    /**
+     * Android (pass D1c): core's capture recovery snapshot written through write [handle], never returned as text:
+     * `{ snapshot: { fileName, bytes, sha256 } | null }`.
+     */
+    captureSnapshotFile(handle: string): string {
+        return submit(async () => {
+            const snapshot = unwrap(await contract.createQuickCaptureSnapshot());
+            if (!snapshot) return { snapshot: null };
+            try {
+                channelWrite(handle, snapshot.contents);
+                return { snapshot: { fileName: snapshot.fileName, ...channelClose(handle) } };
+            } catch (error) {
+                if (channelCode(error)) throw new Error('SAVE_FAILED: The recovery snapshot could not be written');
+                throw error;
+            }
+        });
+    },
+    /**
+     * Android (pass D1c design §3.5): RN's export file for [format] written through write [handle] (a TaskNotes ZIP as its
+     * bytes), `{ fileName, bytes }`. The library's size is checked inside the document lane, and the snapshot is taken in the
+     * same turn as a last check that persistence is settled and the store is unchanged since that size was read: the bytes
+     * measured are the library serialized. A library over [maxBytes] is refused before anything is serialized.
+     */
+    dataExportFile(format: string, handle: string, maxBytes: number): string {
+        return submit(async () => runSerializedSyncDocumentWriteOperation(async () => {
+            if (format !== 'json' && format !== 'csv' && format !== 'tasknotes') throw new Error('INVALID_INPUT: Unsupported export format');
+            const settled = () => {
+                const pending = getPersistenceStatus();
+                return !(pending.queued || pending.inFlight || pending.immediate || pending.retrying || pending.failed);
+            };
+            if (!settled()) throw new Error('NOT_READY: Backup export is unavailable while saving is pending');
+            const stamp = useTaskStore.getState().lastDataChangeAt;
+            if (await backupAdapter().libraryBytes() > Number(maxBytes)) throw new Error('TOO_LARGE: The library exceeds the transfer limit');
+            if (!settled() || useTaskStore.getState().lastDataChangeAt !== stamp) throw new Error('NOT_READY: The library changed while the export was checked');
+            const file = unwrap(contract.getDataBackup(format));
+            try {
+                if (file.encoding === 'base64') channelWriteBase64(handle, file.content); else channelWrite(handle, file.content);
+                return { fileName: file.fileName, bytes: channelClose(handle).bytes };
+            } catch (error) {
+                if (channelCode(error)) throw new Error('SAVE_FAILED: The export file could not be written');
+                throw error;
+            }
+        }));
+    },
+    /**
+     * Debug builds (pass D1c design §7, check-data-device D0): the text behind read [readHandle], joined and written back
+     * through write [writeHandle] with the same splitting as every Data file; Kotlin compares the two files.
+     */
+    dataChannelRoundTrip(readHandle: string, writeHandle: string): string {
+        return submit(async () => {
+            const text = channelRead(readHandle);
+            channelClose(readHandle);
+            channelWrite(writeHandle, text);
+            return channelClose(writeHandle);
+        });
     },
     /** `json` is `{ text, options, captureIds, snapshotFileName }`: one task per line, in one write. */
     captureLines(json: string): string {

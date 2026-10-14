@@ -41,6 +41,8 @@ class BackupOperations(
         private const val RESERVATION = "reservation.json"
         private const val RECOVERY_PENDING = ".recovery.pending"
         private val RECOVERY_PENDING_NAME = Regex("^\\.([0-9a-f-]{36})\\.recovery\\.pending$")
+        /** A capture snapshot core was writing through the data channel (CoreHost.createQuickCaptureSnapshot). */
+        val CAPTURE_PENDING_NAME = Regex("^\\.capture-[0-9a-f-]{36}\\.pending$")
         private const val MAX_MANIFEST_BYTES = 8192
         private const val MAX_RESULT_BYTES = 128 * 1024
         private val UUID = Regex("^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
@@ -168,8 +170,8 @@ class BackupOperations(
         root.listFiles().orEmpty().filter { it.isDirectory && it.name !in retaining }.forEach { discard(it.name) }
         root.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(PENDING) }.forEach { it.delete() }
         // A recovery snapshot core was still writing, or that never published, when the process died.
-        snapshots.listFiles().orEmpty().filter { file -> RECOVERY_PENDING_NAME.matchEntire(file.name)?.groupValues?.get(1)?.let { it !in retaining } == true }
-            .forEach { it.delete() }
+        snapshots.listFiles().orEmpty().filter { file -> RECOVERY_PENDING_NAME.matchEntire(file.name)?.groupValues?.get(1)?.let { it !in retaining } == true
+            || CAPTURE_PENDING_NAME.matches(file.name) }.forEach { it.delete() }
     }
 
     /** The snapshot names no prune may remove: each open operation's (reserved or in its manifest), and the result record's Undo snapshot. */

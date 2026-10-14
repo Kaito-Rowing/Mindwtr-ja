@@ -24,7 +24,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
-import java.util.Base64
 import java.util.Date
 import java.util.UUID
 
@@ -110,7 +109,8 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 
     /**
      * Export backup, Export CSV, Export TaskNotes (RN's exportCurrentDataBackup): core's file from the snapshot at press time,
-     * then the folder picker (RN's requestDirectoryPermissionsAsync); a folder writes the file there, no folder shares it.
+     * written into the app's cache through the data channel (pass D1c), then the folder picker (RN's
+     * requestDirectoryPermissionsAsync); a folder gets a copy of the file, no folder shares it.
      */
     fun export(format: String) {
         if (busy) return
@@ -118,11 +118,17 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         val failed = words.getString(when (format) { "csv" -> "csvFailed"; "tasknotes" -> "tasknotesFailed"; else -> "failed" })
         val running = if (format == "json") "export" else "export:$format"
         action = running
-        val read = when (format) { "csv" -> "dataCsvExport"; "tasknotes" -> "dataTaskNotesExport"; else -> "dataBackup" }
         shell.anyTime({ runtime ->
-            val file = runtime.menuRead(read, JSONObject().put("maxBytes", DataTransferLimits.MAX_DATA_TRANSFER_BYTES).toString()).put("format", format)
+            // The early check; core's own, in its document lane, decides (pass D1c §3.5).
+            if (runtime.databaseBytes() > DataTransferLimits.MAX_DATA_TRANSFER_BYTES) throw TransferTooLarge()
+            val dir = File(app.cacheDir, "exports").apply { mkdirs() }
+            dir.listFiles().orEmpty().forEach { it.delete() }
+            val pending = File(dir, "export-${UUID.randomUUID()}.pending")
+            val made = try { runtime.dataExport(format, pending, DataTransferLimits.MAX_DATA_TRANSFER_BYTES) } catch (failure: Throwable) { pending.delete(); throw failure }
+            val file = File(dir, made.getString("fileName"))
+            if (!pending.renameTo(file)) { pending.delete(); throw IOException("Cannot save the export file") }
             shell.ui {
-                exportFile = file
+                exportFile = JSONObject().put("path", file.path).put("format", format)
                 launch = "tree"
             }
         }) { failure ->
@@ -132,26 +138,23 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         }
     }
 
-    /** The folder picker's answer: write into [tree], or (none chosen, or the write failed) RN's share fallback. */
+    /** The folder picker's answer: copy the file into [tree], or (none chosen, or the write failed) RN's share fallback. */
     fun folderPicked(tree: Uri?) {
-        val file = exportFile ?: run { action = null; return }
+        val made = exportFile ?: run { action = null; return }
         exportFile = null
         val words = words()
         shell.anyTime({ runtime ->
-            val name = file.getString("fileName")
-            val bytes = if (file.getString("encoding") == "base64") Base64.getDecoder().decode(file.getString("content")) else file.getString("content").toByteArray()
-            val mime = when (file.getString("format")) { "csv" -> "text/csv"; "tasknotes" -> "application/zip"; else -> "application/json" }
-            val written = tree?.let { runCatching { writeToFolder(it, name, mime, bytes) }.onFailure { Log.w(CoreHost.TAG, "Export folder write failed ${failureForLog(it)}") }.isSuccess } ?: false
+            val file = File(made.getString("path"))
+            check(file.isFile) { "The export file is gone" }
+            val mime = when (made.getString("format")) { "csv" -> "text/csv"; "tasknotes" -> "application/zip"; else -> "application/json" }
+            val written = tree?.let { runCatching { writeToFolder(it, file.name, mime, file) }.onFailure { Log.w(CoreHost.TAG, "Export folder write failed ${failureForLog(it)}") }.isSuccess } ?: false
             if (written) {
+                file.delete()
                 runtime.logLine("Native Android backup file written releaseCheck=v1.3.5/android-backup-export", JSONObject().put("releaseCheck", "v1.3.5/android-backup-export")
-                    .put("format", file.getString("format")).put("route", "saf"))
+                    .put("format", made.getString("format")).put("route", "saf"))
                 shell.ui { action = null }
             } else {
-                val dir = File(app.cacheDir, "exports").apply { mkdirs() }
-                dir.listFiles().orEmpty().forEach { it.delete() }
-                val out = File(dir, name)
-                FileOutputStream(out).use { it.write(bytes) }
-                shell.ui { share = out to mime }
+                shell.ui { share = file to mime }
             }
         }) { failure ->
             Log.w(CoreHost.TAG, "Export failed ${failureForLog(failure)}")
@@ -162,20 +165,23 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 
     /**
      * RN's StorageAccessFramework.createFileAsync and writeAsStringAsync: the grant kept (as Expo takes it), the document created
-     * in the folder, its URI on disk before the first byte, and deleted when the write fails. The record goes once it is closed.
+     * in the folder, its URI on disk before the first byte, [file] copied in, and the document deleted when the write fails.
+     * The record goes once it is closed.
      */
-    private fun writeToFolder(tree: Uri, name: String, mime: String, bytes: ByteArray) {
+    private fun writeToFolder(tree: Uri, name: String, mime: String, file: File) {
         runCatching { resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
         val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
         writeExportDocument(exportPending,
             create = { (DocumentsContract.createDocument(resolver, parent, mime, name) ?: throw IOException("The folder refused the new file")).toString() },
             write = { uri ->
                 if (debugProperty("backup_stop") == "mid-export") {
-                    resolver.openOutputStream(Uri.parse(uri), "w")?.use { it.write(bytes, 0, bytes.size / 2) }
+                    resolver.openOutputStream(Uri.parse(uri), "w")?.use { out -> file.inputStream().use { input ->
+                        val half = ByteArray((file.length() / 2).toInt()); input.read(half); out.write(half)
+                    } }
                     Log.i(CoreHost.TAG, "Native Android backup stop at=mid-export")
                     android.os.Process.killProcess(android.os.Process.myPid())
                 }
-                (resolver.openOutputStream(Uri.parse(uri), "w") ?: throw IOException("The new file cannot be opened")).use { it.write(bytes) }
+                (resolver.openOutputStream(Uri.parse(uri), "w") ?: throw IOException("The new file cannot be opened")).use { out -> file.inputStream().use { it.copyTo(out, 64 * 1024) } }
             },
             delete = ::deleteDocument, exists = ::documentExists)
     }
@@ -368,6 +374,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
      * question owns go too.
      */
     fun leftover() = whenHosted { runtime ->
+        if (BuildConfig.DEBUG && debugProperty("channel_roundtrip") == "1") channelRoundTrip(runtime)
         runCatching { cleanupInterruptedExport(runtime) }.onFailure { Log.w(CoreHost.TAG, "Interrupted export cleanup failed ${failureForLog(it)}") }
         runCatching { StagedCopies.sweep(staging) }.onFailure { Log.w(CoreHost.TAG, "Staged copy sweep failed ${failureForLog(it)}") }
         var found = "none"
@@ -387,6 +394,23 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         // Debug builds only (check-data-device.mjs watches each start until this line): the start's leftover step is over, its
         // toast (if any) already handed to the main thread.
         if (BuildConfig.DEBUG) Log.i(CoreHost.TAG, "Native Android data leftover done result=$found")
+    }
+
+    /**
+     * Debug builds (check-data-device D0, pass D1c design §7): a file whose second 1 MiB read starts with the bridge's error
+     * marker and whose first 512 Ki-unit write ends inside a surrogate pair goes through the real bridge and back; the log line
+     * says whether the copy is byte for byte the file.
+     */
+    private fun channelRoundTrip(runtime: CoreHost) {
+        val dir = File(app.cacheDir, "channel-check").apply { mkdirs() }
+        val source = File(dir, "source.txt")
+        val copy = File(dir, "copy.txt")
+        val head = "a".repeat(512 * 1024 - 1) + "\uD83E\uDD89"
+        val pad = "b".repeat(DataChannel.CHUNK_BYTES - head.toByteArray().size)
+        source.writeText(head + pad + "!MindwtrNativeError:tail")
+        val ok = runCatching { runtime.dataChannelRoundTrip(source, copy); copy.readBytes().contentEquals(source.readBytes()) }.getOrDefault(false)
+        Log.i(CoreHost.TAG, "Native Android channel roundtrip ok=$ok")
+        dir.deleteRecursively()
     }
 
     /** At start, before any export: a folder document whose write never finished is deleted (the persisted grant allows it). */

@@ -79,7 +79,7 @@ const PHONE_DIR = '/sdcard/Download/mtd1';
 // The folder picker's starting place (EXTRA_INITIAL_URI takes a document URI, not a tree URI).
 const TREE = 'content://com.android.externalstorage.documents/document/primary%3ADownload%2Fmtd1';
 const DB = 'files/SQLite/mindwtr.db';
-const PROPS = ['backup_stop', 'journal_stop', 'commit_stop', 'delay_before_ms', 'export_tree', 'language', 'transfer_limit_mb'];
+const PROPS = ['backup_stop', 'journal_stop', 'commit_stop', 'delay_before_ms', 'export_tree', 'language', 'transfer_limit_mb', 'channel_roundtrip'];
 const work = resolve(app, 'android/build/data-check');
 const { en: localeEn } = await import(resolve(repo, 'packages/core/src/i18n/locales/en.ts'));
 // The starter.* strings live in their own generated module (getting-started-seed.ts reads them), not in en.ts.
@@ -381,6 +381,14 @@ try {
     sh('settings put system user_rotation 0');
     await launch();
     check(snapshots().length === 0 && journal().length === 0, 'a fresh library: no recovery snapshot, an empty journal');
+
+    // ---- D0 (pass D1c): the data channel through the real QuickJS bridge: a read chunk that starts with the bridge's error
+    // marker, and a write chunk that ends inside a surrogate pair, come back byte for byte ----
+    setProp('channel_roundtrip', '1');
+    await relaunch();
+    await until('the channel round trip', () => allLogs().includes('Native Android channel roundtrip ok='), 60_000, 500);
+    check(allLogs().includes('Native Android channel roundtrip ok=true'), '(D0) the file came back through the bridge byte for byte');
+    setProp('channel_roundtrip', '');
 
     // ---- E3: Merge backup, Undo, Restore backup ----
     const a = fixture(`d1-merge-a-${run}.json`, [task(`d1a${run}`), task(`d1b${run}`, { description: '日本語 🦉' })]);

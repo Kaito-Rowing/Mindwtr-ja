@@ -1815,6 +1815,9 @@ assert.match(source('CoreWork.kt'), /fun retryDrain\(context: Context\) = enqueu
     // D1c cut i: the storage adapter keeps no read document after a boot (bundle/host-backup-memory.test.ts, bun).
     const memoryTested = spawnSync('bun', ['test', 'apps/android-native/bundle/host-backup-memory.test.ts'], { cwd: resolve(app, '../..'), encoding: 'utf8' });
     assert.equal(memoryTested.status, 0, `bundle/host-backup-memory.test.ts: ${memoryTested.stderr.slice(-1500)}`);
+    // D1c: host-entry's side of Settings › Data's file channel, each JS fix with its red run (bundle/host-data-channel.test.ts, bun).
+    const channelTested = spawnSync('bun', ['test', 'apps/android-native/bundle/host-data-channel.test.ts'], { cwd: resolve(app, '../..'), encoding: 'utf8' });
+    assert.equal(channelTested.status, 0, `bundle/host-data-channel.test.ts: ${channelTested.stderr.slice(-1500)}`);
     // D8: the channel is the build's flavor, read by core as RN's isFossBuild; no host passes a fixed false any more.
     assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /create\("play"\) \{\s+dimension = "channel"\s+buildConfigField\("boolean", "FOSS", "false"\)[^}]*\}\s+create\("foss"\) \{\s+dimension = "channel"\s+buildConfigField\("boolean", "FOSS", "true"\)/);
     assert.match(coreHost, /engine\.globalObject\.setProperty\("__mindwtrFossBuild", BuildConfig\.FOSS\)/);
@@ -2103,10 +2106,12 @@ assert.doesNotMatch(code(activity), /"\$inbox · \$total"/, 'the "Inbox · N" co
 
 // The capture popup (pass 5): core's quick capture contract, every write through perform with its exact request on disk first.
 for (const [fn, js] of [['openQuickCapture', 'captureOpen'], ['quickCaptureView', 'captureView'], ['editQuickCapture', 'captureEdit'],
-    ['submitQuickCapture', 'captureSubmit'], ['createQuickCaptureSnapshot', 'captureSnapshot'], ['submitQuickCaptureLines', 'captureLines'],
+    ['submitQuickCapture', 'captureSubmit'], ['submitQuickCaptureLines', 'captureLines'],
     ['submitQuickCapturePickerQuery', 'capturePicker']]) {
     assert.match(coreHost, new RegExp(`fun ${fn}\\([^)]*\\): JSONObject = callAsync\\("${js}"`), `CoreHost.${fn} reaches host method ${js}`);
 }
+// Pass D1c: the capture's snapshot goes through the data channel (captureSnapshotFile), never as text.
+assert.match(coreHost, /fun createQuickCaptureSnapshot\(snapshots: File, protect: \(\) -> Set<String>\): String\? \{[\s\S]{0,400}?callAsync\("captureSnapshotFile", handle\)/);
 for (const read of ['captureOpen(): string', 'captureView(json: string): string', 'captureEdit(json: string): string']) {
     assert.match(hostEntry, new RegExp(`${read.replace(/[()]/g, '\\$&')} \\{\\s*return submit\\(async \\(\\) => \\{\\s*requireSaved\\(\\);`), `${read} waits for an owed save`);
 }
@@ -2139,7 +2144,9 @@ assert.match(model, /CaptureStore\(File\(app\.noBackupFilesDir, "capture"\)\)/);
 assert.match(captureUi, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(state\.toString\(\)\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
 // Several lines: core's snapshot is written as mobile writes it (a temporary file, a clash number, the 5 newest) before the batch.
 // An open backup operation's snapshot and the last result's Undo snapshot are never pruned by it (pass D1a).
-assert.match(model, /RecoverySnapshots\.write\(snapshots, it\.getString\("fileName"\), it\.getString\("contents"\), menu\.settings\.transfer\.operations::protectedNames\)/);
+// Pass D1c: core writes it through the data channel; CoreHost publishes it with RecoverySnapshots' clash and prune rules.
+assert.match(model, /runtime\.createQuickCaptureSnapshot\(snapshots, menu\.settings\.transfer\.operations::protectedNames\)/);
+assert.match(coreHost, /return RecoverySnapshots\.publishCapture\(snapshots, written, snapshot\.getString\("fileName"\), protect\)/);
 assert.match(model, /private val snapshots = File\(app\.filesDir, "snapshots"\)/);
 assert.match(snapshotsKt, /private const val MAX_SNAPSHOTS = 5/);
 assert.match(snapshotsKt, /name = fileName\.removeSuffix\(SUFFIX\) \+ "\.\$clash\$SUFFIX"/);
@@ -2159,7 +2166,7 @@ assert.match(captureUi, /if \(landscape\) footer\(\)\s+\}\s+if \(!landscape\) fo
 assert.match(model, /storedCapture\?\.takeIf \{ saved\.get<Boolean>\("capturing"\) == true \|\| it\.pending != null \}/);
 assert.match(model, /keepCapture\(current\.copy\(requests = current\.requests \+ JSONObject\(\)\.put\("edit", edit\)\)\)\n/, 'an edit is persisted before it is sent');
 assert.match(captureUi, /\.put\("edits", /);
-assert.match(model, /val written = taken\?\.let \{ RecoverySnapshots\.write\(snapshots, it\.getString\("fileName"\), it\.getString\("contents"\), menu\.settings\.transfer\.operations::protectedNames\) \}\s+onMain \{ capture\?\.let \{ keepCapture\(it\.copy\(snapshot = written, snapshotTaken = true\)\) \} \}\s+submit\(written\)/);
+assert.match(model, /val written = runtime\.createQuickCaptureSnapshot\(snapshots, menu\.settings\.transfer\.operations::protectedNames\)\s+onMain \{ capture\?\.let \{ keepCapture\(it\.copy\(snapshot = written, snapshotTaken = true\)\) \} \}\s+submit\(written\)/);
 assert.equal(code(model).match(/snapshotFileName/g).length, 1);
 assert.match(model, /\.put\("snapshotFileName", name \?: JSONObject\.NULL\)/);
 assert.match(model, /if \(!taken\) fresh\(\) else try \{ submit\(name\) \} catch \(failure: Exception\) \{\s+if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure\s+fresh\(\)/,
@@ -3943,6 +3950,7 @@ export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
 export function getStorageAdapter() { return globalThis.adapter; }
 export async function flushPendingSave() { globalThis.events.push('flush'); await globalThis.flushHold;
   if (globalThis.flushError) throw new Error(globalThis.flushError); }
+export const runSerializedSyncDocumentWriteOperation = (operation) => operation();
 export function getPersistenceStatus() { globalThis.onPersistenceStatus?.(); return globalThis.persistenceStatus ||
   { generation: 0, queued: false, inFlight: false, immediate: false, retrying: false, failed: false }; }
 export function isSupportedLanguage(value) { return ['en', 'zh', 'fa', 'de'].includes(value); }

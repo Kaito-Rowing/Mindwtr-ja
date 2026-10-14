@@ -21,7 +21,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
-import tech.dongdongbh.mindwtr.pilot.core.RecoverySnapshots
 import tech.dongdongbh.mindwtr.pilot.core.debugProperty
 import java.io.File
 import java.io.FileOutputStream
@@ -1358,8 +1357,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 .put("captureIds", ids).put("snapshotFileName", name ?: JSONObject.NULL).toString())
         }
         val fresh = {
-            val taken = runtime.createQuickCaptureSnapshot().optJSONObject("snapshot")
-            val written = taken?.let { RecoverySnapshots.write(snapshots, it.getString("fileName"), it.getString("contents"), menu.settings.transfer.operations::protectedNames) }
+            val written = runtime.createQuickCaptureSnapshot(snapshots, menu.settings.transfer.operations::protectedNames)
             onMain { capture?.let { keepCapture(it.copy(snapshot = written, snapshotTaken = true)) } }
             submit(written)
         }

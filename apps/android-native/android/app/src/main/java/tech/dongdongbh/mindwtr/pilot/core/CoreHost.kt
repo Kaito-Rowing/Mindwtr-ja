@@ -533,8 +533,38 @@ class CoreHost(
     /** Core's submitQuickCapture with [json] unchanged; its captureId makes a retry exact. */
     fun submitQuickCapture(json: String): JSONObject = callAsync("captureSubmit", json)
 
-    /** Core's createQuickCaptureSnapshot, as `{ snapshot: { fileName, contents } | null }`. */
-    fun createQuickCaptureSnapshot(): JSONObject = callAsync("captureSnapshot")
+    /**
+     * Core's createQuickCaptureSnapshot, written into [snapshots] through the data channel (pass D1c: the library's text never
+     * crosses into Kotlin) and published as RecoverySnapshots.write would, sparing [protect]; the name written, or null when
+     * core took none.
+     */
+    fun createQuickCaptureSnapshot(snapshots: File, protect: () -> Set<String>): String? {
+        snapshots.mkdirs()
+        val written = File(snapshots, ".capture-${java.util.UUID.randomUUID()}.pending")
+        val handle = data.openWrite(written)
+        try {
+            val snapshot = callAsync("captureSnapshotFile", handle).optJSONObject("snapshot") ?: return null.also { written.delete() }
+            return RecoverySnapshots.publishCapture(snapshots, written, snapshot.getString("fileName"), protect)
+        } finally { data.drop(handle) }
+    }
+
+    /**
+     * RN's export file for [format] ("json", "csv", "tasknotes") written into [file] through the data channel; core refuses a
+     * library over [maxBytes] before it serializes anything. `{ fileName, bytes }`.
+     */
+    fun dataExport(format: String, file: File, maxBytes: Long): JSONObject {
+        val handle = data.openWrite(file, base64 = format == "tasknotes")
+        try { return callAsync("dataExportFile", format, handle, maxBytes, deadlineMs = BACKUP_DEADLINE_MS) }
+        finally { data.drop(handle) }
+    }
+
+    /** Debug builds (check-data-device D0): [source] read and written back into [copy] through the bridge; `{ bytes, sha256 }` of the copy. */
+    fun dataChannelRoundTrip(source: File, copy: File): JSONObject {
+        val read = data.openRead(source)
+        val write = data.openWrite(copy)
+        try { return callAsync("dataChannelRoundTrip", read, write, deadlineMs = BACKUP_DEADLINE_MS) }
+        finally { data.drop(read); data.drop(write) }
+    }
 
     /** Core's submitQuickCaptureLines with [json] unchanged; one capture ID per line. */
     fun submitQuickCaptureLines(json: String): JSONObject = callAsync("captureLines", json)

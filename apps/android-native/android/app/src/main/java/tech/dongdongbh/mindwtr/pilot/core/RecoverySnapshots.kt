@@ -51,14 +51,7 @@ object RecoverySnapshots {
     fun write(dir: File, fileName: String, contents: String, protect: () -> Set<String> = { emptySet() }, exact: Boolean = false,
               prune: Boolean = true, syncDirectory: (File) -> Unit = ::syncDirectory, beforePublish: () -> Unit = {}): String = synchronized(this) {
         dir.mkdirs()
-        var name = fileName
-        var clash = 0
-        while (File(dir, name).exists()) {
-            check(!exact) { "The recovery snapshot name is already taken" }
-            clash += 1
-            check(clash <= MAX_COLLISIONS) { "Snapshot storage already holds too many snapshots from this instant." }
-            name = fileName.removeSuffix(SUFFIX) + ".$clash$SUFFIX"
-        }
+        val name = freeName(dir, fileName, exact)
         val pending = File(dir, PENDING)
         try {
             FileOutputStream(pending).use { out -> out.write(contents.toByteArray()); out.fd.sync() }
@@ -70,6 +63,35 @@ object RecoverySnapshots {
         }
         syncDirectory(dir)
         if (prune) prune(dir) { protect() + name }
+        name
+    }
+
+    /** [fileName], or (unless [exact]) its first clash-numbered twin no file has yet. */
+    private fun freeName(dir: File, fileName: String, exact: Boolean): String {
+        var name = fileName
+        var clash = 0
+        while (File(dir, name).exists()) {
+            check(!exact) { "The recovery snapshot name is already taken" }
+            clash += 1
+            check(clash <= MAX_COLLISIONS) { "Snapshot storage already holds too many snapshots from this instant." }
+            name = fileName.removeSuffix(SUFFIX) + ".$clash$SUFFIX"
+        }
+        return name
+    }
+
+    /**
+     * The capture popup's snapshot (pass D1c), which core wrote through the data channel into [written]: published as
+     * [fileName] or its clash-numbered twin, as [write] does, then the older ones pruned. Returns the name written.
+     */
+    fun publishCapture(dir: File, written: File, fileName: String, protect: () -> Set<String>, syncDirectory: (File) -> Unit = ::syncDirectory): String = synchronized(this) {
+        val name = try {
+            freeName(dir, fileName, exact = false).also { check(written.renameTo(File(dir, it))) { "Cannot save the recovery snapshot" } }
+        } catch (failure: Throwable) {
+            written.delete()
+            throw failure
+        }
+        syncDirectory(dir)
+        prune(dir) { protect() + name }
         name
     }
 
