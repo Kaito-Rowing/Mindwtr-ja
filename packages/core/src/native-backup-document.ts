@@ -275,8 +275,25 @@ const completeDocument = (value: unknown): value is AppData => record(value)
     && ['tasks', 'projects', 'sections', 'areas', 'people'].every((field) => Array.isArray(value[field]))
     && record(value.settings) && validateMergedSyncData(value as unknown as AppData).length === 0;
 
-/** Freeze shared RN policy against a fresh durable base; this performs no document or file write. */
-export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, input: NativeBackupDocumentPrepareInput): Promise<{ planJSON: string; recoveryJSON: string | null }> {
+/**
+ * Where a host with a file channel (Android, pass D1c) takes prepare's two texts instead of the reply: [recovery] once with the
+ * whole recovery snapshot (none for a snapshot restore), then [plan] with the plan's parts in order. The parts join to the
+ * exact text the reply would carry, so the plan's bytes and hash do not depend on the host.
+ */
+export type NativeBackupPrepareSink = { recovery(text: string): void; plan(part: string): void };
+/** The plan's text in parts: its fields, then each large document stringified on its own, never the whole plan at once. */
+function* planParts(plan: Plan): Generator<string> {
+    yield `{"version":${JSON.stringify(plan.version)},"requestId":${JSON.stringify(plan.requestId)},"mode":${JSON.stringify(plan.mode)},"preparedAt":${JSON.stringify(plan.preparedAt)},"expectedCurrent":`;
+    yield JSON.stringify(plan.expectedCurrent);
+    yield ',"data":';
+    yield JSON.stringify(plan.data);
+    yield `,"reply":${JSON.stringify(plan.reply)}${plan.maxLibraryBytes === undefined ? '' : `,"maxLibraryBytes":${JSON.stringify(plan.maxLibraryBytes)}`}}`;
+}
+
+/** Freeze shared RN policy against a fresh durable base; this performs no document write (a [sink] only receives its texts). */
+export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, input: NativeBackupDocumentPrepareInput): Promise<{ planJSON: string; recoveryJSON: string | null }>;
+export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, input: NativeBackupDocumentPrepareInput, sink: NativeBackupPrepareSink): Promise<{ written: true; recovery: boolean }>;
+export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, input: NativeBackupDocumentPrepareInput, sink?: NativeBackupPrepareSink): Promise<{ planJSON: string; recoveryJSON: string | null } | { written: true; recovery: boolean }> {
     releaseNativeBackupDocumentWarnings();
     const fields = ['requestId', 'mode', 'snapshotName', 'text', 'metadata'];
     const admission: unknown = (input as { admission?: unknown }).admission;
@@ -381,13 +398,19 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
                 // A snapshot restore has no recovery snapshot to admit: its result library itself stays within the limit.
                 plan.maxLibraryBytes = input.admission.maxTransferBytes;
             }
-            const planJSON = JSON.stringify(plan);
-            if (!withinUtf8Limit(planJSON, MAX_NATIVE_BACKUP_PLAN_BYTES)) invalid('Prepared backup plan exceeds 512 MiB');
+            if (sink && recoveryJSON !== null) sink.recovery(recoveryJSON);
+            let planJSON = '';
+            let planBytes = 0;
+            for (const part of planParts(plan)) {
+                planBytes += utf8Bytes(part, MAX_NATIVE_BACKUP_PLAN_BYTES - planBytes);
+                if (planBytes > MAX_NATIVE_BACKUP_PLAN_BYTES) invalid('Prepared backup plan exceeds 512 MiB');
+                if (sink) sink.plan(part); else planJSON += part;
+            }
             const diagnostics = createImportDiagnostics(rawWarnings, 'warning');
             if (diagnostics.some((diagnostic) => diagnostic.code === 'renamed-container')) {
                 liveWarnings = { snapshotName, tokens: [...(reply as { result: { warnings: string[] } }).result.warnings], diagnostics };
             }
-            return { planJSON, recoveryJSON };
+            return sink ? { written: true as const, recovery: recoveryJSON !== null } : { planJSON, recoveryJSON };
         });
     } catch (error) {
         if (error instanceof BackupInputError) throw error;

@@ -1283,4 +1283,27 @@ describe('native backup prepare output stays byte-identical (D1c parity fixture)
         expect(existsSync(FIXTURE)).toBe(true);
         expect(outputs).toEqual(JSON.parse(readFileSync(FIXTURE, 'utf8')));
     }, 60_000);
+    it.each([false, true])('a sink receives the same recovery text and plan bytes, in parts (admission %s)', async (admitted) => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            for (const [, make] of cases) {
+                const source = make();
+                const withAdmission = admitted ? { ...source, admission: { sourceBytes: 1, maxTransferBytes: 512 * 1024 * 1024 } } : source;
+                const seeds = () => { let next = 0; vi.spyOn(globalThis.crypto, 'randomUUID').mockImplementation(() =>
+                    `00000000-0000-4000-8000-${String(next++).padStart(12, '0')}` as ReturnType<typeof crypto.randomUUID>); };
+                vi.setSystemTime(new Date(AT)); seeds();
+                const whole = await prepareNativeBackupDocument((await open()).adapter, clone(withAdmission));
+                vi.setSystemTime(new Date(AT)); seeds();
+                const recovery: string[] = []; const parts: string[] = [];
+                const written = await prepareNativeBackupDocument((await open()).adapter, clone(withAdmission),
+                    { recovery: (text) => recovery.push(text), plan: (part) => parts.push(part) });
+                expect(written).toEqual({ written: true, recovery: whole.recoveryJSON !== null });
+                expect(recovery).toEqual(whole.recoveryJSON === null ? [] : [whole.recoveryJSON]);
+                expect(parts.length).toBeGreaterThan(2);
+                expect(parts.join('')).toBe(whole.planJSON);
+                expect(JSON.stringify(JSON.parse(whole.planJSON))).toBe(whole.planJSON);
+                expect('maxLibraryBytes' in JSON.parse(whole.planJSON)).toBe(admitted);
+            }
+        } finally { vi.useRealTimers(); }
+    }, 120_000);
 });
