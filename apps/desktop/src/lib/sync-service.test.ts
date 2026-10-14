@@ -4,6 +4,7 @@ import {
     runAfterStoreWriteLock,
     runDataTransferTransactionWithoutSnapshot,
     runSerializedSyncDocumentOperation,
+    runStoreCommand,
     mergeAppData,
     SyncFileLockBusyError,
     SyncRemoteWriteConflict,
@@ -3142,6 +3143,44 @@ describe('SyncService testability hooks', () => {
         expect(cleanupStartedDuringTransaction).toBe(false);
         expect(events.indexOf('cleanup:flush')).toBeGreaterThan(events.indexOf('transaction:finish'));
         expect(cleanupError).toEqual(new Error('stop after queue proof'));
+    });
+
+    it('holds the store write gate through manual cleanup\'s save and publication, then refreshes after it', async () => {
+        const events: string[] = [];
+        const data = { tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} } satisfies AppData;
+        let command: Promise<unknown> | null = null;
+        const invoke = vi.fn(async (command_: string, args?: Record<string, unknown>) => {
+            if (command_ === 'get_sync_backend') return 'file';
+            if (command_ === 'acquire_file_sync_lease') return 'cleanup-lease';
+            if (command_ === 'release_file_sync_lease') return undefined;
+            if (command_ === 'get_data') return data;
+            if (command_ === 'save_data') {
+                events.push('save');
+                // A command arriving at the commit must act on the published cleanup, not the store before it.
+                command ??= runStoreCommand(async () => { events.push('command'); });
+                return args?.data;
+            }
+            if (command_ === 'cleanup_attachment_temp_files') return undefined;
+            throw new Error(`unexpected command: ${command_}`);
+        });
+        __syncServiceTestUtils.setDependenciesForTests({
+            isTauriRuntime: () => true,
+            invoke: invoke as unknown as <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
+            flushPendingSave: vi.fn(async () => undefined),
+            applySyncedDataToStore: vi.fn(() => { events.push('publish'); }),
+            getStoreState: () => ({
+                fetchData: vi.fn(async () => { events.push('refresh'); }),
+                lastDataChangeAt: 0,
+                settings: {},
+            }) as any,
+            markLocalSqliteWrite: vi.fn(),
+            markLocalWrite: vi.fn(),
+        });
+
+        await SyncService.cleanupAttachmentsNow();
+        await command;
+
+        expect(events).toEqual(['save', 'publish', 'command', 'refresh']);
     });
 
     it('tests WebDAV connectivity against the normalized data.json URL', async () => {
