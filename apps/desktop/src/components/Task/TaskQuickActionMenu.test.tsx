@@ -212,7 +212,7 @@ describe('TaskQuickActionMenu', () => {
         fireEvent.click(screen.getByRole('menuitem', { name: 'Contexts…' }));
         fireEvent.change(screen.getByRole('textbox', { name: 'task.aria.contexts' }), { target: { value: input } });
         fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-        await waitFor(() => expect(props.onUpdateTask).toHaveBeenCalledExactlyOnceWith({ contexts: expected }, expect.objectContaining({ id: task.id })));
+        await waitFor(() => expect(props.onUpdateTask).toHaveBeenCalledExactlyOnceWith({ contexts: expected }));
     });
 
     it.each(['pointer', 'keyboard'] as const)(
@@ -238,7 +238,7 @@ describe('TaskQuickActionMenu', () => {
             expect(screen.getByRole('menu')).toBeInTheDocument();
             expect(input).toHaveValue('@garden');
             fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-            await waitFor(() => expect(props.onUpdateTask).toHaveBeenCalledExactlyOnceWith({ contexts: ['@garden'] }, expect.objectContaining({ id: task.id })));
+            await waitFor(() => expect(props.onUpdateTask).toHaveBeenCalledExactlyOnceWith({ contexts: ['@garden'] }));
         },
     );
 
@@ -248,7 +248,7 @@ describe('TaskQuickActionMenu', () => {
         const save = screen.getByRole('button', { name: 'Save' });
         expect(save).toBeEnabled();
         fireEvent.click(save);
-        await waitFor(() => expect(props.onUpdateTask).toHaveBeenCalledExactlyOnceWith({ contexts: ['@garden'] }, expect.objectContaining({ id: task.id })));
+        await waitFor(() => expect(props.onUpdateTask).toHaveBeenCalledExactlyOnceWith({ contexts: ['@garden'] }));
     });
 
     it('does not write canonical contexts merely by opening or cancelling the menu (#1189)', () => {

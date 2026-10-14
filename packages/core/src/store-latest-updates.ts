@@ -1,4 +1,3 @@
-import { taskEditValuesEqual } from './json-value-equality';
 import { logWarn } from './logger';
 import { useTaskStore } from './store';
 import type { StoreActionResult } from './store-types';
@@ -55,28 +54,6 @@ export const batchUpdateTasksFromLatest = (
         return next ? [{ id, updates: next }] : [];
     });
     return updates.length > 0 ? useTaskStore.getState().batchUpdateTasks(updates) : { success: true, ids: [] };
-});
-
-/**
- * A draft's save against the row the editor opened with ([base]): refused (STALE_REVISION) when a field it writes was
- * changed since and the draft holds another value, as SQLite refused a lower-revision write before the gate. [base] is the
- * row the draft was last opened or saved on, so the editor's own earlier saves are not conflicts.
- */
-export const updateTaskFromBase = (
-    id: string,
-    base: Task,
-    updates: Partial<Task>,
-): Promise<StoreActionResult> => runStoreCommand(async () => {
-    const task = useTaskStore.getState()._tasksById.get(id);
-    if (!task) return missing('Task');
-    const conflict = (Object.keys(updates) as Array<keyof Task>).some((key) => (
-        !taskEditValuesEqual(task[key], base[key]) && !taskEditValuesEqual(updates[key], task[key])
-    ));
-    if (conflict) {
-        logStaleWriteRefused('draft-save');
-        return { success: false, error: 'STALE_REVISION: The task changed on another device; reopen it to edit' };
-    }
-    return useTaskStore.getState().updateTask(id, updates);
 });
 
 /**

@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { act, createEvent, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useEffect, useState } from 'react';
 import { useTaskStore, type Task } from '@mindwtr/core';
 import { ChecklistField, reorderChecklistItems } from './ChecklistField';
@@ -91,27 +91,18 @@ describe('ChecklistField', () => {
         });
     });
 
-    it('refuses a checklist save when a sync save changed the list since the field opened, and keeps the synced item', async () => {
-        const { getByRole, getAllByRole } = render(
-            <ChecklistHarness initial={[{ id: 'c1', title: 'One', isCompleted: false }]} />
-        );
+    it('writes the field\'s list as it is when a sync save changed the list since the field opened (last write wins)', async () => {
+        render(<ChecklistHarness initial={[{ id: 'c1', title: 'One', isCompleted: false }]} />);
         const finish = holdSyncSave(() => useTaskStore.setState({ _allTasks: [storedTask(
             [{ id: 'c1', title: 'One', isCompleted: false }, { id: 'c2', title: 'Two', isCompleted: false }],
             { rev: 3 },
         )] }));
-        fireEvent.click(getByRole('button', { name: 'taskEdit.checklist 1' }));
+        fireEvent.click(screen.getByRole('button', { name: 'taskEdit.checklist 1' }));
         await act(finish);
 
-        await waitFor(() => expect(useUiStore.getState().toasts.map((toast) => toast.message))
-            .toContainEqual(expect.stringMatching(/^STALE_REVISION/)));
-        expect(useTaskStore.getState()._tasksById.get('task-1')?.checklist?.map((item) => [item.id, item.isCompleted]))
-            .toEqual([['c1', false], ['c2', false]]);
-        expect(getAllByRole('textbox').map((input) => (input as HTMLInputElement).value)).toEqual(['One', 'Two']);
-
-        // The field now edits the stored list, so the next tick saves.
-        fireEvent.click(getByRole('button', { name: 'taskEdit.checklist 1' }));
-        await waitFor(() => expect(useTaskStore.getState()._tasksById.get('task-1')?.checklist?.map((item) => item.isCompleted))
-            .toEqual([true, false]));
+        await waitFor(() => expect(useTaskStore.getState()._tasksById.get('task-1')?.checklist?.map((item) => [item.id, item.isCompleted]))
+            .toEqual([['c1', true]]));
+        expect(useUiStore.getState().toasts.map((toast) => toast.message)).not.toContainEqual(expect.stringMatching(/^STALE_REVISION/));
     });
 
     it('edits a reference list without completion controls and preserves item metadata', () => {

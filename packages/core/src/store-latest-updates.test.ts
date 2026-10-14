@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
-import { batchUpdateTasksFromLatest, updateProjectFromLatest, updateTaskFromBase, updateTaskFromLatest } from './store-latest-updates';
+import { batchUpdateTasksFromLatest, updateProjectFromLatest, updateTaskFromLatest } from './store-latest-updates';
 import { runSyncStoreSave } from './store-write-gate';
 import type { Attachment, Project, Task } from './types';
 
@@ -63,20 +63,5 @@ describe('writes built from the latest row', () => {
         );
         expect(useTaskStore.getState()._tasksById.get('t1')?.checklist?.map((item) => [item.id, item.isCompleted]))
             .toEqual([['c1', true], ['c2', false]]);
-    });
-
-    it('refuses a draft save whose field changed since the editor opened, and saves fields nobody else changed', async () => {
-        const base = task();
-        useTaskStore.setState({ _allTasks: [base] });
-        const refused = await behindSyncSave(
-            () => useTaskStore.setState({ _allTasks: [task({ rev: 3, tags: ['remote'] })] }),
-            () => updateTaskFromBase('t1', base, { tags: ['draft'] }),
-        );
-        expect(refused).toMatchObject({ success: false, error: expect.stringMatching(/^STALE_REVISION/) });
-        expect(useTaskStore.getState()._tasksById.get('t1')?.tags).toEqual(['remote']);
-
-        const saved = await updateTaskFromBase('t1', base, { title: 'Draft title' });
-        expect(saved.success).toBe(true);
-        expect(useTaskStore.getState()._tasksById.get('t1')).toMatchObject({ title: 'Draft title', tags: ['remote'] });
     });
 });
