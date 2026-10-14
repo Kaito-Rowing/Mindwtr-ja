@@ -2,9 +2,8 @@ import { useCallback, useRef } from 'react';
 import {
     taskDraftToChangedUpdatePatch,
     flushPendingSave,
+    mergeTaskDraftAttachments,
     runStoreCommand,
-    taskEditValuesEqual,
-    updateTaskFromBase,
     useTaskStore,
     type Attachment,
     type Task,
@@ -28,38 +27,17 @@ type UseTaskItemSubmitParams = {
 };
 
 /**
- * The draft's attachment changes (added, edited, soft-deleted or dropped since [base]) applied by id to [latest], so an
- * attachment a sync save added that the draft never saw is kept.
+ * The editor save as one store command: the draft's attachment changes since [base] are merged over the latest row by
+ * core's mergeTaskDraftAttachments (as mobile's editor does), so an attachment or tombstone a sync save brought stays.
+ * Other fields are written as the draft holds them (last write wins, as before the write gate). Answers the row it
+ * saved, read before any sync save can publish over it, as the base for the next save of this session.
  */
-const mergeDraftAttachments = (
-    base: Attachment[] = [],
-    draft: Attachment[] = [],
-    latest: Attachment[] = [],
-): Attachment[] => {
-    const baseById = new Map(base.map((item) => [item.id, item]));
-    const draftIds = new Set(draft.map((item) => item.id));
-    const changed = new Map(draft
-        .filter((item) => !taskEditValuesEqual(item, baseById.get(item.id)))
-        .map((item) => [item.id, item]));
-    const merged = latest
-        .filter((item) => !baseById.has(item.id) || draftIds.has(item.id))
-        .map((item) => changed.get(item.id) ?? item);
-    const latestIds = new Set(latest.map((item) => item.id));
-    return [...merged, ...[...changed.values()].filter((item) => !latestIds.has(item.id))];
-};
-
-/**
- * The editor save as one store command. Fields are refused (STALE_REVISION) when another device changed them since
- * [base] and the draft holds another value; attachments are merged by id instead. Answers the row it saved, read
- * before any sync save can publish over it, as the base for the next save of this session.
- */
-const saveDraftFromBase = (id: string, base: Task, patch: Partial<Task>) => runStoreCommand(async () => {
+const saveDraftOnLatest = (id: string, base: Task, patch: Partial<Task>) => runStoreCommand(async () => {
     const latest = useTaskStore.getState()._tasksById.get(id);
-    const mergeAttachments = latest && 'attachments' in patch;
-    const updates = mergeAttachments
-        ? { ...patch, attachments: mergeDraftAttachments(base.attachments, patch.attachments, latest.attachments) }
+    const updates = latest && patch.attachments
+        ? { ...patch, attachments: mergeTaskDraftAttachments(latest.attachments ?? [], base.attachments ?? [], patch.attachments) }
         : patch;
-    const result = await updateTaskFromBase(id, mergeAttachments ? { ...base, attachments: latest.attachments } : base, updates);
+    const result = await useTaskStore.getState().updateTask(id, updates);
     return { result, saved: useTaskStore.getState()._tasksById.get(id) };
 });
 
@@ -107,7 +85,7 @@ export function useTaskItemSubmit({
 
         const base = savedRef.current?.opened === baselineTask ? savedRef.current.saved : baselineTask;
         const attachmentSaveRequiresDurability = beginAttachmentSave();
-        const { result, saved } = await saveDraftFromBase(task.id, base, patch);
+        const { result, saved } = await saveDraftOnLatest(task.id, base, patch);
         if (!result.success) {
             cancelAttachmentSaveBeforeStoreUpdate();
             showToast(result.error || t('task.updateFailed'), 'error');

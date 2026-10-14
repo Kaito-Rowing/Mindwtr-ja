@@ -207,17 +207,22 @@ describe('useTaskItemSubmit attachment durability', () => {
             expect(useTaskStore.getState()._tasksById.get(task.id)?.attachments?.map((item) => item.id)).toEqual(['A', 'B', 'D']);
         });
 
-        it('refuses a field another device changed since the editor opened and shows the save error', async () => {
+        it('writes a field another device changed since the editor opened as the draft holds it, as before the gate', async () => {
             useTaskStore.setState({ _allTasks: [opened] });
-            const showToast = vi.fn();
-            const { result } = submitHook({ title: 'Draft title' }, opened.attachments, showToast);
+            const { result } = submitHook({ title: 'Draft title' });
             const outcome = await submitBehind(() => result.current(), { title: 'Remote title' });
-            expect(outcome).toMatchObject({ success: false, error: expect.stringMatching(/^STALE_REVISION/) });
-            expect(showToast).toHaveBeenCalledWith(expect.stringMatching(/^STALE_REVISION/), 'error');
-            expect(useTaskStore.getState()._tasksById.get(task.id)?.title).toBe('Remote title');
+            expect(outcome).toMatchObject({ success: true });
+            expect(useTaskStore.getState()._tasksById.get(task.id)?.title).toBe('Draft title');
         });
 
-        it('takes its own earlier save as the base, so a second save of the same field is not refused', async () => {
+        it('keeps the tombstone of an attachment another device deleted while the draft edited it', async () => {
+            useTaskStore.setState({ _allTasks: [opened] });
+            const { result } = submitHook({}, [{ ...file('A'), title: 'Renamed.pdf' }]);
+            await submitBehind(() => result.current(), { attachments: [{ ...file('A'), deletedAt: '2026-08-28T00:00:00.000Z' }] });
+            expect(useTaskStore.getState()._tasksById.get(task.id)?.attachments?.[0]?.deletedAt).toBe('2026-08-28T00:00:00.000Z');
+        });
+
+        it('takes its own earlier save as the base, so a second save merges its attachments against it', async () => {
             useTaskStore.setState({ _allTasks: [opened] });
             const { result, rerender } = submitHook({ title: 'First' });
             await act(async () => { await result.current(undefined, { keepEditing: true }); });
