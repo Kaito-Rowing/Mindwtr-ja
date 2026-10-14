@@ -308,6 +308,35 @@ describe.each([false, true])('a command during the remote write (guarded adapter
         }
     });
 
+    it('admits commands while the cycle runs its attachments phase, after its save released the gate', async () => {
+        const adapter = await openStore(guarded);
+        const fake = createHost(adapter, winner());
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
+        let releaseAttachments!: () => void;
+        const attachmentsHeld = new Promise<void>((resolve) => { releaseAttachments = resolve; });
+        let attachmentsStarted!: () => void;
+        const inAttachments = new Promise<void>((resolve) => { attachmentsStarted = resolve; });
+        const attachments = fake.host.attachments as unknown as Record<string, unknown>;
+        attachments.hasPendingWork = async () => true;
+        attachments.syncCloud = async () => { attachmentsStarted(); await attachmentsHeld; return false; };
+        const service = createMobileSyncService(fake.host);
+        try {
+            const cycle = runCycle(service);
+            await inAttachments;
+            // A slow attachments phase (a backend choice waits behind it in Settings › Sync) holds no gate.
+            const answered = await Promise.race([
+                useTaskStore.getState().updateSettings({ theme: 'dark' }).then(() => 'answered'),
+                new Promise((resolve) => setTimeout(() => resolve('blocked'), 500)),
+            ]);
+            expect(answered).toBe('answered');
+            releaseAttachments();
+            await cycle;
+        } finally {
+            releaseAttachments();
+            service.__mobileSyncTestUtils.reset();
+        }
+    });
+
     it('publishes nothing when the save fails before its commit', async () => {
         const adapter = await openStore(guarded);
         const fake = createHost(adapter, winner());
