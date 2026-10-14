@@ -2587,7 +2587,7 @@ describe('runSharedSyncCycle', () => {
         );
     });
 
-    it('requeues before applying or uploading data when a local edit lands during persistence', async () => {
+    it('publishes the committed save, then requeues before uploading, when an ungated edit lands during persistence', async () => {
         const local = createData([createTask('t-local', 'Before sync')]);
         let raceMidPersist: () => void = () => {
             throw new Error('Harness mutation was not initialized');
@@ -2624,8 +2624,9 @@ describe('runSharedSyncCycle', () => {
         const result = await run();
 
         expect(result).toMatchObject({ success: true, skipped: 'requeued' });
-        expect(harness.inMemory.tasks[0]?.title).toBe('Edited while saving');
-        expect(applyDataToStore).not.toHaveBeenCalled();
+        // The store shows what the commit wrote: a gated writer cannot land here, and the disk holds this.
+        expect(applyDataToStore).toHaveBeenCalledWith(harness.persisted);
+        expect(harness.inMemory).toEqual(harness.persisted);
         expect(io.writeRemote).not.toHaveBeenCalled();
         expect(hooks.requestFollowUp).toHaveBeenCalled();
         expect(hooks.onStaleSnapshot).toHaveBeenCalled();

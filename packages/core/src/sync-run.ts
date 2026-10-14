@@ -997,9 +997,9 @@ class SharedSyncRunMachine {
 
     /**
      * One local save and its store publish, inside the store write gate (store-write-gate.ts): no command
-     * runs from the freshness check through the commit, and the committed document reaches the store
-     * before any check after the save can end the cycle. A save that fails publishes nothing: the store
-     * still matches the disk. [data] is a builder when the document must be read from the store inside the gate.
+     * runs from the freshness check through the commit. A commit always reaches the store, before any check
+     * after the save can end the cycle. A save that fails publishes nothing: the store still matches the disk.
+     * [data] is a builder when the document must be read from the store inside the gate.
      */
     private async persistLocalDataWithTracking(data: AppData | (() => AppData)): Promise<AppData> {
         await this.assertRemoteMutationFenceHeld();
@@ -1013,11 +1013,13 @@ class SharedSyncRunMachine {
             // Disk has moved past the snapshot this cycle read, so it is no longer
             // a baseline for the unchanged-write guard.
             this.state.localSnapshotMatchesDisk = false;
-            // Behind the gate only an ungated writer can move the stamp during the save; its edit stays
-            // in the store and the cycle requeues, as before the gate.
-            this.ensureLocalSnapshotFresh(persisted);
+            // Behind the gate only an ungated writer can move the stamp during the save. The committed
+            // document is published anyway, so the store matches the disk; then the cycle requeues.
+            let staleDuringSave: unknown = null;
+            try { this.ensureLocalSnapshotFresh(persisted); } catch (error) { staleDuringSave = error; }
             this.publishToStore(persisted);
             this.state.wroteLocal = true;
+            if (staleDuringSave) throw staleDuringSave;
             await this.storage.afterPersistLocal?.();
             return persisted;
         });
