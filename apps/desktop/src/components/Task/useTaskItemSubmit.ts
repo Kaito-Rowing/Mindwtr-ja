@@ -3,6 +3,7 @@ import {
     taskDraftToChangedUpdatePatch,
     flushPendingSave,
     runStoreCommand,
+    taskEditValuesEqual,
     updateTaskFromBase,
     useTaskStore,
     type Attachment,
@@ -10,7 +11,6 @@ import {
     type TaskDraft,
     type TaskStatus,
 } from '@mindwtr/core';
-import { taskEditValuesEqual } from '@mindwtr/core/json-value-equality';
 
 type UseTaskItemSubmitParams = {
     baselineTask: Task;
