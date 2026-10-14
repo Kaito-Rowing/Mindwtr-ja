@@ -28,6 +28,7 @@ import {
     getPersonOptionNames,
     normalizeTimeSpentMinutes,
     useTaskStore,
+    updateTaskFromLatest,
     areDraftAttachmentsDirty,
     isTaskDraftDirty,
     type TaskDraftSetter,
@@ -440,13 +441,19 @@ export const TaskItem = memo(function TaskItem({
     }, [effectiveReadOnly, isEditing, selectionMode, toggleTaskFocus]);
     const handleToggleChecklistItem = useCallback((index: number) => {
         if (effectiveReadOnly) return;
-        const checklist = task.checklist || [];
-        if (!checklist[index]) return;
-        const nextChecklist = checklist.map((item, i) =>
-            i === index ? { ...item, isCompleted: !item.isCompleted } : item
-        );
-        void updateTask(task.id, { checklist: nextChecklist });
-    }, [effectiveReadOnly, task, updateTask]);
+        const itemId = task.checklist?.[index]?.id;
+        if (!itemId) return;
+        // Flip the item by id on the latest row, so an item a sync save added meanwhile is kept.
+        void updateTaskFromLatest(task.id, (latest) => {
+            const checklist = latest.checklist || [];
+            if (!checklist.some((item) => item.id === itemId)) return null;
+            return {
+                checklist: checklist.map((item) =>
+                    item.id === itemId ? { ...item, isCompleted: !item.isCompleted } : item
+                ),
+            };
+        });
+    }, [effectiveReadOnly, task.checklist, task.id]);
     const recurrence = useTaskItemRecurrence({
         task,
         draft,
@@ -698,14 +705,12 @@ export const TaskItem = memo(function TaskItem({
         openCustomRecurrence,
         createAssignedToPerson,
         requestBackdatedComplete: canCompleteFromEditor ? requestEditorBackdatedComplete : undefined,
-        updateTask,
         resetTaskChecklist,
     }), [
         openCustomRecurrence,
         createAssignedToPerson,
         canCompleteFromEditor,
         requestEditorBackdatedComplete,
-        updateTask,
         resetTaskChecklist,
     ]);
 
@@ -801,7 +806,6 @@ export const TaskItem = memo(function TaskItem({
         showToast,
         t,
         task,
-        updateTask,
         beginAttachmentSave,
         cancelAttachmentSaveBeforeStoreUpdate,
         settlePersistedAttachmentSave,

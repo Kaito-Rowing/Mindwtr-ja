@@ -21,6 +21,7 @@ import {
     safeFormatDate,
     safeParseDate,
     tFallback,
+    updateTaskFromLatest,
     useTaskStore,
     type Attachment,
     type MarkdownSelection,
@@ -144,7 +145,6 @@ export type TaskEditorActions = {
     openCustomRecurrence: () => void;
     createAssignedToPerson: (name: string) => void | Promise<void>;
     requestBackdatedComplete?: () => void;
-    updateTask: (taskId: string, updates: Partial<Task>) => void;
     resetTaskChecklist: (taskId: string) => void;
 };
 
@@ -205,7 +205,6 @@ export function TaskItemFieldRenderer({
         openCustomRecurrence,
         createAssignedToPerson,
         requestBackdatedComplete,
-        updateTask,
         resetTaskChecklist,
     } = actions;
     const taskId = task.id;
@@ -654,7 +653,7 @@ export function TaskItemFieldRenderer({
             // the task instead of deleting it (#1245). Transcription runs for
             // many seconds, so the list to append to is the one the store holds
             // now, never the one captured when this callback was built.
-            const { tasks: currentTasks, updateTask: updateTaskNow } = useTaskStore.getState();
+            const { tasks: currentTasks } = useTaskStore.getState();
             const existing = currentTasks.find((item) => item.id === taskId);
             if (capture && existing) {
                 const nowIso = new Date().toISOString();
@@ -670,9 +669,11 @@ export function TaskItemFieldRenderer({
                 };
                 appendRetainedAttachment(retainedAttachment, existing.attachments ?? []);
                 try {
-                    const updateResult = await updateTaskNow(taskId, {
-                        attachments: [...(existing.attachments ?? []), retainedAttachment],
-                    });
+                    // Appended on the row as it is when the write is admitted, so an attachment a sync
+                    // save brought meanwhile is kept.
+                    const updateResult = await updateTaskFromLatest(taskId, (latest) => ({
+                        attachments: [...(latest.attachments ?? []), retainedAttachment],
+                    }));
                     if (!updateResult.success) {
                         throw new Error(updateResult.error || tFallback(t, 'task.updateFailed', 'Could not update task.'));
                     }
@@ -1195,7 +1196,6 @@ export function TaskItemFieldRenderer({
                     taskId={taskId}
                     checklist={task.checklist}
                     plainList={editStatus === 'reference'}
-                    updateTask={updateTask}
                     resetTaskChecklist={resetTaskChecklist}
                 />
             );

@@ -9,6 +9,7 @@ import {
     type TaskEditorOptionLists,
 } from './TaskItemFieldRenderer';
 import { LanguageProvider } from '../../contexts/language-context';
+import { holdSyncSave } from '../../test/hold-sync-save';
 
 const audioMocks = vi.hoisted(() => ({
     startAudioCapture: vi.fn(),
@@ -223,7 +224,6 @@ const createProps = (overrides: FixtureOverrides = {}): Omit<RendererProps, 'fie
         actions: {
             openCustomRecurrence: vi.fn(),
             createAssignedToPerson: vi.fn(),
-            updateTask: vi.fn(),
             resetTaskChecklist: vi.fn(),
             ...overrides.actions,
         },
@@ -472,6 +472,23 @@ describe('TaskItemFieldRenderer description dictation', () => {
                 expect.objectContaining({ uri: capture.path }),
             ],
         });
+    });
+
+    it('appends the kept recording to the attachments a sync save published while the write waited', async () => {
+        audioMocks.processAudioCapture.mockRejectedValue(new Error('Whisper model not found'));
+        const file = (id: string) => ({
+            id, kind: 'file' as const, title: id, uri: `/data/attachments/${id}.pdf`,
+            createdAt: '2026-09-18T00:00:00.000Z', updatedAt: '2026-09-18T00:00:00.000Z',
+        });
+        const stored: Task = { ...baseTask, rev: 1, attachments: [file('A')] };
+        act(() => useTaskStore.setState({ _allTasks: [stored], tasks: [stored] }));
+
+        const finish = holdSyncSave(() => useTaskStore.setState({ _allTasks: [{ ...stored, rev: 3, attachments: [file('A'), file('B')] }] }));
+        const { capture } = await dictate({ task: stored });
+        await act(finish);
+
+        await waitFor(() => expect(useTaskStore.getState()._tasksById.get(stored.id)?.attachments?.map((item) => item.uri))
+            .toEqual(['/data/attachments/A.pdf', '/data/attachments/B.pdf', capture.path]));
     });
 
     it('stays in the transcribing state until the kept attachment is written', async () => {

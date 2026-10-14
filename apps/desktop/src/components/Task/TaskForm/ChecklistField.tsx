@@ -22,12 +22,14 @@ import {
     generateUUID,
     isMarkdownEditorAssistEnabled,
     parsePastedChecklistItems,
+    updateTaskFromBase,
     useTaskStore,
     type MarkdownSelection,
     type MarkdownToolbarResult,
     type Task,
 } from '@mindwtr/core';
 import { cn } from '../../../lib/utils';
+import { useUiStore } from '../../../store/ui-store';
 import { TaskEditorFieldLabel } from '../task-editor-label';
 import {
     captureScrollSnapshot,
@@ -40,7 +42,6 @@ type ChecklistFieldProps = {
     taskId: string;
     checklist: Task['checklist'];
     plainList?: boolean;
-    updateTask: (taskId: string, updates: Partial<Task>) => void;
     resetTaskChecklist: (taskId: string) => void;
 };
 
@@ -151,13 +152,14 @@ export function ChecklistField({
     taskId,
     checklist,
     plainList = false,
-    updateTask,
     resetTaskChecklist,
 }: ChecklistFieldProps) {
     const markdownEditorAssist = useTaskStore((state) => isMarkdownEditorAssistEnabled(state.settings));
+    const showToast = useUiStore((state) => state.showToast);
     const [checklistDraft, setChecklistDraft] = useState<Task['checklist']>(checklist || []);
     const checklistDraftRef = useRef<Task['checklist']>(checklist || []);
-    const persistedChecklistRef = useRef<Task['checklist']>(checklist || []);
+    // The stored list as the row holds it (absent stays absent): the base a draft save is checked against.
+    const persistedChecklistRef = useRef<Task['checklist']>(checklist);
     const checklistDirtyRef = useRef(false);
     const checklistInputRefs = useRef<Array<HTMLInputElement | null>>([]);
     const checklistSelectionRefs = useRef<Array<MarkdownSelection>>([]);
@@ -177,11 +179,11 @@ export function ChecklistField({
         const taskChanged = lastTaskIdRef.current !== taskId;
         lastTaskIdRef.current = taskId;
         if (!taskChanged && checklistDirtyRef.current) return;
+        persistedChecklistRef.current = checklist;
         const incoming = checklist || [];
         if (!taskChanged && areChecklistsEqual(incoming, checklistDraftRef.current)) return;
         setChecklistDraft(incoming);
         checklistDraftRef.current = incoming;
-        persistedChecklistRef.current = incoming;
         checklistDirtyRef.current = false;
     }, [taskId, checklist]);
 
@@ -192,9 +194,21 @@ export function ChecklistField({
     }, []);
 
     const commitChecklistUpdate = useCallback((nextChecklist: Task['checklist']) => {
+        const base = persistedChecklistRef.current;
         persistedChecklistRef.current = nextChecklist;
-        updateTask(taskId, { checklist: nextChecklist });
-    }, [taskId, updateTask]);
+        // A draft save against the list this field last opened or saved: refused when a sync save changed the
+        // checklist since. Only the written field is compared, so the base needs only the checklist.
+        void updateTaskFromBase(taskId, { checklist: base } as Task, { checklist: nextChecklist }).then((result) => {
+            if (result.success) return;
+            // Show the refusal and adopt the stored list, so the next edit starts from what is saved.
+            const stored = useTaskStore.getState()._tasksById.get(taskId)?.checklist;
+            setChecklistDraft(stored || []);
+            checklistDraftRef.current = stored || [];
+            persistedChecklistRef.current = stored;
+            checklistDirtyRef.current = false;
+            showToast(result.error || t('task.updateFailed'), 'error');
+        });
+    }, [showToast, t, taskId]);
 
     const commitChecklistDraft = useCallback((next?: Task['checklist']) => {
         const payload = next ?? checklistDraftRef.current;

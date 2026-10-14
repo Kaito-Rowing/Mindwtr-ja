@@ -1,13 +1,16 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import {
     taskDraftToChangedUpdatePatch,
     flushPendingSave,
+    runStoreCommand,
+    updateTaskFromBase,
+    useTaskStore,
     type Attachment,
-    type StoreActionResult,
     type Task,
     type TaskDraft,
     type TaskStatus,
 } from '@mindwtr/core';
+import { taskEditValuesEqual } from '@mindwtr/core/json-value-equality';
 
 type UseTaskItemSubmitParams = {
     baselineTask: Task;
@@ -19,11 +22,46 @@ type UseTaskItemSubmitParams = {
     showToast: (message: string, tone?: 'info' | 'error' | 'success') => void;
     t: (key: string) => string;
     task: Task;
-    updateTask: (id: string, patch: Partial<Task>) => Promise<StoreActionResult>;
     beginAttachmentSave: () => boolean;
     cancelAttachmentSaveBeforeStoreUpdate: () => void;
     settlePersistedAttachmentSave: (attachments: Attachment[]) => void;
 };
+
+/**
+ * The draft's attachment changes (added, edited, soft-deleted or dropped since [base]) applied by id to [latest], so an
+ * attachment a sync save added that the draft never saw is kept.
+ */
+const mergeDraftAttachments = (
+    base: Attachment[] = [],
+    draft: Attachment[] = [],
+    latest: Attachment[] = [],
+): Attachment[] => {
+    const baseById = new Map(base.map((item) => [item.id, item]));
+    const draftIds = new Set(draft.map((item) => item.id));
+    const changed = new Map(draft
+        .filter((item) => !taskEditValuesEqual(item, baseById.get(item.id)))
+        .map((item) => [item.id, item]));
+    const merged = latest
+        .filter((item) => !baseById.has(item.id) || draftIds.has(item.id))
+        .map((item) => changed.get(item.id) ?? item);
+    const latestIds = new Set(latest.map((item) => item.id));
+    return [...merged, ...[...changed.values()].filter((item) => !latestIds.has(item.id))];
+};
+
+/**
+ * The editor save as one store command. Fields are refused (STALE_REVISION) when another device changed them since
+ * [base] and the draft holds another value; attachments are merged by id instead. Answers the row it saved, read
+ * before any sync save can publish over it, as the base for the next save of this session.
+ */
+const saveDraftFromBase = (id: string, base: Task, patch: Partial<Task>) => runStoreCommand(async () => {
+    const latest = useTaskStore.getState()._tasksById.get(id);
+    const mergeAttachments = latest && 'attachments' in patch;
+    const updates = mergeAttachments
+        ? { ...patch, attachments: mergeDraftAttachments(base.attachments, patch.attachments, latest.attachments) }
+        : patch;
+    const result = await updateTaskFromBase(id, mergeAttachments ? { ...base, attachments: latest.attachments } : base, updates);
+    return { result, saved: useTaskStore.getState()._tasksById.get(id) };
+});
 
 type TaskItemSubmitOptions = {
     statusOverride?: TaskStatus;
@@ -43,11 +81,12 @@ export function useTaskItemSubmit({
     showToast,
     t,
     task,
-    updateTask,
     beginAttachmentSave,
     cancelAttachmentSaveBeforeStoreUpdate,
     settlePersistedAttachmentSave,
 }: UseTaskItemSubmitParams) {
+    // The row this edit session last saved: the next save's base, so the editor's own saves are not conflicts.
+    const savedRef = useRef<{ opened: Task; saved: Task } | null>(null);
     return useCallback(async (event?: React.FormEvent, options?: TaskItemSubmitOptions) => {
         event?.preventDefault();
         const patch = taskDraftToChangedUpdatePatch(draft, baselineTask, {
@@ -66,13 +105,15 @@ export function useTaskItemSubmit({
             patch.timeSpentMinutes = options.timeSpentMinutesOverride;
         }
 
+        const base = savedRef.current?.opened === baselineTask ? savedRef.current.saved : baselineTask;
         const attachmentSaveRequiresDurability = beginAttachmentSave();
-        const result = await updateTask(task.id, patch);
+        const { result, saved } = await saveDraftFromBase(task.id, base, patch);
         if (!result.success) {
             cancelAttachmentSaveBeforeStoreUpdate();
             showToast(result.error || t('task.updateFailed'), 'error');
             return result;
         }
+        if (saved) savedRef.current = { opened: baselineTask, saved };
         if (attachmentSaveRequiresDurability) {
             try {
                 await flushPendingSave();
@@ -81,7 +122,7 @@ export function useTaskItemSubmit({
                 showToast(message, 'error');
                 return { success: false, error: message };
             }
-            settlePersistedAttachmentSave(editAttachments ?? task.attachments ?? []);
+            settlePersistedAttachmentSave(saved?.attachments ?? editAttachments ?? task.attachments ?? []);
         }
         if (!options?.keepEditing) {
             setIsEditing(false);
@@ -103,6 +144,5 @@ export function useTaskItemSubmit({
         showToast,
         t,
         task,
-        updateTask,
     ]);
 }
