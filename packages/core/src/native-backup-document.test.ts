@@ -2,7 +2,8 @@ import { formatRecoverySnapshotLabel } from './recovery-snapshot-names';
 import { strToU8, zipSync } from 'fflate';
 import { bytesToBase64 } from './base64-bytes';
 import { createImportDiagnostics, formatImportDiagnostic } from './import-diagnostics';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -1247,4 +1248,39 @@ describe('native OmniFocus CSV/JSON/ZIP prepared import', () => {
     it('refuses stale OmniFocus frozen plan after intervening durable change without writes', async () => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, omniInput()); const later = await env.adapter.getData(); later.tasks[0].title = 'Changed after OmniFocus'; later.tasks[0].rev! += 1; await env.adapter.saveData(later); const before = await env.state(); env.writes.length = 0; await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:'); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
     });
+});
+
+/**
+ * Pass D1c: prepare's plan and recovery snapshot, frozen from HEAD (f5d7d792a) before the plan is written in parts and the
+ * copies are cut. A host that passes no writer (iOS) must keep getting these exact bytes. `MINDWTR_WRITE_PLAN_FIXTURE=1`
+ * rewrites the fixture; only a deliberate format change may do that.
+ */
+describe('native backup prepare output stays byte-identical (D1c parity fixture)', () => {
+    const FIXTURE = new URL('./native-backup-plan-parity.fixtures.json', import.meta.url);
+    const digest = (text: string | null) => text === null ? null
+        : { bytes: strToU8(text).length, sha256: createHash('sha256').update(text, 'utf8').digest('hex') };
+    const cases: [string, () => NativeBackupDocumentPrepareInput][] = [
+        ['merge', () => input()], ['replace', () => input(undefined, 'replace')], ['restore', () => input(undefined, 'restore')],
+        ['csv', () => csvInput()], ['todoist', () => todoistInput()], ['ticktick', () => ticktickInput()],
+        ['dgt', () => dgtInput()], ['omnifocus', () => omniInput()],
+    ];
+    it('gives every mode the frozen plan and recovery bytes', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        const outputs: Record<string, unknown> = {};
+        try {
+            for (const [mode, make] of cases) {
+                vi.setSystemTime(new Date(AT));
+                // Importers name new rows with random UUIDs: a counter per mode makes the plan repeatable.
+                let next = 0;
+                vi.spyOn(globalThis.crypto, 'randomUUID').mockImplementation(() =>
+                    `00000000-0000-4000-8000-${String(next++).padStart(12, '0')}` as ReturnType<typeof crypto.randomUUID>);
+                const env = await open();
+                const prepared = await prepareNativeBackupDocument(env.adapter, make());
+                outputs[mode] = { plan: digest(prepared.planJSON), recovery: digest(prepared.recoveryJSON) };
+            }
+        } finally { vi.useRealTimers(); }
+        if (process.env.MINDWTR_WRITE_PLAN_FIXTURE === '1') writeFileSync(FIXTURE, `${JSON.stringify(outputs, null, 2)}\n`);
+        expect(existsSync(FIXTURE)).toBe(true);
+        expect(outputs).toEqual(JSON.parse(readFileSync(FIXTURE, 'utf8')));
+    }, 60_000);
 });
