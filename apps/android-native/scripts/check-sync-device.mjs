@@ -421,8 +421,11 @@ try {
     const offChip = tagged(await screen(), 'sync-backend-off') ?? fail('no Off chip beside WebDAV');
     await tap(webdavChip);
     await tap(offChip);
-    await until('both backend choices to answer', () => commands('selectSyncBackend', 'saved', choicesSince) >= 2, 240_000, 1_000);
+    // The slow server only has to hold the WebDAV choice while Off is tapped. Then it runs at full speed, so the rest of
+    // its activation (probe, verification sync, sync) no longer grows with the phone's attachments (run11: 241 s).
+    await sleep(3_000);
     dav.state.delayMs = 0;
+    await until('both backend choices to answer', () => commands('selectSyncBackend', 'saved', choicesSince) >= 2, 240_000, 1_000);
     await until('Off stored', () => rkStorage().keys['@mindwtr_sync_backend'] === 'off', 15_000, 1_000);
     check(true, '(7) Off tapped during a slow WebDAV choice is not dropped: both choices answered, and RKStorage holds "off"');
     await toTabs();
