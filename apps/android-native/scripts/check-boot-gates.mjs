@@ -2112,7 +2112,10 @@ for (const [fn, js] of [['openQuickCapture', 'captureOpen'], ['quickCaptureView'
     ['submitQuickCapturePickerQuery', 'capturePicker']]) {
     assert.match(coreHost, new RegExp(`fun ${fn}\\([^)]*\\): JSONObject = callAsync\\("${js}"`), `CoreHost.${fn} reaches host method ${js}`);
 }
-// Pass D1c: the capture's snapshot goes through the data channel (captureSnapshotFile), never as text.
+// Pass D1c: the capture's snapshot goes through the data channel (captureSnapshotFile), never as text, on a handle capped at
+// core's 128 MiB backup limit (code review P2), as an operation's recovery snapshot is.
+assert.match(coreHost, /val handle = data\.openRecoveryWrite\(written\)/);
+assert.match(coreHost, /val recoveryHandle = recovery\?\.let\(data::openRecoveryWrite\)/);
 assert.match(coreHost, /fun createQuickCaptureSnapshot\(snapshots: File, protect: \(\) -> Set<String>\): String\? \{[\s\S]{0,400}?callAsync\("captureSnapshotFile", handle, deadlineMs = budget\.ms\(libraryFileBytes\(\)\)\)/);
 for (const read of ['captureOpen(): string', 'captureView(json: string): string', 'captureEdit(json: string): string']) {
     assert.match(hostEntry, new RegExp(`${read.replace(/[()]/g, '\\$&')} \\{\\s*return submit\\(async \\(\\) => \\{\\s*requireSaved\\(\\);`), `${read} waits for an owed save`);

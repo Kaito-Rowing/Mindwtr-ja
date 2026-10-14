@@ -556,7 +556,7 @@ class CoreHost(
     fun createQuickCaptureSnapshot(snapshots: File, protect: () -> Set<String>): String? {
         snapshots.mkdirs()
         val written = File(snapshots, ".capture-${java.util.UUID.randomUUID()}.pending")
-        val handle = data.openWrite(written)
+        val handle = data.openRecoveryWrite(written)
         try {
             val snapshot = callAsync("captureSnapshotFile", handle, deadlineMs = budget.ms(libraryFileBytes())).optJSONObject("snapshot") ?: return null.also { written.delete() }
             return RecoverySnapshots.publishCapture(snapshots, written, snapshot.getString("fileName"), protect)
@@ -819,11 +819,11 @@ class CoreHost(
      * the recovery snapshot into [recovery] (null for a snapshot restore) and the plan into [plan], at most [maxPlanBytes], through
      * the data channel, and answers `{ plan: { bytes, sha256 }, recovery: { bytes, sha256 } | null }`. A failure leaves neither file.
      */
-    fun backupPrepare(source: File, base64: Boolean, inputJson: String, recovery: File?, plan: File, maxPlanBytes: Long, maxRecoveryBytes: Long): JSONObject {
+    fun backupPrepare(source: File, base64: Boolean, inputJson: String, recovery: File?, plan: File, maxPlanBytes: Long): JSONObject {
         val handles = ArrayList<String>()
         try {
             val sourceHandle = data.openRead(source, base64).also(handles::add)
-            val recoveryHandle = recovery?.let { data.openWrite(it, capBytes = maxRecoveryBytes) }?.also(handles::add) ?: ""
+            val recoveryHandle = recovery?.let(data::openRecoveryWrite)?.also(handles::add) ?: ""
             val planHandle = data.openWrite(plan, capBytes = maxPlanBytes).also(handles::add)
             return callAsync("backupDocumentPrepareFile", sourceHandle, inputJson, recoveryHandle, planHandle, deadlineMs = budget.ms(source.length() + libraryFileBytes()))
         } finally { handles.forEach(data::drop) }

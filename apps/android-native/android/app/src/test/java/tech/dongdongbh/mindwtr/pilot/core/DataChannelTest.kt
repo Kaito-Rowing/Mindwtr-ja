@@ -117,4 +117,16 @@ class DataChannelTest {
         replies(channel, reader); channel.close(reader)
         assertEquals(DataChannel.HANDLE, code { channel.close(reader) })
     }
+
+    // D1c code review P2: every recovery snapshot (an operation's and the capture popup's) is written through a handle capped
+    // at core's 128 MiB backup limit, so no snapshot a restore would refuse is ever published; past it the file goes.
+    @Test fun aRecoveryWriteIsCappedAtTheBackupLimit() {
+        assertEquals(128L * 1024 * 1024, DataChannel.RECOVERY_CAP_BYTES)
+        val target = File(folder.root, ".capture.pending")
+        val channel = DataChannel(recoveryCapBytes = 8)
+        val handle = channel.openRecoveryWrite(target)
+        channel.write(handle, "12345678")
+        assertEquals(DataChannel.CAP, code { channel.write(handle, "9") })
+        assertFalse(target.exists())
+    }
 }

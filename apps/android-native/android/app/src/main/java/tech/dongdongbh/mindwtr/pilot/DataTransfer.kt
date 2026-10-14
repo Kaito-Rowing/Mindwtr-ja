@@ -345,7 +345,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                     runtime.backupPrepare(source, base64, JSONObject().put("requestId", requestId).put("mode", mode).put("snapshotName", name)
                         .put("metadata", metadata)
                         .put("admission", JSONObject().put("sourceBytes", sourceBytes).put("maxTransferBytes", DataTransferLimits.MAX_DATA_TRANSFER_BYTES)).toString(),
-                        recoveryFile, ops.pendingPlan(requestId), DataTransferLimits.MAX_PLAN_BYTES, DataTransferLimits.MAX_BACKUP_SOURCE_BYTES)
+                        recoveryFile, ops.pendingPlan(requestId), DataTransferLimits.MAX_PLAN_BYTES)
                 } finally { staged?.let(StagedCopies::release) }
                 val recovery = prepared.optJSONObject("recovery")?.let(::closed)
                 if (recovery != null) RecoverySnapshots.publish(snapshots, recoveryFile!!, name, recovery.bytes, recovery.sha256)

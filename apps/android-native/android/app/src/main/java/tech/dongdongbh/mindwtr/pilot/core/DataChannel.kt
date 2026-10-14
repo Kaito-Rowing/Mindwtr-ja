@@ -24,7 +24,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Errors are [Failure]s with fixed, content-free codes; no path, handle or file byte is ever in their text.
  */
-class DataChannel(private val chunkBytes: Int = CHUNK_BYTES, private val opener: (File) -> InputStream = ::FileInputStream) {
+class DataChannel(private val chunkBytes: Int = CHUNK_BYTES, private val recoveryCapBytes: Long = RECOVERY_CAP_BYTES,
+                  private val opener: (File) -> InputStream = ::FileInputStream) {
     enum class Kind { UTF8_READ, BASE64_READ, UTF8_WRITE, BASE64_WRITE }
 
     /** A channel failure: [code] is the whole message (the bridge's error marker carries it to core). */
@@ -140,6 +141,9 @@ class DataChannel(private val chunkBytes: Int = CHUNK_BYTES, private val opener:
         return UUID.randomUUID().toString().also { open[it] = writer }
     }
 
+    /** A write handle for a recovery snapshot (an operation's or the capture popup's): capped at core's 128 MiB backup limit. */
+    fun openRecoveryWrite(file: File): String = openWrite(file, capBytes = recoveryCapBytes)
+
     /** The bridge's `dataRead`: "D" + the next chunk, or "E" at the end (a data chunk can never look like an error marker). */
     fun read(handle: String): String {
         val reader = open[handle] as? Reader ?: throw Failure(HANDLE)
@@ -174,6 +178,8 @@ class DataChannel(private val chunkBytes: Int = CHUNK_BYTES, private val opener:
     companion object {
         /** About 1 MiB per bridge call. */
         const val CHUNK_BYTES = 1024 * 1024
+        /** Core's MAX_BACKUP_SOURCE_BYTES: a restore refuses a larger snapshot, so none is ever written. */
+        const val RECOVERY_CAP_BYTES = 128L * 1024 * 1024
         const val IO = "DATA_IO"
         const val MISMATCH = "DATA_MISMATCH"
         const val CAP = "DATA_CAP"
