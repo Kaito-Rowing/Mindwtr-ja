@@ -84,6 +84,7 @@ import { fail, isObjectRecord, isText } from './native-host-contract-menu-views'
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { createNativeRequestReceipts, requestRowId, runStoreWrite, settleWrite, taskRevisionOf } from './native-request-receipts';
 import { useTaskStore } from './store';
+import { runOutsideStoreGate } from './store-write-gate';
 import type { Attachment, Project, Task } from './types';
 import { taskEditValuesEqual } from './json-value-equality';
 import { isStatusListTaskReadOnly } from './menu-views-model';
@@ -260,7 +261,9 @@ const readPicked = (value: unknown): NativePickedAttachment | null => (
 );
 
 const availabilityOf = (host: NativeAttachmentsHost): AttachmentAvailabilityPort => ({
-    ensureAttachmentAvailableDetailed: (attachment) => host.ensureAttachmentAvailableDetailed(attachment),
+    // The download waits on the network outside the write gate; resolveAttachmentAvailability reads the store
+    // again and checks the attachment's identity before it applies the result.
+    ensureAttachmentAvailableDetailed: (attachment) => runOutsideStoreGate(() => host.ensureAttachmentAvailableDetailed(attachment)),
     getAttachmentDownloadIdentity,
     hasAttachmentDownloadIdentity,
     getAttachmentAvailabilityPatch,

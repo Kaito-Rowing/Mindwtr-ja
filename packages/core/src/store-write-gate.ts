@@ -43,6 +43,24 @@ export const runStoreCommand = <T>(command: () => Promise<T>): Promise<T> => {
 };
 
 /**
+ * Inside a store command, run network [work] (an attachment download) outside the gate, so a sync save can
+ * run while it waits. The command rejoins afterwards, behind that save unless another command still holds the
+ * gate (a nested call must not wait on a save that waits on its caller). After it, the command must read the
+ * store again and check its identity before it writes.
+ */
+export const runOutsideStoreGate = async <T>(work: () => Promise<T>): Promise<T> => {
+    if (commands === 0) return work();
+    commands -= 1;
+    if (commands === 0) onCommandsDrained?.();
+    try {
+        return await work();
+    } finally {
+        while (syncSave && commands === 0) await syncSave;
+        commands += 1;
+    }
+};
+
+/**
  * Gate an object's methods as store commands, in place: every `async` method and every name in
  * [promiseCommands], except [ungated]. A native command then holds the gate from its first durable read
  * through its no-op decision, its writes, its save and its receipt. Outside it, a read on the shared SQLite

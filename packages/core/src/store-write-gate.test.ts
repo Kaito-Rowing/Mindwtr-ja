@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createNativeRequestReceipts, resetNativeRequestReceipts } from './native-request-receipts';
 import { STORE_NON_COMMAND_KEYS, useTaskStore } from './store';
-import { isStoreCommand, runStoreCommand, runSyncStoreSave } from './store-write-gate';
+import { isStoreCommand, runOutsideStoreGate, runStoreCommand, runSyncStoreSave } from './store-write-gate';
 
 describe('store write gate', () => {
     it('lets a sync save run only between commands, and a nested command join its caller', async () => {
@@ -27,6 +27,35 @@ describe('store write gate', () => {
         await Promise.all([outer, save]);
         await late;
         expect(order).toEqual(['outer start', 'nested', 'outer end', 'save start', 'save end', 'late command']);
+    });
+
+    it('lets a sync save run while a command waits on the network, and rejoins a nested caller without waiting', async () => {
+        const order: string[] = [];
+        let release!: () => void;
+        const network = new Promise<void>((resolve) => { release = resolve; });
+        const command = runStoreCommand(async () => {
+            await runOutsideStoreGate(async () => { order.push('network start'); await network; order.push('network end'); });
+            order.push('command writes');
+        });
+        await Promise.resolve();
+        await runSyncStoreSave(async () => { order.push('save'); });
+        release();
+        await command;
+        expect(order).toEqual(['network start', 'save', 'network end', 'command writes']);
+
+        // Nested: the caller still holds the gate, so the save waits for it and the inner command rejoins at once.
+        const nested: string[] = [];
+        let releaseNested!: () => void;
+        const nestedNetwork = new Promise<void>((resolve) => { releaseNested = resolve; });
+        const outer = runStoreCommand(async () => {
+            await runStoreCommand(() => runOutsideStoreGate(async () => { await nestedNetwork; nested.push('inner done'); }));
+            nested.push('outer done');
+        });
+        await Promise.resolve();
+        const save = runSyncStoreSave(async () => { nested.push('save'); });
+        releaseNested();
+        await Promise.all([outer, save]);
+        expect(nested).toEqual(['inner done', 'outer done', 'save']);
     });
 
     it('releases the gate when a sync save throws', async () => {

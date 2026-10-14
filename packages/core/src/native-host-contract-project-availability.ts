@@ -5,7 +5,7 @@ import { readAreaDurableData, createAreaSaveGuard } from './native-host-contract
 import { detach, exact, iso, record } from './native-host-contract-project-shared';
 import { getAttachmentDownloadFileName } from './mobile-attachment-availability';
 import { getStorageAdapter, getPersistenceStatus, useTaskStore } from './store';
-import { gateStoreCommands } from './store-write-gate';
+import { gateStoreCommands, runOutsideStoreGate } from './store-write-gate';
 import { rawReadProjectSnapshot, rawReadRow, rememberRawReadRow } from './sqlite-raw-snapshot';
 import { PROJECT_SQLITE_COLUMNS, projectFromSqliteRow, projectToSqliteRow } from './project-sync-schema';
 import { ensureDeviceId } from './store-helpers';
@@ -107,7 +107,8 @@ export function createProjectAvailabilityMethods(deps: Deps, mode: 'relocated' |
                 projectToSqliteRow(selectedProject(initial.read.authority.snapshot.projects, input.projectId)!)).row];
             const deviceIdBefore = initial.read.authority.snapshot.settings.deviceId ?? null;
             let outcome;
-            try { outcome = await host.ensureAttachmentAvailableDetailed({ ...initial.attachment, uri: currentTargetURI }); }
+            // Outside the write gate while it downloads; the fresh durable read below checks what it found.
+            try { outcome = await runOutsideStoreGate(() => host.ensureAttachmentAvailableDetailed({ ...initial.attachment, uri: currentTargetURI })); }
             catch { return fail('ACTION_FAILED', 'Project availability is unavailable'); }
             if (outcome.status !== 'available') return { ok: true, value: { status: 'generation-conflict', message: null, update: null } };
             if (!same(outcome.attachment, { ...initial.attachment, uri: currentTargetURI, localStatus: 'available' })) return invalid();
