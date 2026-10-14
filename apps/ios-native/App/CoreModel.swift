@@ -5445,6 +5445,22 @@ final class CoreModel: ObservableObject {
             if ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(recovery.text("method")), recovery.text("source") == "reference" {
                 selectedSurface = .reference
             }
+            if ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(recovery.text("method")), recovery.text("source") == "board" {
+                let requestID = recovery.text("requestId"), result = recovery.object("result")
+                guard Set(recovery.keys) == Set(["method", "source", "requestId", "result"]),
+                      UUID(uuidString: requestID)?.uuidString.lowercased() == requestID,
+                      !result.text("id").isEmpty, result.text("id").utf16.count <= 500 else { throw CocoaError(.coderReadCorrupt) }
+                selectedSurface = .board
+                taskCompletionRequest = nil; taskActionUndoRequest = nil; retryNeeded = false
+                if recovery.text("method") == "taskCompletionCommit" {
+                    guard validBoardCompletionResult(result) else { throw CocoaError(.coderReadCorrupt) }
+                    taskActionRequestID = requestID
+                    showTaskAction(result, operation: "completion", source: "board")
+                } else {
+                    guard Set(result.keys) == Set(["id"]) else { throw CocoaError(.coderReadCorrupt) }
+                    taskActionNotice = [:]; taskActionRequestID = nil
+                }
+            }
             if recovery.text("method") == "referenceProjectNextActionCommit", recovery.text("source") == "reference" {
                 selectedSurface = .reference
                 let result = recovery.object("result")
@@ -17041,6 +17057,29 @@ final class CoreModel: ObservableObject {
         await performBoardAction(request)
     }
 
+    func boardCardCanComplete(_ displayed: CoreObject) -> Bool {
+        let row = displayed.object("row")
+        guard boardActionsEnabled, !morePresented, !capturePresented, !boardActionPending,
+              taskCompletionRequest == nil, taskActionUndoRequest == nil, !referenceProjectNextActionPending,
+              displayed.flag("completeAllowed"), ["inbox", "next", "waiting", "someday"].contains(row.text("status")),
+              !row.text("id").isEmpty, row.text("id").utf16.count <= 500,
+              !row.text("taskRevision").isEmpty, row.text("taskRevision").utf16.count <= 200 else { return false }
+        return boardView.objects("columns").contains { column in
+            column.objects("cards").contains {
+                let current = $0.object("row")
+                return $0.flag("completeAllowed") && current.text("id").utf8.elementsEqual(row.text("id").utf8)
+                    && current.text("taskRevision").utf8.elementsEqual(row.text("taskRevision").utf8)
+                    && current.text("status").utf8.elementsEqual(row.text("status").utf8)
+            }
+        }
+    }
+
+    func completeBoardCard(_ displayed: CoreObject) async {
+        guard boardCardCanComplete(displayed) else { return }
+        let row = displayed.object("row")
+        await saveTaskCompletion(row.text("id"), taskRevision: row.text("taskRevision"), source: "board")
+    }
+
     func boardMoveDestinations(_ displayed: CoreObject) -> [CoreObject] {
         let row = displayed.object("row")
         guard boardActionsEnabled, !morePresented, !capturePresented, !boardActionPending,
@@ -27619,6 +27658,7 @@ final class CoreModel: ObservableObject {
             let request = try json(fields)
             taskActionUndoRequest = request
             let result = try await query(taskActionUndoMethod, [request])
+            if taskActionNotice.text("source") == "board" { selectedSurface = .board }
             try acknowledgeTaskActionUndo(result)
             do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
         } catch {
@@ -27642,10 +27682,13 @@ final class CoreModel: ObservableObject {
                   CFGetTypeID(count) != CFBooleanGetTypeID(),
                   count.doubleValue == Double(taskActionNotice.number("count")) else { throw CocoaError(.coderReadCorrupt) }
         } else {
-            let idMatches = taskActionNotice.text("source") == "reference"
+            let idMatches = ["reference", "board"].contains(taskActionNotice.text("source"))
                 ? result.text("id").utf8.elementsEqual(taskActionNotice.text("id").utf8)
                 : result.text("id") == taskActionNotice.text("id")
             guard idMatches else { throw CocoaError(.coderReadCorrupt) }
+            if taskActionNotice.text("source") == "board" {
+                guard Set(result.keys) == Set(["id"]) else { throw CocoaError(.coderReadCorrupt) }
+            }
         }
         if ["done", "archive"].contains(taskActionNotice.text("source")) { historyError = nil }
         if taskActionNotice.text("source") == "reference" { referenceError = nil }
@@ -30077,7 +30120,8 @@ final class CoreModel: ObservableObject {
         await saveTaskCompletion(id, taskRevision: taskRevision)
     }
 
-    private func saveTaskCompletion(_ id: String, taskRevision: String, reference: Bool = false) async {
+    private func saveTaskCompletion(_ id: String, taskRevision: String, reference: Bool = false, source: String? = nil) async {
+        guard source == nil || source == "board", !reference || source == nil else { return }
         busy = true
         invalidatePreview()
         defer { finishOperation() }
@@ -30086,6 +30130,7 @@ final class CoreModel: ObservableObject {
             let requestID = UUID().uuidString.lowercased()
             var input: CoreObject = ["id": id, "requestId": requestID, "taskRevision": taskRevision]
             if reference { input["source"] = "reference" }
+            else if let source { input["source"] = source }
             let request = try json(input)
             taskActionRequestID = requestID
             taskCompletionRequest = request
@@ -30101,14 +30146,15 @@ final class CoreModel: ObservableObject {
             self.error = error.localizedDescription
             return
         }
+        if source == "board" { selectedSurface = .board }
         do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
-        if let acknowledgment { showTaskAction(acknowledgment, operation: "completion") }
+        if let acknowledgment { showTaskAction(acknowledgment, operation: "completion", source: source) }
     }
 
     private func acknowledgeTaskCompletion(_ result: CoreObject) throws {
         guard let request = taskCompletionRequest,
               let submitted = try? decode(request),
-              (submitted.text("source") == "reference"
+              (["reference", "board"].contains(submitted.text("source"))
                   ? result.text("id").utf8.elementsEqual(submitted.text("id").utf8)
                   : result.text("id") == submitted.text("id")),
               taskActionRequestID == submitted.text("requestId"),
@@ -30118,9 +30164,21 @@ final class CoreModel: ObservableObject {
             referenceError = nil
             queueReferenceProjectNextAction(kind: "completion", submitted: submitted)
         }
+        if submitted.text("source") == "board" {
+            guard validBoardCompletionResult(result) else { throw CocoaError(.coderReadCorrupt) }
+        }
         taskCompletionRequest = nil
         retryNeeded = false
         error = nil
+    }
+
+    private func validBoardCompletionResult(_ result: CoreObject) -> Bool {
+        let completed = result.object("completion")
+        return Set(result.keys) == Set(["id", "completion"])
+            && Set(completed.keys) == Set(["completedAt", "undoEnabled", "message", "undoLabel"])
+            && !completed.text("completedAt").isEmpty && completed.text("completedAt").utf16.count <= 100
+            && completed.flag("undoEnabled") && !completed.text("message").isEmpty && completed.text("message").utf16.count <= 512
+            && !completed.text("undoLabel").isEmpty && completed.text("undoLabel").utf16.count <= 80
     }
 
     func retry() async {
@@ -30273,7 +30331,7 @@ final class CoreModel: ObservableObject {
                     if let acknowledgment, try json(result) != json(decode(acknowledgment)) {
                         throw CocoaError(.coderReadCorrupt)
                     }
-                } else if taskActionUndoMethod == "taskCompletionUndo", acknowledgment == nil || taskActionNotice.text("source") == "reference" {
+                } else if taskActionUndoMethod == "taskCompletionUndo", acknowledgment == nil || ["reference", "board"].contains(taskActionNotice.text("source")) {
                     let outcome = try await query("taskCompletionUndoRetryOutcome", [request])
                     guard outcome.text("kind") == "confirmed" else {
                         let unknown = label("task.completionUndoOutcomeUnknown")
@@ -30283,7 +30341,7 @@ final class CoreModel: ObservableObject {
                         return
                     }
                     result = outcome.object("result")
-                    if taskActionNotice.text("source") == "reference" {
+                    if ["reference", "board"].contains(taskActionNotice.text("source")) {
                         guard Set(outcome.keys) == Set(["kind", "result"]) else { throw CocoaError(.coderReadCorrupt) }
                         if let acknowledgment, !(try json(result)).utf8.elementsEqual((try json(decode(acknowledgment))).utf8) {
                             throw CocoaError(.coderReadCorrupt)
@@ -30291,14 +30349,17 @@ final class CoreModel: ObservableObject {
                     }
                 } else if let acknowledgment { result = try decode(acknowledgment) }
                 else { result = try await query(taskActionUndoMethod, [request]) }
+                if taskActionNotice.text("source") == "board" { selectedSurface = .board }
                 try acknowledgeTaskActionUndo(result)
                 do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
                 return
             }
             if let request = taskCompletionRequest {
                 let result: CoreObject
-                let referenceCompletion = (try decode(request)).text("source") == "reference"
-                if let acknowledgment, !referenceCompletion { result = try decode(acknowledgment) }
+                let completionSource = (try decode(request)).text("source")
+                let referenceCompletion = completionSource == "reference"
+                let scopedCompletion = ["reference", "board"].contains(completionSource)
+                if let acknowledgment, !scopedCompletion { result = try decode(acknowledgment) }
                 else {
                     let outcome = try await query("taskCompletionRetryOutcome", [request])
                     guard outcome.text("kind") == "confirmed" else {
@@ -30310,7 +30371,7 @@ final class CoreModel: ObservableObject {
                         return
                     }
                     result = outcome.object("result")
-                    if referenceCompletion {
+                    if scopedCompletion {
                         guard Set(outcome.keys) == Set(["kind", "result"]) else { throw CocoaError(.coderReadCorrupt) }
                         if let acknowledgment, !(try json(result)).utf8.elementsEqual((try json(decode(acknowledgment))).utf8) {
                             throw CocoaError(.coderReadCorrupt)
@@ -30318,8 +30379,9 @@ final class CoreModel: ObservableObject {
                     }
                 }
                 try acknowledgeTaskCompletion(result)
+                if completionSource == "board" { selectedSurface = .board }
                 do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
-                showTaskAction(result, operation: "completion", source: referenceCompletion ? "reference" : nil)
+                showTaskAction(result, operation: "completion", source: scopedCompletion ? completionSource : nil)
                 return
             }
             if let request = projectDeleteUndoRequest {

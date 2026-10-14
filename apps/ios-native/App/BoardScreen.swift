@@ -132,6 +132,7 @@ struct BoardScreen: View {
         let id = row.text("id")
         let swipes = model.boardView.object("cardActions").object("swipes")
         let moveTo = model.boardView.object("cardActions").object("moveTo")
+        let complete = model.boardView.object("cardActions").object("complete")
         return SwipeActionCard(
             palette: palette, enabled: model.boardActionsEnabled, id: "board-task-" + id,
             leftLabel: model.boardSwipeAction("left") == nil ? "" : swipes.object("left").text("label"),
@@ -141,6 +142,8 @@ struct BoardScreen: View {
             swipe: { side in endInput(); Task { await model.performBoardSwipe(side, taskID: id) } },
             moveLabel: moveTo.text("label"), moveDestinations: model.boardMoveDestinations(item),
             move: { status in endInput(); Task { await model.moveBoardCard(item, status: status) } },
+            completeLabel: model.boardCardCanComplete(item) ? complete.text("label") : "",
+            complete: { endInput(); Task { await model.completeBoardCard(item) } },
             content: VStack(alignment: .leading, spacing: 8) {
                 Text(row.text("title")).rnFont(14, .medium).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -209,6 +212,8 @@ struct SwipeActionCard<Content: View>: View {
     var moveLabel: String = ""
     var moveDestinations: [CoreObject] = []
     var move: (String) -> Void = { _ in }
+    var completeLabel: String = ""
+    var complete: () -> Void = {}
     let content: Content
     @GestureState private var offset: CGFloat = 0
 
@@ -224,6 +229,7 @@ struct SwipeActionCard<Content: View>: View {
             .disabled(!enabled)
             .accessibilityIdentifier(id)
             .accessibilityActions {
+                if !completeLabel.isEmpty { Button(completeLabel) { complete() }.disabled(!enabled) }
                 if !leftLabel.isEmpty { Button(leftLabel) { swipe("left") }.disabled(!enabled) }
                 if !rightLabel.isEmpty { Button(rightLabel) { swipe("right") }.disabled(!enabled) }
                 ForEach(moveDestinations.indices, id: \.self) { index in
@@ -233,6 +239,10 @@ struct SwipeActionCard<Content: View>: View {
                 }
             }
             .contextMenu {
+                if !completeLabel.isEmpty {
+                    Button(completeLabel, systemImage: "checkmark") { complete() }
+                        .accessibilityIdentifier("board-complete-" + id).disabled(!enabled)
+                }
                 if !leftLabel.isEmpty { Button(leftLabel, systemImage: leftSystemImage) { swipe("left") }.disabled(!enabled) }
                 if !rightLabel.isEmpty {
                     Button(rightLabel, systemImage: "trash", role: .destructive) { swipe("right") }.disabled(!enabled)

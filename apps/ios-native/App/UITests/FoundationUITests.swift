@@ -5815,6 +5815,48 @@ final class FoundationUITests: XCTestCase {
         XCTAssertEqual(cards.count, 1)
     }
 
+    func testBoardCompletePublicUndoAndColdRead() throws {
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_BOARD_COMPLETE_UI_NORMAL_LIBRARY"] else {
+            throw XCTSkip("An externally staged isolated Board Complete library is required")
+        }
+        guard let id = UUID(uuidString: library), id.uuidString.lowercased() == library else {
+            XCTFail("The Board Complete library must be a canonical lowercase UUID")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US"]
+        app.launch(); defer { app.terminate() }
+        boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardSelectAllAreas(app); boardOpen(app); task730AssertStatus(app, "next")
+        let card = app.buttons["board-task-n-draft"]
+        revealPagedElement(app, card, in: app.scrollViews["board-scroll"]); boardEnabled(card)
+        XCTAssertGreaterThanOrEqual(card.frame.height, 44 - 0.001)
+        card.press(forDuration: 1)
+        // SwiftUI context-menu buttons expose their localized labels on this phone.
+        let choices = app.collectionViews.buttons.matching(NSPredicate(format: "label == %@", "Done"))
+        let complete = choices.firstMatch
+        boardEnabled(complete); XCTAssertEqual(choices.count, 1)
+        XCTAssertEqual(complete.label, "Done"); XCTAssertTrue(complete.isHittable)
+        XCTAssertTrue(app.frame.contains(complete.frame)); complete.tap()
+        let undo = app.buttons.matching(identifier: "task-completion-undo").firstMatch
+        boardEnabled(undo, timeout: 30)
+        XCTAssertEqual(app.buttons.matching(identifier: "task-completion-undo").count, 1)
+        XCTAssertFalse(app.staticTexts["task-completion-notice"].label.isEmpty)
+        task730AssertStatus(app, "done")
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        XCTAssertTrue(undo.isHittable); undo.tap()
+        task730AssertStatus(app, "next")
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); task730AssertStatus(app, "next")
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        XCTAssertFalse(app.staticTexts["task-completion-notice"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+    }
+
     func testBoardMoveToNonterminalDestinationsAndColdRead() throws {
         try task730MoveRoundTrip("NORMAL")
     }

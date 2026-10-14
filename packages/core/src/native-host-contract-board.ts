@@ -41,6 +41,7 @@ import {
     type BoardFilterState,
     type BoardStatus,
 } from './board-view-model';
+import { canCompleteNativeBoardTask } from './native-host-contract-task-checklist';
 import { matchesPickerQuery } from './native-host-contract-menu-views';
 import { createProjectOrderReserver, ensureDeviceId, matchesDuplicateSource, nextRevision } from './store-helpers';
 import { boardMoveEffect, boardMoveScope, buildDuplicateTask, sanitizeRestoredTaskContainerReferences, taskEditValuesEqual } from './store-tasks';
@@ -86,7 +87,7 @@ export type BoardViewDeps = {
 /** The Board's filter state; missing keys are the empty state's. */
 export type NativeBoardFilters = Partial<BoardFilterState>;
 export type NativeBoardWindow<T> = { total: number; items: T[] };
-export type NativeBoardCard = { row: NativeTaskRow; card: BoardCard; boardOrder: number | null; moveAllowed: boolean };
+export type NativeBoardCard = { row: NativeTaskRow; card: BoardCard; boardOrder: number | null; moveAllowed: boolean; completeAllowed: boolean };
 export type NativeBoardColumn = {
     status: BoardStatus;
     label: string;
@@ -136,6 +137,7 @@ export type NativeBoardView = {
         swipes: Record<'left' | 'right', { label: string; actions: readonly BoardCardAction[] }>;
         /** A failed duplicate's error toast: this title, the error's message. */
         errorTitle: string;
+        complete: { label: string };
         moveTo: { label: string; destinations: { status: NativeBoardMoveStatus; label: string }[] };
     };
 };
@@ -389,6 +391,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                     right: { label: cardText.delete, actions: BOARD_CARD_SWIPES.right.actions },
                 },
                 errorTitle: cardText.errorTitle,
+                complete: { label: resolveI18nText(t, 'common.done') },
                 moveTo: { label: t('task.moveTo'), destinations: columns
                     .filter(column => ['inbox', 'next', 'waiting', 'someday'].includes(column.status))
                     .map(column => ({ status: column.status as NativeBoardMoveStatus, label: column.label })) },
@@ -421,11 +424,23 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
     };
     const cards = (board: ReturnType<typeof buildBoard>, tasks: readonly Task[], now: Date): NativeBoardCard[] => {
         const rows = deps.rows(tasks, now);
+        const state = useTaskStore.getState();
+        // Index once for this bounded page, retaining duplicates so admission
+        // fails closed instead of hiding them behind the store's ID maps.
+        const projects = new Map<string, Project[]>(); const sections = new Map<string, Section[]>();
+        for (const row of state._allProjects) projects.set(row.id, [...(projects.get(row.id) ?? []), row]);
+        for (const row of state._allSections) sections.set(row.id, [...(sections.get(row.id) ?? []), row]);
+        const completeAllowed = (task: Task) => {
+            const sourceSections = sections.get(task.sectionId ?? '') ?? [];
+            const parentId = task.projectId ?? sourceSections[0]?.projectId;
+            return canCompleteNativeBoardTask(task, projects.get(parentId ?? '') ?? [], sourceSections);
+        };
         return tasks.map((task, index) => ({
             row: rows[index],
             card: getBoardCard(task, { badges: board.badges, timeEstimatesEnabled: board.timeEstimatesEnabled, t: deps.t() }),
             boardOrder: Number.isFinite(task.boardOrder) ? task.boardOrder as number : null,
             moveAllowed: moveAllowed(task),
+            completeAllowed: completeAllowed(task),
         }));
     };
 
