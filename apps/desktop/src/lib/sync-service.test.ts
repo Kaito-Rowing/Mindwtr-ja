@@ -3151,7 +3151,7 @@ describe('SyncService testability hooks', () => {
         // Native answers the rows it holds after the save, which differ from the document sent.
         const canonical = { ...data, settings: { deviceId: 'canonical-device' } } satisfies AppData;
         let command: Promise<unknown> | null = null;
-        const invoke = vi.fn(async (command_: string, args?: Record<string, unknown>) => {
+        const invoke = vi.fn(async (command_: string) => {
             if (command_ === 'get_sync_backend') return 'file';
             if (command_ === 'acquire_file_sync_lease') return 'cleanup-lease';
             if (command_ === 'release_file_sync_lease') return undefined;
