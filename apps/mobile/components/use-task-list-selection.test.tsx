@@ -388,3 +388,30 @@ describe('useTaskListSelection selection boundaries', () => {
     expect(batchDeleteTasks).toHaveBeenCalledWith(['a']);
   });
 });
+
+describe('useTaskListSelection handleBatchOrganize', () => {
+  it('keeps a tag a sync save published while the organize write waited', async () => {
+    const tasks = { b: { ...makeTask('b'), tags: ['#urgent'] } };
+    useTaskStore.setState({ _allTasks: Object.values(tasks) });
+    const batchUpdateTasks = vi.fn((updates: { id: string; updates: Partial<Task> }[]) => runStoreCommand(async () => {
+      const byId = new Map(updates.map((entry) => [entry.id, entry.updates]));
+      useTaskStore.setState({ _allTasks: useTaskStore.getState()._allTasks.map((task) => ({ ...task, ...byId.get(task.id) })) });
+      return { success: true } as StoreActionResult;
+    }));
+    renderer.act(() => { renderer.create(<Harness {...baseParams({ batchUpdateTasks, tasksById: tasks })} />); });
+    renderer.act(() => { hookRef.toggleMultiSelect('b'); });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    // Another device's tag, published by a sync save that holds the gate while Apply is pressed.
+    const save = runSyncStoreSave(async () => {
+      await held;
+      const stored = useTaskStore.getState()._tasksById.get('b')!;
+      useTaskStore.setState({ _allTasks: [{ ...stored, rev: (stored.rev ?? 1) + 1, tags: [...stored.tags, '#remote'] }] });
+    });
+    let pending!: Promise<void>;
+    renderer.act(() => { pending = hookRef.handleBatchOrganize({ tags: ['#new'] }); });
+    release();
+    await renderer.act(async () => { await save; await pending; });
+    expect(useTaskStore.getState()._tasksById.get('b')?.tags).toEqual(expect.arrayContaining(['#urgent', '#remote', '#new']));
+  });
+});

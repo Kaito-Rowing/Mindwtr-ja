@@ -251,11 +251,17 @@ export function useTaskListSelection({
     const updates = buildBulkOrganizeTaskUpdates(selectedIdsArray, tasksById, input);
     if (updates.length === 0) return;
     await runBulkAction(tFallback(t, 'bulk.organize', 'Bulk organize'), async () => {
-      assertBulkActionSucceeded(await batchUpdateTasks(updates));
+      // Built again on the rows as stored when the write is admitted, as writeTagUpdates does.
+      const { count, result } = await runStoreCommand(async () => {
+        const latest = buildBulkOrganizeTaskUpdates(selectedIdsArray, useTaskStore.getState()._tasksById, input);
+        return { count: latest.length, result: latest.length > 0 ? await batchUpdateTasks(latest) : undefined };
+      });
+      if (count === 0) return;
+      assertBulkActionSucceeded(result);
       exitSelectionMode();
       showToast({
         title: t('common.done'),
-        message: formatListItemCount(updates.length, 'task', t),
+        message: formatListItemCount(count, 'task', t),
         tone: 'success',
       });
     });
