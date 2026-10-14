@@ -9,6 +9,7 @@ import {
     mergeTaskDraftAttachments,
     normalizeFocusTaskLimit,
     resolveTaskEditorFocusStar,
+    runStoreCommand,
     type Attachment,
     type AttachmentDraftSettlementInput,
     type MarkdownSelection,
@@ -436,23 +437,24 @@ export function useTaskEditState({
             title: titleDraftRef.current,
             description: descriptionDraftRef.current,
         });
-        // The draft's attachments go over the task as stored now, not the copy the editor
-        // opened: a cloudKey, new content or removal sync recorded meanwhile stays.
+        // The draft's attachments go over the task as stored when the write is admitted, not the
+        // copy the editor opened: a cloudKey, new content or removal sync recorded meanwhile stays.
+        // One store command merges and writes, so a sync save admitted first is merged too.
         // The list Save writes: the file cleanup after Save settles against it.
         let savedAttachments = saveDraftState.attachments ?? currentTask.attachments;
-        const storedTask = updates?.attachments ? useTaskStore.getState()._tasksById?.get(currentTask.id) : undefined;
-        if (updates?.attachments && storedTask) {
-            const draftAttachments = updates.attachments;
-            const merged = mergeTaskDraftAttachments(storedTask.attachments ?? [], currentTask.attachments ?? [], draftAttachments);
-            updates = { ...updates, attachments: merged };
+        const writeMerged = (patch: Partial<Task>) => runStoreCommand(async () => {
+            const storedTask = patch.attachments ? useTaskStore.getState()._tasksById?.get(currentTask.id) : undefined;
+            if (!patch.attachments || !storedTask) return writePatch(currentTask.id, patch);
+            const merged = mergeTaskDraftAttachments(storedTask.attachments ?? [], currentTask.attachments ?? [], patch.attachments);
             savedAttachments = merged;
-            if (JSON.stringify(merged) !== JSON.stringify(draftAttachments)) {
+            if (JSON.stringify(merged) !== JSON.stringify(patch.attachments)) {
                 void logInfo('Editor attachment save kept a newer stored change', {
                     scope: 'task-edit',
                     extra: { releaseCheck: 'v1.3.4/editor-attachment-save-merge', outcome: 'merged' },
                 });
             }
-        }
+            return writePatch(currentTask.id, { ...patch, attachments: merged });
+        });
         if (mode === 'cancel') {
             if (!updates) return false;
             updates = {
@@ -514,7 +516,7 @@ export function useTaskEditState({
             saveAwaitingDurabilityRef.current = wasAwaitingDurability
                 || attachmentSaveRequiresDurability
                 || mode === 'cancel';
-            const saved = await Promise.resolve(writePatch(currentTask.id, updates));
+            const saved = await writeMerged(updates);
             if (!saved) {
                 saveAwaitingDurabilityRef.current = wasAwaitingDurability;
                 return false;
