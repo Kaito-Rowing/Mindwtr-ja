@@ -201,7 +201,7 @@ describe('useInboxProcessingController not-actionable destinations', () => {
         }));
         let committed!: Promise<unknown>;
         act(() => {
-            committed = result.current.wizardProps.handleConfirmReference();
+            committed = Promise.resolve(result.current.wizardProps.handleConfirmReference());
         });
         await finish();
         await act(async () => { await committed; });
