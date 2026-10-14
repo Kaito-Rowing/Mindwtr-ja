@@ -1495,6 +1495,12 @@ try {
     }
 } catch (error) {
     evidenced(error);
+    // The app's own log lines (this tag) beside the screen evidence: a refusal's class name shows why an operation stopped.
+    try {
+        const logFile = resolve(work, `logcat-${run}.txt`);
+        writeFileSync(logFile, allLogs());
+        console.error(`app log: ${logFile}`);
+    } catch { /* evidence only */ }
     console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);
     process.exitCode = error instanceof Stopped ? 3 : 1;
 } finally {
