@@ -453,8 +453,11 @@ const deadlineRows = async (part) => {
             const small0 = budget(libraryFileMiB());
             delays(small0 + 60_000, 3);
             if (name === 'control') control('no-activation-storage');
-            // The control fails at activation's storage timeout; 600 s holds the real run's slow reads too.
-            const result = await start(name === 'control' ? 600_000 : 900_000);
+            // The control's activation fails at the small library's storage timeout (small0, 180 s at 2 MiB of files), after
+            // the boot and the replay (undelayed, under 5 min). Its wait must also outlast a fixed run, whose activation read
+            // takes the delay (small0 + 60 s): so the delay plus 5 min for the boot and replay, and never under 600 s.
+            const controlWait = Math.max(600_000, small0 + 60_000 + 300_000);
+            const result = await start(name === 'control' ? controlWait : 900_000);
             await device.stopApp();
             noDelays(); control('');
             if (name === 'control') check(!result.inbox, `(DL3 control) with the small library's timeout after the replay, activation never finishes (${result.ms} ms)`);
