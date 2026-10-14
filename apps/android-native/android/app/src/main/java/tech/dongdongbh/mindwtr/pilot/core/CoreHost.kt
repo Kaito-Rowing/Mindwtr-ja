@@ -248,8 +248,11 @@ class CoreHost(
                 loading.get()
                 sqlite = database()
                 // Debug builds only (debugProperty is empty in a release): the deadline rows' slow reads and writes (pass D1c).
-                sqlite?.readDelayMs = debugFault("sql_read_delay_ms").toLongOrNull() ?: 0
-                data.writeDelayMs = debugFault("channel_write_delay_ms").toLongOrNull() ?: 0
+                if (BuildConfig.DEBUG) {
+                    sqlite?.readDelayMs = { debugFault("sql_read_delay_ms").toLongOrNull() ?: 0 }
+                    data.writeDelayMs = { debugFault("channel_write_delay_ms").toLongOrNull() ?: 0 }
+                    data.failNextRead = debugFault("channel_fail") == "read-once"
+                }
                 // This host journals every write (WriteJournal), so core requires each write's replay tokens. A journaled backup commit
                 // boots in recovery: no load maintenance runs before its replay, so the document it was prepared against is unchanged.
                 activationOwed = pendingBackupIds().isNotEmpty()

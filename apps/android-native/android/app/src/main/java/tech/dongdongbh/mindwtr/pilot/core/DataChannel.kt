@@ -143,15 +143,21 @@ class DataChannel(private val chunkBytes: Int = CHUNK_BYTES, private val opener:
     /** The bridge's `dataRead`: "D" + the next chunk, or "E" at the end (a data chunk can never look like an error marker). */
     fun read(handle: String): String {
         val reader = open[handle] as? Reader ?: throw Failure(HANDLE)
-        return try { reader.next()?.let { "D$it" } ?: "E" } catch (failure: Failure) { drop(handle); throw failure }
+        return try {
+            if (failNextRead) { failNextRead = false; throw Failure(IO) }
+            reader.next()?.let { "D$it" } ?: "E"
+        } catch (failure: Failure) { drop(handle); throw failure }
     }
 
-    /** Debug-only delay before each write (check-data-device.mjs's export and capture deadline rows, pass D1c). */
-    @Volatile var writeDelayMs = 0L
+    /** Debug-only delay before each write (check-data-device.mjs's export deadline row, pass D1c), read at each write. */
+    @Volatile var writeDelayMs: () -> Long = { 0L }
+
+    /** Debug-only: the next read fails with [IO] once (check-data-device.mjs R1: a replay whose plan cannot be read). */
+    @Volatile var failNextRead = false
 
     /** The bridge's `dataWrite`. */
     fun write(handle: String, chunk: String) {
-        if (writeDelayMs > 0) Thread.sleep(writeDelayMs)
+        writeDelayMs().takeIf { it > 0 }?.let(Thread::sleep)
         val writer = open[handle] as? Writer ?: throw Failure(HANDLE)
         try { writer.write(chunk) } catch (failure: Failure) { drop(handle); throw failure }
     }

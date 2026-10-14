@@ -21,13 +21,18 @@
 //   G1 Getting Started on a library without it: RN's toast with Open, 7 tasks and 2 Inbox samples, then a second tap adds nothing;
 //   I1 each importer (Todoist ZIP, TickTick ZIP, DGT JSON, OmniFocus CSV, Mindwtr CSV) through its picker: the rows equal core's
 //      own import of the fixture over the pulled library, then Undo leaves none;
-//   I2 a TickTick file on the DGT row: core's invalid-file warning, no staged copy; I3 a 13 MiB file: core's limit text;
+//   I2 a TickTick file on the DGT row: core's invalid-file warning, no staged copy; I3 a 16 MiB + 1 byte file: core's limit text;
 //   I4 process death before the journal (no row, no result) and after COMMIT (the rows once, the receipt, one replay line);
 //   I5 the 60 000-row Mindwtr CSV whose Undo could not be admitted: refused, nothing lands;
 //   I6 sentinels in a dropped rule, a renamed project and a skipped archive entry reach no result record, journal, receipt
 //      or log;
 //   G3 and G2 (each on a fresh install): a seed stopped before its send replays once; one stopped after its COMMIT is there
 //      once with its receipt under the journal's request UUID.
+// Pass D1c: D0 the data channel through the real bridge (a read chunk that starts with the error marker, a write chunk ending
+//   inside a surrogate pair); L1 a multi-byte restore over another, byte for byte, with the v1.3.7/native-large-transfer line;
+//   R1 a replay whose plan cannot be read keeps its entry, and the next start answers from the receipt with Undo; DL1-DL4 the
+//   size-scaled deadlines, each delay between the old budget and the new one (a slow recovery boot, a large restore over a
+//   small library, a replay before SQL then activation, a slow export).
 // With D1_MEASURE=1 it measures the transfer limit instead (design §4.1): for each size it reinstalls, merges a backup of that
 // size, then restores the same file over it, sampling the app's native heap (QuickJS allocates there) and Java heap each second.
 // It clears every debug property it sets, puts rotation back, and leaves the phone on its home screen.
@@ -79,7 +84,8 @@ const PHONE_DIR = '/sdcard/Download/mtd1';
 // The folder picker's starting place (EXTRA_INITIAL_URI takes a document URI, not a tree URI).
 const TREE = 'content://com.android.externalstorage.documents/document/primary%3ADownload%2Fmtd1';
 const DB = 'files/SQLite/mindwtr.db';
-const PROPS = ['backup_stop', 'journal_stop', 'commit_stop', 'delay_before_ms', 'export_tree', 'language', 'transfer_limit_mb', 'channel_roundtrip'];
+const PROPS = ['backup_stop', 'journal_stop', 'commit_stop', 'delay_before_ms', 'export_tree', 'language', 'transfer_limit_mb', 'channel_roundtrip',
+    'channel_fail', 'sql_read_delay_ms', 'channel_write_delay_ms', 'budget_ms_per_mib'];
 const work = resolve(app, 'android/build/data-check');
 const { en: localeEn } = await import(resolve(repo, 'packages/core/src/i18n/locales/en.ts'));
 // The starter.* strings live in their own generated module (getting-started-seed.ts reads them), not in en.ts.
@@ -370,6 +376,8 @@ const measureFixture = (name, mib, shape, prefix) => {
     const words = 'plan review call write send check draft order book'.split(' ');
     const make = (index) => shape === 'notes'
         ? task(`${prefix}${index}${run}`, { description: note })
+        // Multi-byte text everywhere, so the channel's 1 MiB reads and 512 Ki-unit writes fall inside characters.
+        : shape === 'emoji' ? task(`${prefix}${index}${run} 🦉`, { description: 'aé🦉日本語 '.repeat(40) })
         : task(`${prefix}${index}${run} ${words[index % words.length]} the weekly report`, {
             description: `${words[(index + 3) % words.length]} `.repeat(70).slice(0, 400), tags: ['d1test', 'work', `t${index % 7}`],
             contexts: ['@desk', `@c${index % 5}`], dueDate: '2026-12-01', checklist: [0, 1, 2].map((item) => ({ id: randomUUID(), title: `step ${item}`, isCompleted: item === 0 })),
@@ -877,12 +885,13 @@ try {
     await waitFor('the invalid-file warning', (current) => hasText(current, en['settings.backupMobile.importFailed']), 60_000);
     check(staged().length === 0 && !confirmButton(await screen()), '(I2) a TickTick file on the DGT row asks nothing and leaves no staged copy');
 
-    // I3: a 13 MiB file passes the transfer limit while it is copied: core's limit text, no copy left.
-    const big = binary(`d1-big-${run}.csv`, Buffer.alloc(13 * 1024 * 1024, 'x'));
+    // I3: a file one byte past core's 16 MiB import cap (pass D1c: the cap holds whatever the transfer limit) is refused while
+    // it is copied: core's limit text, no copy left.
+    const big = binary(`d1-big-${run}.csv`, Buffer.alloc(16 * 1024 * 1024 + 1, 'x'));
     push(big);
     await importPick('mindwtr-csv', big);
     await waitFor('the limit refusal', (current) => hasText(current, en['settings.backupMobile.importFailed']) && hasText(current, en['settings.importDiagnostics.limitExceeded']), 60_000);
-    check(staged().length === 0 && !confirmButton(await screen()), '(I3) a 13 MiB file is refused while copied, with core\'s limit text and no staged copy');
+    check(staged().length === 0 && !confirmButton(await screen()), '(I3) a 16 MiB + 1 byte file is refused while copied, with core\'s limit text and no staged copy');
     sh(`rm -f ${PHONE_DIR}/${big.name}`);
 
     // I4: a Todoist import stopped before the journal; then one stopped right after its COMMIT. Each time the files are read
@@ -961,12 +970,15 @@ try {
     const expansion = binary(`d1-expansion-${run}.csv`, strToU8(`Title\n${Array.from({ length: 60_000 }, (_, index) => `d1x${index}x${run}`).join('\n')}\n`));
     push(expansion);
     const csvReceipts = receiptCount('i5-before', 'csv');
+    // The 12 MiB limit this row was built for (pass D1c raises the default; the Undo-size refusal is what it checks).
+    setProp('transfer_limit_mb', '12');
     await importPick('mindwtr-csv', expansion);
     await confirmQuestion(en['settings.backupMobile.importMindwtrCsvData']);
     await waitFor('the Undo-size refusal', (current) => hasText(current, en['settings.backupMobile.importFailed']) && hasText(current, en['settings.importDiagnostics.limitExceeded']), 600_000);
     check(!taggedRows(pullDb('i5')).some((row) => row.title.startsWith('d1x')), '(I5) the 60 000-row import landed nothing');
     check(receiptCount('i5-after', 'csv') === csvReceipts, '(I5) and wrote no receipt');
     await until('(I5) the journal and the operation folder to empty', () => journal().length === 0 && operations().length === 0, 60_000);
+    setProp('transfer_limit_mb', '');
     sh(`rm -f ${PHONE_DIR}/${expansion.name}`);
 
     // I6: sentinels in a dropped repeat rule, a renamed project and a skipped archive entry's name. The durable files are read
@@ -1043,6 +1055,150 @@ try {
     const receipt = sqlite(pullDb('g2-receipt'), `SELECT method FROM native_request_receipts WHERE request_id = '${requestId}'`);
     check(receipt.length === 1 && receipt[0].method.startsWith('gettingStarted:'), `(G2) its receipt is gettingStarted:<hash> under the journal's request UUID: ${JSON.stringify(receipt)}`);
     check(seededLines('created') + seededLines('unchanged') === g2Lines, '(G2) no seed line: the stop came right after COMMIT and the replay answered from the receipt');
+
+    // ---- Pass D1c: larger transfers, a replay whose plan cannot be read, and the size-scaled deadlines ----
+    const MIB = 1024 * 1024;
+    const limitMiB = 12; // DataTransferLimits.LIMIT_BYTES until step 0 sets the new limit
+    const fresh = async () => {
+        if (sh(`pm list packages ${PKG}`).split('\n').some((line) => line.trim() === `package:${PKG}`)) sh(`pm uninstall ${PKG}`);
+        adbRaw('install', '-g', apk);
+        clearLogs();
+        await launch();
+    };
+    const restore = async (file) => {
+        await openData();
+        await tap(tagged(await screen(), 'data-transfer-restore'));
+        await pickDocument(file.name);
+        await until('the app back in front', () => !otherAppFront(), 15_000, 500);
+        await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 300_000)));
+    };
+    const rowsLike = (label, prefix) => sqlite(pullDb(label), `SELECT count(*) AS n FROM tasks WHERE deletedAt IS NULL AND title LIKE '${prefix}%'`)[0].n;
+    const transfer = () => allLogs().split('\n').filter((line) => line.includes('v1.3.7/native-large-transfer')).at(-1) ?? '';
+
+    // L1: a share of the limit restored over another, every row multi-byte: each row lands byte for byte, and the new
+    // log line names the operation, its sizes and a Java peak far below the file.
+    await fresh();
+    // A fifth of the limit each: SQLite keeps multi-byte rows with their full-text index, larger than their JSON.
+    const share = Math.max(2, Math.floor(limitMiB / 5));
+    const l1a = measureFixture(`d1-l1-a-${run}.json`, share, 'emoji', 'd1la');
+    const l1b = measureFixture(`d1-l1-b-${run}.json`, share, 'emoji', 'd1lb');
+    push(l1a); push(l1b);
+    await restore(l1a);
+    await toastWith(en['settings.backupMobile.restoreComplete'], 600_000);
+    await restore(l1b);
+    await toastWith(en['settings.backupMobile.restoreComplete'], 600_000);
+    const l1db = pullDb('l1');
+    const l1rows = sqlite(l1db, "SELECT title, description FROM tasks WHERE deletedAt IS NULL AND title LIKE 'd1lb%' ORDER BY title");
+    const l1expected = [...l1b.tasks].map((item) => ({ title: item.title, description: item.description })).sort((left, right) => (left.title < right.title ? -1 : left.title > right.title ? 1 : 0));
+    check(JSON.stringify(l1rows) === JSON.stringify(l1expected), `(L1) every multi-byte row of the restored file is in the library byte for byte (${l1rows.length} of ${l1expected.length})`);
+    check(rowsLike('l1-a', 'd1la') === 0, '(L1) the restore replaced the first library');
+    const l1line = transfer();
+    check(/"operation":"replace"/.test(l1line) && /"outcome":"committed"/.test(l1line) && Number(/"javaPeakMiB":(\d+)/.exec(l1line)?.[1] ?? 999) < 128,
+        `(L1) the v1.3.7/native-large-transfer line says replace, committed, a Java peak under 128 MiB: ${l1line.slice(-260)}`);
+    sh(`rm -f ${PHONE_DIR}/${l1a.name} ${PHONE_DIR}/${l1b.name}`);
+
+    // R1: a merge stopped right after its COMMIT; the next start's replay cannot read its plan (a debug read failure): the
+    // entry stays, nothing shows; the start after answers the first success from the receipt, writes nothing again, and offers Undo.
+    await fresh();
+    const r1 = fixture(`d1-r1-${run}.json`, [task(`d1r1a${run}`), task(`d1r1b${run}`)]);
+    push(r1);
+    const committedBefore = allLogs().split('\n').filter((line) => line.includes('v1.3.4/native-backup-document')).length;
+    setProp('commit_stop', 'backupDocumentCommit');
+    await merge(r1);
+    await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 120_000)));
+    await until('the process to end (R1)', () => !pid(), 120_000, 500);
+    setProp('commit_stop', '');
+    const receiptsAfterCommit = sqlite(pullDb('r1-commit'), `SELECT count(*) AS n FROM native_request_receipts WHERE method LIKE '["backupDocument","merge",%'`)[0].n;
+    check(receiptsAfterCommit === 1 && journal().length === 1, `(R1) the stop came after COMMIT: one receipt, the entry still journaled (${receiptsAfterCommit}, ${journal().length})`);
+    setProp('channel_fail', 'read-once');
+    // The replay keeps its entry, so this start never resumes normal activation: no Inbox wait.
+    device.launch(ACTIVITY);
+    await sleep(20_000);
+    setProp('channel_fail', '');
+    check(journal().length === 1 && !hasText(await screen(), en['settings.mergeBackup']), '(R1) the replay that could not read its plan kept the entry and showed nothing');
+    await relaunch();
+    const r1toast = await toastWith(en['settings.mergeBackup'], 300_000);
+    check(Boolean(undoButton(r1toast)), '(R1) the next start shows the merge\'s result with RN\'s Undo');
+    await until('(R1) the journal to empty', () => journal().length === 0, 60_000);
+    const receiptsAfterReplay = sqlite(pullDb('r1-replay'), `SELECT count(*) AS n FROM native_request_receipts WHERE method LIKE '["backupDocument","merge",%'`)[0].n;
+    const committedAfter = allLogs().split('\n').filter((line) => line.includes('v1.3.4/native-backup-document')).length;
+    check(receiptsAfterReplay === 1 && committedAfter === committedBefore && rowsLike('r1-rows', `d1r1`) === 2,
+        `(R1) the replay answered from the receipt: one receipt, no second commit line, the two rows once (${receiptsAfterReplay}, ${committedAfter - committedBefore})`);
+    sh(`rm -f ${PHONE_DIR}/${r1.name}`);
+
+    // DL rows (design §3.4, review 3 #17): every delay sits above the old budget and below the new one. A 20 s/MiB rate (debug
+    // budget_ms_per_mib) makes a small library's budget 140 s; each page of a full library read waits `pageMs`.
+    const rate = 20_000;
+    const pageMs = 20_000;
+    setProp('budget_ms_per_mib', String(rate));
+    // DL2: a small library booted, then a large restore whose reload (8 pages, 160 s) passes the small library's 140 s.
+    await fresh();
+    const small = fixture(`d1-dl-small-${run}.json`, Array.from({ length: 200 }, (_, index) => task(`d1dls${index}x${run}`)));
+    const large = measureFixture(`d1-dl-large-${run}.json`, 4, 'rows', 'd1dll');
+    push(small); push(large);
+    await merge(small);
+    await confirmQuestion(en['settings.mergeBackup']);
+    await toastWith(en['settings.mergeBackup']);
+    await relaunch();
+    await openData();
+    await tap(tagged(await screen(), 'data-transfer-restore'));
+    await pickDocument(large.name);
+    await until('the app back in front', () => !otherAppFront(), 15_000, 500);
+    const dl2question = await waitFor('the question', (current) => Boolean(confirmButton(current)), 300_000);
+    setProp('sql_read_delay_ms', String(pageMs));
+    await tap(confirmButton(dl2question));
+    await toastWith(en['settings.backupMobile.restoreComplete'], 900_000);
+    setProp('sql_read_delay_ms', '');
+    check(rowsLike('dl2', 'd1dll') === large.tasks.length, '(DL2) a large restore over a small library lands though its reload took longer than the small library\'s budget');
+
+    // DL1: a merge stopped right after its COMMIT over that library; the next start's reads (8 pages each) take longer than a
+    // fixed 120 s but fit the library's budget: the recovery boot replays from the receipt and activation finishes.
+    setProp('commit_stop', 'backupDocumentCommit');
+    await merge(small);
+    await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 120_000)));
+    await until('the process to end (DL1)', () => !pid(), 300_000, 500);
+    setProp('commit_stop', '');
+    setProp('sql_read_delay_ms', String(pageMs));
+    device.launch(ACTIVITY);
+    await waitFor('the Inbox after the slow recovery boot', onInbox, 900_000);
+    setProp('sql_read_delay_ms', '');
+    await until('(DL1) the journal to empty', () => journal().length === 0, 120_000);
+    check(true, '(DL1) the slow recovery boot replayed the commit and activated');
+
+    // DL3 (review 4 #18): a small library; a large restore stopped with its entry journaled and nothing sent. Before the
+    // restart the small library is there and no receipt names the restore; at the start the replay restores the large
+    // library and activation's read (8 pages) takes longer than the small library's budget, within the large one's.
+    await fresh();
+    await merge(small);
+    await confirmQuestion(en['settings.mergeBackup']);
+    await toastWith(en['settings.mergeBackup']);
+    setProp('journal_stop', 'before:backupDocumentCommit');
+    await openData();
+    await tap(tagged(await screen(), 'data-transfer-restore'));
+    await pickDocument(large.name);
+    await until('the app back in front', () => !otherAppFront(), 15_000, 500);
+    await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 300_000)));
+    await until('the process to end (DL3)', () => !pid(), 300_000, 500);
+    setProp('journal_stop', '');
+    const dl3before = pullDb('dl3-before');
+    check(sqlite(dl3before, "SELECT count(*) AS n FROM tasks WHERE deletedAt IS NULL AND title LIKE 'd1dls%'")[0].n === 200
+        && sqlite(dl3before, `SELECT count(*) AS n FROM native_request_receipts WHERE method LIKE '["backupDocument","replace",%'`)[0].n === 0
+        && journal().length === 1, '(DL3) before the restart: the small library, no receipt for the restore, its entry journaled');
+    setProp('sql_read_delay_ms', String(pageMs));
+    device.launch(ACTIVITY);
+    await waitFor('the Inbox after the replayed restore', onInbox, 900_000);
+    setProp('sql_read_delay_ms', '');
+    await until('(DL3) the journal to empty', () => journal().length === 0, 120_000);
+    check(rowsLike('dl3-after', 'd1dll') === large.tasks.length, '(DL3) the replay restored the large library and activation finished');
+
+    // DL4: an export whose writes take longer than the old 30 s, within the library's budget.
+    setProp('export_tree', TREE);
+    setProp('channel_write_delay_ms', '5000');
+    const dl4 = await exportFile('data-transfer-export', '.json');
+    setProp('channel_write_delay_ms', '');
+    check(JSON.parse(readFileSync(dl4.local, 'utf8')).tasks.length >= large.tasks.length, '(DL4) a slow export (over 30 s) finished with the whole library');
+    setProp('budget_ms_per_mib', '');
+    sh(`rm -f ${PHONE_DIR}/${small.name} ${PHONE_DIR}/${large.name}`);
 
     console.log('Settings › Data device check passed');
     }
