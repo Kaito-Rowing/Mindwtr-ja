@@ -94,13 +94,6 @@ class SqliteBridge(databaseFile: File) {
      */
     @Volatile var stopAfterCommit = false
 
-    /**
-     * Debug-only delay (check-data-device.mjs's deadline rows, pass D1c): `debug.mindwtr.native.sql_read_delay_ms`, set by
-     * CoreHost's `BuildConfig.DEBUG`-gated hook and read again at each page, so a check can slow one operation's reads only;
-     * each page of a full library read waits this long first.
-     */
-    @Volatile var readDelayMs: () -> Long = { 0L }
-
     fun run(sql: String, paramsJson: String) {
         // The core's adapter then runs ROLLBACK, as after a real commit failure.
         if (failCommits && sql == "COMMIT") throw IllegalStateException("Injected commit failure")
@@ -119,7 +112,6 @@ class SqliteBridge(databaseFile: File) {
     }
 
     fun all(sql: String, paramsJson: String): String {
-        if (sql.startsWith("SELECT rowid as _rowid")) readDelayMs().takeIf { it > 0 }?.let(Thread::sleep)
         val statement = statementFor(sql)
         bind(statement, JSONArray(paramsJson))
         val rows = JSONArray()

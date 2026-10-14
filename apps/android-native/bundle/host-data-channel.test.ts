@@ -45,6 +45,7 @@ const fixture = (bundle = source, onSql: (sql: string) => void = () => undefined
             rnStateCommit: () => null, kvGet: () => '[null]', kvSet: () => null, kvRemove: () => null,
             kvMultiGet: (keys: string) => JSON.stringify((JSON.parse(keys) as string[]).map((key) => [key, null])), kvMultiSet: () => null, kvMultiRemove: () => null,
             fileList: () => 'null', fileRead: () => '', fileDelete: () => null, hostEvent: () => null,
+            debugProp: (name: string) => state.debugProps?.[name] ?? '',
             // DataChannel.kt's answers: reads 1 MiB of bytes at a time, never splitting a character; strict UTF-8 writes.
             dataRead: (id: string) => {
                 state.onDataRead?.();
@@ -185,5 +186,34 @@ describe('the data channel through the shipped bundle (D1c)', () => {
         const f = fixture();
         expect((await f.poll(f.state.MindwtrHost.boot('', ''))).ok).toBe(true);
         expect(f.state.fixture.timeout()).toBe(15_000);
+    });
+
+    // Code review P2: the deadline rows' delays wait on timers, so core's storage timeout and the host's deadline run while they
+    // wait. A delay that blocked inside one bridge call would finish before any timer fired, and these would pass without a fix.
+    it('a debug read delay lets the storage timeout fire; within a larger budget the load finishes', async () => {
+        const slow = fixture();
+        slow.state.debugProps = { sql_read_delay_ms: '300' };
+        const failed = await slow.poll(slow.state.MindwtrHost.boot('', '', 'journaled', JSON.stringify({ baseMs: 1000, msPerMiB: 10, storageTimeoutMs: 50 })));
+        expect(failed.ok).toBe(false);
+        expect(String(failed.error)).toContain('Storage request timed out');
+        const roomy = fixture();
+        roomy.state.debugProps = { sql_read_delay_ms: '300' };
+        const started = Date.now();
+        expect((await roomy.poll(roomy.state.MindwtrHost.boot('', '', 'journaled', JSON.stringify({ baseMs: 1000, msPerMiB: 10, storageTimeoutMs: 5000 })))).ok).toBe(true);
+        expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+    });
+
+    it('a debug write delay pauses an export across engine turns: its call is still open on the first poll', async () => {
+        const f = fixture();
+        expect((await f.poll(f.state.MindwtrHost.boot('', '', 'journaled'))).ok).toBe(true);
+        f.state.debugProps = { channel_write_delay_ms: '300' };
+        const handle = f.open({});
+        const started = Date.now();
+        const ticket = f.state.MindwtrHost.dataExportFile('json', handle, 512 * 1024 * 1024);
+        await new Promise((done) => setTimeout(done, 20));
+        expect(f.state.MindwtrHost.poll(ticket)).toBeNull();
+        const answer = await f.poll(ticket);
+        expect(answer.ok).toBe(true);
+        expect(Date.now() - started).toBeGreaterThanOrEqual(300);
     });
 });

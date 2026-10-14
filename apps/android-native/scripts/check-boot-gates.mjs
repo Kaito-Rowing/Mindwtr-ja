@@ -1035,7 +1035,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 46, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch, secret and sync crypto calls, logFile, the key-value calls, hostEvent, the queue\'s file calls, Settings › Data\'s three channel calls and its debug memory probe (D1c), the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls, the background sync\'s schedule, and the device calendar call: each guarded');
+assert.equal(bridgeCallbacks.length, 47, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch, secret and sync crypto calls, logFile, the key-value calls, hostEvent, the queue\'s file calls, Settings › Data\'s three channel calls, its debug property and memory probe (D1c), the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls, the background sync\'s schedule, and the device calendar call: each guarded');
 // C3: the device calendar call only starts on the engine thread; HostIo's calendar thread runs it (a prompt answers later).
 assert(bridgeCallbacks.includes('bridge.setProperty("calendarCall", guarded { args -> io.calendar(args[0] as String, device::call) }) }'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));
@@ -1148,7 +1148,8 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.match(coreHost, /const val NETWORK_DEADLINE_MS = HostIo\.CALL_TIMEOUT_MS \+ OPERATION_DEADLINE_MS/);
     assert.match(coreHost, /private fun callAsync\(method: String, vararg args: Any\?, deadlineMs: Long = deadline\(method, args\.toList\(\)\)\): JSONObject \{/);
     // D1c: a backup commit's deadline is the one frozen in its manifest; every other call's is deadlineOf's.
-    assert.match(coreHost, /private fun deadline\(method: String, args: List<Any\?>\): Long =\s+if \(method == BackupOperations\.METHOD\) backups\?\.budgetMs\(args\[0\] as String, budget\) \?: BACKUP_DEADLINE_MS else deadlineOf\(method, args\)/);
+    assert.match(coreHost, /private fun deadline\(method: String, args: List<Any\?>\): Long =\s+if \(method == BackupOperations\.METHOD\) frozenBudget\(args\[0\] as String\) else deadlineOf\(method, args\)/);
+    assert.match(coreHost, /else backups\?\.budgetMs\(reference, budget\) \?: BACKUP_DEADLINE_MS/);
     // D9: a nested call (on the engine) pumps until its answer; any other starts its operation in one engine task and is answered
     // from the pump's turns, so it never holds the engine while the operation waits. Past its deadline it is cancelled, drained,
     // or stops the host, as a nested one.
@@ -2116,7 +2117,7 @@ for (const [fn, js] of [['openQuickCapture', 'captureOpen'], ['quickCaptureView'
 // core's 128 MiB backup limit (code review P2), as an operation's recovery snapshot is.
 assert.match(coreHost, /val handle = data\.openRecoveryWrite\(written\)/);
 assert.match(coreHost, /val recoveryHandle = recovery\?\.let\(data::openRecoveryWrite\)/);
-assert.match(coreHost, /fun createQuickCaptureSnapshot\(snapshots: File, protect: \(\) -> Set<String>\): String\? \{[\s\S]{0,400}?callAsync\("captureSnapshotFile", handle, deadlineMs = budget\.ms\(libraryFileBytes\(\)\)\)/);
+assert.match(coreHost, /fun createQuickCaptureSnapshot\(snapshots: File, protect: \(\) -> Set<String>\): String\? \{[\s\S]{0,400}?callAsync\("captureSnapshotFile", handle, deadlineMs = sized\(OPERATION_DEADLINE_MS, libraryFileBytes\(\)\)\)/);
 for (const read of ['captureOpen(): string', 'captureView(json: string): string', 'captureEdit(json: string): string']) {
     assert.match(hostEntry, new RegExp(`${read.replace(/[()]/g, '\\$&')} \\{\\s*return submit\\(async \\(\\) => \\{\\s*requireSaved\\(\\);`), `${read} waits for an owed save`);
 }
@@ -3957,6 +3958,7 @@ export async function flushPendingSave() { globalThis.events.push('flush'); awai
   if (globalThis.flushError) throw new Error(globalThis.flushError); }
 export const runSerializedSyncDocumentWriteOperation = (operation) => operation();
 export const setStorageTimeoutMs = (ms) => { globalThis.storageTimeouts?.push(ms); };
+export const getStorageTimeoutMs = () => 15000;
 export function getPersistenceStatus() { globalThis.onPersistenceStatus?.(); return globalThis.persistenceStatus ||
   { generation: 0, queued: false, inFlight: false, immediate: false, retrying: false, failed: false }; }
 export function isSupportedLanguage(value) { return ['en', 'zh', 'fa', 'de'].includes(value); }

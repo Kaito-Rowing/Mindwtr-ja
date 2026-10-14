@@ -248,16 +248,12 @@ class CoreHost(
                 loading.get()
                 sqlite = database()
                 // Debug builds only (debugProperty is empty in a release): the deadline rows' slow reads and writes (pass D1c).
-                if (BuildConfig.DEBUG) {
-                    sqlite?.readDelayMs = { debugFault("sql_read_delay_ms").toLongOrNull() ?: 0 }
-                    data.writeDelayMs = { debugFault("channel_write_delay_ms").toLongOrNull() ?: 0 }
-                    data.failNextRead = debugFault("channel_fail") == "read-once"
-                }
+                if (BuildConfig.DEBUG) data.failNextRead = debugFault("channel_fail") == "read-once"
                 // This host journals every write (WriteJournal), so core requires each write's replay tokens. A journaled backup commit
                 // boots in recovery: no load maintenance runs before its replay, so the document it was prepared against is unchanged.
                 activationOwed = pendingBackupIds().isNotEmpty()
                 // Sized to the library on disk (its write-ahead log too), so a large one loads within its own budget (pass D1c §3.4).
-                val bootDeadline = budget.ms(libraryFileBytes())
+                val bootDeadline = sized(OPERATION_DEADLINE_MS, libraryFileBytes())
                 (if (activationOwed) callAsync("bootRecovery", legacyState, legacyBackup, "journaled", storageBudget(), deadlineMs = bootDeadline)
                 else callAsync("boot", legacyState, legacyBackup, "journaled", storageBudget(), deadlineMs = bootDeadline)).also { netCheck() }
             } catch (failure: Throwable) {
@@ -486,6 +482,9 @@ class CoreHost(
         bridge.setProperty("dataRead", guarded { args -> data.read(args[0] as String) })
         bridge.setProperty("dataWrite", guarded { args -> data.write(args[0] as String, args[1] as String); null })
         bridge.setProperty("dataClose", guarded { args -> data.close(args[0] as String).let { JSONObject().put("bytes", it.bytes).put("sha256", it.sha256).toString() } })
+        // Debug builds only (pass D1c's device checks): a debug property, read by host-entry's delays across engine turns and
+        // its controls (bundle debugProp).
+        if (BuildConfig.DEBUG) bridge.setProperty("debugProp", guarded { args -> debugFault(args[0] as String) })
         // Debug builds only (step 0 of pass D1c): QuickJS's own memory at a Data operation's checkpoints, in logcat.
         if (BuildConfig.DEBUG) bridge.setProperty("memProbe", guarded { args -> Log.i(TAG, "Native Android memory probe at=${args[0]} quickjsMiB=${engine.memoryUsedSize / (1024 * 1024)}"); null })
         // Core's attachment file port (bundle/host-attachments.ts): each call only starts here; HostIo runs it on its files
@@ -558,7 +557,7 @@ class CoreHost(
         val written = File(snapshots, ".capture-${java.util.UUID.randomUUID()}.pending")
         val handle = data.openRecoveryWrite(written)
         try {
-            val snapshot = callAsync("captureSnapshotFile", handle, deadlineMs = budget.ms(libraryFileBytes())).optJSONObject("snapshot") ?: return null.also { written.delete() }
+            val snapshot = callAsync("captureSnapshotFile", handle, deadlineMs = sized(OPERATION_DEADLINE_MS, libraryFileBytes())).optJSONObject("snapshot") ?: return null.also { written.delete() }
             return RecoverySnapshots.publishCapture(snapshots, written, snapshot.getString("fileName"), protect)
         } finally { data.drop(handle) }
     }
@@ -569,7 +568,7 @@ class CoreHost(
      */
     fun dataExport(format: String, file: File, maxBytes: Long): JSONObject {
         val handle = data.openWrite(file, base64 = format == "tasknotes")
-        try { return callAsync("dataExportFile", format, handle, maxBytes, deadlineMs = budget.ms(libraryFileBytes())) }
+        try { return callAsync("dataExportFile", format, handle, maxBytes, deadlineMs = sized(OPERATION_DEADLINE_MS, libraryFileBytes())) }
         finally { data.drop(handle) }
     }
 
@@ -791,6 +790,12 @@ class CoreHost(
     private val budget: BackupBudget get() = debugFault("budget_ms_per_mib").toLongOrNull()?.takeIf { it > 0 }
         ?.let { BackupBudget.DEFAULT.copy(msPerMiB = it) } ?: BackupBudget.DEFAULT
 
+    /**
+     * Debug builds only (check-data-device's controls, pass D1c code review): `debug.mindwtr.native.d1c_control=pre-d1c` or
+     * `fixed-deadlines` gives every Data deadline its value before pass D1c ([old]), so a deadline row must fail under it.
+     */
+    private fun sized(old: Long, bytes: Long): Long = if (debugFault("d1c_control") in setOf("pre-d1c", "fixed-deadlines")) old else budget.ms(bytes)
+
     /** [bytes]' budget (an operation's file and library), for the deadline a backup commit freezes into its manifest. */
     fun budgetMs(bytes: Long): Long = budget.ms(bytes)
 
@@ -798,7 +803,12 @@ class CoreHost(
 
     /** [method]'s deadline: a backup commit's is the one frozen in its manifest, on its first send and every replay alike. */
     private fun deadline(method: String, args: List<Any?>): Long =
-        if (method == BackupOperations.METHOD) backups?.budgetMs(args[0] as String, budget) ?: BACKUP_DEADLINE_MS else deadlineOf(method, args)
+        if (method == BackupOperations.METHOD) frozenBudget(args[0] as String) else deadlineOf(method, args)
+
+    /** Backup commit [reference]'s budget, frozen in its manifest (a debug control's old 120 s). */
+    private fun frozenBudget(reference: String): Long =
+        if (debugFault("d1c_control") in setOf("pre-d1c", "fixed-deadlines")) BACKUP_DEADLINE_MS
+        else backups?.budgetMs(reference, budget) ?: BACKUP_DEADLINE_MS
 
     /** The storage read budget host-entry sizes its loads by (Android only; iOS keeps core's 15 s). */
     private fun storageBudget(): String = JSONObject().put("baseMs", budget.baseMs).put("msPerMiB", budget.msPerMiB)
@@ -810,7 +820,7 @@ class CoreHost(
      */
     fun backupInspect(file: File, base64: Boolean, metadataJson: String, format: String): JSONObject {
         val handle = data.openRead(file, base64)
-        try { return callAsync("backupDocumentInspectFile", handle, metadataJson, format, deadlineMs = budget.ms(file.length() + libraryFileBytes())) }
+        try { return callAsync("backupDocumentInspectFile", handle, metadataJson, format, deadlineMs = sized(BACKUP_DEADLINE_MS, file.length() + libraryFileBytes())) }
         finally { data.drop(handle) }
     }
 
@@ -825,7 +835,7 @@ class CoreHost(
             val sourceHandle = data.openRead(source, base64).also(handles::add)
             val recoveryHandle = recovery?.let(data::openRecoveryWrite)?.also(handles::add) ?: ""
             val planHandle = data.openWrite(plan, capBytes = maxPlanBytes).also(handles::add)
-            return callAsync("backupDocumentPrepareFile", sourceHandle, inputJson, recoveryHandle, planHandle, deadlineMs = budget.ms(source.length() + libraryFileBytes()))
+            return callAsync("backupDocumentPrepareFile", sourceHandle, inputJson, recoveryHandle, planHandle, deadlineMs = sized(BACKUP_DEADLINE_MS, source.length() + libraryFileBytes()))
         } finally { handles.forEach(data::drop) }
     }
 
@@ -1247,7 +1257,7 @@ class CoreHost(
     /** The recovery boot's normal activation (host-entry resumeActivation), once its backup commits settled. Engine thread. */
     private fun resumeActivation() {
         // The library its replays left, read again: activation loads it (pass D1c review 3 #15).
-        val result = answer("resumeActivation", emptyArray(), budget.ms(libraryFileBytes()))
+        val result = answer("resumeActivation", emptyArray(), sized(OPERATION_DEADLINE_MS, libraryFileBytes()))
         if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
         activationOwed = false
         Log.i(TAG, "Native Android recovery boot activation resumed")

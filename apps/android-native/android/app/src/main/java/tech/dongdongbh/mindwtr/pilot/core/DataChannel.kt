@@ -153,15 +153,11 @@ class DataChannel(private val chunkBytes: Int = CHUNK_BYTES, private val recover
         } catch (failure: Failure) { drop(handle); throw failure }
     }
 
-    /** Debug-only delay before each write (check-data-device.mjs's export deadline row, pass D1c), read at each write. */
-    @Volatile var writeDelayMs: () -> Long = { 0L }
-
     /** Debug-only: the next read fails with [IO] once (check-data-device.mjs R1: a replay whose plan cannot be read). */
     @Volatile var failNextRead = false
 
     /** The bridge's `dataWrite`. */
     fun write(handle: String, chunk: String) {
-        writeDelayMs().takeIf { it > 0 }?.let(Thread::sleep)
         val writer = open[handle] as? Writer ?: throw Failure(HANDLE)
         try { writer.write(chunk) } catch (failure: Failure) { drop(handle); throw failure }
     }

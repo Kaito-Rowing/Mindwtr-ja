@@ -73,6 +73,7 @@ import {
     getPersistenceStatus,
     runSerializedSyncDocumentWriteOperation,
     setStorageTimeoutMs,
+    getStorageTimeoutMs,
     getNextFutureStartRevealAt,
     compareAppVersions,
     fetchAppStoreInfo,
@@ -189,6 +190,8 @@ type NativeBridge = {
     dataRead?(handle: string): string;
     dataWrite?(handle: string, chunk: string): string | null;
     dataClose?(handle: string): string;
+    /** Android debug builds only (pass D1c's device checks): a debug property's value, "" when unset. */
+    debugProp?(name: string): string;
     /** Android debug builds only (pass D1c step 0): logs QuickJS's memory at a named checkpoint. */
     memProbe?(label: string): string | null;
 };
@@ -224,20 +227,51 @@ const channelClose = (handle: string): { bytes: number; sha256: string } => JSON
 /** UTF-16 units per write: at most 1.5 MiB of UTF-8. */
 const CHANNEL_UNITS = 512 * 1024;
 /** [text] in pieces that never split a surrogate pair, so each piece crosses the bridge as whole characters. */
-const channelWrite = (handle: string, text: string): void => {
-    const bridge = native();
+const channelPieces = function* (text: string): Generator<string> {
     for (let start = 0; start < text.length;) {
         let end = Math.min(text.length, start + CHANNEL_UNITS);
         const last = text.charCodeAt(end - 1);
         if (end < text.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
-        checked(bridge.dataWrite!(handle, text.slice(start, end)));
+        yield text.slice(start, end);
         start = end;
     }
 };
+const channelWrite = (handle: string, text: string): void => {
+    const bridge = native();
+    for (const piece of channelPieces(text)) checked(bridge.dataWrite!(handle, piece));
+};
 /** Base64 [text] in pieces of whole 4-character groups, so each piece decodes alone (a TaskNotes ZIP). */
+const base64Pieces = function* (text: string): Generator<string> {
+    for (let start = 0; start < text.length; start += 4 * 256 * 1024) yield text.slice(start, start + 4 * 256 * 1024);
+};
 const channelWriteBase64 = (handle: string, text: string): void => {
     const bridge = native();
-    for (let start = 0; start < text.length; start += 4 * 256 * 1024) checked(bridge.dataWrite!(handle, text.slice(start, start + 4 * 256 * 1024)));
+    for (const piece of base64Pieces(text)) checked(bridge.dataWrite!(handle, piece));
+};
+
+/**
+ * Debug builds only (check-data-device's deadline rows, pass D1c code review): a debug property, "" in a release (no bridge
+ * function). The delays below wait on timers, across engine turns, so the host's deadlines and core's storage timeout run
+ * while they wait, as they would for a slow phone.
+ */
+const debugProp = (name: string): string => {
+    const read = (globalThis.__mindwtrNative as NativeBridge | undefined)?.debugProp;
+    return read ? String(checked(read(name)) ?? '') : '';
+};
+const debugControl = (name: string): boolean => debugProp('d1c_control') === name || debugProp('d1c_control') === 'pre-d1c' && name === 'no-storage-budget';
+const pause = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+/** Full reads of the tasks table so far (debug `sql_read_delay_skip` lets that many pass undelayed). */
+let fullReads = 0;
+/** [text] through write [handle] as RN's export or snapshot file, once paused (debug `channel_write_delay_ms`) after its first piece. */
+const channelWriteFile = async (handle: string, text: string, base64: boolean): Promise<void> => {
+    const delay = Number(debugProp('channel_write_delay_ms'));
+    if (!(delay > 0)) { if (base64) channelWriteBase64(handle, text); else channelWrite(handle, text); return; }
+    const bridge = native();
+    let first = true;
+    for (const piece of base64 ? base64Pieces(text) : channelPieces(text)) {
+        checked(bridge.dataWrite!(handle, piece));
+        if (first) { first = false; await pause(delay); }
+    }
 };
 /**
  * Android (pass D1c design §3.4): the storage read budget Kotlin hands its boot (BackupBudget), so each load that follows a
@@ -245,7 +279,7 @@ const channelWriteBase64 = (handle: string, text: string): void => {
  */
 let storageBudget: { baseMs: number; msPerMiB: number } | null = null;
 const sizeStorageTimeout = async (adapter: { libraryBytes(): Promise<number> }): Promise<void> => {
-    if (!storageBudget) return;
+    if (!storageBudget || debugControl('no-storage-budget')) return;
     setStorageTimeoutMs(storageBudget.baseMs + Math.ceil(await adapter.libraryBytes() / (1024 * 1024)) * storageBudget.msPerMiB);
 };
 /** A channel failure's code, or null for any other error. */
@@ -272,8 +306,15 @@ if ((globalThis.__mindwtrNative as NativeBridge | undefined)?.trace) {
 
 const sqlite: SqliteClient = {
     run: async (sql, params) => { checked(native().sqlRun(sql, JSON.stringify(params ?? []))); },
-    all: async <T,>(sql: string, params?: unknown[]): Promise<T[]> =>
-        JSON.parse(checked(native().sqlAll(sql, JSON.stringify(params ?? [])))) as T[],
+    all: async <T,>(sql: string, params?: unknown[]): Promise<T[]> => {
+        // Debug builds only: a full library read's first page waits `sql_read_delay_ms`, past the first `sql_read_delay_skip`.
+        if (sql.startsWith('SELECT rowid as _rowid, * FROM tasks WHERE rowid > ?') && params?.[0] === 0) {
+            fullReads += 1;
+            const delay = Number(debugProp('sql_read_delay_ms'));
+            if (delay > 0 && fullReads > (Number(debugProp('sql_read_delay_skip')) || 0)) await pause(delay);
+        }
+        return JSON.parse(checked(native().sqlAll(sql, JSON.stringify(params ?? [])))) as T[];
+    },
     get: async <T,>(sql: string, params?: unknown[]): Promise<T | undefined> =>
         (JSON.parse(checked(native().sqlAll(sql, JSON.stringify(params ?? [])))) as T[])[0],
     exec: async (sql) => {
@@ -1362,7 +1403,7 @@ const activateAndVerify = async (adapter: ValidatedSqliteAdapter, recoveryLoad =
     return inbox;
 };
 const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, journaled = false, budgetJSON = ''): string => submit(async () => {
-    if (budgetJSON) {
+    if (budgetJSON && !debugControl('no-storage-budget')) {
         const budget = JSON.parse(budgetJSON) as { baseMs: number; msPerMiB: number; storageTimeoutMs: number };
         storageBudget = { baseMs: budget.baseMs, msPerMiB: budget.msPerMiB };
         setStorageTimeoutMs(budget.storageTimeoutMs);
@@ -1861,7 +1902,7 @@ globalThis.MindwtrHost = {
         return submit(async () => {
             if (!bootAdapter) throw new Error('Native recovery adapter unavailable');
             // The replays may have restored a much larger library: its load gets that library's budget.
-            await sizeStorageTimeout(bootAdapter);
+            if (!debugControl('no-activation-storage')) await sizeStorageTimeout(bootAdapter);
             return activateAndVerify(bootAdapter);
         });
     },
@@ -4107,7 +4148,7 @@ globalThis.MindwtrHost = {
             const snapshot = unwrap(await contract.createQuickCaptureSnapshot());
             if (!snapshot) return { snapshot: null };
             try {
-                channelWrite(handle, snapshot.contents);
+                await channelWriteFile(handle, snapshot.contents, false);
                 return { snapshot: { fileName: snapshot.fileName, ...channelClose(handle) } };
             } catch (error) {
                 if (channelCode(error)) throw new Error('SAVE_FAILED: The recovery snapshot could not be written');
@@ -4134,7 +4175,7 @@ globalThis.MindwtrHost = {
             if (!settled() || useTaskStore.getState().lastDataChangeAt !== stamp) throw new Error('NOT_READY: The library changed while the export was checked');
             const file = unwrap(contract.getDataBackup(format));
             try {
-                if (file.encoding === 'base64') channelWriteBase64(handle, file.content); else channelWrite(handle, file.content);
+                await channelWriteFile(handle, file.content, file.encoding === 'base64');
                 return { fileName: file.fileName, bytes: channelClose(handle).bytes };
             } catch (error) {
                 if (channelCode(error)) throw new Error('SAVE_FAILED: The export file could not be written');
@@ -4345,7 +4386,10 @@ globalThis.MindwtrHost = {
         return submit(async () => {
             // Android: the commit's reload (inside core's commit) reads the result within the budget frozen in its manifest;
             // afterwards the timeout fits the library the commit left, whatever it did.
-            if (typeof budgetMs === 'number' && budgetMs > 0) setStorageTimeoutMs(budgetMs);
+            // Debug controls (check-data-device): `no-commit-storage` skips the frozen budget; `no-activation-storage` puts the
+            // earlier timeout back afterwards, as the code before review 3 did.
+            const before = getStorageTimeoutMs();
+            if (typeof budgetMs === 'number' && budgetMs > 0 && !debugControl('no-commit-storage') && !debugControl('no-storage-budget')) setStorageTimeoutMs(budgetMs);
             const source = globalThis.__mindwtrHostPlatform === 'android' ? { take: () => {
                 try {
                     const text = channelRead(planJSON);
@@ -4362,7 +4406,8 @@ globalThis.MindwtrHost = {
                 return await commitNativeBackupDocument(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof commitNativeBackupDocument>[1], source, snapshotName);
             } finally {
                 native().memProbe?.('commit:done');
-                if (typeof budgetMs === 'number' && budgetMs > 0) await sizeStorageTimeout(backupAdapter()).catch(() => undefined);
+                if (debugControl('no-activation-storage')) setStorageTimeoutMs(before);
+                else if (typeof budgetMs === 'number' && budgetMs > 0) await sizeStorageTimeout(backupAdapter()).catch(() => undefined);
             }
         });
     },
