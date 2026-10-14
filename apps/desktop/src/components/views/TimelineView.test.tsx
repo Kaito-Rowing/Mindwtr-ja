@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { TimelineView, resolveTimelineTrack, taskBarTint } from './TimelineView';
 import { LanguageProvider } from '../../contexts/language-context';
-import { DEFAULT_PROJECT_COLOR, configureDateFormatting, useTaskStore, type Area, type Project, type Task } from '@mindwtr/core';
+import { DEFAULT_PROJECT_COLOR, configureDateFormatting, useTaskStore, type Area, type Project, type Section, type Task } from '@mindwtr/core';
 
 const iso = (offsetDays: number): string => {
     const date = new Date();
@@ -24,15 +24,18 @@ const setStore = ({
     tasks = [],
     projects = [],
     areas = [],
-}: { tasks?: Task[]; projects?: Project[]; areas?: Area[] }) => {
+    sections = [],
+}: { tasks?: Task[]; projects?: Project[]; areas?: Area[]; sections?: Section[] }) => {
     useTaskStore.setState({
         tasks,
         projects,
         areas,
+        sections,
         settings: {},
         _allTasks: tasks,
         _allProjects: projects,
         _allAreas: areas,
+        _allSections: sections,
     });
 };
 
@@ -340,6 +343,61 @@ describe('TimelineView (#1111)', () => {
         });
         renderTimeline();
         expect(rowLabels()).toEqual(['Area project', 'Owned task', 'No project', 'Loose task']);
+    });
+
+    it('uses Projects section and manual task order, independent of dates, with named row handles', () => {
+        setStore({
+            projects: [{ id: 'p1', title: 'Ordered project', status: 'active', order: 0, createdAt: iso(-60), updatedAt: iso(-60) } as Project],
+            sections: [
+                { id: 'second', projectId: 'p1', title: 'Second section', order: 1024, createdAt: iso(-60), updatedAt: iso(-60) },
+                { id: 'first', projectId: 'p1', title: 'First section', order: 0, createdAt: iso(-60), updatedAt: iso(-60) },
+            ],
+            tasks: [
+                makeTask({ id: 'b', title: 'Second task', projectId: 'p1', sectionId: 'first', order: 1024, dueDate: iso(-4) }),
+                makeTask({ id: 'other', title: 'Other section', projectId: 'p1', sectionId: 'second', order: 0, dueDate: iso(-8) }),
+                makeTask({ id: 'a', title: 'First task', projectId: 'p1', sectionId: 'first', order: 0, dueDate: iso(4) }),
+            ],
+        });
+        renderTimeline();
+        expect(rowLabels()).toEqual(['Ordered project', 'First task', 'Second task', 'Other section']);
+        expect(screen.getByRole('button', { name: 'Reorder task: First task' })).toHaveAttribute('data-testid', 'timeline-reorder-task');
+        expect(screen.getByRole('button', { name: 'Reorder project: Ordered project' })).toBeInTheDocument();
+    });
+
+    it('honors an explicit project task sort and omits task handles', () => {
+        setStore({
+            projects: [{ id: 'p1', title: 'Sorted project', status: 'active', taskSortBy: 'due', createdAt: iso(-60), updatedAt: iso(-60) } as Project],
+            tasks: [
+                makeTask({ id: 'a', title: 'Manual first', projectId: 'p1', order: 0, dueDate: iso(4) }),
+                makeTask({ id: 'b', title: 'Earlier due', projectId: 'p1', order: 1024, dueDate: iso(-4) }),
+            ],
+        });
+        renderTimeline();
+        expect(rowLabels()).toEqual(['Sorted project', 'Earlier due', 'Manual first']);
+        expect(screen.queryAllByTestId('timeline-reorder-task')).toHaveLength(0);
+    });
+
+    it('shows area order before project order and keeps no-project and completed tasks read-only for ordering', () => {
+        window.localStorage.setItem('mindwtr:view:timeline:v1', JSON.stringify({ statuses: ['next', 'done'] }));
+        setStore({
+            areas: [
+                { id: 'a2', name: 'Second area', color: '#00ff00', order: 1024, createdAt: iso(-60), updatedAt: iso(-60) },
+                { id: 'a1', name: 'First area', color: '#0000ff', order: 0, createdAt: iso(-60), updatedAt: iso(-60) },
+            ],
+            projects: [
+                { id: 'p2', title: 'Second area project', status: 'active', areaId: 'a2', order: 0, createdAt: iso(-60), updatedAt: iso(-60) } as Project,
+                { id: 'p1', title: 'First area project', status: 'active', areaId: 'a1', order: 1024, createdAt: iso(-60), updatedAt: iso(-60) } as Project,
+            ],
+            tasks: [
+                makeTask({ id: 'done', title: 'Completed task', projectId: 'p1', status: 'done', dueDate: iso(0) }),
+                makeTask({ id: 'live', title: 'Active task', projectId: 'p2', dueDate: iso(0) }),
+                makeTask({ id: 'loose', title: 'No project task', dueDate: iso(0) }),
+            ],
+        });
+        renderTimeline();
+        expect(rowLabels()).toEqual(['First area project', 'Completed task', 'Second area project', 'Active task', 'No project', 'No project task']);
+        expect(screen.getAllByTestId('timeline-reorder-task')).toHaveLength(1);
+        expect(screen.getByTestId('timeline-reorder-task')).toHaveAttribute('data-task-id', 'live');
     });
 
     describe('project bars', () => {

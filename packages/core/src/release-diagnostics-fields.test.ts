@@ -13,6 +13,7 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // timeline-shared-order reuses releaseCheck, kind, and outcome below; no content or IDs.
     // mcp-access-controls: device-local grants, loopback port, fixed denied category; no payload.
     'allowWrite', 'allowArchive', 'allowDelete', 'port', 'category',
     // mcp-codex-copy reuses releaseCheck, operation, outcome, backend below.

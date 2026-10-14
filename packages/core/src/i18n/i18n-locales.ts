@@ -285,7 +285,8 @@ export const LOCALES = {
         // Includes the local MCP integration strings; pin to the actual translated count
         // so English growth does not reclassify deliberate protocol and brand names.
         // Eight MCP permission, port, and Codex-copy labels are translated in #1337.
-        translatedKeyFloor: 2554,
+        // Five Timeline reorder labels and keyboard instructions are translated in #1362.
+        translatedKeyFloor: 2559,
     },
     it: {
         loadSync: () => require('./locales/it') as typeof import('./locales/it'),
