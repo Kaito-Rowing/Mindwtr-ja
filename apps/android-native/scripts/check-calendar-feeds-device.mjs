@@ -67,7 +67,7 @@ const EVENTS = { timed: `Standup ${run}`, allDay: `Offsite ${run}` };
 const thisMonth = new Date(Date.now() + 86_400_000).getMonth() === new Date().getMonth() ? 2 : 1;
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
-const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, tapExpecting } = device;
+const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, tapExpecting, settle } = device;
 const logs = () => device.logs(pid(), TAG);
 
 // ---- The phone's storage (run-as copies, read on this computer) ----
@@ -273,8 +273,11 @@ try {
     const line = feedLines('calendar').at(-1);
     check(line.includes('"outcome":"ready"') && line.includes('"releaseCheck":"v1.3.5/native-android-calendar-feeds"') && !line.includes('127.0.0.1'),
         '(4) the load\'s line: slot calendar, outcome ready, no URL');
-    // The all-day event (always in view; the timed block may sit above the timeline's scroll).
-    nodes = await tapExpecting(eventBlock(nodes, EVENTS.allDay), (current) => Boolean(tagged(current, 'calendar-sheet')), 'the event\'s sheet');
+    // The all-day event (always in view; the timed block may sit above the timeline's scroll), from a screen that holds still.
+    nodes = await settle(await screen());
+    const offsite = eventBlock(nodes, EVENTS.allDay) ?? fail(`no "${EVENTS.allDay}" on screen`);
+    console.log(`note - tapping "${EVENTS.allDay}" at ${offsite.bounds} (${nodes.filter((node) => node['resource-id'] === 'calendar-block').length} all-day and timed blocks)`);
+    nodes = await tapExpecting(offsite, (current) => Boolean(tagged(current, 'calendar-sheet')), 'the event\'s sheet');
     check(Boolean(button(nodes, en['calendar.createTaskFromEvent'])) && !button(nodes, en['calendar.openInCalendar']),
         '(4) the event\'s sheet offers RN\'s Create task, and no Open in calendar for a subscription\'s event');
     await tapExpecting(button(nodes, en['common.cancel']) ?? fail('no Cancel'), (current) => !tagged(current, 'calendar-sheet'), 'the sheet closed');
@@ -379,7 +382,7 @@ try {
 } catch (error) {
     try {
         console.log(`evidence - server saw: ${JSON.stringify(server?.state.seen.map(({ path, mode, origin, at }) => `${at} ${path?.replace(/\d{6,}/, '<run>')} ${mode} ${origin}`))}`);
-        console.log(`evidence - app log (calendar):\n${logs().split('\n').filter((line) => /alendar/.test(line)).slice(-30).map((line) => line.slice(0, 300)).join('\n')}`);
+        console.log(`evidence - app log (calendar, core failures):\n${logs().split('\n').filter((line) => /alendar|Core action failed|AndroidRuntime/.test(line)).slice(-40).map((line) => line.slice(0, 300)).join('\n')}`);
     } catch { /* the app is gone */ }
     evidenced(error);
     for (const name of added) {
