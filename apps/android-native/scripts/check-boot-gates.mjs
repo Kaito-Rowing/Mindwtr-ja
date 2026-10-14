@@ -1821,6 +1821,9 @@ assert.match(source('CoreWork.kt'), /fun retryDrain\(context: Context\) = enqueu
     // D1c: host-entry's side of Settings › Data's file channel, each JS fix with its red run (bundle/host-data-channel.test.ts, bun).
     const channelTested = spawnSync('bun', ['test', 'apps/android-native/bundle/host-data-channel.test.ts'], { cwd: resolve(app, '../..'), encoding: 'utf8' });
     assert.equal(channelTested.status, 0, `bundle/host-data-channel.test.ts: ${channelTested.stderr.slice(-1500)}`);
+    // D1c step 0: the transfer limit's rule (the whole matrix, a failing smaller row caps it, imports by the library they left).
+    const limitTested = spawnSync('bun', ['test', 'apps/android-native/scripts/data-transfer-limit.test.mjs'], { cwd: resolve(app, '../..'), encoding: 'utf8' });
+    assert.equal(limitTested.status, 0, `scripts/data-transfer-limit.test.mjs: ${limitTested.stderr.slice(-1500)}`);
     // D8: the channel is the build's flavor, read by core as RN's isFossBuild; no host passes a fixed false any more.
     assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /create\("play"\) \{\s+dimension = "channel"\s+buildConfigField\("boolean", "FOSS", "false"\)[^}]*\}\s+create\("foss"\) \{\s+dimension = "channel"\s+buildConfigField\("boolean", "FOSS", "true"\)/);
     assert.match(coreHost, /engine\.globalObject\.setProperty\("__mindwtrFossBuild", BuildConfig\.FOSS\)/);

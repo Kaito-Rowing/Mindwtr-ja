@@ -33,13 +33,15 @@
 //   R1 a replay whose plan cannot be read keeps its entry, and the next start answers from the receipt with Undo; DL1-DL4 the
 //   size-scaled deadlines, each delay between the old budget and the new one (a slow recovery boot, a large restore over a
 //   small library, a replay before SQL then activation, a slow export).
-// With D1_MEASURE=1 it measures the transfer limit instead (design §4.1): for each size it reinstalls, merges a backup of that
-// size, then restores the same file over it, sampling the app's native heap (QuickJS allocates there) and Java heap each second.
+// With D1_MEASURE=1 it runs pass D1c's step 0 instead (design §8): every Data workload in every shape at growing sizes, each
+// sampled from before it starts, with the library measured before and after; then the limit data-transfer-limit.mjs proposes,
+// and every workload again at that limit, which must pass. With D1C_PART=deadlines it runs only the DL rows
+// (check-data-deadlines-device.mjs).
 // It clears every debug property it sets, puts rotation back, and leaves the phone on its home screen.
 // Exit 0 = pass, 1 = fail, 2 = refused, 3 = stopped.
 import { execFileSync } from 'node:child_process';
 import { randomInt, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { strToU8, zipSync } from 'fflate';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -54,6 +56,7 @@ const shown = (nodes, tag) => {
     return top >= listTop && bottom <= listBottom ? node : undefined;
 };
 import { cleanupOnExit } from './check-net-device.mjs';
+import { boundaryVerdict, MEASURE_SHAPES, proposeTransferLimit } from './data-transfer-limit.mjs';
 
 const [serial] = process.argv.slice(2);
 if (!serial) {
@@ -519,7 +522,19 @@ const measured = [];
  * One measured run: `dumpsys meminfo` sampled every second from before [act] starts (D1a sampled only after the question
  * opened) until [done] holds, the app dies, or 900 s pass; then the app's own log line, when the run was a Data operation.
  */
-const measureRun = async (shape, workload, sizeMiB, act, done) => {
+/** The library's SQLite bytes on the phone now (page count × page size, as core admits), in MiB, from a pulled copy. */
+const libraryNowMiB = (label) => {
+    const [{ bytes }] = sqlite(pullDb(label), 'SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()');
+    return Math.round(bytes / MIB * 10) / 10;
+};
+/**
+ * One measured run: `dumpsys meminfo` sampled every second from before [act] starts (D1a sampled only after the question
+ * opened) until [done] holds, the app dies, or 900 s pass. The library is measured on the phone before and after (code review
+ * P2: an import counts the library it left; an export, a capture or a start the library it read); [source] gives the
+ * picked file's bytes and, for an import, its expanded bytes. [boundary] marks a rerun at the proposed limit.
+ */
+const measureRun = async (shape, workload, sizeMiB, act, done, { sourceBytes = 0, expandedBytes = null, boundary = false } = {}) => {
+    const libraryBeforeMiB = pid() ? libraryNowMiB(`m-${workload}-before`) : null;
     const peak = { native: 0, java: 0, total: 0 };
     const linesBefore = transferLines();
     const probesBefore = allLogs().split('\n').filter((line) => line.includes('Native Android memory probe')).length;
@@ -532,12 +547,13 @@ const measureRun = async (shape, workload, sizeMiB, act, done) => {
         }
     })();
     let outcome = 'timeout';
+    let toast = [];
     try {
         await act();
         for (let second = 0; second < 900; second += 1) {
             if (!pid()) { outcome = 'died'; break; }
             const nodes = await screen().catch(() => []);
-            if (done(nodes)) { outcome = 'done'; break; }
+            if (done(nodes)) { outcome = 'done'; toast = nodes; break; }
             const failed = nodes.find((node) => /failed|too large|too long/i.test(node.text ?? ''));
             if (failed) { outcome = `failed: ${failed.text}`; break; }
             await sleep(1000);
@@ -551,16 +567,19 @@ const measureRun = async (shape, workload, sizeMiB, act, done) => {
     const app = lastTransferLine(linesBefore);
     const probes = allLogs().split('\n').filter((line) => line.includes('Native Android memory probe')).slice(probesBefore)
         .map((line) => /at=(\S+) quickjsMiB=(\d+)/.exec(line)).filter(Boolean).map((match) => `${match[1]}=${match[2]}`);
+    if (!pid()) await launch();
+    const libraryAfterMiB = libraryNowMiB(`m-${workload}-after`);
     const nativeMiB = Math.round(peak.native / 1024);
     const javaMiB = Math.round(peak.java / 1024);
     const pass = outcome === 'done' && javaMiB <= MEASURE_JAVA_MIB && nativeMiB <= MEASURE_NATIVE_MIB
         && (!app || app.javaPeakMiB <= MEASURE_JAVA_MIB && app.nativePeakMiB <= MEASURE_NATIVE_MIB);
-    const row = { shape, workload, sizeMiB, sourceMiB: app?.sourceMiB ?? null, libraryMiB: app?.libraryMiB ?? null, outcome,
+    const row = { shape, workload, sizeMiB, boundary, sourceMiB: Math.round(sourceBytes / MIB * 10) / 10,
+        expandedMiB: expandedBytes === null ? null : Math.round(expandedBytes / MIB * 10) / 10, libraryBeforeMiB, libraryAfterMiB, outcome,
         seconds: Math.round((Date.now() - started) / 1000), nativeMiB, javaMiB, pssMiB: Math.round(peak.total / 1024),
         appNativeMiB: app?.nativePeakMiB ?? null, appJavaMiB: app?.javaPeakMiB ?? null, probes, pass };
     measured.push(row);
     console.log(`measure ${JSON.stringify(row)}`);
-    return row;
+    return { row, toast };
 };
 /** A backup of about [mib] MiB in [shape]: `notes` (D1a's: 64 KiB notes, few rows) or `rows` (about 1 KiB per task, RN's fields). */
 const measureFixture = (name, mib, shape, prefix) => {
@@ -580,11 +599,11 @@ const measureFixture = (name, mib, shape, prefix) => {
     const tasks = Array.from({ length: Math.max(1, Math.round(target / per)) }, (_, index) => make(index));
     return fixture(name, tasks);
 };
-const measureFreshInstall = async () => {
+const measureFreshInstall = async (limitMiB = 1024) => {
     if (sh(`pm list packages ${PKG}`).split('\n').some((line) => line.trim() === `package:${PKG}`)) sh(`pm uninstall ${PKG}`);
     adbRaw('install', '-g', apk);
     clearLogs();
-    setProp('transfer_limit_mb', '1024');
+    setProp('transfer_limit_mb', String(limitMiB));
     await launch();
 };
 const restoreFile = async (file) => {
@@ -594,106 +613,150 @@ const restoreFile = async (file) => {
     await until('the app back in front', () => !otherAppFront(), 15_000, 500);
     await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 900_000)));
 };
-const importCsvFile = async (file) => {
+const IMPORT_TITLES = { todoist: 'importTodoistData', ticktick: 'importTicktickData', dgt: 'importDgtGtdData', omnifocus: 'importOmnifocusData', 'mindwtr-csv': 'importMindwtrCsvData' };
+const importFile = async (key, file) => {
     let nodes = await openData();
     for (let step = 0; step < 8 && !shown(nodes, 'import-disclosure'); step += 1) nodes = await device.swipe(nodes, 'down');
     if (!tagged(nodes, 'import-guide-link')) nodes = await tapExpecting(tagged(nodes, 'import-disclosure') ?? fail('no Import fold'), (current) => Boolean(tagged(current, 'import-guide-link')), 'the Import fold open');
-    for (let step = 0; step < 6 && !shown(nodes, 'data-transfer-import-mindwtr-csv'); step += 1) nodes = await device.swipe(nodes, 'down');
-    await tap(tagged(nodes, 'data-transfer-import-mindwtr-csv') ?? fail('no Mindwtr CSV import row'));
+    for (let step = 0; step < 6 && !shown(nodes, `data-transfer-import-${key}`); step += 1) nodes = await device.swipe(nodes, 'down');
+    await tap(tagged(nodes, `data-transfer-import-${key}`) ?? fail(`no ${key} import row`));
     await pickDocument(file.name);
     await until('the app back in front', () => !otherAppFront(), 15_000, 500);
     await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 900_000)));
 };
 /**
- * Pass D1c step 0 (design §8). For each shape and size S: a fresh library restores A (S over nothing), merges B (S over S),
- * restores A again (S over about 2S), undoes it (a snapshot restore), exports JSON and TaskNotes, imports a Mindwtr CSV ZIP
- * that expands to core's 16 MiB with 100 000 rows, and starts cold. A shape stops growing once its fresh restore fails.
- * At the largest size that restored, a restore stopped before its commit is sent measures the recovery boot. Then T: half of
- * the smallest largest-passing S+L over every workload and shape.
+ * Each importer's largest file core admits (code review P2): two 8 MiB-entry ZIP members where the format reads several
+ * (Todoist), else one text near core's 8 MiB text cap, with at most 100 000 rows (core's row and entity caps). The expanded
+ * bytes are what core parses.
  */
+const importFixtures = () => {
+    const q = (n) => 'q'.repeat(n);
+    const csv = (cells) => cells.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',');
+    const texts = {
+        todoist: [0, 1].map((part) => [`d1mtd${part}${run}.csv`, ['TYPE,CONTENT,PRIORITY,INDENT,DATE,DESCRIPTION',
+            ...Array.from({ length: 49_000 }, (_, index) => `task,d1mtd${part}x${index} ${q(130)},1,1,,`)].join('\n')]),
+        ticktick: [['backup.csv', [csv(['Folder Name', 'List Name', 'Title', 'Kind', 'Tags', 'Content', 'Is Check list', 'Start Date', 'Due Date', 'Repeat', 'Priority', 'Status', 'Created Time', 'Completed Time', 'Timezone', 'Is All Day', 'taskId', 'parentId']),
+            ...Array.from({ length: 95_000 }, (_, index) => csv(['F', 'd1mtt', `d1mtt${index} ${q(14)}`, 'TEXT', '', '', 'N', '', '', '', '0', '0', '', '', 'UTC', 'false', String(index + 1), '']))].join('\n')]],
+        dgt: [[`d1-measure-dgt-${run}.json`, JSON.stringify({ version: 3, FOLDER: [{ ID: 1, TITLE: 'd1mdgt', ORDINAL: 0 }],
+            TASK: Array.from({ length: 90_000 }, (_, index) => ({ ID: index + 10, TYPE: 0, TITLE: `d1mdg${index} ${q(30)}`, STATUS: 0 })) })]],
+        omnifocus: [[`d1-measure-omnifocus-${run}.csv`, [csv(['Task ID', 'Type', 'Name', 'Status', 'Project', 'Context', 'Start Date', 'Planned Date', 'Due Date', 'Completion Date', 'Duration', 'Flagged', 'Notes', 'Tags']),
+            ...Array.from({ length: 95_000 }, (_, index) => csv([`a${index}`, 'Action', `d1mof${index} ${q(20)}`, 'Available', '', '', '', '', '', '', '', '0', '', '']))].join('\n')]],
+        'mindwtr-csv': [['tasks.csv', `Title\n${Array.from({ length: 99_000 }, (_, index) => `d1mcsv${index} ${q(60)}`).join('\n')}\n`]],
+    };
+    return Object.entries(texts).map(([key, entries]) => {
+        const expandedBytes = entries.reduce((sum, [, text]) => sum + Buffer.byteLength(text), 0);
+        for (const [, text] of entries) if (Buffer.byteLength(text) > 8 * MIB) fail(`the ${key} fixture passes core's 8 MiB text cap`);
+        const zipped = key === 'todoist' || key === 'ticktick' || key === 'mindwtr-csv';
+        const name = zipped ? `d1-measure-${key}-${run}.zip` : entries[0][0];
+        writeFileSync(resolve(work, name), zipped ? zipSync(Object.fromEntries(entries.map(([entry, text]) => [entry, strToU8(text)]))) : strToU8(entries[0][1]));
+        const file = { name, tasks: [] };
+        push(file);
+        return { key, workload: `import-${key}`, file, expandedBytes, bytes: statSync(resolve(work, name)).size };
+    });
+};
+/** The capture popup's several lines (RN's paste path, check-capture-device's (d)): its recovery snapshot, then the lines. */
+const captureLines = async (titles) => {
+    setProp('clipboard', titles.join('\\n'));
+    let nodes = await device.openCapture();
+    await sleep(500);
+    setProp('clipboard', '');
+    await device.focusAtEnd(tagged(nodes, 'capture-title') ?? fail('no capture field'));
+    sh('input keyevent KEYCODE_PASTE');
+    await waitFor('the lines in the field', (current) => (tagged(current, 'capture-title')?.text ?? '') === titles.join('\n'), 10_000);
+    const confirmTitle = en['quickAdd.bulkConfirmTitle'].replace('{{count}}', String(titles.length));
+    nodes = await tapExpecting(button(await screen(), en['common.save']) ?? fail('no Save'), (current) => current.some((node) => node.text === confirmTitle), 'the several-lines question');
+    await tap(button(nodes, en['quickAdd.bulkConfirmCreate']) ?? fail('no Create tasks'));
+};
+const bytesOf = (file) => statSync(resolve(work, file.name)).size;
+
+/**
+ * Pass D1c step 0 (design §8, the coordinator's rulings, code review P2). Every workload of MEASURE_WORKLOADS in every shape
+ * of MEASURE_SHAPES, at growing sizes: a fresh library restores A, merges B over it, restores A again, undoes that, exports
+ * JSON, CSV and TaskNotes, takes the capture popup's snapshot, runs each importer's largest file (undone after), and starts
+ * cold; a shape stops growing once its fresh restore fails. At the largest size that restored, a restore stopped before its
+ * send measures the recovery boot. The limit: half of the smallest bound over the whole matrix (data-transfer-limit.mjs),
+ * then every workload and shape again at that limit's admitted boundary, which must pass.
+ */
+const runSequence = async (shape, mib, { boundary = false, limitMiB = 1024, imports }) => {
+    const sizeFor = (target) => Math.max(1, Math.floor(target));
+    const a = measureFixture(`d1-m-${shape}-${mib}-a-${run}${boundary ? '-b' : ''}.json`, sizeFor(boundary ? limitMiB / 3 : mib), shape, 'd1ma');
+    push(a);
+    await measureFreshInstall(limitMiB);
+    const fresh = await measureRun(shape, 'restore-fresh', mib, () => restoreFile(a), (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']), { sourceBytes: bytesOf(a), boundary });
+    if (fresh.row.outcome !== 'done') return false;
+    // At the boundary, B and the second A fill the limit with the library the phone holds now.
+    const room = () => sizeFor(limitMiB - libraryNowMiB('room') - 1);
+    const b = measureFixture(`d1-m-${shape}-${mib}-b-${run}${boundary ? '-b' : ''}.json`, boundary ? room() : mib, shape, 'd1mb');
+    push(b);
+    await measureRun(shape, 'merge-over', mib, async () => {
+        await merge(b);
+        await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 900_000)));
+    }, (nodes) => hasText(nodes, en['settings.mergeBackup']) && !confirmButton(nodes), { sourceBytes: bytesOf(b), boundary });
+    const a2 = boundary ? measureFixture(`d1-m-${shape}-${mib}-a2-${run}-b.json`, room(), shape, 'd1mc') : a;
+    if (boundary) push(a2);
+    const over = await measureRun(shape, 'restore-over', mib, () => restoreFile(a2), (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']), { sourceBytes: bytesOf(a2), boundary });
+    if (over.row.outcome === 'done' && undoButton(over.toast)) {
+        await measureRun(shape, 'undo', mib, async () => {
+            await tap(undoButton(over.toast));
+            await confirmQuestion(en['settings.undoImportConfirmTitle']);
+        }, (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']) && !confirmButton(nodes), { boundary });
+    } else measured.push({ shape, workload: 'undo', sizeMiB: mib, boundary, outcome: 'no Undo offered', pass: false });
+    setProp('export_tree', TREE);
+    for (const [workload, tag, suffix] of [['export-json', 'data-transfer-export', '.json'], ['export-csv', 'data-transfer-export-csv', '.csv'], ['export-tasknotes', 'data-transfer-export-tasknotes', '.zip']]) {
+        const before = exportsOnPhone();
+        await measureRun(shape, workload, mib, async () => {
+            await openData();
+            await tap(tagged(await screen(), tag) ?? fail(`no ${tag} row`));
+            await useTestFolder();
+        }, () => exportsOnPhone().some((name) => !before.includes(name) && name.endsWith(suffix)), { boundary });
+        sh(`rm -f ${PHONE_DIR}/mindwtr-backup*`);
+    }
+    setProp('export_tree', '');
+    const lines = [`d1mcap1${mib}${run}`, `d1mcap2${mib}${run}`];
+    await measureRun(shape, 'capture', mib, () => captureLines(lines), () => rowsLike(`m-capture-${mib}`, `d1mcap1${mib}`) === 1, { boundary });
+    await device.stopApp();
+    await launch();
+    for (const item of imports) {
+        const imported = await measureRun(shape, item.workload, mib, () => importFile(item.key, item.file),
+            (nodes) => hasText(nodes, en['settings.backupMobile.importComplete']) && !confirmButton(nodes), { sourceBytes: item.bytes, expandedBytes: item.expandedBytes, boundary });
+        // Undone, so the next importer meets the same library (not measured).
+        if (imported.row.outcome === 'done' && undoButton(imported.toast)) {
+            await tap(undoButton(imported.toast));
+            await confirmQuestion(en['settings.undoImportConfirmTitle']);
+            await toastWith(en['settings.backupMobile.restoreComplete'], 900_000).catch(() => undefined);
+        }
+        if (!pid()) await launch();
+    }
+    await measureRun(shape, 'cold-start', mib, async () => { await device.stopApp(); device.launch(ACTIVITY); }, (nodes) => onInbox(nodes), { boundary });
+    // A restore stopped with its commit journaled, never sent: the next start's recovery boot replays it.
+    setProp('journal_stop', 'before:backupDocumentCommit');
+    await restoreFile(a2).catch(() => undefined);
+    await until('the process to end', () => !pid(), 900_000, 1000).catch(() => undefined);
+    setProp('journal_stop', '');
+    await measureRun(shape, 'recovery-boot', mib, async () => { if (pid()) await device.stopApp(); device.launch(ACTIVITY); }, (nodes) => onInbox(nodes), { boundary });
+    sh(`rm -f ${PHONE_DIR}/${a.name} ${PHONE_DIR}/${b.name}`);
+    return true;
+};
 const measure = async () => {
     console.log(`heap limits: dalvik.vm.heapgrowthlimit=${sh('getprop dalvik.vm.heapgrowthlimit')} heapsize=${sh('getprop dalvik.vm.heapsize')}; ${sh('grep MemTotal /proc/meminfo')}`);
-    const shapes = (process.env.D1_MEASURE_SHAPES ?? 'rows,notes').split(',');
+    const shapes = (process.env.D1_MEASURE_SHAPES ?? MEASURE_SHAPES.join(',')).split(',');
     const sizesOf = (shape) => (process.env[`D1_MEASURE_SIZES_${shape.toUpperCase()}`] ?? process.env.D1_MEASURE_SIZES ?? (shape === 'notes' ? '16,32,64,96,128' : '8,16,32,48,64')).split(',').map(Number);
-    const rows = Array.from({ length: 100_000 }, (_, index) => `d1mcsv${index}${run} ${'q'.repeat(140)}`);
-    const csvZip = { name: `d1-measure-csv-${run}.zip`, tasks: [] };
-    writeFileSync(resolve(work, csvZip.name), zipSync({ 'tasks.csv': strToU8(`Title\n${rows.join('\n')}\n`) }));
-    push(csvZip);
+    const imports = importFixtures();
     for (const shape of shapes) {
-        let largest = null;
-        for (const mib of sizesOf(shape)) {
-            const a = measureFixture(`d1-measure-${shape}-${mib}-a-${run}.json`, mib, shape, 'd1ma');
-            const b = measureFixture(`d1-measure-${shape}-${mib}-b-${run}.json`, mib, shape, 'd1mb');
-            push(a); push(b);
-            await measureFreshInstall();
-            const fresh = await measureRun(shape, 'restore-fresh', mib, () => restoreFile(a), (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']));
-            if (fresh.outcome !== 'done') { if (!pid()) await launch(); break; }
-            largest = { mib, a };
-            await measureRun(shape, 'merge-over', mib, async () => {
-                await merge(b);
-                await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 900_000)));
-            }, (nodes) => hasText(nodes, en['settings.mergeBackup']) && !confirmButton(nodes));
-            if (!pid()) await launch();
-            let toast = [];
-            const over = await measureRun(shape, 'restore-over', mib, () => restoreFile(a), (nodes) => {
-                if (hasText(nodes, en['settings.backupMobile.restoreComplete'])) { toast = nodes; return true; }
-                return false;
-            });
-            if (!pid()) await launch();
-            if (over.outcome === 'done' && undoButton(toast)) {
-                await measureRun(shape, 'undo', mib, async () => {
-                    await tap(undoButton(toast));
-                    await confirmQuestion(en['settings.undoImportConfirmTitle']);
-                }, (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']) && !confirmButton(nodes));
-                if (!pid()) await launch();
-            }
-            setProp('export_tree', TREE);
-            for (const [workload, tag, suffix] of [['export-json', 'data-transfer-export', '.json'], ['export-tasknotes', 'data-transfer-export-tasknotes', '.zip']]) {
-                const before = exportsOnPhone();
-                await measureRun(shape, workload, mib, async () => {
-                    await openData();
-                    await tap(tagged(await screen(), tag) ?? fail(`no ${tag} row`));
-                    await useTestFolder();
-                }, () => exportsOnPhone().some((name) => !before.includes(name) && name.endsWith(suffix)));
-                if (!pid()) await launch();
-                sh(`rm -f ${PHONE_DIR}/mindwtr-backup*`);
-            }
-            setProp('export_tree', '');
-            await measureRun(shape, 'import-csv-16mib', mib, () => importCsvFile(csvZip),
-                (nodes) => hasText(nodes, en['settings.backupMobile.importComplete']) && !confirmButton(nodes));
-            if (!pid()) await launch();
-            await measureRun(shape, 'cold-start', mib, async () => { await device.stopApp(); device.launch(ACTIVITY); }, (nodes) => onInbox(nodes));
-            sh(`rm -f ${PHONE_DIR}/${a.name} ${PHONE_DIR}/${b.name}`);
-        }
-        if (largest) {
-            // A restore stopped with its commit journaled but never sent: the next start's recovery boot replays it.
-            const a = measureFixture(`d1-measure-${shape}-${largest.mib}-r-${run}.json`, largest.mib, shape, 'd1mr');
-            push(a);
-            await measureFreshInstall();
-            await restoreFile(a);
-            await waitFor('the restore', (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']), 900_000);
-            setProp('journal_stop', 'before:backupDocumentCommit');
-            await restoreFile(a).catch(() => undefined);
-            await until('the process to end', () => !pid(), 900_000, 1000);
-            setProp('journal_stop', '');
-            await measureRun(shape, 'recovery-boot', largest.mib, async () => { device.launch(ACTIVITY); }, (nodes) => onInbox(nodes));
-            sh(`rm -f ${PHONE_DIR}/${a.name}`);
-        }
+        for (const mib of sizesOf(shape)) if (!(await runSequence(shape, mib, { imports }))) break;
+    }
+    const proposal = proposeTransferLimit(measured, { shapes });
+    for (const [cell, bound] of Object.entries(proposal.bounds)) console.log(`bound ${cell}: ${bound} MiB`);
+    if (proposal.limitMiB === null) {
+        console.log(`T: none: the matrix misses ${proposal.missing.join(', ')}`);
+    } else {
+        console.log(`T candidate: ${proposal.limitMiB} MiB (half of the smallest bound, ${proposal.smallestMiB} MiB); boundary reruns at ${proposal.limitMiB} MiB`);
+        for (const shape of shapes) await runSequence(shape, proposal.limitMiB, { boundary: true, limitMiB: proposal.limitMiB, imports });
+        const verdict = boundaryVerdict(measured, proposal.limitMiB, { shapes });
+        console.log(verdict.established ? `T established: ${proposal.limitMiB} MiB`
+            : `T not established at ${proposal.limitMiB} MiB: failed ${verdict.failed.join(', ') || 'none'}; missing ${verdict.missing.join(', ') || 'none'}`);
     }
     setProp('transfer_limit_mb', '');
-    // The limit (design §8, ruling): per workload and shape, B = its largest passing S+L; T = half of the smallest B.
-    const bounds = new Map();
-    for (const row of measured) {
-        const key = `${row.shape}/${row.workload}`;
-        const total = (row.sourceMiB ?? 0) + (row.libraryMiB ?? 0) || row.sizeMiB;
-        if (!bounds.has(key)) bounds.set(key, { pass: 0, failedAt: null });
-        const bound = bounds.get(key);
-        if (row.pass) bound.pass = Math.max(bound.pass, total);
-        else if (bound.failedAt === null) bound.failedAt = total;
-    }
-    for (const [key, bound] of bounds) console.log(`bound ${key}: largest passing S+L ${bound.pass} MiB; first failure ${bound.failedAt ?? 'none'}`);
-    const smallest = Math.min(...[...bounds.values()].map((bound) => bound.pass));
-    console.log(`T candidate: ${Math.floor(smallest / 2)} MiB (half of the smallest bound, ${smallest} MiB); rows ${measured.length}`);
     writeFileSync(resolve(work, `measure-${run}.json`), JSON.stringify(measured, null, 2));
 };
 
