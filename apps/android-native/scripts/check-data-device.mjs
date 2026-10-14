@@ -375,16 +375,29 @@ const deadlineRows = async () => {
     // DL1: a merge stopped right after its COMMIT over the large library; the next start's three reads (the recovery load, the
     // commit's reload, activation's load) each take 60 s: past the old 30 s boot deadline and 15 s storage timeout, within the
     // library's budget.
+    // A merge's plan holds the library twice, so at 30 s per MiB its frozen budget over the large library would pass the 15-min
+    // ceiling and the merge would be refused before its commit (batch1). 10 s per MiB keeps it admitted, and the library's own
+    // budget still holds three 60 s reads.
+    const DL1_RATE = 10_000;
     const dl1 = async (name) => {
         await setup();
+        setProp('budget_ms_per_mib', String(DL1_RATE));
         await restore(large);
         await toastWith(en['settings.backupMobile.restoreComplete'], 600_000);
         setProp('commit_stop', 'backupDocumentCommit');
         await merge(small);
         await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 120_000)));
-        await until(`the process to end (DL1 ${name})`, () => !pid(), 300_000, 500);
+        // The process ends at its COMMIT; a failure toast instead means the merge never reached it.
+        let refusal = '';
+        await until(`the process to end at its COMMIT (DL1 ${name})`, async () => {
+            if (!pid()) return true;
+            const failed = (await screen().catch(() => [])).find((node) => node.text === en['settings.mergeBackupFailed']);
+            if (failed) refusal = failed.text;
+            return Boolean(refusal);
+        }, 300_000, 500);
         setProp('commit_stop', '');
-        check(budget(libraryFileMiB()) > 60_000 * 3, '(DL1) the library\'s budget holds the three slow reads');
+        check(!refusal, `(DL1 ${name}) the merge reached its COMMIT (no "${refusal}" toast)`);
+        check(BASE + libraryFileMiB() * DL1_RATE > 60_000 * 3, '(DL1) the library\'s budget holds the three slow reads');
         delays(60_000);
     };
     await dl1('control');
@@ -1302,9 +1315,12 @@ try {
         const lines = committedLines('todoist');
         const replays = replayLines().length;
         await importCrash(label, { backup_stop: stop }, binary(`d1-i4-${label}-${run}.zip`, zipSync({ [`d1i4proj${run}.csv`]: todoistCsv(titles) })));
-        // Dead: no journal entry, no result record; a mid-plan stop leaves only its unpublished folder.
+        // Dead: no journal entry, no result record. Since pass D1c the operation's folder exists from before its prepare (its
+        // snapshot name's reservation), so either stop leaves one folder with no manifest; the next start deletes it.
         check(journal().length === 0 && !hasResult(), `(I4 ${label}) while stopped: no journal entry and no result record`);
-        check(stop === 'mid-plan' ? operations().length === 1 : operations().length === 0, `(I4 ${label}) while stopped: ${stop === 'mid-plan' ? 'one unpublished operation folder' : 'no operation folder'}`);
+        const folders = operations();
+        check(folders.length === 1 && !listing(`no_backup/backup-operations/${folders[0]}`).includes('manifest.json'),
+            `(I4 ${label}) while stopped: one unpublished operation folder, no manifest (${folders.join(' ')})`);
         check(!taggedRows(pullDb(`i4-${label}`)).some((row) => titles.includes(row.title)), `(I4 ${label}) nothing landed`);
         const start = await watchStart(() => operations().length === 0 && journal().length === 0);
         check(start.found === 'none' && !start.toast, `(I4 ${label}) the start's leftover step found no result and showed no toast: ${JSON.stringify(start)}`);
