@@ -189,6 +189,8 @@ type NativeBridge = {
     dataRead?(handle: string): string;
     dataWrite?(handle: string, chunk: string): string | null;
     dataClose?(handle: string): string;
+    /** Android debug builds only (pass D1c step 0): logs QuickJS's memory at a named checkpoint. */
+    memProbe?(label: string): string | null;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown; fetch: typeof fetch };
@@ -4300,6 +4302,7 @@ globalThis.MindwtrHost = {
                 if (channelCode(error)) throw new Error('SAVE_FAILED: The selected file could not be read');
                 throw error;
             }
+            native().memProbe?.('prepare:read');
             if (input && typeof input === 'object' && input.admission && input.admission.sourceBytes !== sourceBytes) {
                 throw new Error('INVALID_INPUT: Invalid backup document input');
             }
@@ -4320,6 +4323,7 @@ globalThis.MindwtrHost = {
                 }),
                 plan: (part) => written(() => channelWrite(planHandle, part)),
             });
+            native().memProbe?.('prepare:done');
             let plan: { bytes: number; sha256: string } | undefined;
             let recovery: { bytes: number; sha256: string } | null = null;
             written(() => {
@@ -4346,6 +4350,7 @@ globalThis.MindwtrHost = {
                 try {
                     const text = channelRead(planJSON);
                     channelClose(planJSON);
+                    native().memProbe?.('commit:read');
                     return text;
                 } catch (error) {
                     if (channelCode(error) === 'DATA_MISMATCH') throw new Error('INVALID_INPUT: Backup operation files do not match');
@@ -4356,6 +4361,7 @@ globalThis.MindwtrHost = {
             try {
                 return await commitNativeBackupDocument(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof commitNativeBackupDocument>[1], source, snapshotName);
             } finally {
+                native().memProbe?.('commit:done');
                 if (typeof budgetMs === 'number' && budgetMs > 0) await sizeStorageTimeout(backupAdapter()).catch(() => undefined);
             }
         });

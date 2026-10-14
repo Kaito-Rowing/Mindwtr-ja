@@ -1035,7 +1035,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 45, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch, secret and sync crypto calls, logFile, the key-value calls, hostEvent, the queue\'s file calls, Settings › Data\'s three channel calls (D1c), the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls, the background sync\'s schedule, and the device calendar call: each guarded');
+assert.equal(bridgeCallbacks.length, 46, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch, secret and sync crypto calls, logFile, the key-value calls, hostEvent, the queue\'s file calls, Settings › Data\'s three channel calls and its debug memory probe (D1c), the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls, the background sync\'s schedule, and the device calendar call: each guarded');
 // C3: the device calendar call only starts on the engine thread; HostIo's calendar thread runs it (a prompt answers later).
 assert(bridgeCallbacks.includes('bridge.setProperty("calendarCall", guarded { args -> io.calendar(args[0] as String, device::call) }) }'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));

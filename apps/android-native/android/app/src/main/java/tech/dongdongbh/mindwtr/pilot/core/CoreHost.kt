@@ -483,6 +483,8 @@ class CoreHost(
         bridge.setProperty("dataRead", guarded { args -> data.read(args[0] as String) })
         bridge.setProperty("dataWrite", guarded { args -> data.write(args[0] as String, args[1] as String); null })
         bridge.setProperty("dataClose", guarded { args -> data.close(args[0] as String).let { JSONObject().put("bytes", it.bytes).put("sha256", it.sha256).toString() } })
+        // Debug builds only (step 0 of pass D1c): QuickJS's own memory at a Data operation's checkpoints, in logcat.
+        if (BuildConfig.DEBUG) bridge.setProperty("memProbe", guarded { args -> Log.i(TAG, "Native Android memory probe at=${args[0]} quickjsMiB=${engine.memoryUsedSize / (1024 * 1024)}"); null })
         // Core's attachment file port (bundle/host-attachments.ts): each call only starts here; HostIo runs it on its files
         // thread and the pump settles it, as a fetch. The folders are named as expo-file-system names them.
         bridge.setProperty("fileCall", guarded { args -> io.file(args[0] as String, files::call) })

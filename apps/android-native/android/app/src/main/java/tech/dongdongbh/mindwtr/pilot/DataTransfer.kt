@@ -324,11 +324,16 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
             val ops = operations
             val requestId = UUID.randomUUID().toString()
             var journaled = false
+            val peak = HeapPeak()
+            var outcome = "failed"
+            var sourceMiB = 0L
+            var libraryMiB = 0L
             try {
                 check(source.isFile) { "Snapshot file not found." }
                 if (!base64 && source.length() > DataTransferLimits.MAX_BACKUP_SOURCE_BYTES) throw TransferTooLarge()
                 val sourceBytes = source.length()
                 val libraryBytes = runtime.databaseBytes()
+                sourceMiB = sourceBytes / MIB; libraryMiB = libraryBytes / MIB
                 admitTransfer(sourceBytes, libraryBytes)
                 val name = snapshot ?: RecoverySnapshots.nextName(snapshots, Date())
                 // The name is protected from every prune before any of this operation's files exist.
@@ -352,6 +357,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 val reply = runtime.backupCommit(reference, name)
                 val result = runtime.backupResultModel(reply.toString())
                 RecoverySnapshots.prune(snapshots, ops::protectedNames)
+                outcome = "committed"
                 shell.ui { finish(); showResult(result, if (mode == "restore") null else name) { ops.clearResult(requestId) } }
             } catch (failure: Throwable) {
                 staged?.let(StagedCopies::release)
@@ -359,6 +365,15 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 if (!journaled) runCatching { ops.discard(requestId); ops.pendingSnapshot(requestId).delete() }
                 Log.w(CoreHost.TAG, "Backup operation failed mode=$mode ${failureForLog(failure)}")
                 fail(runtime, mode, failure)
+            } finally {
+                // The size and memory a tester's phone used for it (pass D1c §3.6): whole MiB and seconds only.
+                val (nativeMiB, javaMiB) = peak.stop()
+                runCatching {
+                    runtime.logLine("Native Android data transfer finished releaseCheck=v1.3.7/native-large-transfer", JSONObject()
+                        .put("releaseCheck", "v1.3.7/native-large-transfer").put("operation", mode).put("outcome", outcome)
+                        .put("sourceMiB", sourceMiB).put("libraryMiB", libraryMiB).put("seconds", peak.seconds())
+                        .put("nativePeakMiB", nativeMiB).put("javaPeakMiB", javaMiB))
+                }
             }
         }
     }
@@ -677,6 +692,41 @@ internal fun previewStaged(file: File, libraryBytes: Long, inspect: (File) -> JS
         StagedCopies.release(file)
         throw failure
     }
+}
+
+private const val MIB = 1024L * 1024
+
+/**
+ * The native heap (QuickJS allocates there) and the Java heap at their highest while one Data operation runs, sampled every
+ * 500 ms on its own thread until [stop] (pass D1c §3.6).
+ */
+internal class HeapPeak {
+    private val started = System.nanoTime()
+    @Volatile private var native = 0L
+    @Volatile private var java = 0L
+    @Volatile private var running = true
+    private val sampler = Thread({
+        while (running) {
+            sample()
+            try { Thread.sleep(500) } catch (_: InterruptedException) { break }
+        }
+    }, "mindwtr-heap-peak").apply { isDaemon = true; start() }
+
+    private fun sample() {
+        native = maxOf(native, android.os.Debug.getNativeHeapAllocatedSize())
+        val runtime = Runtime.getRuntime()
+        java = maxOf(java, runtime.totalMemory() - runtime.freeMemory())
+    }
+
+    /** The peaks in whole MiB, after one last sample. */
+    fun stop(): Pair<Long, Long> {
+        running = false
+        sampler.interrupt()
+        runCatching { sample() }
+        return native / MIB to java / MIB
+    }
+
+    fun seconds(): Long = (System.nanoTime() - started) / 1_000_000_000
 }
 
 /** A picked file, or it with the library, over the measured transfer limit (design §4.1). */

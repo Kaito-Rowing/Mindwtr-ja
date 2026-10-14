@@ -32,6 +32,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'requestClass', 'comparison',
     'outgoingTasksSig', 'outgoingProjectsSig', 'outgoingSectionsSig', 'outgoingAreasSig', 'outgoingPeopleSig', 'outgoingSettingsSig',
     'priorRemoteTasksSig', 'priorRemoteProjectsSig', 'priorRemoteSectionsSig', 'priorRemoteAreasSig', 'priorRemotePeopleSig', 'priorRemoteSettingsSig',
+    // native-large-transfer: Settings › Data's operation sizes and memory peaks in whole MiB, and its seconds (pass D1c).
+    'sourceMiB', 'libraryMiB', 'seconds', 'nativePeakMiB', 'javaPeakMiB',
     // reminder-boot-recovery: native scheduling acknowledgments, not a DB-row inventory count.
     'requested', 'rearmed', 'skipped', 'failed', 'bootEnabled', 'exactAllowed',
     // renderer-navigation: fixed route categories, a runtime token, and coarse library sizes.
