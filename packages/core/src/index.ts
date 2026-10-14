@@ -40,6 +40,7 @@ export * from './sandbox';
 export * from './sandbox-data';
 export * from './store';
 export { runStoreCommand, runSyncStoreSave } from './store-write-gate';
+export * from './store-latest-updates';
 export * from './native-host-contract';
 export * from './native-host-contract-calendar';
 export * from './native-host-contract-saved-search-write';
