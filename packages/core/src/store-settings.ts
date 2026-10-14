@@ -44,6 +44,15 @@ import { backfillArchiveClocks, getArchiveRetentionPreview, isArchiveRetentionDa
 import { calendarSubscriptionModules } from './store-calendar-subscription-modules';
 
 const STORAGE_TIMEOUT_MS = 15_000;
+let storageTimeoutMs = STORAGE_TIMEOUT_MS;
+/**
+ * How long a load waits for storage's whole read. Android's native host sizes it to its library and to each backup
+ * operation (pass D1c), so a large library loads within its own budget; RN, desktop and iOS keep the default (no argument).
+ */
+export const setStorageTimeoutMs = (ms?: number): void => {
+    storageTimeoutMs = typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : STORAGE_TIMEOUT_MS;
+};
+export const getStorageTimeoutMs = (): number => storageTimeoutMs;
 // Runtime diagnostic threshold: loads slower than this get a phase-breakdown log line.
 const SLOW_FETCH_LOG_THRESHOLD_MS = 1_000;
 const getFetchDataErrorMessage = (error: unknown): string => {
@@ -468,7 +477,7 @@ export const createSettingsActions = ({
             const sourceStorage = options?.preloadedData ? undefined : getStorage();
             const data = options?.preloadedData
                 ?? await measureCoreStartupPhase('core.fetch_data.storage_get_data', async () =>
-                    withTimeout(sourceStorage!.getData(), STORAGE_TIMEOUT_MS, 'Storage request timed out')
+                    withTimeout(sourceStorage!.getData(), storageTimeoutMs, 'Storage request timed out')
                 );
             if (!isResultStillRelevant()) {
                 finishIrrelevantFetch();
