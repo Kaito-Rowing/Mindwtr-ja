@@ -2840,6 +2840,26 @@ describe('TaskItem', () => {
             .toEqual([['c1', true], ['c2', false]]));
     });
 
+    it('sets the value the row showed, so a tick another device made while the tap waited is not undone', async () => {
+        const task: Task = {
+            ...mockTask,
+            id: 'checklist-set-task',
+            rev: 1,
+            checklist: [{ id: 'c1', title: 'One', isCompleted: false }],
+        };
+        act(() => useTaskStore.setState({ _allTasks: [task], tasks: [task] }));
+        const view = render(<LanguageProvider><TaskItem task={task} /></LanguageProvider>);
+        fireEvent.click(view.getByRole('button', { name: /toggle task details/i }));
+
+        const finish = holdSyncSave(() => useTaskStore.setState({ _allTasks: [{
+            ...task, rev: 3, checklist: [{ id: 'c1', title: 'One', isCompleted: true }],
+        }] }));
+        fireEvent.click(view.getByRole('button', { name: 'One' }));
+        await act(finish);
+
+        await waitFor(() => expect(useTaskStore.getState()._tasksById.get(task.id)?.checklist?.[0]?.isCompleted).toBe(true));
+    });
+
     it('does not rerender for unrelated project updates while not editing', () => {
         const task: Task = {
             ...mockTask,

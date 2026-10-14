@@ -441,16 +441,16 @@ export const TaskItem = memo(function TaskItem({
     }, [effectiveReadOnly, isEditing, selectionMode, toggleTaskFocus]);
     const handleToggleChecklistItem = useCallback((index: number) => {
         if (effectiveReadOnly) return;
-        const itemId = task.checklist?.[index]?.id;
-        if (!itemId) return;
-        // Flip the item by id on the latest row, so an item a sync save added meanwhile is kept.
+        const shown = task.checklist?.[index];
+        if (!shown?.id) return;
+        // Set the item by id on the latest row to the opposite of what the row showed (as mobile does), so an item a
+        // sync save added meanwhile is kept and a tick another device made is not undone by a flip.
+        const isCompleted = !shown.isCompleted;
         void updateTaskFromLatest(task.id, (latest) => {
             const checklist = latest.checklist || [];
-            if (!checklist.some((item) => item.id === itemId)) return null;
+            if (!checklist.some((item) => item.id === shown.id)) return null;
             return {
-                checklist: checklist.map((item) =>
-                    item.id === itemId ? { ...item, isCompleted: !item.isCompleted } : item
-                ),
+                checklist: checklist.map((item) => (item.id === shown.id ? { ...item, isCompleted } : item)),
             };
         });
     }, [effectiveReadOnly, task.checklist, task.id]);
