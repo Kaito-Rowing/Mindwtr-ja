@@ -1,6 +1,7 @@
 import { normalizeFocusTaskLimit } from './focus-utils';
 import { formatI18nTemplate, translateWithFallback } from './i18n';
 import { useTaskStore } from './store';
+import { logStaleWriteRefused } from './store-latest-updates';
 import { runStoreCommand } from './store-write-gate';
 import type { Task, TaskStatus } from './types';
 
@@ -31,7 +32,9 @@ const changedElsewhere = (taskId: string): boolean => {
     const state = useTaskStore.getState();
     const task = state._tasksById.get(taskId);
     const deviceId = state.settings.deviceId;
-    return Boolean(task?.revBy && deviceId && task.revBy !== deviceId);
+    const changed = Boolean(task?.revBy && deviceId && task.revBy !== deviceId);
+    if (changed) logStaleWriteRefused('undo-restore');
+    return changed;
 };
 
 /** Undo's restore of a task's saved fields ([restoreUpdates]), refused when another device changed the task since. */
