@@ -5997,7 +5997,44 @@ final class FoundationUITests: XCTestCase {
         return app
     }
 
-    private func task730Search(_ app: XCUIApplication) {
+    func testBoardSearchLargestTextFocusAndFilter() throws {
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_BOARD_SEARCH_UI_LARGEST_LIBRARY"] else {
+            throw XCTSkip("An externally staged isolated Board search library is required")
+        }
+        guard let id = UUID(uuidString: library), id.uuidString.lowercased() == library else {
+            XCTFail("The Board search library must be a canonical lowercase UUID")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-AppleInterfaceStyle", "Dark"]
+        app.launch(); defer { app.terminate() }
+        boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardSelectAllAreas(app); boardOpen(app)
+        let ids = ["board-order-first", "board-order-middle", "board-order-last"]
+        let cards = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "board-task-"))
+        func assertCards(_ expected: [String]) {
+            expectation(for: NSPredicate(format: "label == %@", String(expected.count)), evaluatedWith: app.staticTexts["board-count-next"])
+            waitForExpectations(timeout: 10)
+            XCTAssertEqual(cards.count, expected.count)
+            for id in ids { XCTAssertEqual(app.buttons["board-task-" + id].exists, expected.contains(id)) }
+            for status in ["inbox", "waiting", "someday", "done"] {
+                XCTAssertEqual(app.staticTexts["board-count-" + status].label, "0")
+            }
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        }
+        assertCards(ids)
+        let title = "Middle Next task"
+        task730Search(app, searchText: title)
+        XCTAssertEqual(app.textFields["board-search"].value as? String, title)
+        assertCards(["board-order-middle"])
+        boardTap(app, "board-search-clear"); assertCards(ids)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); assertCards(ids)
+    }
+
+    private func task730Search(_ app: XCUIApplication, searchText: String = "Draft launch post") {
         if app.buttons["board-search-clear"].exists { boardTap(app, "board-search-clear") }
         let query = app.textFields["board-search"]; boardEnabled(query)
         XCTAssertTrue(query.isHittable)
@@ -6023,7 +6060,7 @@ final class FoundationUITests: XCTestCase {
         let keyboardAppeared = app.keyboards.firstMatch.waitForExistence(timeout: 10)
         captureFocus("after-keyboard-wait")
         XCTAssertTrue(keyboardAppeared)
-        query.typeText("Draft launch post\n")
+        query.typeText(searchText + "\n")
         boardEnabled(app.buttons["board-filter-open"])
     }
 

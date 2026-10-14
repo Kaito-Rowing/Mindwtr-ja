@@ -68,6 +68,9 @@ struct BoardScreen: View {
                     .padding(.horizontal, 12).frame(minHeight: 44)
                     .accessibilityLabel(bar.text("searchPlaceholder")).accessibilityIdentifier("board-search")
                     .disabled(model.retryNeeded || model.boardActionPending)
+                    .contentShape(Rectangle()).onTapGesture {
+                        if !model.retryNeeded && !model.boardActionPending { searchFocused = true }
+                    }
                 if !model.boardSearchText.isEmpty {
                     Button { model.setBoardSearch("") } label: {
                         AppIcon(name: "x", size: 16).frame(width: 44, height: 44).contentShape(Rectangle())
