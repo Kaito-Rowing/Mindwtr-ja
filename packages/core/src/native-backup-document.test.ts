@@ -1283,6 +1283,25 @@ describe('native backup prepare output stays byte-identical (D1c parity fixture)
         expect(existsSync(FIXTURE)).toBe(true);
         expect(outputs).toEqual(JSON.parse(readFileSync(FIXTURE, 'utf8')));
     }, 60_000);
+    it('no import policy changes the library it applies to: every mode prepares the same plan from a deep-frozen read', async () => {
+        const deepFreeze = <T,>(value: T): T => {
+            if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.freeze(value); Object.values(value).forEach(deepFreeze); }
+            return value;
+        };
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            for (const [mode, make] of cases) {
+                const seeds = () => { let next = 0; vi.spyOn(globalThis.crypto, 'randomUUID').mockImplementation(() =>
+                    `00000000-0000-4000-8000-${String(next++).padStart(12, '0')}` as ReturnType<typeof crypto.randomUUID>); };
+                vi.setSystemTime(new Date(AT)); seeds();
+                const plain = await prepareNativeBackupDocument((await open()).adapter, make());
+                vi.setSystemTime(new Date(AT)); seeds();
+                const env = await open(); const read = env.adapter.getData.bind(env.adapter);
+                vi.spyOn(env.adapter, 'getData').mockImplementation(async (options) => deepFreeze(await read(options)));
+                await expect(prepareNativeBackupDocument(env.adapter, make()), mode).resolves.toEqual(plain);
+            }
+        } finally { vi.useRealTimers(); }
+    }, 120_000);
     it.each([false, true])('a sink receives the same recovery text and plan bytes, in parts (admission %s)', async (admitted) => {
         vi.useFakeTimers({ toFake: ['Date'] });
         try {

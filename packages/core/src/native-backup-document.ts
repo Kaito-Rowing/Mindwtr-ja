@@ -22,7 +22,6 @@ import { flushPendingSave, useTaskStore } from './store';
 import { markNextLoadAsDocumentReplacement } from './store-settings';
 import { stripSensitiveSettings } from './store-helpers';
 import { validateMergedSyncData } from './sync-normalization';
-import { cloneAppData } from './sync-runtime-utils';
 import type { AppData } from './types';
 
 export const MAX_NATIVE_BACKUP_PLAN_BYTES = 512 * 1024 * 1024;
@@ -334,7 +333,9 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
             const raw = await adapter.getData();
             if (!completeDocument(raw)) invalid();
             const current: AppData = { ...raw, settings: stripSensitiveSettings(raw.settings) };
-            const expectedCurrent = cloneAppData(current);
+            // No copy: no import policy changes the document it applies to (a deep-frozen test per mode guards this), so the
+            // baseline and its recovery snapshot read `current` itself.
+            const expectedCurrent = current;
             const applied = operation === 'merge' ? applyImportSource('backup-merge', current, parsed!) : null;
             const csvApplied = operation === 'csv' ? applyImportSource('mindwtr-csv', current, csv!) : null;
             const todoistApplied = operation === 'todoist' ? applyImportSource('todoist', current, todoist!) : null;
@@ -386,7 +387,8 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
             const plan: Plan = { version: 1, requestId, mode: operation, preparedAt: new Date().toISOString(),
                 expectedCurrent, data, reply };
             if (!completeDocument(data)) invalid();
-            const recoveryJSON = operation !== 'restore' ? serializeBackupData(expectedCurrent) : null;
+            let recoveryJSON = operation !== 'restore' ? serializeBackupData(expectedCurrent) : null;
+            const recovery = recoveryJSON !== null;
             if (recoveryJSON !== null) {
                 if (!withinUtf8Limit(recoveryJSON, MAX_BACKUP_SOURCE_BYTES)) invalid('Recovery snapshot exceeds 128 MiB');
                 if (!parseSource(recoveryJSON, { fileName: snapshotName, lastModified: Date.now(), appVersion }).valid) invalid('Recovery snapshot is not a valid backup');
@@ -398,7 +400,8 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
                 // A snapshot restore has no recovery snapshot to admit: its result library itself stays within the limit.
                 plan.maxLibraryBytes = input.admission.maxTransferBytes;
             }
-            if (sink && recoveryJSON !== null) sink.recovery(recoveryJSON);
+            // A sink takes the recovery text before the plan is stringified, and this frame lets it go.
+            if (sink && recoveryJSON !== null) { sink.recovery(recoveryJSON); recoveryJSON = null; }
             let planJSON = '';
             let planBytes = 0;
             for (const part of planParts(plan)) {
@@ -410,7 +413,7 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
             if (diagnostics.some((diagnostic) => diagnostic.code === 'renamed-container')) {
                 liveWarnings = { snapshotName, tokens: [...(reply as { result: { warnings: string[] } }).result.warnings], diagnostics };
             }
-            return sink ? { written: true as const, recovery: recoveryJSON !== null } : { planJSON, recoveryJSON };
+            return sink ? { written: true as const, recovery } : { planJSON, recoveryJSON };
         });
     } catch (error) {
         if (error instanceof BackupInputError) throw error;
