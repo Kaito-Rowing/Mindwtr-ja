@@ -442,10 +442,11 @@ export function useTaskEditState({
         // One store command merges and writes, so a sync save admitted first is merged too.
         // The list Save writes: the file cleanup after Save settles against it.
         let savedAttachments = saveDraftState.attachments ?? currentTask.attachments;
-        const writeMerged = (patch: Partial<Task>) => runStoreCommand(async () => {
-            const storedTask = patch.attachments ? useTaskStore.getState()._tasksById?.get(currentTask.id) : undefined;
-            if (!patch.attachments || !storedTask) return writePatch(currentTask.id, patch);
-            const merged = mergeTaskDraftAttachments(storedTask.attachments ?? [], currentTask.attachments ?? [], patch.attachments);
+        // Only an attachment save waits for admission; any other save reaches onSave in this tick, so the modal closes at once.
+        const writeMerged = (patch: Partial<Task>) => (!patch.attachments ? writePatch(currentTask.id, patch) : runStoreCommand(async () => {
+            const storedTask = useTaskStore.getState()._tasksById?.get(currentTask.id);
+            if (!storedTask) return writePatch(currentTask.id, patch);
+            const merged = mergeTaskDraftAttachments(storedTask.attachments ?? [], currentTask.attachments ?? [], patch.attachments ?? []);
             savedAttachments = merged;
             if (JSON.stringify(merged) !== JSON.stringify(patch.attachments)) {
                 void logInfo('Editor attachment save kept a newer stored change', {
@@ -454,7 +455,7 @@ export function useTaskEditState({
                 });
             }
             return writePatch(currentTask.id, { ...patch, attachments: merged });
-        });
+        }));
         if (mode === 'cancel') {
             if (!updates) return false;
             updates = {

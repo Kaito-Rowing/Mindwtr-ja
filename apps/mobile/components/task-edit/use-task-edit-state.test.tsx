@@ -727,6 +727,44 @@ describe('useTaskEditState', () => {
         expect(onSave).toHaveBeenCalledWith(task.id, expect.objectContaining({ attachments: [file, remote, link] }));
     });
 
+    it('hands a save without attachments to onSave at once, even while a sync save holds the gate', async () => {
+        let state!: ReturnType<typeof useTaskEditState>;
+        const onSave = vi.fn((_id: string, _updates: Partial<Task>) => true);
+        function Probe() {
+            state = useTaskEditState({
+                onClose: vi.fn(),
+                onSave,
+                onSaveError: vi.fn(),
+                resetCopilotStateRef: { current: vi.fn() },
+                settleAttachmentDraft: vi.fn(),
+                sections: [],
+                task,
+                tasks: [task],
+                visible: true,
+            });
+            return null;
+        }
+        renderer.act(() => { renderer.create(React.createElement(Probe)); });
+        renderer.act(() => {
+            state.titleDraftRef.current = 'Renamed';
+            state.setTitleDraft('Renamed');
+            state.setDraftField('title', 'Renamed');
+        });
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const save = runSyncStoreSave(async () => { await held; });
+        let saved!: Promise<boolean>;
+        try {
+            renderer.act(() => { saved = state.draftLifecycle.save(); });
+            await renderer.act(async () => { for (let tick = 0; tick < 10; tick += 1) await Promise.resolve(); });
+            // The modal's onSave ran without waiting for the sync save, so the modal can close.
+            expect(onSave).toHaveBeenCalledWith(task.id, expect.objectContaining({ title: 'Renamed' }));
+        } finally {
+            release();
+        }
+        await renderer.act(async () => { await save; expect(await saved).toBe(true); });
+    });
+
     it('settles the files against the list Save wrote: newer stored bytes at the baseline path are kept', async () => {
         let state!: ReturnType<typeof useTaskEditState>;
         const settleAttachmentDraft = vi.fn();
