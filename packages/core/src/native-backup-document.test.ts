@@ -348,6 +348,46 @@ describe('an import whose Undo could not be admitted is refused before COMMIT (D
         await expect(prepareNativeBackupDocument(env.adapter, { ...csvInput(), admission: { sourceBytes: 10, maxTransferBytes: 12 * MIB } })).resolves.toMatchObject({ planJSON: expect.any(String) });
     });
 
+    it('admits again inside the document lane: a write queued before it that grows the library past the limit is refused (D1c change 1)', async () => {
+        const env = await open();
+        const grown: AppData = { ...clone(original), tasks: [...clone(original).tasks,
+            ...Array.from({ length: 200 }, (_, index) => task(`grown-${index}`, { description: 'g'.repeat(2048) }))] };
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        // A writer that entered the lane first, and grows the library only after the early check has run.
+        const queued = runSerializedSyncDocumentWriteOperation(async () => { await gate; await env.adapter.saveData(grown); });
+        // A snapshot restore makes no recovery snapshot, so no Undo bound stands in for the lane's own check.
+        const source = input(serializeBackupData(incoming), 'restore');
+        const sourceBytes = strToU8(source.text).length;
+        const maxTransferBytes = await env.adapter.libraryBytes() + sourceBytes + 64 * 1024;
+        const prepared = prepareNativeBackupDocument(env.adapter, { ...source, admission: { sourceBytes, maxTransferBytes } });
+        prepared.catch(() => undefined);
+        release(); await queued;
+        expect(await env.adapter.libraryBytes() + sourceBytes).toBeGreaterThan(maxTransferBytes);
+        await expect(prepared).rejects.toThrow('TOO_LARGE:');
+    });
+
+    it('a snapshot restore freezes the limit as its result library\'s bound: a restore whose library would pass it is refused, data and receipt rolled back (D1c change 1)', async () => {
+        // SQLite keeps rows plus their full-text index, so a restored library can take more pages than its JSON's bytes.
+        const snapshotData: AppData = { ...clone(original), tasks: Array.from({ length: 300 }, (_, index) =>
+            task(`snapshot-${index}`, { title: `alpha beta gamma ${index}`, description: Array.from({ length: 120 }, (_, word) => `w${index}x${word}`).join(' ') })) };
+        const text = serializeBackupData(snapshotData);
+        const sourceBytes = strToU8(text).length;
+        const env = await open();
+        const maxTransferBytes = sourceBytes + await env.adapter.libraryBytes();
+        const prepared = await prepareNativeBackupDocument(env.adapter, { ...input(text, 'restore'), admission: { sourceBytes, maxTransferBytes } });
+        expect(prepared.recoveryJSON).toBeNull();
+        expect(JSON.parse(prepared.planJSON).maxLibraryBytes).toBe(maxTransferBytes);
+        const before = await env.state();
+        await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('TOO_LARGE:');
+        expect(await env.state()).toEqual(before);
+        // The same restore under a roomy limit lands.
+        const roomy = await open();
+        const fits = await prepareNativeBackupDocument(roomy.adapter, { ...input(text, 'restore'), admission: { sourceBytes, maxTransferBytes: 512 * MIB } });
+        await expect(commitNativeBackupDocument(roomy.adapter, reference, fits.planJSON, NAME)).resolves.toMatchObject({ operation: 'restore' });
+        expect(await roomy.adapter.libraryBytes()).toBeGreaterThan(maxTransferBytes);
+    });
+
     it('refuses the 60 000-row CSV whose library would pass 12 MiB, leaving SQLite and the receipts as they were', async () => {
         const rows = Array.from({ length: 60_000 }, (_, index) => `Task ${index}`);
         const text = `Title\n${rows.join('\n')}\n`;

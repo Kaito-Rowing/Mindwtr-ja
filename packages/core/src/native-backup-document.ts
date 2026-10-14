@@ -53,21 +53,26 @@ export type NativeBackupDocumentPrepareInput = {
     text: string; metadata: NativeBackupDocumentMetadata;
     /**
      * A host with a measured memory limit (Android): the picked file's bytes and that limit. The library's bytes are core's
-     * (SQLite pages), so the source and the library are refused together before any parse, and the plan freezes how large
-     * the library may grow while its Undo still fits (`maxLibraryBytes`).
+     * (SQLite pages), so the source and the library are refused together before any parse and again inside the document lane
+     * (a write queued ahead may have grown the library), and the plan freezes how large the library may grow while its Undo
+     * still fits (`maxLibraryBytes`).
      */
     admission?: { sourceBytes: number; maxTransferBytes: number };
 };
 type Plan = {
     version: 1; requestId: string; mode: Operation; preparedAt: string;
     expectedCurrent: AppData; data: AppData; reply: NativeBackupDocumentReply;
-    /** The library's SQLite bytes the commit may leave, its receipt included: the limit less the recovery snapshot's bytes. */
+    /**
+     * The library's SQLite bytes the commit may leave, its receipt included: the limit less the recovery snapshot's bytes, or for a
+     * snapshot restore (no recovery snapshot) the limit itself.
+     */
     maxLibraryBytes?: number;
 };
 class BackupInputError extends Error {}
 function invalid(message = 'Invalid backup document input'): never { throw new BackupInputError(`INVALID_INPUT: ${message}`); }
 function tooLarge(message: string): never { throw new BackupInputError(`TOO_LARGE: ${message}`); }
 const UNDO_TOO_LARGE = 'TOO_LARGE: The imported library would be too large to undo';
+const RESTORE_TOO_LARGE = 'TOO_LARGE: The restored library would exceed the transfer limit';
 function saveFailed(): never { throw new Error('SAVE_FAILED: Backup document outcome could not be verified'); }
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const exact = (value: unknown, fields: string[]): value is Record<string, unknown> => record(value)
@@ -278,9 +283,12 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
     const admitted = admission === undefined ? exact(input, fields) : exact(input, [...fields, 'admission'])
         && exact(admission, ['sourceBytes', 'maxTransferBytes']) && count(admission.sourceBytes) && count(admission.maxTransferBytes);
     if (!admitted || !uuid(input.requestId) || !mode(input.mode) || !snapshot(input.snapshotName)) invalid();
-    if (input.admission && input.admission.sourceBytes + await adapter.libraryBytes() > input.admission.maxTransferBytes) {
-        tooLarge('The selected file and the library exceed the transfer limit');
-    }
+    const admit = async () => {
+        if (input.admission && input.admission.sourceBytes + await adapter.libraryBytes() > input.admission.maxTransferBytes) {
+            tooLarge('The selected file and the library exceed the transfer limit');
+        }
+    };
+    await admit();
     // Parse owned bytes before admission; no untrusted thrown details escape.
     let parsed: ReturnType<typeof parseSource>['data'];
     let csv: ReturnType<typeof parseCsvSource>['parsedData'];
@@ -302,6 +310,8 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
     try {
         return await runSerializedSyncDocumentWriteOperation(async () => {
             await flush();
+            // Again in the lane: a write queued ahead of this one may have grown the library since the first check.
+            await admit();
             // A legacy settings.ai.apiKey (an older build saved it) never reaches the plan, the recovery snapshot or the saved
             // result; the commit's baseline check ignores it the same way (NativeReceiptSqliteAdapter.saveDocumentWithReceipt).
             const raw = await adapter.getData();
@@ -367,6 +377,9 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
             if (input.admission && recoveryJSON !== null) {
                 plan.maxLibraryBytes = input.admission.maxTransferBytes - utf8Bytes(recoveryJSON);
                 if (plan.maxLibraryBytes < 0) tooLarge('The library is too large to undo an import');
+            } else if (input.admission) {
+                // A snapshot restore has no recovery snapshot to admit: its result library itself stays within the limit.
+                plan.maxLibraryBytes = input.admission.maxTransferBytes;
             }
             const planJSON = JSON.stringify(plan);
             if (!withinUtf8Limit(planJSON, MAX_NATIVE_BACKUP_PLAN_BYTES)) invalid('Prepared backup plan exceeds 512 MiB');
@@ -463,7 +476,7 @@ async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: Native
                 if (error instanceof Error && error.message === 'Stale document receipt baseline') {
                     throw new Error('STALE_REVISION: Local data changed after backup preparation');
                 }
-                if (error instanceof Error && error.message === UNDO_LIMIT_EXCEEDED) throw new Error(UNDO_TOO_LARGE);
+                if (error instanceof Error && error.message === UNDO_LIMIT_EXCEEDED) throw new Error(plan.mode === 'restore' ? RESTORE_TOO_LARGE : UNDO_TOO_LARGE);
                 return saveFailed();
             }
             const reply = matchedReply(result.reply, plan);
@@ -476,7 +489,7 @@ async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: Native
         });
     } catch (error) {
         if (error instanceof Error && (error.message === 'STALE_REVISION: Local data changed after backup preparation'
-            || error.message === UNDO_TOO_LARGE
+            || error.message === UNDO_TOO_LARGE || error.message === RESTORE_TOO_LARGE
             || error.message === 'SAVE_FAILED: Backup document was saved but reload failed')) throw error;
         return saveFailed();
     }
