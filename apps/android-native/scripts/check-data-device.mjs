@@ -36,7 +36,7 @@
 // With D1_MEASURE=1 it runs pass D1c's step 0 instead (design §8): every Data workload in every shape at growing sizes, each
 // sampled from before it starts, with the library measured before and after; then the limit data-transfer-limit.mjs proposes,
 // and every workload again at that limit, which must pass. With D1C_PART=deadlines it runs only the DL rows
-// (check-data-deadlines-device.mjs).
+// (D1C_PART=deadlines-1 or deadlines-2: check-data-deadlines-device.mjs, check-data-deadlines2-device.mjs).
 // It clears every debug property it sets, puts rotation back, and leaves the phone on its home screen.
 // Exit 0 = pass, 1 = fail, 2 = refused, 3 = stopped.
 import { execFileSync } from 'node:child_process';
@@ -143,7 +143,8 @@ const pullDb = (label) => {
     return resolve(dir, 'mindwtr.db');
 };
 const sqlite = (file, sql) => {
-    const out = execFileSync('sqlite3', ['-json', file, sql], { encoding: 'utf8' }).trim();
+    // A large library's rows pass spawnSync's 1 MiB default (batch2: ENOBUFS).
+    const out = execFileSync('sqlite3', ['-json', file, sql], { encoding: 'utf8', maxBuffer: 1 << 28 }).trim();
     return out ? JSON.parse(out) : [];
 };
 /** This run's live task titles (the d1… rows), sorted. */
@@ -337,7 +338,7 @@ const libraryFileMiB = () => {
  * core's storage timeout run while it waits. A 30 s per MiB rate (debug budget_ms_per_mib) and a 64 MiB transfer limit keep
  * the windows wide; the budget's base is 120 s.
  */
-const deadlineRows = async () => {
+const deadlineRows = async (part) => {
     const BASE = 120_000;
     const RATE = 30_000;
     const budget = (mib) => BASE + mib * RATE;
@@ -372,139 +373,145 @@ const deadlineRows = async () => {
     };
     const outcomeToast = (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']) || hasText(nodes, en['settings.backupMobile.restoreFailed']);
 
-    // DL1: a merge stopped right after its COMMIT over the large library; the next start's three reads (the recovery load, the
-    // commit's reload, activation's load) each take 60 s: past the old 30 s boot deadline and 15 s storage timeout, within the
-    // library's budget.
-    // A merge's plan holds the library twice, so at 30 s per MiB its frozen budget over the large library would pass the 15-min
-    // ceiling and the merge would be refused before its commit (batch1). 10 s per MiB keeps it admitted, and the library's own
-    // budget still holds three 60 s reads.
-    const DL1_RATE = 10_000;
-    const dl1 = async (name) => {
-        await setup();
-        setProp('budget_ms_per_mib', String(DL1_RATE));
-        await restore(large);
-        await toastWith(en['settings.backupMobile.restoreComplete'], 600_000);
-        setProp('commit_stop', 'backupDocumentCommit');
-        await merge(small);
-        await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 120_000)));
-        // The process ends at its COMMIT; a failure toast instead means the merge never reached it.
-        let refusal = '';
-        await until(`the process to end at its COMMIT (DL1 ${name})`, async () => {
-            if (!pid()) return true;
-            const failed = (await screen().catch(() => [])).find((node) => node.text === en['settings.mergeBackupFailed']);
-            if (failed) refusal = failed.text;
-            return Boolean(refusal);
-        }, 300_000, 500);
-        setProp('commit_stop', '');
-        check(!refusal, `(DL1 ${name}) the merge reached its COMMIT (no "${refusal}" toast)`);
-        check(BASE + libraryFileMiB() * DL1_RATE > 60_000 * 3, '(DL1) the library\'s budget holds the three slow reads');
-        delays(60_000);
-    };
-    await dl1('control');
-    control('pre-d1c');
-    const dl1control = await start(240_000);
-    await device.stopApp();
-    control('');
-    check(!dl1control.inbox, `(DL1 control) with the old deadlines the slow recovery boot never reaches the Inbox (${dl1control.ms} ms)`);
-    const dl1real = await start(900_000);
-    noDelays();
-    check(dl1real.inbox && dl1real.ms > 120_000, `(DL1) the slow recovery boot replays from the receipt and activates, taking ${dl1real.ms} ms, past the old budgets`);
-    await until('(DL1) the journal to empty', () => journal().length === 0, 120_000);
-
-    // DL2: a large restore over a small library; only its reload is slow, longer than the small library's storage budget and
-    // within the budget the commit froze. The control keeps the small library's storage timeout through the reload.
-    for (const name of ['control', 'real']) {
-        await setup();
+    // Two parts (check-data-deadlines-device: DL1-DL2; check-data-deadlines2-device: DL3-DL5), each within the batch's hour.
+    if (part === 1) {
+        // DL1: a merge stopped right after its COMMIT over the large library; the next start's three reads (the recovery load, the
+        // commit's reload, activation's load) each take 60 s: past the old 30 s boot deadline and 15 s storage timeout, within the
+        // library's budget.
+        // A merge's plan holds the library twice, so at 30 s per MiB its frozen budget over the large library would pass the 15-min
+        // ceiling and the merge would be refused before its commit (batch1). 10 s per MiB keeps it admitted, and the library's own
+        // budget still holds three 60 s reads.
+        const DL1_RATE = 10_000;
+        const dl1 = async (name) => {
+            await setup();
+            setProp('budget_ms_per_mib', String(DL1_RATE));
+            await restore(large);
+            await toastWith(en['settings.backupMobile.restoreComplete'], 600_000);
+            setProp('commit_stop', 'backupDocumentCommit');
+            await merge(small);
+            await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 120_000)));
+            // The process ends at its COMMIT; a failure toast instead means the merge never reached it.
+            let refusal = '';
+            await until(`the process to end at its COMMIT (DL1 ${name})`, async () => {
+                if (!pid()) return true;
+                const failed = (await screen().catch(() => [])).find((node) => node.text === en['settings.mergeBackupFailed']);
+                if (failed) refusal = failed.text;
+                return Boolean(refusal);
+            }, 300_000, 500);
+            setProp('commit_stop', '');
+            check(!refusal, `(DL1 ${name}) the merge reached its COMMIT (no "${refusal}" toast)`);
+            check(BASE + libraryFileMiB() * DL1_RATE > 60_000 * 3, '(DL1) the library\'s budget holds the three slow reads');
+            delays(60_000);
+        };
+        await dl1('control');
+        control('pre-d1c');
+        const dl1control = await start(240_000);
         await device.stopApp();
-        await launch();
-        const small0 = budget(libraryFileMiB());
-        const question = await restoreTimed(large);
-        delays(small0 + 60_000, 2);
-        if (name === 'control') control('no-commit-storage');
-        const started = Date.now();
-        await tap(confirmButton(question));
-        const nodes = await waitFor('the restore\'s outcome', outcomeToast, 900_000);
-        const ms = Date.now() - started;
-        noDelays(); control('');
-        if (name === 'control') check(hasText(nodes, en['settings.backupMobile.restoreFailed']), `(DL2 control) with the small library's storage timeout the reload fails (${ms} ms)`);
-        else check(hasText(nodes, en['settings.backupMobile.restoreComplete']) && ms > small0 && rowsLike('dl2', 'd1dll') === large.tasks.length,
-            `(DL2) the large restore lands though its reload took ${ms} ms, past the small library's ${small0} ms`);
-    }
+        control('');
+        check(!dl1control.inbox, `(DL1 control) with the old deadlines the slow recovery boot never reaches the Inbox (${dl1control.ms} ms)`);
+        const dl1real = await start(900_000);
+        noDelays();
+        check(dl1real.inbox && dl1real.ms > 120_000, `(DL1) the slow recovery boot replays from the receipt and activates, taking ${dl1real.ms} ms, past the old budgets`);
+        await until('(DL1) the journal to empty', () => journal().length === 0, 120_000);
 
-    // DL3 (review 4 #18): a large restore stopped with its entry journaled, nothing sent; before the restart the small library is
-    // there and no receipt names the restore. At the start only activation's read is slow (after the recovery load, the
-    // commit's stale check and its reload), longer than the small library's budget, within the large one's.
-    for (const name of ['control', 'real']) {
-        await setup();
-        setProp('journal_stop', 'before:backupDocumentCommit');
-        const question = await restoreTimed(large);
-        await tap(confirmButton(question));
-        await until(`the process to end (DL3 ${name})`, () => !pid(), 300_000, 500);
-        setProp('journal_stop', '');
-        const before = pullDb(`dl3-${name}-before`);
-        check(sqlite(before, "SELECT count(*) AS n FROM tasks WHERE deletedAt IS NULL AND title LIKE 'd1dls%'")[0].n === 200
-            && sqlite(before, `SELECT count(*) AS n FROM native_request_receipts WHERE method LIKE '["backupDocument","replace",%'`)[0].n === 0
-            && journal().length === 1, `(DL3 ${name}) before the restart: the small library, no receipt for the restore, its entry journaled`);
-        const small0 = budget(libraryFileMiB());
-        delays(small0 + 60_000, 3);
-        if (name === 'control') control('no-activation-storage');
-        const result = await start(900_000);
-        await device.stopApp();
-        noDelays(); control('');
-        if (name === 'control') check(!result.inbox, `(DL3 control) with the small library's timeout after the replay, activation never finishes (${result.ms} ms)`);
-        else {
-            check(result.inbox && result.ms > small0, `(DL3) the replay restored the large library and activation finished in ${result.ms} ms, past the small library's ${small0} ms`);
+        // DL2: a large restore over a small library; only its reload is slow, longer than the small library's storage budget and
+        // within the budget the commit froze. The control keeps the small library's storage timeout through the reload.
+        for (const name of ['control', 'real']) {
+            await setup();
+            await device.stopApp();
             await launch();
-            check(rowsLike('dl3-after', 'd1dll') === large.tasks.length && journal().length === 0, '(DL3) the large library is in, the journal empty');
+            const small0 = budget(libraryFileMiB());
+            const question = await restoreTimed(large);
+            delays(small0 + 60_000, 2);
+            if (name === 'control') control('no-commit-storage');
+            const started = Date.now();
+            await tap(confirmButton(question));
+            const nodes = await waitFor('the restore\'s outcome', outcomeToast, 900_000);
+            const ms = Date.now() - started;
+            noDelays(); control('');
+            if (name === 'control') check(hasText(nodes, en['settings.backupMobile.restoreFailed']), `(DL2 control) with the small library's storage timeout the reload fails (${ms} ms)`);
+            else check(hasText(nodes, en['settings.backupMobile.restoreComplete']) && ms > small0 && rowsLike('dl2', 'd1dll') === large.tasks.length,
+                `(DL2) the large restore lands though its reload took ${ms} ms, past the small library's ${small0} ms`);
         }
-    }
 
-    // DL4: an export paused 60 s while it is written: past the old 30 s deadline, within the library's budget.
-    setProp('export_tree', TREE);
-    for (const name of ['control', 'real']) {
-        if (name === 'control') control('fixed-deadlines');
-        setProp('channel_write_delay_ms', '60000');
-        const before = exportsOnPhone();
-        const started = Date.now();
-        await openData();
-        await tap(tagged(await screen(), 'data-transfer-export') ?? fail('no export row'));
-        await useTestFolder();
-        let made = false;
-        try { await until(`the export (DL4 ${name})`, () => exportsOnPhone().some((file) => !before.includes(file) && file.endsWith('.json')), 300_000, 1000); made = true; } catch { /* the control's export fails */ }
-        const ms = Date.now() - started;
-        noDelays(); control('');
-        if (name === 'control') check(!made, `(DL4 control) with the old 30 s deadline the slow export makes no file (${ms} ms)`);
-        else check(made && ms > 60_000, `(DL4) the slow export finished in ${ms} ms, past the old 30 s`);
-        if (!pid()) await launch();
     }
-    setProp('export_tree', '');
+    if (part === 2) {
+        // DL3 (review 4 #18): a large restore stopped with its entry journaled, nothing sent; before the restart the small library is
+        // there and no receipt names the restore. At the start only activation's read is slow (after the recovery load, the
+        // commit's stale check and its reload), longer than the small library's budget, within the large one's.
+        for (const name of ['control', 'real']) {
+            await setup();
+            setProp('journal_stop', 'before:backupDocumentCommit');
+            const question = await restoreTimed(large);
+            await tap(confirmButton(question));
+            await until(`the process to end (DL3 ${name})`, () => !pid(), 300_000, 500);
+            setProp('journal_stop', '');
+            const before = pullDb(`dl3-${name}-before`);
+            check(sqlite(before, "SELECT count(*) AS n FROM tasks WHERE deletedAt IS NULL AND title LIKE 'd1dls%'")[0].n === 200
+                && sqlite(before, `SELECT count(*) AS n FROM native_request_receipts WHERE method LIKE '["backupDocument","replace",%'`)[0].n === 0
+                && journal().length === 1, `(DL3 ${name}) before the restart: the small library, no receipt for the restore, its entry journaled`);
+            const small0 = budget(libraryFileMiB());
+            delays(small0 + 60_000, 3);
+            if (name === 'control') control('no-activation-storage');
+            // The control fails at activation's storage timeout; 600 s holds the real run's slow reads too.
+            const result = await start(name === 'control' ? 600_000 : 900_000);
+            await device.stopApp();
+            noDelays(); control('');
+            if (name === 'control') check(!result.inbox, `(DL3 control) with the small library's timeout after the replay, activation never finishes (${result.ms} ms)`);
+            else {
+                check(result.inbox && result.ms > small0, `(DL3) the replay restored the large library and activation finished in ${result.ms} ms, past the small library's ${small0} ms`);
+                await launch();
+                check(rowsLike('dl3-after', 'd1dll') === large.tasks.length && journal().length === 0, '(DL3) the large library is in, the journal empty');
+            }
+        }
 
-    // DL5: the capture popup's recovery snapshot paused 60 s while it is written: past the old 30 s, within the library's budget.
-    for (const name of ['control', 'real']) {
-        if (name === 'control') control('fixed-deadlines');
-        const titles = [`d1dl5a${name}${run}`, `d1dl5b${name}${run}`];
-        const snapshotsBefore = snapshots();
-        setProp('clipboard', titles.join('\\n'));
-        let nodes = await device.openCapture();
-        await sleep(500);
-        setProp('clipboard', '');
-        await device.focusAtEnd(tagged(nodes, 'capture-title') ?? fail('no capture field'));
-        sh('input keyevent KEYCODE_PASTE');
-        await waitFor('two lines in the field', (current) => (tagged(current, 'capture-title')?.text ?? '') === titles.join('\n'), 10_000);
-        setProp('channel_write_delay_ms', '60000');
-        const confirmTitle = en['quickAdd.bulkConfirmTitle'].replace('{{count}}', '2');
-        nodes = await tapExpecting(button(await screen(), en['common.save']) ?? fail('no Save'), (current) => current.some((node) => node.text === confirmTitle), 'the several-lines question');
-        const started = Date.now();
-        await tap(button(nodes, en['quickAdd.bulkConfirmCreate']) ?? fail('no Create tasks'));
-        let stored = false;
-        try { await until(`the lines (DL5 ${name})`, () => rowsLike(`dl5-${name}`, `d1dl5a${name}`) === 1, 300_000, 5000); stored = true; } catch { /* the control stores nothing */ }
-        const ms = Date.now() - started;
-        noDelays(); control('');
-        const written = snapshots().filter((file) => !snapshotsBefore.includes(file));
-        if (name === 'control') check(!stored && written.length === 0, `(DL5 control) with the old 30 s deadline the slow snapshot fails: no snapshot, no lines (${ms} ms)`);
-        else check(stored && written.length === 1 && ms > 60_000, `(DL5) the slow snapshot was written (${written[0]}) and the lines stored, in ${ms} ms`);
-        await device.stopApp();
-        await launch();
+        // DL4: an export paused 60 s while it is written: past the old 30 s deadline, within the library's budget.
+        setProp('export_tree', TREE);
+        for (const name of ['control', 'real']) {
+            if (name === 'control') control('fixed-deadlines');
+            setProp('channel_write_delay_ms', '60000');
+            const before = exportsOnPhone();
+            const started = Date.now();
+            await openData();
+            await tap(tagged(await screen(), 'data-transfer-export') ?? fail('no export row'));
+            await useTestFolder();
+            let made = false;
+            try { await until(`the export (DL4 ${name})`, () => exportsOnPhone().some((file) => !before.includes(file) && file.endsWith('.json')), 300_000, 1000); made = true; } catch { /* the control's export fails */ }
+            const ms = Date.now() - started;
+            noDelays(); control('');
+            if (name === 'control') check(!made, `(DL4 control) with the old 30 s deadline the slow export makes no file (${ms} ms)`);
+            else check(made && ms > 60_000, `(DL4) the slow export finished in ${ms} ms, past the old 30 s`);
+            if (!pid()) await launch();
+        }
+        setProp('export_tree', '');
+
+        // DL5: the capture popup's recovery snapshot paused 60 s while it is written: past the old 30 s, within the library's budget.
+        for (const name of ['control', 'real']) {
+            if (name === 'control') control('fixed-deadlines');
+            const titles = [`d1dl5a${name}${run}`, `d1dl5b${name}${run}`];
+            const snapshotsBefore = snapshots();
+            setProp('clipboard', titles.join('\\n'));
+            let nodes = await device.openCapture();
+            await sleep(500);
+            setProp('clipboard', '');
+            await device.focusAtEnd(tagged(nodes, 'capture-title') ?? fail('no capture field'));
+            sh('input keyevent KEYCODE_PASTE');
+            await waitFor('two lines in the field', (current) => (tagged(current, 'capture-title')?.text ?? '') === titles.join('\n'), 10_000);
+            setProp('channel_write_delay_ms', '60000');
+            const confirmTitle = en['quickAdd.bulkConfirmTitle'].replace('{{count}}', '2');
+            nodes = await tapExpecting(button(await screen(), en['common.save']) ?? fail('no Save'), (current) => current.some((node) => node.text === confirmTitle), 'the several-lines question');
+            const started = Date.now();
+            await tap(button(nodes, en['quickAdd.bulkConfirmCreate']) ?? fail('no Create tasks'));
+            let stored = false;
+            try { await until(`the lines (DL5 ${name})`, () => rowsLike(`dl5-${name}`, `d1dl5a${name}`) === 1, 300_000, 5000); stored = true; } catch { /* the control stores nothing */ }
+            const ms = Date.now() - started;
+            noDelays(); control('');
+            const written = snapshots().filter((file) => !snapshotsBefore.includes(file));
+            if (name === 'control') check(!stored && written.length === 0, `(DL5 control) with the old 30 s deadline the slow snapshot fails: no snapshot, no lines (${ms} ms)`);
+            else check(stored && written.length === 1 && ms > 60_000, `(DL5) the slow snapshot was written (${written[0]}) and the lines stored, in ${ms} ms`);
+            await device.stopApp();
+            await launch();
+        }
     }
     setProp('budget_ms_per_mib', '');
     setProp('transfer_limit_mb', '');
@@ -896,9 +903,9 @@ try {
     sh(`rm -rf ${PHONE_DIR}`);
     sh(`mkdir -p ${PHONE_DIR}`);
     steps: {
-    if (process.env.D1C_PART === 'deadlines') {
+    if (process.env.D1C_PART === 'deadlines-1' || process.env.D1C_PART === 'deadlines-2') {
         sh('settings put system accelerometer_rotation 0');
-        await deadlineRows();
+        await deadlineRows(process.env.D1C_PART === 'deadlines-1' ? 1 : 2);
         console.log('Settings › Data deadline rows passed');
         break steps;
     }
