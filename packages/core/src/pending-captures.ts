@@ -21,6 +21,7 @@ import { prepareCaptureTask, type CaptureAssemblyInput } from './capture';
 import { normalizeShortcutTags } from './capture-deeplink';
 import { safeParseDate } from './date';
 import { getChecklistEditStatus } from './task-checklist-model';
+import { runStoreCommand } from './store-write-gate';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
 import { buildQuickAddParseOptions, parseQuickAdd } from './quick-add';
 import type { AppData, Area, Person, Project, Task } from './types';
@@ -494,8 +495,18 @@ async function applyPendingDefer(
     return outcome;
 }
 
-/** Resolve against current data; never replace the Watch's old copy of the list. */
-export async function applyPendingChecklist(
+/**
+ * Resolve against current data; never replace the Watch's old copy of the list. One store command reads the task and
+ * writes its list (store-write-gate.ts), so a list a sync save published meanwhile is the one the tick lands on.
+ */
+export function applyPendingChecklist(
+    command: PendingChecklist,
+    deps: Pick<PendingCaptureStoreDeps, 'tasks' | 'getTasks' | 'projects' | 'getProjects' | 'updateTask'>,
+): Promise<string | null> {
+    return runStoreCommand(() => applyPendingChecklistNow(command, deps));
+}
+
+async function applyPendingChecklistNow(
     command: PendingChecklist,
     deps: Pick<PendingCaptureStoreDeps, 'tasks' | 'getTasks' | 'projects' | 'getProjects' | 'updateTask'>,
 ): Promise<string | null> {

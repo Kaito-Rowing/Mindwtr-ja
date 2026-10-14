@@ -9,6 +9,7 @@ import {
     type PendingChecklist,
 } from './pending-captures';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import { runSyncStoreSave } from './store-write-gate';
 import type { AppData, Task } from './types';
 
 // React Native's own tests (apps/mobile/lib/pending-captures.test.ts) replay every
@@ -141,6 +142,22 @@ describe('Watch checklist delivery', () => {
         await drainPendingCaptureQueue(storeDeps(queue.port, { settleWatchChecklist: settle }));
         expect(saved().tasks[0].checklist?.map((item) => item.isCompleted)).toEqual([false, true]);
         expect(settle).toHaveBeenCalledWith(CAPTURE_ID, 'stale');
+    });
+
+    it('ticks the item on the list a sync save published while the delivery waited, keeping its new item', async () => {
+        await openStore([task('shopping', { checklist: [milk] })]);
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const rice = { id: 'rice', title: 'Rice', isCompleted: false };
+        const save = runSyncStoreSave(async () => {
+            await held;
+            useTaskStore.setState((state) => ({ _allTasks: state._allTasks.map((row) => ({ ...row, rev: 3, checklist: [milk, rice] })) }));
+        });
+        const applied = applyPendingChecklist(command(), storeDeps(fakeQueue({}).port));
+        release();
+        await save;
+        expect(await applied).toBe('applied');
+        expect(useTaskStore.getState()._tasksById.get('shopping')?.checklist).toEqual([{ ...milk, isCompleted: true }, rice]);
     });
 
     it('rejects ambiguous, renamed, removed and terminal items', async () => {
