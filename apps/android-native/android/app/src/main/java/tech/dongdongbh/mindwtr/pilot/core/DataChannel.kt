@@ -146,8 +146,12 @@ class DataChannel(private val chunkBytes: Int = CHUNK_BYTES, private val opener:
         return try { reader.next()?.let { "D$it" } ?: "E" } catch (failure: Failure) { drop(handle); throw failure }
     }
 
+    /** Debug-only delay before each write (check-data-device.mjs's export and capture deadline rows, pass D1c). */
+    @Volatile var writeDelayMs = 0L
+
     /** The bridge's `dataWrite`. */
     fun write(handle: String, chunk: String) {
+        if (writeDelayMs > 0) Thread.sleep(writeDelayMs)
         val writer = open[handle] as? Writer ?: throw Failure(HANDLE)
         try { writer.write(chunk) } catch (failure: Failure) { drop(handle); throw failure }
     }

@@ -6,6 +6,23 @@ import java.io.FileOutputStream
 import java.security.MessageDigest
 
 /**
+ * How long Settings › Data's work on [bytes] of library and file may take (pass D1c design §3.4): [baseMs] plus [msPerMiB] for
+ * each started MiB. One budget sizes Android's boot, recovery activation, the storage read, inspect, prepare, export and the
+ * capture snapshot; a backup commit's is frozen into its manifest when it is published and never recomputed.
+ */
+data class BackupBudget(val baseMs: Long, val msPerMiB: Long) {
+    fun ms(bytes: Long): Long = baseMs + (bytes + MIB - 1) / MIB * msPerMiB
+
+    companion object {
+        private const val MIB = 1024L * 1024
+        // Provisional: three times D1a measure2's slowest rate (16 over 16 MiB in 69 s, about 2.2 s per MiB); step 0 sets it.
+        val DEFAULT = BackupBudget(baseMs = 120_000, msPerMiB = 7_000)
+        /** The longest operation a start admits (15 min); a journaled one is never refused for it. */
+        const val MAX_MS = 15 * 60 * 1000L
+    }
+}
+
+/**
  * A restore, merge or import's files between core's prepare and its journaled commit (design D1 §4), under the app's no-backup
  * `backup-operations` folder:
  *
@@ -31,6 +48,8 @@ class BackupOperations(
     class Mismatch(message: String) : IllegalStateException(message)
     /** A plan over the limit [plan] reads back: refused before anything is written, so no journal entry is ever set aside for its size. */
     class PlanTooLarge : java.io.IOException("The prepared plan exceeds the transfer limit")
+    /** An operation whose time budget passes [BackupBudget.MAX_MS]: refused at publish, before its journal entry exists. */
+    class BudgetTooLarge : java.io.IOException("The operation would take too long")
 
     companion object {
         const val METHOD = "backupDocumentCommit"
@@ -94,8 +113,9 @@ class BackupOperations(
      * snapshot the plan's reply names, and [recovery] the bytes and hash of the one this operation published there (null: it
      * wrote none). A file on disk that differs from what the channel wrote publishes nothing ([Mismatch]).
      */
-    fun publish(id: String, mode: String, plan: DataChannel.Closed, snapshotName: String, recovery: DataChannel.Closed?, beforeManifest: () -> Unit = {}): String {
+    fun publish(id: String, mode: String, plan: DataChannel.Closed, snapshotName: String, recovery: DataChannel.Closed?, budgetMs: Long = 0, beforeManifest: () -> Unit = {}): String {
         val pending = pendingPlan(id)
+        if (budgetMs > BackupBudget.MAX_MS) { pending.delete(); throw BudgetTooLarge() }
         // An import can grow far past its file (100 000 short rows): a plan [plan] would refuse at its identity check is refused here.
         if (plan.bytes > maxPlanBytes) { pending.delete(); throw PlanTooLarge() }
         if (!pending.isFile || pending.length() != plan.bytes || sha256(pending) != plan.sha256) throw Mismatch("The prepared plan changed")
@@ -105,6 +125,8 @@ class BackupOperations(
         beforeManifest()
         val manifest = JSONObject().put("version", 1).put("id", id).put("mode", mode)
             .put("planSha256", plan.sha256).put("planBytes", plan.bytes).put("snapshotName", snapshotName)
+        // The commit's deadline, frozen now: its first send and every replay use it (pass D1c review 3 #11).
+        if (budgetMs > 0) manifest.put("budgetMs", budgetMs)
         if (recovery != null) {
             val snapshot = File(snapshots, snapshotName)
             if (!snapshot.isFile || snapshot.length() != recovery.bytes || sha256(snapshot) != recovery.sha256) throw Mismatch("The recovery snapshot is missing or changed")
@@ -138,6 +160,15 @@ class BackupOperations(
         }
         return planFile to planSha256
     }
+
+    /**
+     * Operation [referenceJson]'s commit deadline: the budget frozen in its manifest, or for a manifest published before pass
+     * D1c, [budget] over twice its plan; null when the manifest is unreadable (the identity check then refuses the send).
+     */
+    fun budgetMs(referenceJson: String, budget: BackupBudget): Long? = runCatching {
+        val manifest = manifest(referenceJson)
+        manifest.optLong("budgetMs", 0).takeIf { it > 0 } ?: budget.ms(2 * manifest.getLong("planBytes"))
+    }.getOrNull()
 
     /** The operation's mode from its manifest (for the result record when its plan cannot be sent); null when unreadable. */
     fun mode(referenceJson: String): String? = runCatching { manifest(referenceJson).getString("mode") }.getOrNull()

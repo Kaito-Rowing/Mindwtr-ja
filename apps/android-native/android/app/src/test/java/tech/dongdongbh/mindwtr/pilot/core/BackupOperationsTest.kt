@@ -27,7 +27,7 @@ class BackupOperationsTest {
     /** The production publish after core wrote [planJson] through the channel; [recovery] is the text this operation published. */
     private fun BackupOperations.publishText(id: String, mode: String, planJson: String, snapshotName: String, recovery: String?, beforeManifest: () -> Unit = {}): String {
         pendingPlan(id).writeText(planJson)
-        return publish(id, mode, closed(planJson), snapshotName, recovery?.let(::closed), beforeManifest)
+        return publish(id, mode, closed(planJson), snapshotName, recovery?.let(::closed), beforeManifest = beforeManifest)
     }
     private fun BackupOperations.planText(reference: String, snapshotName: String): String = plan(reference, snapshotName).let { (file, sha) ->
         assertEquals(BackupOperations.sha256(file), sha)
@@ -182,5 +182,53 @@ class BackupOperationsTest {
         assertTrue(open.isFile)
         assertFalse(dead.exists())
         assertFalse(RecoverySnapshots.isName(open.name))
+    }
+
+    private val mib = 1024L * 1024
+
+    // Pass D1c §3.4: one budget, growing with every started MiB.
+    @Test fun theBudgetGrowsWithEachStartedMiB() {
+        val budget = BackupBudget(baseMs = 120_000, msPerMiB = 10_000)
+        assertEquals(120_000L, budget.ms(0))
+        assertEquals(130_000L, budget.ms(1))
+        assertEquals(130_000L, budget.ms(mib))
+        assertEquals(140_000L, budget.ms(mib + 1))
+    }
+
+    // Pass D1c review 3 #16: S 1, L 40, plan 80 MiB at 10 s/MiB is 120 + 10 × 121 = 1,330 s, past the 900 s ceiling: refused at
+    // publish, so no manifest (and so no journal entry) exists to replay.
+    @Test fun anOperationPastTheCeilingIsRefusedBeforeItsManifest() {
+        val budget = BackupBudget(baseMs = 120_000, msPerMiB = 10_000)
+        assertEquals(1_330_000L, budget.ms(121 * mib))
+        val plan = "{\"plan\":1}"
+        ops().pendingPlan(a).writeText(plan)
+        val failure = runCatching { ops().publish(a, "merge", closed(plan), name, recovery = null, budgetMs = budget.ms(121 * mib)) }.exceptionOrNull()
+        assertTrue(failure is BackupOperations.BudgetTooLarge)
+        assertFalse(File(folder.root, "ops/$a/manifest.json").exists())
+        assertFalse(File(folder.root, "ops/$a/plan.json").exists())
+    }
+
+    // Pass D1c review 3 #11/#16: S 1, L 10, plan 20 MiB at 10 s/MiB is 430 s, frozen into the manifest. A replay after the rate
+    // changes to 2 s/MiB (a recompute would give 182 s) still gets 430 s; a D1a manifest gets the budget over twice its plan.
+    @Test fun aReplayKeepsTheBudgetFrozenInItsManifest() {
+        val frozen = BackupBudget(baseMs = 120_000, msPerMiB = 10_000).ms(31 * mib)
+        assertEquals(430_000L, frozen)
+        val plan = "{\"plan\":1}"
+        ops().pendingPlan(a).writeText(plan)
+        val ref = ops().publish(a, "merge", closed(plan), name, recovery = null, budgetMs = frozen)
+        val later = BackupBudget(baseMs = 120_000, msPerMiB = 2_000)
+        assertEquals(182_000L, later.ms(31 * mib))
+        assertEquals(430_000L, ops().budgetMs(ref, later))
+        val old = ops().publishText(b, "merge", plan, name, recovery = null)
+        assertEquals(later.ms(2L * plan.length), ops().budgetMs(old, later))
+        assertNull(ops().budgetMs("{\"id\":\"$b\",\"sha256\":\"${"0".repeat(64)}\",\"byteCount\":3}", later))
+    }
+
+    // Pass D1c review 3 #11: a boot sizes its budget by the database and its write-ahead log, a log larger than the file too.
+    @Test fun theLibrarySizeCountsTheWriteAheadLog() {
+        val db = File(folder.root, "mindwtr.db").apply { writeBytes(ByteArray(4096)) }
+        assertEquals(4096L, libraryFileBytes(db))
+        File(folder.root, "mindwtr.db-wal").writeBytes(ByteArray(3 * 4096 * 4))
+        assertEquals(4096L + 3 * 4096 * 4, libraryFileBytes(db))
     }
 }

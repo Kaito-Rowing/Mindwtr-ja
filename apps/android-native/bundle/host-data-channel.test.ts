@@ -13,8 +13,9 @@ beforeAll(async () => {
     const built = await build({
         stdin: { contents: `
             import './host-entry';
-            import { useTaskStore } from '../../../packages/core/src/store';
-            globalThis.fixture = { touch: () => useTaskStore.setState({ lastDataChangeAt: useTaskStore.getState().lastDataChangeAt + 1 }) };
+            import { getStorageTimeoutMs, useTaskStore } from '../../../packages/core/src/store';
+            globalThis.fixture = { touch: () => useTaskStore.setState({ lastDataChangeAt: useTaskStore.getState().lastDataChangeAt + 1 }),
+                timeout: getStorageTimeoutMs };
         `, resolveDir: import.meta.dir, loader: 'ts' },
         bundle: true, write: false, format: 'iife', target: 'es2022', logLevel: 'silent',
     });
@@ -46,6 +47,7 @@ const fixture = (bundle = source, onSql: (sql: string) => void = () => undefined
             fileList: () => 'null', fileRead: () => '', fileDelete: () => null, hostEvent: () => null,
             // DataChannel.kt's answers: reads 1 MiB of bytes at a time, never splitting a character; strict UTF-8 writes.
             dataRead: (id: string) => {
+                state.onDataRead?.();
                 const handle = handles.get(id);
                 if (!handle?.read) return fail('DATA_HANDLE');
                 if (handle.failRead) return fail(handle.failRead);
@@ -160,5 +162,28 @@ describe('the data channel through the shipped bundle (D1c)', () => {
         const exported = await f.poll(f.state.MindwtrHost.dataExportFile('tasknotes', zip, 512 * 1024 * 1024));
         expect(exported.ok).toBe(true);
         expect(f.written(zip).subarray(0, 2).toString('latin1')).toBe('PK');
+    });
+
+    it('the storage read budget follows the library: boot\'s, an activation\'s after replays, a commit\'s frozen one and the one it leaves', async () => {
+        const budget = JSON.stringify({ baseMs: 1000, msPerMiB: 10, storageTimeoutMs: 4321 });
+        const f = fixture();
+        expect((await f.poll(f.state.MindwtrHost.bootRecovery('', '', 'journaled', budget))).ok).toBe(true);
+        expect(f.state.fixture.timeout()).toBe(4321);
+        expect((await f.poll(f.state.MindwtrHost.resumeActivation())).ok).toBe(true);
+        // The library is under 1 MiB here: one started MiB.
+        expect(f.state.fixture.timeout()).toBe(1010);
+        let during = 0;
+        f.state.onDataRead = () => { during = f.state.fixture.timeout(); };
+        const reference = JSON.stringify({ id: '11111111-1111-4111-8111-111111111111', sha256: 'a'.repeat(64), byteCount: 100 });
+        const plan = f.open({ read: Buffer.from('{}'), failRead: 'DATA_IO' });
+        await f.poll(f.state.MindwtrHost.backupDocumentCommit(reference, plan, 'data.2026-10-04T12-00-00.000.snapshot.json', 77_777));
+        expect(during).toBe(77_777);
+        expect(f.state.fixture.timeout()).toBe(1010);
+    });
+
+    it('a host that sends no budget (iOS) keeps core\'s 15 s', async () => {
+        const f = fixture();
+        expect((await f.poll(f.state.MindwtrHost.boot('', ''))).ok).toBe(true);
+        expect(f.state.fixture.timeout()).toBe(15_000);
     });
 });

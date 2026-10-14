@@ -680,13 +680,13 @@ assert.match(sqliteBridge, /syncFile\(partial\)[\s\S]*?renameTo\(checkpointFile\
     const order = ['val opened = FutureTask {', 'database.ensureRecoveryCheckpoint()', 'val database = { opened.get() }', 'executor.submit(Callable {',
         'install(engine, database)', 'load(engine, database, bundle)', 'opened.run()', 'return onEngine {', '                loading.get()\n                sqlite = database()',
         'activationOwed = pendingBackupIds().isNotEmpty()',
-        '(if (activationOwed) callAsync("bootRecovery", legacyState, legacyBackup, "journaled") else callAsync("boot", legacyState, legacyBackup, "journaled"))'].map((text) => start.indexOf(text));
+        '(if (activationOwed) callAsync("bootRecovery", legacyState, legacyBackup, "journaled", storageBudget(), deadlineMs = bootDeadline)\n                else callAsync("boot", legacyState, legacyBackup, "journaled", storageBudget(), deadlineMs = bootDeadline))'].map((text) => start.indexOf(text));
     assert(order.every((index, i) => index > (i ? order[i - 1] : -1)), `start order ${order}`);
     // Pass D1a: a journaled backup commit boots in recovery (no load maintenance before its replay), and the replay resumes normal
     // activation once its last backup commit has a final reply, before the entries after it.
     assert.match(coreHost, /if \(index == lastBackup && activationOwed\) resumeActivation\(\)/);
     assert.match(coreHost, /if \(owed == null && activationOwed\) resumeActivation\(\)/);
-    assert.match(hostEntry, /bootRecovery\(legacyState: string, legacyBackup: string, writeJournal = ''\): string \{\s*return boot\(legacyState, legacyBackup, true, writeJournal === 'journaled'\);/);
+    assert.match(hostEntry, /bootRecovery\(legacyState: string, legacyBackup: string, writeJournal = '', budgetJSON = ''\): string \{\s*return boot\(legacyState, legacyBackup, true, writeJournal === 'journaled', budgetJSON\);/);
     // Audit C: core's stricter legacy-import preflight runs once the bundle has loaded and before the RN database opens; a
     // refusal closes only the engine (the open never ran, so nothing waits on it).
     const preflight = ['load(engine, database, bundle)', 'if (preflight) {', '                    loading.get()\n', 'answer("legacyCheck", arrayOf(legacyState, legacyBackup)',
@@ -914,10 +914,10 @@ assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'),
 assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /include\(listOf\("AttachmentFileInstallerCoreTest", "AndroidAttachmentInstallerFileOpsTest"\)\.map \{ "test\/java\/\$installer\/\$it\.kt" \}\)/);
 // The Kotlin host journals every write, and says so at boot: core then requires each write's replay tokens. Only this
 // flag sets 'required'; iOS boots and recovers with none (its bootRecovery sends two arguments).
-assert.match(coreHost, /\(if \(activationOwed\) callAsync\("bootRecovery", legacyState, legacyBackup, "journaled"\) else callAsync\("boot", legacyState, legacyBackup, "journaled"\)\)/);
+assert.match(coreHost, /\(if \(activationOwed\) callAsync\("bootRecovery", legacyState, legacyBackup, "journaled", storageBudget\(\), deadlineMs = bootDeadline\)\s+else callAsync\("boot", legacyState, legacyBackup, "journaled", storageBudget\(\), deadlineMs = bootDeadline\)\)/);
 assert.equal(coreHost.match(/"journaled"/g).length, 2);
 assert.match(hostEntry, /setNativeReplayTokens\(journaled \? 'required' : 'optional'\)/);
-assert.match(hostEntry, /bootRecovery\(legacyState: string, legacyBackup: string, writeJournal = ''\): string \{\s*return boot\(legacyState, legacyBackup, true, writeJournal === 'journaled'\);/);
+assert.match(hostEntry, /bootRecovery\(legacyState: string, legacyBackup: string, writeJournal = '', budgetJSON = ''\): string \{\s*return boot\(legacyState, legacyBackup, true, writeJournal === 'journaled', budgetJSON\);/);
 assert.equal(hostEntry.match(/setNativeReplayTokens\(/g).length, 1);
 assert.equal(kotlinFiles.join('\n').match(/LegacyRnStoreGuard\.requireClear\(/g).length, 1);
 assert.match(guard, /private const val DATABASE = "files\/SQLite\/mindwtr\.db"/);
@@ -1146,7 +1146,9 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     const deadline = product(/const val OPERATION_DEADLINE_MS = ([^\n]+)/.exec(coreHost)[1]);
     assert(deadline >= product(/export const DEFAULT_TIMEOUT_MS = ([^;]+);/.exec(coreHttp)[1]) && deadline >= product(/const STORAGE_TIMEOUT_MS = ([^;]+);/.exec(coreStorage)[1]));
     assert.match(coreHost, /const val NETWORK_DEADLINE_MS = HostIo\.CALL_TIMEOUT_MS \+ OPERATION_DEADLINE_MS/);
-    assert.match(coreHost, /private fun callAsync\(method: String, vararg args: Any\?, deadlineMs: Long = deadlineOf\(method, args\.toList\(\)\)\): JSONObject \{/);
+    assert.match(coreHost, /private fun callAsync\(method: String, vararg args: Any\?, deadlineMs: Long = deadline\(method, args\.toList\(\)\)\): JSONObject \{/);
+    // D1c: a backup commit's deadline is the one frozen in its manifest; every other call's is deadlineOf's.
+    assert.match(coreHost, /private fun deadline\(method: String, args: List<Any\?>\): Long =\s+if \(method == BackupOperations\.METHOD\) backups\?\.budgetMs\(args\[0\] as String, budget\) \?: BACKUP_DEADLINE_MS else deadlineOf\(method, args\)/);
     // D9: a nested call (on the engine) pumps until its answer; any other starts its operation in one engine task and is answered
     // from the pump's turns, so it never holds the engine while the operation waits. Past its deadline it is cancelled, drained,
     // or stops the host, as a nested one.
@@ -1170,7 +1172,7 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.equal(/CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(hostIo)[1], /CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(rnClient)[1]);
     assert.match(hostIo, /\.connectTimeout\(CONNECT_TIMEOUT_MS, TimeUnit\.MILLISECONDS\)/);
     assert.match(coreHost, /if \(io\.busy\(\)\) io\.await\(if \(delay < 0\) 25L else minOf\(delay, 25L\)\)\s+else if \(delay > 0\) Thread\.sleep\(minOf\(delay, 25L\)\)/);
-    assert.match(coreHost, /\(if \(activationOwed\) callAsync\("bootRecovery", legacyState, legacyBackup, "journaled"\) else callAsync\("boot", legacyState, legacyBackup, "journaled"\)\)\.also \{ netCheck\(\) \}/);
+    assert.match(coreHost, /\(if \(activationOwed\) callAsync\("bootRecovery", legacyState, legacyBackup, "journaled", storageBudget\(\), deadlineMs = bootDeadline\)\s+else callAsync\("boot", legacyState, legacyBackup, "journaled", storageBudget\(\), deadlineMs = bootDeadline\)\)\.also \{ netCheck\(\) \}/);
     assert.match(coreHost, /val port = debugFault\("net_check"\)\.ifEmpty \{ return \}/, 'the net check is debug-only');
     // RN's network security config (cleartext as RN allows it, user CAs trusted), and the INTERNET permission.
     const rnConfig = /NETWORK_SECURITY_CONFIG_XML = `([\s\S]*?)`;/.exec(readFileSync(resolve(app, '../mobile/plugins/android-network-security-config.js'), 'utf8'))[1];
@@ -1241,9 +1243,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // holds library data. Core's commit is receipted itself (native-backup-document.ts), not a task command.
     const backupCommit = 'backupDocumentCommit';
     assert.deepEqual(shapes[backupCommit], ['{id,sha256}', 'id'], 'the backup commit journals its reference and snapshot name');
-    assert.match(host, /\n    backupDocumentCommit\(referenceJSON: string, planJSON: string, snapshotName: string\): string \{/);
+    assert.match(host, /\n    backupDocumentCommit\(referenceJSON: string, planJSON: string, snapshotName: string, budgetMs\?: number\): string \{/);
     // D1c: the checked plan goes as a read handle whose close checks the same hash again.
-    assert.match(coreHost, /val \(plan, sha256\) = checkNotNull\(backups\)\.plan\(args\[0\] as String, args\[1\] as String\)\s+return arrayOf\(args\[0\], data\.openRead\(plan, expectedSha256 = sha256\), args\[1\]\)/);
+    assert.match(coreHost, /val \(plan, sha256\) = checkNotNull\(backups\)\.plan\(args\[0\] as String, args\[1\] as String\)(?:\s*\/\/[^\n]*)?\s+return arrayOf\(args\[0\], data\.openRead\(plan, expectedSha256 = sha256\), args\[1\], deadline\(method, args\.toList\(\)\)\)/);
     assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes.filter((name) => name !== backupCommit), 'the journal\'s write list is host-entry\'s task commands');
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
     const called = (text) => [...text.matchAll(/contract\.(\w+)\(/g)].map((m) => m[1]);
@@ -1525,7 +1527,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // Replay: in journal order, one at a time, stopped by a kept entry or no reply; at boot after the validated load and the
     // language, before this boot hands the host to any screen (get() waits on the boot); a stop is the screens' owed retry.
     const replayFn = coreHost.slice(coreHost.indexOf('fun replayJournal()'), coreHost.indexOf('private fun journalStop('));
-    assert.match(replayFn, /for \(\(index, entry\) in entries\.withIndex\(\)\) \{[\s\S]*?answerChecked\(entry\.method, entry\.args\.toTypedArray\(\), deadlineOf\(entry\.method, entry\.args\)\)\.also \{\s+val left = if \(entry\.method == BackupOperations\.METHOD\) backupFinish\(entry, entry\.args, it, replay = true\) else settle\(entry, it, replay = true\)\s+if \(left\) dropped \+= 1\s+\}\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
+    assert.match(replayFn, /for \(\(index, entry\) in entries\.withIndex\(\)\) \{[\s\S]*?answerChecked\(entry\.method, entry\.args\.toTypedArray\(\), deadline\(entry\.method, entry\.args\)\)\.also \{\s+val left = if \(entry\.method == BackupOperations\.METHOD\) backupFinish\(entry, entry\.args, it, replay = true\) else settle\(entry, it, replay = true\)\s+if \(left\) dropped \+= 1\s+\}\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
     assert.match(replayFn, /val entries = journal\.pending\(\)/);
     assert.match(replayFn, /Log\.i\(TAG, "Native Android journal replay sent=/);
     assert(coreHost.indexOf('journal = WriteJournal(journalDir') < coreHost.indexOf('engine.evaluate(bundle'));
@@ -2111,7 +2113,7 @@ for (const [fn, js] of [['openQuickCapture', 'captureOpen'], ['quickCaptureView'
     assert.match(coreHost, new RegExp(`fun ${fn}\\([^)]*\\): JSONObject = callAsync\\("${js}"`), `CoreHost.${fn} reaches host method ${js}`);
 }
 // Pass D1c: the capture's snapshot goes through the data channel (captureSnapshotFile), never as text.
-assert.match(coreHost, /fun createQuickCaptureSnapshot\(snapshots: File, protect: \(\) -> Set<String>\): String\? \{[\s\S]{0,400}?callAsync\("captureSnapshotFile", handle\)/);
+assert.match(coreHost, /fun createQuickCaptureSnapshot\(snapshots: File, protect: \(\) -> Set<String>\): String\? \{[\s\S]{0,400}?callAsync\("captureSnapshotFile", handle, deadlineMs = budget\.ms\(libraryFileBytes\(\)\)\)/);
 for (const read of ['captureOpen(): string', 'captureView(json: string): string', 'captureEdit(json: string): string']) {
     assert.match(hostEntry, new RegExp(`${read.replace(/[()]/g, '\\$&')} \\{\\s*return submit\\(async \\(\\) => \\{\\s*requireSaved\\(\\);`), `${read} waits for an owed save`);
 }
@@ -2182,7 +2184,7 @@ assert.match(coreHost, /fun menuCommand\(name: String, json: String\): JSONObjec
 // A project's attachment command copies a picked file, which can outlast the 30 s deadline: it gets a request's deadline, on its
 // first send and on the journal's replay alike, so a slow copy never stops the host (pass A2 review 1).
 assert.match(coreHost, /fun deadlineOf\(method: String, args: List<Any\?>\): Long = when \{\s*method == "menuCommand" && args\.firstOrNull\(\) in ATTACHMENT_COMMANDS -> NETWORK_DEADLINE_MS\s*method == BackupOperations\.METHOD -> BACKUP_DEADLINE_MS\s*else -> OPERATION_DEADLINE_MS\s*\}/);
-assert.match(coreHost, /answerChecked\(entry\.method, entry\.args\.toTypedArray\(\), deadlineOf\(entry\.method, entry\.args\)\)/);
+assert.match(coreHost, /answerChecked\(entry\.method, entry\.args\.toTypedArray\(\), deadline\(entry\.method, entry\.args\)\)/);
 assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)[1].matchAll(/"(\w+)"/g)].map((m) => m[1]),
     [.../val ATTACHMENT_KINDS = setOf\(([^)]*)\)/.exec(source('Attachments.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]), 'CoreHost\'s long-deadline commands are the attachment commands');
 {
@@ -3951,6 +3953,7 @@ export function getStorageAdapter() { return globalThis.adapter; }
 export async function flushPendingSave() { globalThis.events.push('flush'); await globalThis.flushHold;
   if (globalThis.flushError) throw new Error(globalThis.flushError); }
 export const runSerializedSyncDocumentWriteOperation = (operation) => operation();
+export const setStorageTimeoutMs = (ms) => { globalThis.storageTimeouts?.push(ms); };
 export function getPersistenceStatus() { globalThis.onPersistenceStatus?.(); return globalThis.persistenceStatus ||
   { generation: 0, queued: false, inFlight: false, immediate: false, retrying: false, failed: false }; }
 export function isSupportedLanguage(value) { return ['en', 'zh', 'fa', 'de'].includes(value); }
@@ -7427,7 +7430,7 @@ assert.equal((await poll(ready, ready.MindwtrHost.strings('["tab.inbox"]'))).ok,
 const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
 const bootOrder = ['legacyState ? await adapter.getData() : null', 'await importLegacyJson(adapter, loaded,', 'loaded = null;', 'await activateAndVerify(adapter, recoveryLoad)'].map((text) => bootBody.indexOf(text));
 assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `boot order ${bootOrder}`);
-assert.match(hostEntry, /boot\(legacyState: string, legacyBackup: string, writeJournal = ''\): string \{\s*return boot\(legacyState, legacyBackup, false, writeJournal === 'journaled'\);/);
+assert.match(hostEntry, /boot\(legacyState: string, legacyBackup: string, writeJournal = '', budgetJSON = ''\): string \{\s*return boot\(legacyState, legacyBackup, false, writeJournal === 'journaled', budgetJSON\);/);
 const importBody = hostEntry.slice(hostEntry.indexOf('const importLegacyJson'), hostEntry.indexOf('// After a failed save'));
 // The import plans from the boot's own validated read; the adapter caches no document (pass D1c, cut i).
 assert.doesNotMatch(hostEntry, /latestData/);

@@ -72,6 +72,7 @@ import {
     getGeneralSettingsDeviceWrites,
     getPersistenceStatus,
     runSerializedSyncDocumentWriteOperation,
+    setStorageTimeoutMs,
     getNextFutureStartRevealAt,
     compareAppVersions,
     fetchAppStoreInfo,
@@ -235,6 +236,15 @@ const channelWrite = (handle: string, text: string): void => {
 const channelWriteBase64 = (handle: string, text: string): void => {
     const bridge = native();
     for (let start = 0; start < text.length; start += 4 * 256 * 1024) checked(bridge.dataWrite!(handle, text.slice(start, start + 4 * 256 * 1024)));
+};
+/**
+ * Android (pass D1c design §3.4): the storage read budget Kotlin hands its boot (BackupBudget), so each load that follows a
+ * library change (a commit's, an activation's) gets a timeout sized to the library it reads. iOS sends none: core's 15 s.
+ */
+let storageBudget: { baseMs: number; msPerMiB: number } | null = null;
+const sizeStorageTimeout = async (adapter: { libraryBytes(): Promise<number> }): Promise<void> => {
+    if (!storageBudget) return;
+    setStorageTimeoutMs(storageBudget.baseMs + Math.ceil(await adapter.libraryBytes() / (1024 * 1024)) * storageBudget.msPerMiB);
 };
 /** A channel failure's code, or null for any other error. */
 const channelCode = (error: unknown): string | null =>
@@ -1349,7 +1359,12 @@ const activateAndVerify = async (adapter: ValidatedSqliteAdapter, recoveryLoad =
     traceStep('');
     return inbox;
 };
-const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, journaled = false): string => submit(async () => {
+const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, journaled = false, budgetJSON = ''): string => submit(async () => {
+    if (budgetJSON) {
+        const budget = JSON.parse(budgetJSON) as { baseMs: number; msPerMiB: number; storageTimeoutMs: number };
+        storageBudget = { baseMs: budget.baseMs, msPerMiB: budget.msPerMiB };
+        setStorageTimeoutMs(budget.storageTimeoutMs);
+    }
     // A host that journals every write replays it after process death, so each write must carry its replay tokens.
     setNativeReplayTokens(journaled ? 'required' : 'optional');
     const adapter = new ValidatedSqliteAdapter(sqlite, { rejectConcurrentWrites: true });
@@ -1828,21 +1843,23 @@ globalThis.MindwtrHost = {
      * `legacyState` is "" for the dev database; else LegacyRnStoreGuard's reading of RN's AsyncStorage.
      * `writeJournal` is "journaled" from a host that journals every write (Kotlin's WriteJournal); iOS sends nothing.
      */
-    boot(legacyState: string, legacyBackup: string, writeJournal = ''): string {
-        return boot(legacyState, legacyBackup, false, writeJournal === 'journaled');
+    boot(legacyState: string, legacyBackup: string, writeJournal = '', budgetJSON = ''): string {
+        return boot(legacyState, legacyBackup, false, writeJournal === 'journaled', budgetJSON);
     },
     /**
      * Journal recovery: no dynamic load maintenance (a task becoming due, the cleanup interval) before the exact replay, so a
      * journaled backup commit meets the document it was prepared against. iOS sends two arguments; Android's journaling host
      * adds "journaled", as for boot. The host calls resumeActivation after the replay settled.
      */
-    bootRecovery(legacyState: string, legacyBackup: string, writeJournal = ''): string {
-        return boot(legacyState, legacyBackup, true, writeJournal === 'journaled');
+    bootRecovery(legacyState: string, legacyBackup: string, writeJournal = '', budgetJSON = ''): string {
+        return boot(legacyState, legacyBackup, true, writeJournal === 'journaled', budgetJSON);
     },
     /** The native host calls this after durable journal cleanup, before exposing the UI. */
     resumeActivation(): string {
         return submit(async () => {
             if (!bootAdapter) throw new Error('Native recovery adapter unavailable');
+            // The replays may have restored a much larger library: its load gets that library's budget.
+            await sizeStorageTimeout(bootAdapter);
             return activateAndVerify(bootAdapter);
         });
     },
@@ -4320,8 +4337,11 @@ globalThis.MindwtrHost = {
      * text once. A plan that cannot be read keeps the journal entry (SAVE_FAILED: a later start retries, or answers from the
      * receipt); one whose bytes changed after the check is refused like any mismatched operation file.
      */
-    backupDocumentCommit(referenceJSON: string, planJSON: string, snapshotName: string): string {
+    backupDocumentCommit(referenceJSON: string, planJSON: string, snapshotName: string, budgetMs?: number): string {
         return submit(async () => {
+            // Android: the commit's reload (inside core's commit) reads the result within the budget frozen in its manifest;
+            // afterwards the timeout fits the library the commit left, whatever it did.
+            if (typeof budgetMs === 'number' && budgetMs > 0) setStorageTimeoutMs(budgetMs);
             const source = globalThis.__mindwtrHostPlatform === 'android' ? { take: () => {
                 try {
                     const text = channelRead(planJSON);
@@ -4333,7 +4353,11 @@ globalThis.MindwtrHost = {
                     throw error;
                 }
             } } : planJSON;
-            return commitNativeBackupDocument(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof commitNativeBackupDocument>[1], source, snapshotName);
+            try {
+                return await commitNativeBackupDocument(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof commitNativeBackupDocument>[1], source, snapshotName);
+            } finally {
+                if (typeof budgetMs === 'number' && budgetMs > 0) await sizeStorageTimeout(backupAdapter()).catch(() => undefined);
+            }
         });
     },
     backupDocumentOutcome(referenceJSON: string, planJSON: string, snapshotName: string): string {

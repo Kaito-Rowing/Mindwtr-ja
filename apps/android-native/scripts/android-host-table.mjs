@@ -133,7 +133,7 @@ export const KOTLIN_FORWARDING_SITES = [
     { site: 'CoreHost.kt: begin(method, args, deadlineMs, done)', count: 2, why: 'callAsync() hands its own method to its queued write\'s Call' },
     { site: 'CoreHost.kt: Call(method, args, deadlineMs, entry, stop, done)', count: 1, why: 'begin() hands its own method on; Call is private and made only here' },
     { site: 'CoreHost.kt: answerChecked(method, args, deadlineMs)', count: 1, why: 'callAsync()\'s nested path hands its own method on: its callers are literal' },
-    { site: 'CoreHost.kt: answerChecked(entry.method, entry.args.toTypedArray(), deadlineOf(entry.method, entry.args))', count: 1,
+    { site: 'CoreHost.kt: answerChecked(entry.method, entry.args.toTypedArray(), deadline(entry.method, entry.args))', count: 1,
         why: 'the journal replay: an entry replays only under a WriteJournal.SHAPES name (journalReplayMethods, checked against the table)' },
     { site: 'CoreHost.kt: call(call.method, *sent)', count: 1, why: 'start(): a Call\'s method is a val that only begin() sets (its arguments with a backup commit\'s checked plan put in)' },
 ];

@@ -326,7 +326,8 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 check(source.isFile) { "Snapshot file not found." }
                 if (!base64 && source.length() > DataTransferLimits.MAX_BACKUP_SOURCE_BYTES) throw TransferTooLarge()
                 val sourceBytes = source.length()
-                admitTransfer(sourceBytes, runtime.databaseBytes())
+                val libraryBytes = runtime.databaseBytes()
+                admitTransfer(sourceBytes, libraryBytes)
                 val name = snapshot ?: RecoverySnapshots.nextName(snapshots, Date())
                 // The name is protected from every prune before any of this operation's files exist.
                 ops.reserve(requestId, name)
@@ -342,7 +343,9 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 val recovery = prepared.optJSONObject("recovery")?.let(::closed)
                 if (recovery != null) RecoverySnapshots.publish(snapshots, recoveryFile!!, name, recovery.bytes, recovery.sha256)
                 stop("after-snapshot")
-                val reference = ops.publish(requestId, mode, closed(prepared.getJSONObject("plan")), name, recovery) { stop("mid-plan") }
+                val plan = closed(prepared.getJSONObject("plan"))
+                // The commit's deadline is frozen here, before its journal entry; one past the ceiling is refused now, never at a replay.
+                val reference = ops.publish(requestId, mode, plan, name, recovery, budgetMs = runtime.budgetMs(sourceBytes + libraryBytes + plan.bytes)) { stop("mid-plan") }
                 journaled = true
                 val reply = runtime.backupCommit(reference, name)
                 val result = runtime.backupResultModel(reply.toString())
@@ -457,7 +460,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
      * On the calling worker; the toast shows on the main thread and the row's spinner stops.
      */
     private fun fail(runtime: CoreHost, operation: String, failure: Throwable) {
-        val error = if (failure is TransferTooLarge || failure is BackupOperations.PlanTooLarge) "TOO_LARGE" else failure.message ?: ""
+        val error = if (failure is TransferTooLarge || failure is BackupOperations.PlanTooLarge || failure is BackupOperations.BudgetTooLarge) "TOO_LARGE" else failure.message ?: ""
         val model = failureModel(runtime, operation, error)
         shell.ui { finish(); shell.showToast(model.first, model.second, "error", durationMs = 5_200) }
     }

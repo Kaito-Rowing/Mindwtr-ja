@@ -27,6 +27,9 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
+/** [database]'s library bytes as they are on disk now: the database file and its write-ahead log, in full (pass D1c §3.4). */
+internal fun libraryFileBytes(database: File): Long = database.length() + File(database.path + "-wal").length()
+
 /**
  * QuickJS and SQLite share one worker thread; Compose never enters either runtime.
  * [rnDataDir] is set only when [databaseFile] is the React Native app's database:
@@ -244,10 +247,16 @@ class CoreHost(
             try {
                 loading.get()
                 sqlite = database()
+                // Debug builds only (debugProperty is empty in a release): the deadline rows' slow reads and writes (pass D1c).
+                sqlite?.readDelayMs = debugFault("sql_read_delay_ms").toLongOrNull() ?: 0
+                data.writeDelayMs = debugFault("channel_write_delay_ms").toLongOrNull() ?: 0
                 // This host journals every write (WriteJournal), so core requires each write's replay tokens. A journaled backup commit
                 // boots in recovery: no load maintenance runs before its replay, so the document it was prepared against is unchanged.
                 activationOwed = pendingBackupIds().isNotEmpty()
-                (if (activationOwed) callAsync("bootRecovery", legacyState, legacyBackup, "journaled") else callAsync("boot", legacyState, legacyBackup, "journaled")).also { netCheck() }
+                // Sized to the library on disk (its write-ahead log too), so a large one loads within its own budget (pass D1c §3.4).
+                val bootDeadline = budget.ms(libraryFileBytes())
+                (if (activationOwed) callAsync("bootRecovery", legacyState, legacyBackup, "journaled", storageBudget(), deadlineMs = bootDeadline)
+                else callAsync("boot", legacyState, legacyBackup, "journaled", storageBudget(), deadlineMs = bootDeadline)).also { netCheck() }
             } catch (failure: Throwable) {
                 if (sqlite == null) runCatching { database().close() }
                 closeOnEngine()
@@ -270,7 +279,8 @@ class CoreHost(
     private fun sendArgs(method: String, args: Array<out Any?>): Array<out Any?> {
         if (method != BackupOperations.METHOD) return args
         val (plan, sha256) = checkNotNull(backups).plan(args[0] as String, args[1] as String)
-        return arrayOf(args[0], data.openRead(plan, expectedSha256 = sha256), args[1])
+        // The frozen budget goes too: core gives the commit's reload the same storage budget (pass D1c review 2 #1).
+        return arrayOf(args[0], data.openRead(plan, expectedSha256 = sha256), args[1], deadline(method, args.toList()))
     }
 
     /**
@@ -543,7 +553,7 @@ class CoreHost(
         val written = File(snapshots, ".capture-${java.util.UUID.randomUUID()}.pending")
         val handle = data.openWrite(written)
         try {
-            val snapshot = callAsync("captureSnapshotFile", handle).optJSONObject("snapshot") ?: return null.also { written.delete() }
+            val snapshot = callAsync("captureSnapshotFile", handle, deadlineMs = budget.ms(libraryFileBytes())).optJSONObject("snapshot") ?: return null.also { written.delete() }
             return RecoverySnapshots.publishCapture(snapshots, written, snapshot.getString("fileName"), protect)
         } finally { data.drop(handle) }
     }
@@ -554,7 +564,7 @@ class CoreHost(
      */
     fun dataExport(format: String, file: File, maxBytes: Long): JSONObject {
         val handle = data.openWrite(file, base64 = format == "tasknotes")
-        try { return callAsync("dataExportFile", format, handle, maxBytes, deadlineMs = BACKUP_DEADLINE_MS) }
+        try { return callAsync("dataExportFile", format, handle, maxBytes, deadlineMs = budget.ms(libraryFileBytes())) }
         finally { data.drop(handle) }
     }
 
@@ -770,12 +780,32 @@ class CoreHost(
     val data = DataChannel()
 
     /**
+     * Settings › Data's time budget (BackupBudget, pass D1c §3.4). Debug builds only: `debug.mindwtr.native.budget_ms_per_mib`
+     * replaces its per-MiB rate (the deadline checks of check-data-device.mjs).
+     */
+    private val budget: BackupBudget get() = debugFault("budget_ms_per_mib").toLongOrNull()?.takeIf { it > 0 }
+        ?.let { BackupBudget.DEFAULT.copy(msPerMiB = it) } ?: BackupBudget.DEFAULT
+
+    /** [bytes]' budget (an operation's file and library), for the deadline a backup commit freezes into its manifest. */
+    fun budgetMs(bytes: Long): Long = budget.ms(bytes)
+
+    private fun libraryFileBytes(): Long = libraryFileBytes(databaseFile)
+
+    /** [method]'s deadline: a backup commit's is the one frozen in its manifest, on its first send and every replay alike. */
+    private fun deadline(method: String, args: List<Any?>): Long =
+        if (method == BackupOperations.METHOD) backups?.budgetMs(args[0] as String, budget) ?: BACKUP_DEADLINE_MS else deadlineOf(method, args)
+
+    /** The storage read budget host-entry sizes its loads by (Android only; iOS keeps core's 15 s). */
+    private fun storageBudget(): String = JSONObject().put("baseMs", budget.baseMs).put("msPerMiB", budget.msPerMiB)
+        .put("storageTimeoutMs", budget.ms(libraryFileBytes())).toString()
+
+    /**
      * Settings › Data: core's preview of the staged copy [file] ([format] "json", "json-restore", or an importer's, whose bytes
      * go as base64 [base64]), read through the data channel; it writes nothing.
      */
     fun backupInspect(file: File, base64: Boolean, metadataJson: String, format: String): JSONObject {
         val handle = data.openRead(file, base64)
-        try { return callAsync("backupDocumentInspectFile", handle, metadataJson, format, deadlineMs = BACKUP_DEADLINE_MS) }
+        try { return callAsync("backupDocumentInspectFile", handle, metadataJson, format, deadlineMs = budget.ms(file.length() + libraryFileBytes())) }
         finally { data.drop(handle) }
     }
 
@@ -790,7 +820,7 @@ class CoreHost(
             val sourceHandle = data.openRead(source, base64).also(handles::add)
             val recoveryHandle = recovery?.let { data.openWrite(it, capBytes = maxRecoveryBytes) }?.also(handles::add) ?: ""
             val planHandle = data.openWrite(plan, capBytes = maxPlanBytes).also(handles::add)
-            return callAsync("backupDocumentPrepareFile", sourceHandle, inputJson, recoveryHandle, planHandle, deadlineMs = BACKUP_DEADLINE_MS)
+            return callAsync("backupDocumentPrepareFile", sourceHandle, inputJson, recoveryHandle, planHandle, deadlineMs = budget.ms(source.length() + libraryFileBytes()))
         } finally { handles.forEach(data::drop) }
     }
 
@@ -941,7 +971,7 @@ class CoreHost(
      * answers at once when it ended in that turn; otherwise the operation goes on in the pump's turns ([pollCalls]), and the
      * host calls queued meanwhile run between them. A caller on the engine thread (a nested call) pumps until its answer.
      */
-    private fun callAsync(method: String, vararg args: Any?, deadlineMs: Long = deadlineOf(method, args.toList())): JSONObject {
+    private fun callAsync(method: String, vararg args: Any?, deadlineMs: Long = deadline(method, args.toList())): JSONObject {
         val done = CompletableFuture<JSONObject>()
         val wait = {
             try { done.get() } catch (failure: ExecutionException) { throw failure.cause ?: failure }
@@ -1211,7 +1241,8 @@ class CoreHost(
 
     /** The recovery boot's normal activation (host-entry resumeActivation), once its backup commits settled. Engine thread. */
     private fun resumeActivation() {
-        val result = answer("resumeActivation", emptyArray(), OPERATION_DEADLINE_MS)
+        // The library its replays left, read again: activation loads it (pass D1c review 3 #15).
+        val result = answer("resumeActivation", emptyArray(), budget.ms(libraryFileBytes()))
         if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
         activationOwed = false
         Log.i(TAG, "Native Android recovery boot activation resumed")
@@ -1249,7 +1280,7 @@ class CoreHost(
             sent += 1
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             val error = try {
-                answerChecked(entry.method, entry.args.toTypedArray(), deadlineOf(entry.method, entry.args)).also {
+                answerChecked(entry.method, entry.args.toTypedArray(), deadline(entry.method, entry.args)).also {
                     val left = if (entry.method == BackupOperations.METHOD) backupFinish(entry, entry.args, it, replay = true) else settle(entry, it, replay = true)
                     if (left) dropped += 1
                 }.error()
