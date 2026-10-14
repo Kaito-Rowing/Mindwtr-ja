@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const zhHans: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "请选择设为“顺序 → 按分区”的目标项目。新分区保留任务顺序，其他分区仍可独立推进。",
     'timeline.moveTaskDates': "移动任务日期",
     'timeline.moveProjectDates': "移动项目日期",
     'timeline.resizeStart': "调整开始日期",

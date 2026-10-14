@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const csOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "Vyberte cílový projekt s nastavením Sekvenční → V rámci sekcí. Nová sekce zachová pořadí úkolů; ostatní sekce mohou pokračovat nezávisle.",
     'timeline.moveTaskDates': "Posunout data úkolu",
     'timeline.moveProjectDates': "Posunout data projektu",
     'timeline.resizeStart': "Upravit datum začátku",

@@ -2,6 +2,7 @@
 // translation contributions easier. Every English key is translated here (mode: overrides,
 // floor: all), so new English UI copy cannot silently fall back in Spanish.
 export const esOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "Elige un proyecto de destino configurado como Secuencial → Dentro de secciones. La nueva sección conserva su secuencia de tareas; las demás siguen avanzando de forma independiente.",
     'timeline.moveTaskDates': "Mover fechas de la tarea",
     'timeline.moveProjectDates': "Mover fechas del proyecto",
     'timeline.resizeStart': "Ajustar fecha de inicio",

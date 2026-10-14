@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const hiOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "क्रमिक → अनुभागों के भीतर पर सेट गंतव्य प्रोजेक्ट चुनें। नया अनुभाग कार्यों का क्रम बनाए रखता है; अन्य अनुभाग स्वतंत्र रूप से आगे बढ़ते हैं।",
     'timeline.moveTaskDates': "कार्य की तारीखें बदलें",
     'timeline.moveProjectDates': "परियोजना की तारीखें बदलें",
     'timeline.resizeStart': "आरंभ तारीख समायोजित करें",

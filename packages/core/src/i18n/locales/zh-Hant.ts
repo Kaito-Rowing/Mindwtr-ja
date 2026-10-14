@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const zhHant: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "請選擇設為「循序 → 按分區」的目標專案。新分區保留任務順序，其他分區仍可獨立推進。",
     'timeline.moveTaskDates': "移動任務日期",
     'timeline.moveProjectDates': "移動專案日期",
     'timeline.resizeStart': "調整開始日期",

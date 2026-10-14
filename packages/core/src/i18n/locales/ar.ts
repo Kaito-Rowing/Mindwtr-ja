@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const arOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "اختر مشروع وجهة مضبوطًا على متسلسل ← داخل الأقسام. يحتفظ القسم الجديد بتسلسل المهام، وتواصل الأقسام الأخرى التقدم بشكل مستقل.",
     'timeline.moveTaskDates': "نقل تواريخ المهمة",
     'timeline.moveProjectDates': "نقل تواريخ المشروع",
     'timeline.resizeStart': "تعديل تاريخ البدء",

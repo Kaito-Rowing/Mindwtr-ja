@@ -10,6 +10,7 @@
 //   パーサのコマンドトークン (/due:, @context, #tag, +Project…) は英語のまま。
 // - 数値プレースホルダは詰める ({{count}}件)、英単語は前後に半角スペースを入れる (Dropbox に接続)。
 export const jaOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "「順次 → セクションごと」に設定した移動先プロジェクトを選んでください。新しいセクションはタスクの順序を維持し、他のセクションは独立して進められます。",
     'timeline.moveTaskDates': "タスクの日付を移動",
     'timeline.moveProjectDates': "プロジェクトの日付を移動",
     'timeline.resizeStart': "開始日を調整",

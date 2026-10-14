@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const deOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "Wähle ein Zielprojekt mit Sequenziell → Innerhalb von Abschnitten. Der neue Abschnitt behält seine Aufgabenreihenfolge; andere Abschnitte können unabhängig fortfahren.",
     'timeline.moveTaskDates': "Aufgabendaten verschieben",
     'timeline.moveProjectDates': "Projektdaten verschieben",
     'timeline.resizeStart': "Startdatum anpassen",

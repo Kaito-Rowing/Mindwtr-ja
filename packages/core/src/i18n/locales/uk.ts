@@ -1,5 +1,6 @@
 // Ukrainian app strings. Keep placeholders and slash-command syntax in sync with en.ts.
 export const ukOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "Виберіть цільовий проєкт із режимом Послідовний → В межах розділів. Новий розділ зберігає послідовність завдань; інші розділи продовжують роботу незалежно.",
     'timeline.moveTaskDates': "Зсунути дати завдання",
     'timeline.moveProjectDates': "Зсунути дати проєкту",
     'timeline.resizeStart': "Змінити дату початку",

@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const faOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "پروژهٔ مقصد را با حالت ترتیبی ← درون بخش‌ها انتخاب کنید. بخش جدید ترتیب کارها را حفظ می‌کند و بخش‌های دیگر مستقل پیش می‌روند.",
     'timeline.moveTaskDates': "جابه‌جایی تاریخ‌های کار",
     'timeline.moveProjectDates': "جابه‌جایی تاریخ‌های پروژه",
     'timeline.resizeStart': "تنظیم تاریخ شروع",

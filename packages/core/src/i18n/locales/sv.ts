@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const svOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "Välj ett målprojekt med Sekventiellt → Inom sektioner. Den nya sektionen behåller uppgifternas ordning; övriga sektioner kan fortsätta oberoende.",
     'timeline.moveTaskDates': "Flytta uppgiftens datum",
     'timeline.moveProjectDates': "Flytta projektets datum",
     'timeline.resizeStart': "Justera startdatum",

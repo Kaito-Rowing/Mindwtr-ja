@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ruOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "Выберите целевой проект с режимом Последовательный → Внутри разделов. Новый раздел сохранит последовательность задач; другие разделы продолжат работу независимо.",
     'timeline.moveTaskDates': "Сдвинуть даты задачи",
     'timeline.moveProjectDates': "Сдвинуть даты проекта",
     'timeline.resizeStart': "Изменить дату начала",

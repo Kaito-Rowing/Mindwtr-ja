@@ -939,6 +939,7 @@ export const en: Record<string, string> = {
         'projects.convertNavigationFailed': 'Converted, but could not change the Area filter.',
         'projects.convertBlocked.missing-source': 'Project no longer exists.',
         'projects.convertBlocked.source-inactive': 'Only active projects can be converted.',
+        'projects.convertBlocked.destination-section-sequence': 'Choose a destination set to Sequential → Within sections. The new section keeps its task sequence; other sections keep progressing independently.',
         'projects.convertBlocked.source-sequential': 'Switch this project to Parallel first.',
         'projects.convertBlocked.source-sections': 'Move or remove this project’s sections first.',
         'projects.convertBlocked.source-attachments': 'Remove this project’s attachments first.',

@@ -1,5 +1,6 @@
 // Danish translation. Keep at full key parity with en.ts.
 export const daOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "Vælg et destinationsprojekt med Sekventiel → Indenfor sektioner. Den nye sektion bevarer opgavernes rækkefølge; andre sektioner kan fortsætte uafhængigt.",
     'timeline.moveTaskDates': "Flyt opgavens datoer",
     'timeline.moveProjectDates': "Flyt projektets datoer",
     'timeline.resizeStart': "Juster startdato",

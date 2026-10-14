@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const trOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "Sıralı → Bölümler içinde olarak ayarlanmış bir hedef proje seçin. Yeni bölüm görev sırasını korur; diğer bölümler bağımsız ilerlemeye devam eder.",
     'timeline.moveTaskDates': "Görev tarihlerini taşı",
     'timeline.moveProjectDates': "Proje tarihlerini taşı",
     'timeline.resizeStart': "Başlangıç tarihini ayarla",

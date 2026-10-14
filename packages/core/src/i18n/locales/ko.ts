@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const koOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "순차 → 섹션별로 설정된 대상 프로젝트를 선택하세요. 새 섹션은 작업 순서를 유지하고 다른 섹션은 독립적으로 진행됩니다.",
     'timeline.moveTaskDates': "작업 날짜 이동",
     'timeline.moveProjectDates': "프로젝트 날짜 이동",
     'timeline.resizeStart': "시작일 조정",

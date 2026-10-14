@@ -2,6 +2,7 @@
 // translation contributions easier. Every English key is translated here (mode: overrides,
 // floor: all), so new English UI copy cannot silently fall back in Hungarian.
 export const huOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "Válassz Szekvenciális → Szakaszokon belül beállítású célprojektet. Az új szakasz megőrzi a feladatok sorrendjét, a többi szakasz egymástól függetlenül haladhat.",
     'timeline.moveTaskDates': "Feladat dátumainak mozgatása",
     'timeline.moveProjectDates': "Projekt dátumainak mozgatása",
     'timeline.resizeStart': "Kezdődátum módosítása",

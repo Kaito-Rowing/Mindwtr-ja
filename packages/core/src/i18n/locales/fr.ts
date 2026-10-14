@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const frOverrides: Record<string, string> = {
+    "projects.convertBlocked.destination-section-sequence": "Choisissez un projet de destination réglé sur Séquentiel → Dans les sections. La nouvelle section conserve l’ordre des tâches ; les autres sections continuent indépendamment.",
     'timeline.moveTaskDates': "Déplacer les dates de la tâche",
     'timeline.moveProjectDates': "Déplacer les dates du projet",
     'timeline.resizeStart': "Ajuster la date de début",
