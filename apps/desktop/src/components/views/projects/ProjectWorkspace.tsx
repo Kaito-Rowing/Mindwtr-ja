@@ -48,7 +48,7 @@ import { cn } from '../../../lib/utils';
 import { reportError } from '../../../lib/report-error';
 import { showUndoToast } from '../../../lib/undo-registry';
 import { useMiddleMousePan } from './use-column-pan';
-import { useProjectAttachmentActions } from './useProjectAttachmentActions';
+import { appendProjectAttachments, useProjectAttachmentActions } from './useProjectAttachmentActions';
 import { useProjectSectionActions } from './useProjectSectionActions';
 import { useProjectWorkspaceStore } from './useProjectWorkspaceStore';
 import { ProjectDetailsHeader } from './ProjectDetailsHeader';
@@ -1631,7 +1631,6 @@ export function ProjectWorkspace({
         t,
         selectedProject,
         readOnly: isArchivedProject,
-        updateProject,
     });
 
     const selectedProjectAreaLabel = (() => {
@@ -2064,9 +2063,7 @@ export function ProjectWorkspace({
                         createdAt: now,
                         updatedAt: now,
                     }));
-                    updateProject(current.id, {
-                        attachments: [...(current.attachments || []), ...attachments],
-                    });
+                    void appendProjectAttachments(current.id, attachments);
                     setShowLinkPrompt(false);
                 }}
             />
