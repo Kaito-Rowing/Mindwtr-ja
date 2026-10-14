@@ -889,9 +889,12 @@ try {
     // it is copied: core's limit text, no copy left.
     const big = binary(`d1-big-${run}.csv`, Buffer.alloc(16 * 1024 * 1024 + 1, 'x'));
     push(big);
+    // A transfer limit above 16 MiB (code review P3): only the import's own staging cap can refuse this file here.
+    setProp('transfer_limit_mb', '32');
     await importPick('mindwtr-csv', big);
     await waitFor('the limit refusal', (current) => hasText(current, en['settings.backupMobile.importFailed']) && hasText(current, en['settings.importDiagnostics.limitExceeded']), 60_000);
-    check(staged().length === 0 && !confirmButton(await screen()), '(I3) a 16 MiB + 1 byte file is refused while copied, with core\'s limit text and no staged copy');
+    setProp('transfer_limit_mb', '');
+    check(staged().length === 0 && !confirmButton(await screen()), '(I3) under a 32 MiB transfer limit, a 16 MiB + 1 byte import is refused while copied, with core\'s limit text and no staged copy');
     sh(`rm -f ${PHONE_DIR}/${big.name}`);
 
     // I4: a Todoist import stopped before the journal; then one stopped right after its COMMIT. Each time the files are read
