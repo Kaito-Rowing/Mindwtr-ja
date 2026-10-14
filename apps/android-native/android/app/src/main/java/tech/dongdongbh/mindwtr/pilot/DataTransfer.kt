@@ -44,6 +44,8 @@ object DataTransferLimits {
     internal const val LIMIT_BYTES = 12L * 1024 * 1024
     /** Core's MAX_BACKUP_SOURCE_BYTES: a picked JSON backup alone. */
     const val MAX_BACKUP_SOURCE_BYTES = 128L * 1024 * 1024
+    /** Core's DEFAULT_IMPORT_SOURCE_LIMITS.maxInputBytes: an import's picked file alone. */
+    const val MAX_IMPORT_SOURCE_BYTES = 16L * 1024 * 1024
 
     /** The limit; debug builds only: `debug.mindwtr.native.transfer_limit_mb` raises it for the measurement run. */
     val MAX_DATA_TRANSFER_BYTES: Long get() = debugProperty("transfer_limit_mb").toLongOrNull()?.takeIf { it > 0 }?.let { it * 1024 * 1024 } ?: LIMIT_BYTES
@@ -244,7 +246,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         // Core's operation for RN's failure title: Restore failed, Merge failed, or Import failed.
         val operation = importMode ?: if (mode == "merge") "merge" else "replace"
         whenHosted { runtime ->
-            val stage = try { stage(uri) } catch (failure: Throwable) {
+            val stage = try { stage(uri, import = importMode != null) } catch (failure: Throwable) {
                 Log.w(CoreHost.TAG, "Backup stage failed ${failureForLog(failure)}")
                 fail(runtime, operation, failure)
                 return@whenHosted
@@ -427,11 +429,11 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     private class Stage(val file: File, val metadata: JSONObject)
 
     /** RN's picker copy (copyToCacheDirectory) as a private file: its bytes counted while copied, stopped past the limit. */
-    private fun stage(uri: Uri): Stage {
+    private fun stage(uri: Uri, import: Boolean): Stage {
         val (name, modified) = details(uri)
         val file = StagedCopies.create(staging)
         try {
-            (resolver.openInputStream(uri) ?: throw IOException("The selected file cannot be read")).use { input -> copyBounded(input, file, stageLimit()) }
+            (resolver.openInputStream(uri) ?: throw IOException("The selected file cannot be read")).use { input -> copyBounded(input, file, stageLimit(import)) }
         } catch (failure: Throwable) {
             StagedCopies.release(file)
             throw failure
@@ -608,8 +610,12 @@ internal fun admitTransfer(sourceBytes: Long, libraryBytes: Long) {
     if (sourceBytes + libraryBytes > DataTransferLimits.MAX_DATA_TRANSFER_BYTES) throw TransferTooLarge()
 }
 
-/** The staged copy's own bound: the transfer limit, and core's source limit for a JSON backup. */
-internal fun stageLimit(): Long = minOf(DataTransferLimits.MAX_DATA_TRANSFER_BYTES, DataTransferLimits.MAX_BACKUP_SOURCE_BYTES)
+/**
+ * The staged copy's own bound: the transfer limit, and core's source limit: 128 MiB for a JSON backup, 16 MiB for an [import]'s
+ * file (RN's 53128f68a; pass D1c §3.5: once the transfer limit passes 16 MiB, this is the import's only bound before core).
+ */
+internal fun stageLimit(import: Boolean = false, transferLimit: Long = DataTransferLimits.MAX_DATA_TRANSFER_BYTES): Long =
+    minOf(transferLimit, if (import) DataTransferLimits.MAX_IMPORT_SOURCE_BYTES else DataTransferLimits.MAX_BACKUP_SOURCE_BYTES)
 
 /**
  * The picked files' private copies (`no_backup/backup-import`). A copy is live from its creation until its question closes or

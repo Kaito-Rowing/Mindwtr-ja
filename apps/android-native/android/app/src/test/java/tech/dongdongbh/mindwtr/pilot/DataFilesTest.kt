@@ -36,6 +36,18 @@ class DataFilesTest {
         assertEquals(100L, out.length())
     }
 
+    // Pass D1c §3.5 (RN 53128f68a): an import's file is capped at core's 16 MiB even when the transfer limit is larger; a JSON
+    // backup at core's 128 MiB.
+    @Test fun anImportPickIsCappedAtSixteenMiBWhateverTheTransferLimit() {
+        val mib = 1024L * 1024
+        assertEquals(16 * mib, stageLimit(import = true, transferLimit = 64 * mib))
+        assertEquals(12 * mib, stageLimit(import = true, transferLimit = 12 * mib))
+        assertEquals(64 * mib, stageLimit(import = false, transferLimit = 64 * mib))
+        assertEquals(128 * mib, stageLimit(import = false, transferLimit = 256 * mib))
+        val refused = runCatching { copyBounded(ByteArrayInputStream(ByteArray((16 * mib + 1).toInt())), File(folder.root, "import"), stageLimit(import = true, transferLimit = 64 * mib)) }
+        assertTrue(refused.exceptionOrNull() is TransferTooLarge)
+    }
+
     private val library = 4L * 1024 * 1024
     private fun stagedCopy(bytes: ByteArray) = StagedCopies.create(File(folder.root, "backup-import")).apply { writeBytes(bytes) }
 
