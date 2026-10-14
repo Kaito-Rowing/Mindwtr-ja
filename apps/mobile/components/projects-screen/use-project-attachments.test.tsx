@@ -2,7 +2,7 @@ import React from 'react';
 import { Alert } from 'react-native';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type Attachment, type Project } from '@mindwtr/core';
+import { runStoreCommand, runSyncStoreSave, type Attachment, type Project } from '@mindwtr/core';
 import * as DocumentPicker from 'expo-document-picker';
 
 import { useProjectAttachments } from './use-project-attachments';
@@ -112,16 +112,21 @@ type HarnessApi = {
   replaceProject: (project: Project) => void;
 };
 
-function Harness({ expose, initial }: {
+function Harness({ expose, initial, gated = false }: {
   expose: React.MutableRefObject<HarnessApi | null>;
   initial: Project;
+  /** updateProject as the store runs it: a command behind the write gate (store-write-gate.ts). */
+  gated?: boolean;
 }) {
   const [selectedProject, setSelectedProject] = React.useState<Project | null>(initial);
   const updateProject = React.useCallback((id: string, updates: Partial<Project>) => {
-    coreStoreState._allProjects = coreStoreState._allProjects.map((project) => (
-      project.id === id ? { ...project, ...updates } : project
-    ));
-  }, []);
+    const apply = () => {
+      coreStoreState._allProjects = coreStoreState._allProjects.map((project) => (
+        project.id === id ? { ...project, ...updates } : project
+      ));
+    };
+    return gated ? runStoreCommand(async () => apply()) : apply();
+  }, [gated]);
   const hook = useProjectAttachments({
     selectedProject,
     setSelectedProject,
@@ -200,6 +205,37 @@ describe('useProjectAttachments download settlement', () => {
     expect(coreStoreState._allProjects[0]).toEqual(saved);
     vi.mocked(Alert.alert).mock.calls.at(-1)![2]!.find((button) => button.text === 'Copy link')!.onPress!();
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(uri);
+    act(() => tree.unmount());
+  });
+
+  it('keeps a sibling a sync save published while the download waited, when the completion lands behind that save', async () => {
+    const attachment = makeAttachment(1);
+    const project = makeProject(attachment);
+    coreStoreState._allProjects = [project];
+    const download = deferred<{ status: 'available'; attachment: Attachment }>();
+    availabilityMock.ensureAttachmentAvailableDetailed.mockReturnValue(download.promise);
+    const expose = React.createRef<HarnessApi | null>();
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<Harness expose={expose} initial={project} gated />); });
+
+    let pending!: Promise<void>;
+    await act(async () => { pending = expose.current!.downloadAttachment(attachment); });
+    await vi.waitFor(() => expect(availabilityMock.ensureAttachmentAvailableDetailed).toHaveBeenCalled());
+    const sibling = makeAttachment(1, { id: 'attachment-2', title: 'Other device.pdf', cloudKey: 'attachments/attachment-2.pdf' });
+    const releaseSave = deferred<void>();
+    // Another device's sibling: the sync save holds the gate, then publishes revision 3 [A, B].
+    const save = runSyncStoreSave(async () => {
+      await releaseSave.promise;
+      coreStoreState._allProjects = [{ ...coreStoreState._allProjects[0], rev: 3, attachments: [...coreStoreState._allProjects[0].attachments!, sibling] }];
+    });
+    download.resolve({ status: 'available', attachment: { ...attachment, uri: 'file:///managed/attachment-1', localStatus: 'available' } });
+    for (let tick = 0; tick < 5; tick += 1) await Promise.resolve();
+    releaseSave.resolve();
+    await act(async () => { await save; await pending; });
+
+    expect(coreStoreState._allProjects[0].attachments!.map((item) => [item.id, item.localStatus])).toEqual([
+      ['attachment-1', 'available'], ['attachment-2', 'missing'],
+    ]);
     act(() => tree.unmount());
   });
 

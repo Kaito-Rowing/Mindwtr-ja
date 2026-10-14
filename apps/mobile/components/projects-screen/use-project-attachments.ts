@@ -15,6 +15,7 @@ import {
   planAttachmentOpen,
   Project,
   resolveAttachmentAvailability,
+  runStoreCommand,
   softDeleteAttachment,
   type AttachmentResolution,
   useTaskStore,
@@ -76,12 +77,14 @@ export function useProjectAttachments({
     has: (attachment, expected): attachment is Attachment => hasAttachmentDownloadIdentity(attachment, expected),
   }), []);
 
+  // One store command reads the row, builds the whole attachment list and writes it: a sync save admitted first
+  // publishes newer rows (a sibling another device added), and a list built before it would drop them.
   const updateProjectAttachmentIfCurrent = useCallback((
     projectId: string,
     attachmentId: string,
     identity: string,
     patch: Partial<Attachment>,
-  ): Attachment | null => {
+  ): Promise<Attachment | null> => runStoreCommand(async () => {
     const current = currentProjectAttachmentForIdentity(projectId, attachmentId, identity);
     if (!current) return null;
     const nextAttachment = { ...current.attachment, ...patch };
@@ -89,15 +92,18 @@ export function useProjectAttachments({
       logAttachmentWriteSkipped();
       return nextAttachment;
     }
-    const nextAttachments = patchAttachment(current.project.attachments || [], attachmentId, patch);
-    updateProject(projectId, { attachments: nextAttachments });
+    const stored = useTaskStore.getState()._allProjects.find((item) => item.id === projectId);
+    const base = stored ?? current.project;
+    const nextAttachments = patchAttachment(base.attachments || [], attachmentId, patch);
+    const written = updateProject(projectId, { attachments: nextAttachments });
     const selected = selectedProjectRef.current;
     const selectedAttachment = selected?.attachments?.find((item) => item.id === attachmentId);
     if (selected?.id === projectId && hasAttachmentDownloadIdentity(selectedAttachment, identity)) {
-      setSelectedProject({ ...current.project, attachments: nextAttachments });
+      setSelectedProject({ ...base, attachments: nextAttachments });
     }
+    await written;
     return nextAttachment;
-  }, [currentProjectAttachmentForIdentity, setSelectedProject, updateProject]);
+  }), [currentProjectAttachmentForIdentity, setSelectedProject, updateProject]);
 
   const resolveProjectAttachment = useCallback((
     projectId: string,
