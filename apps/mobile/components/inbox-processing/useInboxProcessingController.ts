@@ -54,6 +54,8 @@ import {
   toggleProcessInboxToken,
   undoTaskCompletion,
   updateTaskAppendingAttachments,
+  mergeTaskDraftOntoLatest,
+  runStoreCommand,
   resolveAutoTextDirection,
   useTaskStore,
   type AIProviderId,
@@ -681,9 +683,25 @@ export function useInboxProcessingController({
       if (projectConversionInFlightRef.current) return false;
       projectConversionInFlightRef.current = true;
     }
-    // The title's /link: commands append to the task's attachments, a list core built from the task on screen.
-    // Rebuild it on the row as stored when the write is admitted, so an attachment a sync save brought stays.
-    const updateTaskKeepingAttachments: typeof updateTask = updateTaskAppendingAttachments(currentTask.attachments, updateTask);
+    // The draft is saved field by field onto the row as stored when the write is admitted (base: the task on
+    // screen), so a field, tag or context another device synced since stays. The title's /link: commands still
+    // append to the latest row's attachments, so an attachment a sync save brought stays too.
+    const shownTask = currentTask;
+    const appendAttachments = updateTaskAppendingAttachments(shownTask.attachments, updateTask);
+    const updateTaskKeepingAttachments: typeof updateTask = (id, updates) => runStoreCommand(async () => {
+      const latest = id === shownTask.id ? useTaskStore.getState()._tasksById?.get(id) : undefined;
+      if (!latest) return appendAttachments(id, updates);
+      const { attachments, ...fields } = updates;
+      const merged: Partial<Task> = mergeTaskDraftOntoLatest(shownTask, fields, latest);
+      // A field no other device changed is written as the draft has it, as before; one it changed is written
+      // only when the draft changed it too.
+      const kept = Object.fromEntries(Object.entries(fields).flatMap(([field, value]) => {
+        const key = field as keyof Task;
+        if (key in merged) return [[field, merged[key]]];
+        return JSON.stringify(latest[key] ?? null) === JSON.stringify(shownTask[key] ?? null) ? [[field, value]] : [];
+      })) as Partial<Task>;
+      return appendAttachments(id, attachments ? { ...kept, attachments } : kept);
+    });
     try {
       const result = await commitProcessInboxDecision(kind, {
         task: currentTask,

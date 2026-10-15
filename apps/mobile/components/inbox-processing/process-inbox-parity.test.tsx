@@ -928,6 +928,36 @@ describe('React Native Process Inbox parity fixture', () => {
     expect(observed.at(-1)!.writes[0][2]).toMatchObject({ startTime: '2026-10-08', dueDate: '2026-10-13', reviewAt: '2026-10-09' });
   }, 60_000);
 
+  // The draft was built from the task as shown; filing it writes only what the user changed, field by field.
+  it('keeps a context and a note another device synced while the decision waited', async () => {
+    await seedStore(settingsVariants.base, scenarioTasks(['inbox-a', 'inbox-c']));
+    useTaskStore.setState({ settings: { ...useTaskStore.getState().settings, deviceId: 'this-device' } });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<Root onClose={() => undefined} />); });
+    await flush();
+    const harness: Harness = { renderer, closed: () => 0 };
+    const stored = () => useTaskStore.getState()._tasksById.get('inbox-a')!;
+    for (const action of guidedToFile) await perform(harness, action);
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const save = runSyncStoreSave(async () => {
+      await held;
+      useTaskStore.setState({
+        _allTasks: useTaskStore.getState()._allTasks.map((entry) => (entry.id === 'inbox-a'
+          ? { ...entry, rev: 5, revBy: 'other-device', contexts: ['@phone', '@remote'], description: 'Synced note' }
+          : entry)),
+      });
+    });
+    await perform(harness, ['press', 'fileIt']);
+    release();
+    await save;
+    await flush();
+    expect(stored()).toMatchObject({ status: 'next', contexts: ['@phone', '@remote'], description: 'Synced note' });
+    await act(async () => { renderer.unmount(); });
+    await flushPendingSave();
+  }, 60_000);
+
   it('keeps an attachment a sync save published while a title link waited, and refuses Undo once another device changed the task', async () => {
     toastLog.entries.length = 0;
     await seedStore(settingsVariants.base, scenarioTasks(['inbox-a', 'inbox-c']));
