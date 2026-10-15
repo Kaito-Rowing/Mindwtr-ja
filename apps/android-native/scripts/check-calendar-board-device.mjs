@@ -274,6 +274,9 @@ const revealBlock = async (title, spoken) => {
 const placeForDrop = async (title, header) => {
     const margin = Math.round(72 * pxPerDp()) + 30;
     let nodes = await revealCard(title);
+    // A swipe that moved nothing: the list is at its end. A searched Board fits the screen, so its card cannot leave the top edge
+    // zone (run6 10-15), and nothing scrolls there either.
+    let stuck = false;
     // Eight swipes at most; the ninth pass only checks the last swipe's result (run 48 failed on a screen that fit).
     for (let attempt = 0; attempt < 9; attempt += 1) {
         const list = mainList(nodes);
@@ -281,7 +284,7 @@ const placeForDrop = async (title, header) => {
         const below = nodes.find((node) => tagSuffix(node, 'board-column') && (node['content-desc'] ?? '').startsWith(`${header} · `));
         if (!list || !card) break;
         const [lx1, listTop, lx2, listBottom] = box(list);
-        if (below && box(card)[1] >= listTop + margin && box(below)[3] + 40 <= listBottom - margin) return { nodes, card, below };
+        if (below && (stuck || box(card)[1] >= listTop + margin) && box(below)[3] + 40 <= listBottom - margin) return { nodes, card, below };
         if (attempt === 8) break;
         const x = Math.round(lx1 + (lx2 - lx1) * 0.8);
         const middle = Math.round((listTop + listBottom) / 2);
@@ -292,7 +295,9 @@ const placeForDrop = async (title, header) => {
         requireAppFront();
         sh(`input swipe ${x} ${middle} ${x} ${middle - by} 1500`);
         await sleep(800);
+        const before = device.signature(nodes);
         nodes = await screen();
+        stuck = device.signature(nodes) === before;
     }
     return fail(`the card ${title} and the ${header} column below it do not fit on screen together`);
 };
