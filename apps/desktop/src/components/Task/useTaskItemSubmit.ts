@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react';
 import {
     taskDraftToChangedUpdatePatch,
     flushPendingSave,
-    mergeTaskDraftAttachments,
+    mergeTaskDraftOntoLatest,
     runStoreCommand,
     useTaskStore,
     type Attachment,
@@ -27,17 +27,18 @@ type UseTaskItemSubmitParams = {
 };
 
 /**
- * The editor save as one store command: the draft's attachment changes since [base] are merged over the latest row by
- * core's mergeTaskDraftAttachments (as mobile's editor does), so an attachment or tombstone a sync save brought stays.
- * Other fields are written as the draft holds them (last write wins, as before the write gate). Answers the row it
- * saved, read before any sync save can publish over it, as the base for the next save of this session.
+ * The editor save as one store command, merged field by field onto the latest row by core's mergeTaskDraftOntoLatest:
+ * only the fields the draft changed since [base] are written, and a list another device changed too is merged (tags and
+ * contexts by token, the checklist by item id, attachments by mergeTaskDraftAttachments). A single value takes the
+ * draft's (last write wins). Answers the row it saved, read before any sync save can publish over it, as the base for
+ * the next save of this session.
  */
 const saveDraftOnLatest = (id: string, base: Task, patch: Partial<Task>) => runStoreCommand(async () => {
     const latest = useTaskStore.getState()._tasksById.get(id);
-    const updates = latest && patch.attachments
-        ? { ...patch, attachments: mergeTaskDraftAttachments(latest.attachments ?? [], base.attachments ?? [], patch.attachments) }
-        : patch;
-    const result = await useTaskStore.getState().updateTask(id, updates);
+    const updates = latest ? mergeTaskDraftOntoLatest(base, patch, latest) : patch;
+    const result = Object.keys(updates).length > 0
+        ? await useTaskStore.getState().updateTask(id, updates)
+        : { success: true as const, id };
     return { result, saved: useTaskStore.getState()._tasksById.get(id) };
 });
 

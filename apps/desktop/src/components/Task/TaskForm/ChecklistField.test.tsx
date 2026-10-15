@@ -91,7 +91,7 @@ describe('ChecklistField', () => {
         });
     });
 
-    it('writes the field\'s list as it is when a sync save changed the list since the field opened (last write wins)', async () => {
+    it('merges the field\'s change onto the list a sync save published since the field opened, keeping the synced item', async () => {
         render(<ChecklistHarness initial={[{ id: 'c1', title: 'One', isCompleted: false }]} />);
         const finish = holdSyncSave(() => useTaskStore.setState({ _allTasks: [storedTask(
             [{ id: 'c1', title: 'One', isCompleted: false }, { id: 'c2', title: 'Two', isCompleted: false }],
@@ -101,7 +101,7 @@ describe('ChecklistField', () => {
         await act(finish);
 
         await waitFor(() => expect(useTaskStore.getState()._tasksById.get('task-1')?.checklist?.map((item) => [item.id, item.isCompleted]))
-            .toEqual([['c1', true]]));
+            .toEqual([['c1', true], ['c2', false]]));
         expect(useUiStore.getState().toasts.map((toast) => toast.message)).not.toContainEqual(expect.stringMatching(/^STALE_REVISION/));
     });
 

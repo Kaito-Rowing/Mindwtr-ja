@@ -222,6 +222,49 @@ describe('useTaskItemSubmit attachment durability', () => {
             expect(useTaskStore.getState()._tasksById.get(task.id)?.attachments?.[0]?.deletedAt).toBe('2026-08-28T00:00:00.000Z');
         });
 
+        it('writes only the fields the draft changed, merging tags onto the tags a sync save published', async () => {
+            useTaskStore.setState({ _allTasks: [{ ...opened, tags: ['#a'] }] });
+            const { result } = renderHook(() => useTaskItemSubmit({
+                baselineTask: { ...opened, tags: ['#a'] },
+                draft: createTaskDraft({ ...opened, title: 'Draft title', tags: ['#a', '#mine'] }),
+                editAttachments: opened.attachments,
+                editingTaskId: task.id,
+                setEditingTaskId: vi.fn(),
+                setIsEditing: vi.fn(),
+                showToast: vi.fn(),
+                t: (key) => key,
+                task: opened,
+                beginAttachmentSave: vi.fn(() => false),
+                cancelAttachmentSaveBeforeStoreUpdate: vi.fn(),
+                settlePersistedAttachmentSave: vi.fn(),
+            }));
+            await submitBehind(() => result.current(), { tags: ['#a', '#remote'], description: 'Remote note' });
+            expect(useTaskStore.getState()._tasksById.get(task.id)).toMatchObject({
+                title: 'Draft title', tags: ['#a', '#remote', '#mine'], description: 'Remote note',
+            });
+        });
+
+        it('keeps a reminder policy another device changed when the draft left it as opened', async () => {
+            const withPolicy: Task = { ...opened, reminderPolicy: 'send' };
+            useTaskStore.setState({ _allTasks: [withPolicy] });
+            const { result } = renderHook(() => useTaskItemSubmit({
+                baselineTask: withPolicy,
+                draft: createTaskDraft({ ...withPolicy, title: 'Draft title' }),
+                editAttachments: opened.attachments,
+                editingTaskId: task.id,
+                setEditingTaskId: vi.fn(),
+                setIsEditing: vi.fn(),
+                showToast: vi.fn(),
+                t: (key) => key,
+                task: withPolicy,
+                beginAttachmentSave: vi.fn(() => false),
+                cancelAttachmentSaveBeforeStoreUpdate: vi.fn(),
+                settlePersistedAttachmentSave: vi.fn(),
+            }));
+            await submitBehind(() => result.current(), { reminderPolicy: 'skip' });
+            expect(useTaskStore.getState()._tasksById.get(task.id)).toMatchObject({ title: 'Draft title', reminderPolicy: 'skip' });
+        });
+
         it('takes its own earlier save as the base, so a second save merges its attachments against it', async () => {
             useTaskStore.setState({ _allTasks: [opened] });
             const { result, rerender } = submitHook({ title: 'First' });

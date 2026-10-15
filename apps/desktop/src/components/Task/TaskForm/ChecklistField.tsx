@@ -22,6 +22,7 @@ import {
     generateUUID,
     isMarkdownEditorAssistEnabled,
     parsePastedChecklistItems,
+    updateTaskFromDraft,
     useTaskStore,
     type MarkdownSelection,
     type MarkdownToolbarResult,
@@ -191,9 +192,11 @@ export function ChecklistField({
     }, []);
 
     const commitChecklistUpdate = useCallback((nextChecklist: Task['checklist']) => {
+        // Merged onto the latest row against the list this field last saved or adopted (core's
+        // updateTaskFromDraft, by item id): an item another device added or changed since stays.
+        const base = persistedChecklistRef.current;
         persistedChecklistRef.current = nextChecklist;
-        // The field's list is the user's latest intent: written as it is (last write wins), as before the gate.
-        void useTaskStore.getState().updateTask(taskId, { checklist: nextChecklist });
+        void updateTaskFromDraft(taskId, { checklist: base } as Task, { checklist: nextChecklist });
     }, [taskId]);
 
     const commitChecklistDraft = useCallback((next?: Task['checklist']) => {

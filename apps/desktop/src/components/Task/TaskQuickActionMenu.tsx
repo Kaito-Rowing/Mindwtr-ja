@@ -85,7 +85,8 @@ export interface TaskQuickActionMenuProps {
     onStatusChange: (status: TaskStatus) => void;
     onCreateArea: (name: string) => Promise<string | null>;
     onCreateProject: (title: string) => Promise<string | null>;
-    onUpdateTask: (updates: Partial<Task>) => Promise<StoreActionResult>;
+    /** With [base] (the task an edit panel opened on), the updates merge onto the latest row field by field. */
+    onUpdateTask: (updates: Partial<Task>, base?: Task) => Promise<StoreActionResult>;
     /** Extra entries rendered above Delete. Generic by design — the menu does not interpret them. */
     extraActions?: Array<{
         id: string;
@@ -202,6 +203,8 @@ export function TaskQuickActionMenu({
     const [destinationDraft, setDestinationDraft] = useState<TaskMoveDestination>(initialDestinationDraft);
     const [sectionDraft, setSectionDraft] = useState(initialSectionDraft);
     const [contextsDraft, setContextsDraft] = useState(initialContextsDraft);
+    // The task the contexts draft was last reset from: the save merges against it.
+    const contextsBaseRef = useRef(task);
     const [savingPanel, setSavingPanel] = useState<Exclude<QuickPanelId, null> | null>(null);
     const startLabel = tFallback(t, 'taskEdit.startDateLabel', 'Start Date');
     const dueLabel = tFallback(t, 'taskEdit.dueDateLabel', 'Due Date');
@@ -272,6 +275,7 @@ export function TaskQuickActionMenu({
                 : { kind: 'none' });
         setSectionDraft(task.projectId ? task.sectionId || '' : '');
         setContextsDraft(task.contexts?.join(', ') || '');
+        contextsBaseRef.current = task;
     }, [task.areaId, task.contexts, task.dueDate, task.id, task.projectId, task.reviewAt, task.startTime]);
 
     // Focus the menu container, not the first item — like native context menus,
@@ -534,6 +538,7 @@ export function TaskQuickActionMenu({
             // The priority panel applies immediately from task state; no draft to reset.
         } else {
             setContextsDraft(task.contexts?.join(', ') || '');
+            contextsBaseRef.current = task;
         }
         setActivePanel(panelId);
     };
@@ -651,7 +656,8 @@ export function TaskQuickActionMenu({
     const handleContextsSave = async () => {
         setSavingPanel('contexts');
         try {
-            const result = await onUpdateTask({ contexts: normalizedDraftContexts });
+            // Merged by token onto the latest row: a context another device added since the panel opened stays.
+            const result = await onUpdateTask({ contexts: normalizedDraftContexts }, contextsBaseRef.current);
             if (!result.success) {
                 throw new Error(result.error || 'Failed to update task contexts');
             }

@@ -14,8 +14,9 @@ import {
     isDueForReview,
     isProcessInboxReturningTask,
     parseProcessInboxTitleInput,
+    mergeTaskDraftOntoLatest,
     prepareProcessInboxCommit,
-    updateTaskAppendingAttachments,
+    runStoreCommand,
     setTaskViewSectionId,
     startProcessInboxSession,
     tFallback,
@@ -144,6 +145,7 @@ export function useInboxProcessingController({
         remainingInboxCount,
         resetProcessingSession,
         hydrateProcessingTask,
+        processingBaseRef,
         suggestedContexts,
         suggestedTags,
         scheduleDate,
@@ -328,14 +330,22 @@ export function useInboxProcessingController({
             }
             return false;
         }
+        // The write as one store command, merged field by field onto the row as stored when it is admitted, against
+        // the task the draft was hydrated from (core's mergeTaskDraftOntoLatest): only the fields the step changed are
+        // written, tags and contexts merge by token, and attachments by mergeTaskDraftAttachments, which appends the
+        // title's /link attachments to the latest list. A token or an attachment a sync save brought stays.
+        const base = processingBaseRef.current?.id === processingTask.id ? processingBaseRef.current : processingTask;
+        const updateTaskFromDraft = (id: string, updates: Partial<Task>) => runStoreCommand(async (): Promise<StoreActionResult> => {
+            const latest = useTaskStore.getState()._tasksById.get(id);
+            const merged = latest ? mergeTaskDraftOntoLatest(base, updates, latest) : updates;
+            return Object.keys(merged).length > 0 ? updateTask(id, merged) : { success: true, id };
+        });
         try {
-            // The title's /link commands append to the task on screen's attachments: appended to the row as stored
-            // when the write is admitted instead, so an attachment a sync save brought stays.
             const outcome = await commitProcessInboxWorkflowEvent(
                 processingSession,
                 eligibleInboxTasks,
                 prepared.event,
-                { deleteTask, updateTask: updateTaskAppendingAttachments(processingTask.attachments, updateTask) },
+                { deleteTask, updateTask: updateTaskFromDraft },
                 {
                     entryStep: 'refine',
                     taskUpdates: prepared.taskUpdates,
