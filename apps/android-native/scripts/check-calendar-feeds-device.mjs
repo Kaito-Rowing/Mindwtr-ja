@@ -276,7 +276,10 @@ try {
     // The all-day event (always in view; the timed block may sit above the timeline's scroll), from a screen that holds still.
     nodes = await settle(await screen());
     const offsite = eventBlock(nodes, EVENTS.allDay) ?? fail(`no "${EVENTS.allDay}" on screen`);
-    console.log(`note - tapping "${EVENTS.allDay}" at ${offsite.bounds} (${nodes.filter((node) => node['resource-id'] === 'calendar-block').length} all-day and timed blocks)`);
+    // 10-14: Compose's widened touch target shifted each stacked row's node about 14 dp above its row, so the tap missed.
+    const heights = nodes.filter((node) => node['resource-id'] === 'calendar-block' && box(node)[0] === box(offsite)[0])
+        .map((node) => box(node)[3] - box(node)[1]);
+    check(heights.every((height) => height === heights[0]), `(4) each all-day row's node is the row's own box (heights ${heights.join(', ')})`);
     nodes = await tapExpecting(offsite, (current) => Boolean(tagged(current, 'calendar-sheet')), 'the event\'s sheet');
     check(Boolean(button(nodes, en['calendar.createTaskFromEvent'])) && !button(nodes, en['calendar.openInCalendar']),
         '(4) the event\'s sheet offers RN\'s Create task, and no Open in calendar for a subscription\'s event');

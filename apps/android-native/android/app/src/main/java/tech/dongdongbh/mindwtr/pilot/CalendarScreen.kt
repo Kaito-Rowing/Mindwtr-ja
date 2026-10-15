@@ -95,6 +95,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -152,6 +153,18 @@ private fun JSONObject.extentMinutes(): Int = (getJSONArray("hourLabels").length
 internal fun HoldFor(millis: Long, content: @Composable () -> Unit) {
     val base = LocalViewConfiguration.current
     val config = remember(base, millis) { object : ViewConfiguration by base { override val longPressTimeoutMillis: Long = millis } }
+    CompositionLocalProvider(LocalViewConfiguration provides config, content = content)
+}
+
+/**
+ * RN's Pressable without hitSlop: each row takes touches only inside its own bounds. Compose widens a target under 48 dp (the
+ * day's all-day rows are 19 dp) and reports that widened box, less the next row's, as the row's accessibility bounds, so every
+ * stacked row's node sat about 14 dp above the row it names (TalkBack's box, and a tap at the node's centre missed).
+ */
+@Composable
+private fun ExactTargets(content: @Composable () -> Unit) {
+    val base = LocalViewConfiguration.current
+    val config = remember(base) { object : ViewConfiguration by base { override val minimumTouchTargetSize: DpSize = DpSize.Zero } }
     CompositionLocalProvider(LocalViewConfiguration provides config, content = content)
 }
 
@@ -841,7 +854,7 @@ private fun DayView(model: InboxViewModel, view: JSONObject, content: JSONObject
             val shape = RoundedCornerShape(12.dp)
             Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape).padding(12.dp)) {
                 Text(text.getString("allDay").uppercase(), style = rnText(12, 800), color = c.secondaryText, modifier = Modifier.padding(bottom = 8.dp))
-                Column(Modifier.heightIn(max = 132.dp).verticalScroll(rememberScrollState())) {
+                Column(Modifier.heightIn(max = 132.dp).verticalScroll(rememberScrollState())) { ExactTargets {
                     for (item in allDay) {
                         val pressable = item.getBoolean("pressable")
                         val spoken = item.spoken()
@@ -851,7 +864,7 @@ private fun DayView(model: InboxViewModel, view: JSONObject, content: JSONObject
                                 .clearAndSetSemantics { contentDescription = spoken; role = Role.Button; if (pressable && idle) onClick { calendar.openItem(item); true } else disabled() }
                                 .clickable(enabled = pressable && idle) { calendar.openItem(item) }.padding(vertical = 2.dp))
                     }
-                }
+                } }
             }
         }
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(down).padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 24.dp),
