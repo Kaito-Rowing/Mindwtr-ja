@@ -265,6 +265,8 @@ WHERE utid = ${engine} AND ts < ${span.end} AND ts + dur > ${span.start} GROUP B
         const inputs = `FROM slice i JOIN thread_track it ON i.track_id = it.id JOIN thread ti USING (utid) JOIN process pi USING (upid)
      WHERE pi.name GLOB '${PKG_GLOB}' AND ti.tid = pi.pid AND i.name GLOB 'deliverInputEvent*'`;
         const tapBefore = `${inputs} AND i.ts <= s.ts AND i.ts > s.ts - 150e6 ORDER BY i.ts DESC LIMIT 1`;
+        // The steps query turns the line's commas into ';' and drops its quotes: gateWaitMs:12;40.
+        const gateWaitsOf = (msg) => /gateWaitMs[^\d]{0,6}(\d+(?:[;,]\d+)*)/.exec(String(msg))?.[1].split(/[;,]/).map(Number);
         const tapOf = (name) => /eventTimeNano=(\d+)/.exec(String(name ?? ''))?.[1] ?? null;
         const waits = query(trace, `
 SELECT s.ts, round(s.dur / 1e6, 1) AS waitMs, t.name AS thread,
@@ -306,11 +308,14 @@ WHERE p.name GLOB '${PKG_GLOB}' AND s.name = 'core:wait' AND tt.utid != ${engine
             duplicate: [...matches.values()].filter((n) => n > 1).length, lateGapsMs };
         const steps = query(trace, `
 SELECT round((ts - ${span.start}) / 1e6, 1) AS atSyncMs, replace(replace(msg, ',', ';'), '"', '') AS msg FROM android_logs WHERE tag = '${TAG}'
-  AND (msg GLOB '*Sync step*' OR msg GLOB '*Full sync merge*' OR msg GLOB '*Sync local reconcile*' OR msg GLOB '*sync state*') ORDER BY ts;`);
+  AND (msg GLOB '*Sync step*' OR msg GLOB '*Full sync merge*' OR msg GLOB '*Sync local reconcile*' OR msg GLOB '*sync state*'
+    OR msg GLOB '*Sync save published to the store*') ORDER BY ts;`);
+        // Each local save's wait for the store write gate, in save order (core's v1.3.7/sync-write-gate line, once per cycle).
+        const gateWaitsMs = steps.map((step) => gateWaitsOf(step.msg)).find((waits) => waits) ?? [];
         results.push({
             trace, syncSpanMs: Math.round((span.end - span.start) / 1e5) / 10,
             longestBlocks: blocks.slice(0, 6).map(({ name, ms, inner }) => ({ name, ms, inner })),
-            sections, states, waits, steps, taps,
+            sections, states, waits, steps, taps, gateWaitsMs,
         });
     }
     // Across traces: the sync's sections (median of each sample's total), its longest block, and the waits behind sync vs idle.
@@ -334,6 +339,8 @@ SELECT round((ts - ${span.start}) / 1e6, 1) AS atSyncMs, replace(replace(msg, ',
         // Every host call that waited while sync work ran on the engine (taps, the screens' own reads, workers).
         // A tap whose wait began inside the sync's span (its first to last sync section), whatever ran in the wait.
         tapsInSyncSpan: stats(ok.flatMap((r) => r.waits.filter((w) => w.tapToAnswerMs != null && w.atSyncMs >= 0 && w.atSyncMs <= r.syncSpanMs).map((w) => w.tapToAnswerMs))),
+        // The first local save's gate wait, and every later one's (save 2, cleanup), across traces.
+        gateWaitMs: { first: stats(ok.map((r) => r.gateWaitsMs[0])), later: stats(ok.flatMap((r) => r.gateWaitsMs.slice(1))) },
         taps: (() => {
             const sum = (key) => ok.reduce((total, r) => total + r.taps[key], 0);
             const inSpan = sum('inSpan');
