@@ -224,11 +224,18 @@ const inside = (nodes, tag, title) => {
     return box(node)[1] >= top && box(node)[3] <= bottom ? node : undefined;
 };
 /**
- * Scrolls the Board until the card whose label starts with [title] lies fully inside it. A column longer than core's first
- * window ends in More: a More fully on screen is tapped once, so the column's next window shows.
+ * Searches the Board for [title], as a user finds one card among thousands (10-15: the phone's 5,724 tasks made Inbox too long
+ * to scroll through), then scrolls until the card whose label starts with [title] lies fully inside it. A column longer than
+ * core's first window ends in More: a More fully on screen is tapped once, so the column's next window shows.
  */
 const revealCard = async (title) => {
     let nodes = await device.toTop();
+    if (tagged(nodes, 'board-search')?.text !== title) {
+        await typeInto('board-search', title);
+        await hideKeyboard();
+        nodes = await waitFor(`the Board searched for ${title}`, (current) => Boolean(labelled(current, 'board-card', title)), 15_000);
+        nodes = await device.toTop();
+    }
     const tapped = new Set();
     for (let step = 0; step < 80 && !inside(nodes, 'board-card', title); step += 1) {
         const more = nodes.find((node) => node.text === en['common.more'] && !tapped.has(node.bounds) && mainList(nodes)
@@ -467,6 +474,10 @@ try {
         await waitFor('the copy in the editor', inEditor, 20_000);
         await back((current) => !inEditor(current), 'the editor to close');
     }
+    // The search is the Board's session state only; clear it so the next Board opens unfiltered.
+    nodes = await screen();
+    const clear = withDescription(nodes, en['filters.clear']);
+    if (clear) await tapExpecting(clear, (current) => !tagged(current, 'board-search')?.text, 'the Board search cleared');
     console.log('Calendar and Board device check passed');
 } catch (error) {
     evidenced(error);
