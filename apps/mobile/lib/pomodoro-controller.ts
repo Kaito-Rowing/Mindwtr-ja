@@ -287,12 +287,12 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
     lastEvent: null,
   }), autoStartOptions);
 
-  const setSelectedTaskId = (selectedTaskId: string | undefined) => mutate((current) => ({
+  const setSelectedTaskId = (selectedTaskId: string | undefined, autoStartOptions: PomodoroAutoStartOptions = {}) => mutate((current) => ({
     ...current,
     selectedTaskId,
-  }));
+  }), autoStartOptions);
 
-  const clearLastEvent = () => mutate((current) => ({ ...current, lastEvent: null }));
+  const clearLastEvent = (autoStartOptions: PomodoroAutoStartOptions = {}) => mutate((current) => ({ ...current, lastEvent: null }), autoStartOptions);
 
   const applyWatchCommand = async (
     command: { action: PomodoroCommandAction; taskId?: string; createdAt?: string },

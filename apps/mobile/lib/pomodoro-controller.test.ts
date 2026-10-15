@@ -22,6 +22,33 @@ describe('mobile pomodoro controller', () => {
   });
 
   it.each([
+    ['focus', 'unlink'], ['break', 'unlink'],
+    ['focus', 'select'], ['break', 'select'],
+    ['focus', 'dismiss'], ['break', 'dismiss'],
+  ] as const)('preserves auto-start at a %s deadline when task controls %s', async (phase, action) => {
+    const options = { autoStartBreaks: true, autoStartFocus: true };
+    const controller = createMobilePomodoroController({ storage: makeStorage(), now: () => nowMs });
+    await controller.ensureHydrated(options);
+    controller.setDurations({ focusMinutes: 1, breakMinutes: 1 }, options);
+    controller.setSelectedTaskId('linked', options);
+    if (phase === 'break') controller.switchPhase(options);
+    controller.toggle(options);
+
+    nowMs += 60_000;
+    if (action === 'unlink') controller.setSelectedTaskId(undefined, options);
+    if (action === 'select') controller.setSelectedTaskId('another', options);
+    if (action === 'dismiss') controller.clearLastEvent(options);
+
+    expect(controller.getSnapshot().timerState).toMatchObject({
+      phase: phase === 'focus' ? 'break' : 'focus', remainingSeconds: 60, isRunning: true,
+      completedFocusSessions: phase === 'focus' ? 1 : 0,
+    });
+    expect(controller.getSnapshot().phaseEndsAt).toBe(new Date(nowMs + 60_000).toISOString());
+    expect(controller.getSnapshot().sessionHistory.completedFocusSessionsByTaskId.linked ?? 0)
+      .toBe(phase === 'focus' ? 1 : 0);
+  });
+
+  it.each([
     ['focus', 'start', 'focus-finished'],
     ['focus', 'reset', 'focus-finished'],
     ['focus', 'switch-phase', 'focus-finished'],
