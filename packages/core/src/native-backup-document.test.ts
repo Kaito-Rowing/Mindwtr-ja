@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MAX_BACKUP_SOURCE_BYTES, serializeBackupData, validateBackupJson } from './backup-transfer';
-import { runSerializedSyncDocumentWriteOperation } from './data-transfer-transaction';
+import { runSerializedSyncDocumentOperation, runSerializedSyncDocumentWriteOperation } from './data-transfer-transaction';
 import { createMockArea, createMockProject, createMockSection } from './sync-test-utils';
 import { formatI18nTemplate, getTranslator } from './i18n';
 import { consoleLogger, setLogger, type LogPayload } from './logger';
@@ -1386,5 +1386,39 @@ describe('native backup prepare and commit let their documents go (D1c)', () => 
         expect(source.taken).toBe(1);
         expect(writing).toEqual({ expected: false, data: true, current: false });
         expect(alive).toEqual({ expected: false, data: false, current: false });
+    });
+});
+
+/**
+ * Pass D1c against main's sync write gate (0c277ee77): a sync cycle runs in the same document lane as the commit
+ * (mobile-sync-service.ts runs each cycle through runSerializedSyncDocumentOperation), so no sync commits and publishes
+ * between the commit's COMMIT and its store reload.
+ */
+describe('a sync cycle waits behind a native backup commit and its reload (D1c, sync write gate)', () => {
+    it('starts only after the commit reloaded the store', async () => {
+        const env = await open();
+        const prepared = await prepareNativeBackupDocument(env.adapter, input());
+        const events: string[] = [];
+        const read = env.adapter.getData.bind(env.adapter);
+        let reads = 0;
+        let reloadStarted!: () => void;
+        const reloading = new Promise<void>((resolve) => { reloadStarted = resolve; });
+        env.adapter.getData = async (options) => {
+            reads += 1;
+            if (reads === 2) {
+                events.push('reload');
+                reloadStarted();
+                await new Promise((resolve) => setTimeout(resolve, 50));
+                const data = await read(options);
+                events.push('reloaded');
+                return data;
+            }
+            return read(options);
+        };
+        const commit = commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        await reloading;
+        const sync = runSerializedSyncDocumentOperation(async () => { events.push('sync'); });
+        await Promise.all([commit, sync]);
+        expect(events).toEqual(['reload', 'reloaded', 'sync']);
     });
 });
