@@ -26,10 +26,11 @@ val rnReleaseVersion = (System.getenv("ANALYTICS_RELEASE_VERSION") ?: "").trim()
     runCatching { ((groovy.json.JsonSlurper().parse(rootProject.projectDir.resolve("../../mobile/release-version.json")) as Map<*, *>)["releaseVersion"] as String).trim() }.getOrDefault("")
 }
 val rnFeedbackUrl = (System.getenv("FEEDBACK_ENDPOINT_URL") ?: "").trim()
-// RN's builds default to the live heartbeat endpoint; this app is not a production build yet (it ships under the dev package),
-// so its heartbeat is on only when ANALYTICS_HEARTBEAT_URL names one. The production identity pass (O3) restores RN's default.
+// RN's heartbeat endpoint rule (app.config.ts): its committed default, ANALYTICS_HEARTBEAT_URL in its place, none when
+// ANALYTICS_HEARTBEAT_DISABLED. Only a release sends it (O3); the debug, upgrade harness and benchmark builds keep none, so phone
+// checks never send real analytics (check-variant-identity.mjs checks both, and the default against RN's).
 val rnHeartbeatUrl = if (System.getenv("ANALYTICS_HEARTBEAT_DISABLED") in setOf("1", "true")) "" else
-    (System.getenv("ANALYTICS_HEARTBEAT_URL") ?: "").trim()
+    (System.getenv("ANALYTICS_HEARTBEAT_URL") ?: "").trim().ifEmpty { "https://mindwtr-analytics.mindwtr.workers.dev/" }
 val rnHeartbeatChannel = System.getenv("ANALYTICS_HEARTBEAT_CHANNEL")
 fun quoted(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
@@ -68,7 +69,7 @@ android {
         buildConfigField("String", "RN_VERSION_CODE", quoted(rnVersionCode))
         buildConfigField("String", "RN_RELEASE_VERSION", quoted(rnReleaseVersion))
         buildConfigField("String", "FEEDBACK_ENDPOINT_URL", quoted(rnFeedbackUrl))
-        buildConfigField("String", "ANALYTICS_HEARTBEAT_URL", quoted(rnHeartbeatUrl))
+        buildConfigField("String", "ANALYTICS_HEARTBEAT_URL", "\"\"")
     }
 
     buildTypes {
@@ -76,6 +77,7 @@ android {
         // RN's app (its id is set in androidComponents below): it opens RN's files where RN left them.
         getByName("release") {
             buildConfigField("boolean", "RN_STORAGE", "true")
+            buildConfigField("String", "ANALYTICS_HEARTBEAT_URL", quoted(rnHeartbeatUrl))
             launcherIdentity()
         }
         // Upgrade harness only (scripts/check-upgrade-device.mjs): installs in place over the

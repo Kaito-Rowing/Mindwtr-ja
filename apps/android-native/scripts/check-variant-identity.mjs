@@ -3,7 +3,7 @@
 // RN's package, version, number and name (apps/mobile/app.json), so it installs over RN's store app in place; and which storage
 // its BuildConfig opens (RN's files in a release and the upgrade harness build, the dev database elsewhere); and RN's backup rules,
 // which back up and transfer nothing; RN's microphone permission and right-to-left layout; and a declared component behind every
-// shortcut target.
+// shortcut target; and the heartbeat endpoint, RN's (app.config.ts's rule and default) in a release and none in any other build.
 // Gradle's checkVariantIdentity runs it for each variant (app/build.gradle.kts); it prints every problem and fails on any.
 // Usage: node check-variant-identity.mjs <build type> <merged AndroidManifest.xml> <mindwtr_shortcuts.xml> <BuildConfig.java>
 import { readFileSync } from 'node:fs';
@@ -15,6 +15,14 @@ const require = createRequire(import.meta.url);
 const { parseStringPromise } = require('xml2js');
 const app = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../mobile/app.json'), 'utf8')).expo;
 const rnManifest = require('../../mobile/plugins/android-manifest-fixes.js').__testables;
+/** RN's heartbeat endpoint for this environment (app.config.ts): none when disabled, else ANALYTICS_HEARTBEAT_URL or its default. */
+const rnHeartbeatUrl = () => {
+    if (['1', 'true'].includes(process.env.ANALYTICS_HEARTBEAT_DISABLED)) return '';
+    const config = readFileSync(resolve(import.meta.dirname, '../../mobile/app.config.ts'), 'utf8');
+    const fallback = /const DEFAULT_ANALYTICS_HEARTBEAT_URL = '([^']+)';/.exec(config)?.[1];
+    if (!fallback) throw new Error('app.config.ts no longer names DEFAULT_ANALYTICS_HEARTBEAT_URL');
+    return (process.env.ANALYTICS_HEARTBEAT_URL ?? '').trim() || fallback;
+};
 const resXml = (name) => readFileSync(resolve(import.meta.dirname, `../android/app/src/main/res/xml/${name}.xml`), 'utf8');
 
 const attr = (node, name) => node?.$?.[`android:${name}`];
@@ -66,6 +74,7 @@ export async function identityProblems(type, manifest, shortcuts, buildConfig) {
     for (const name of receivers) if (!named(application.receiver, name)) problems.push(`no receiver ${name}`);
     if (!named(application.service, 'tech.dongdongbh.mindwtr.quicksettings.CaptureTileService')) problems.push('no Quick Settings tile service');
     expect('RN_STORAGE', field(buildConfig, 'RN_STORAGE'), String(type === 'release' || type === 'upgradetest'));
+    expect('ANALYTICS_HEARTBEAT_URL', field(buildConfig, 'ANALYTICS_HEARTBEAT_URL'), type === 'release' ? rnHeartbeatUrl() : '');
     if (!named(root['uses-permission'], 'android.permission.RECORD_AUDIO')) problems.push('RECORD_AUDIO is not declared');
     expect('supportsRtl', attr(application, 'supportsRtl'), 'true');
     // A shortcut's explicit intent opens this app's own component.
