@@ -958,6 +958,21 @@ final class NativeBoardMoveTests: XCTestCase {
             _ = try await core.call("logLine", argumentsJSON: json([stageMessage,
                 #"{"releaseCheck":"v1.3.5/ios-board-drag-stage","stage":"begin","reason":"ready","reason":"private"}"#]))
         }
+        let pagingMessage = "Native iOS Inbox paging recovered"
+        let pagingContext: [String: Any] = ["releaseCheck": "v1.3.5/ios-inbox-paging", "outcome": "recovered", "count": 55]
+        _ = try await core.call("logLine", argumentsJSON: json([pagingMessage, json(pagingContext)]))
+        for count in [true, "55", -1, 0.5, NSNull()] as [Any] {
+            var forged = pagingContext; forged["count"] = count
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([pagingMessage, json(forged)])) }
+        }
+        for field in ["taskId", "revision", "text", "path"] {
+            var forged = pagingContext; forged[field] = "private"
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([pagingMessage, json(forged)])) }
+        }
+        for (field, value) in [("releaseCheck", "v1.3.5/ios-board-drag"), ("outcome", "saved")] {
+            var forged = pagingContext; forged[field] = value
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([pagingMessage, json(forged)])) }
+        }
         let shared = try object(await core.diagnosticsFileAction("logShare"))
         let url = try await core.validatedDiagnosticsShareURL(XCTUnwrap(shared["path"] as? String))
         let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map { try object(String($0)) }
@@ -967,6 +982,10 @@ final class NativeBoardMoveTests: XCTestCase {
         let stages = lines.filter { $0["message"] as? String == stageMessage }
         XCTAssertEqual(stages.count, stageContexts.count)
         XCTAssertEqual(try stages.map { try json(XCTUnwrap($0["context"])) }.sorted(), try stageContexts.map { try json($0) }.sorted())
+        let paging = lines.filter { $0["message"] as? String == pagingMessage }
+        XCTAssertEqual(paging.count, 1)
+        XCTAssertEqual(try json(XCTUnwrap(paging.first?["context"])), try json([
+            "releaseCheck": "v1.3.5/ios-inbox-paging", "outcome": "recovered", "count": "55"]))
         XCTAssertFalse(lines.contains { $0["message"] as? String == "Native iOS Board order saved" })
         XCTAssertEqual(writes, 0); XCTAssertEqual(try boardOrderRows(ids), before)
         XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))

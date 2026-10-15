@@ -11,8 +11,12 @@ import {
     selectStatusListTasks,
 } from './menu-views-model';
 import { createNativeHostContract, sortAreasForDisplay } from './native-host-contract';
+import { openSqliteHost } from './screen-parity.replay';
+import { SqliteAdapter } from './sqlite-adapter';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
+import type { Task } from './types';
+import { generateUUID } from './uuid';
 
 const fixture = loadInboxViewFixture();
 const scenario = (settings: string, extra: Partial<InboxViewScenario> = {}): InboxViewScenario => ({ name: settings, settings, actions: [], ...extra });
@@ -163,6 +167,70 @@ describe('native host contract: the Inbox view', () => {
         expect(view.sortBy).toBe('title');
         expect(view.toolbar.sort.options.find((option) => option.selected)?.value).toBe('title');
         expect(view.toolbar.sort.accessibilityLabel).toBe('Sort: Title');
+    });
+
+    it('persists checked Inbox sorts through complete paging and cold reload without editing tasks', async () => {
+        freezeClock();
+        const ids = Array.from({ length: 55 }, (_, index) => `inbox-sort-${String(index + 1).padStart(3, '0')}`);
+        const deviceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        const tasks: Task[] = ids.map((id, index) => ({
+            id, title: `Inbox sort ${String(55 - index).padStart(3, '0')}`, status: 'inbox', contexts: [], tags: [],
+            createdAt: new Date(Date.parse('2026-09-01T12:00:00.000Z') + index * 1000).toISOString(),
+            updatedAt: '2026-09-01T12:00:00.000Z', rev: 1, revBy: deviceId,
+        }));
+        const sqlite = await openSqliteHost({ tasks, settings: { deviceId, theme: 'light', quickAddAutoClean: true } });
+        try {
+            const data = () => new SqliteAdapter(sqlite.client()).getData({ rawTasks: true });
+            const taskRows = () => sqlite.sql('SELECT rowid AS evidence_rowid, * FROM tasks ORDER BY rowid');
+            const receiptRows = () => sqlite.sql<{ request_id: string; reply: string }>(
+                'SELECT rowid AS evidence_rowid, * FROM native_request_receipts ORDER BY rowid');
+            const before = await data(), originalTasks = await taskRows();
+            const pages = () => {
+                const first = value(sqlite.host.getInboxView({ offset: 0, limit: 50 }));
+                const last = value(sqlite.host.getInboxView({ offset: 50, limit: 50, revision: first.revision }));
+                expect(first.total).toBe(55);
+                expect(first.items).toHaveLength(50);
+                expect(last.items).toHaveLength(5);
+                return { first, ids: [...first.items, ...last.items].map((item) => item.type === 'task' ? item.row.id : item.id) };
+            };
+            let previous = pages();
+            expect(previous.ids).toEqual(ids);
+            expect(value(sqlite.host.getTaskListSortOptions({})).expected).toEqual({ sortBy: null });
+            const requests: string[] = [], replies: { sortBy: string }[] = [];
+            for (const sortBy of ['title', 'default'] as const) {
+                const requestId = generateUUID();
+                const expected = value(sqlite.host.getTaskListSortOptions({})).expected;
+                expect(await sqlite.host.setTaskListSortChecked({ requestId, sortBy, expected }))
+                    .toEqual({ ok: true, value: { sortBy } });
+                requests.push(requestId); replies.push({ sortBy });
+                const persisted = await data();
+                expect(persisted.settings?.taskSortBy).toBe(sortBy);
+                const otherSettings = { ...persisted.settings };
+                delete otherSettings.taskSortBy;
+                expect({ ...persisted, settings: otherSettings }).toEqual(before);
+                expect(await taskRows()).toEqual(originalTasks);
+                const receipts = await receiptRows();
+                expect(receipts.map((row) => row.request_id)).toEqual(requests);
+                expect(receipts.map((row) => JSON.parse(row.reply))).toEqual(replies);
+                expect(sqlite.host.getInboxView({ offset: 50, limit: 50, revision: previous.first.revision }))
+                    .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+                const ordered = sortBy === 'title' ? [...ids].reverse() : ids;
+                const state = useTaskStore.getState();
+                const rn = buildStatusListModel({ kind: 'inbox', tasks: state.tasks, projects: state.projects,
+                    areas: state.areas, settings: state.settings, groupBy: 'none', criteria: {}, searchQuery: '',
+                    collapsedGroupIds: new Set(), t, now: new Date(fixture.now) });
+                expect(rn.orderedTasks.map((task) => task.id)).toEqual(ordered);
+                expect(pages().ids).toEqual(ordered);
+                await sqlite.restart();
+                expect(await data()).toEqual(persisted);
+                expect(await receiptRows()).toEqual(receipts);
+                expect(value(sqlite.host.getTaskListSortOptions({})).expected).toEqual({ sortBy });
+                previous = pages();
+                expect(previous.ids).toEqual(ordered);
+                expect(previous.first.sortBy).toBe(sortBy);
+                expect(previous.first.toolbar.sort.options.find((option) => option.selected)?.value).toBe(sortBy);
+            }
+        } finally { await sqlite.close(); }
     });
 
     it('retries a failed Inbox sort through setTaskListSort with one settings write', async () => {

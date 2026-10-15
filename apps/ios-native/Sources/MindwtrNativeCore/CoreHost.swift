@@ -20767,6 +20767,12 @@ private final class Engine: @unchecked Sendable {
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-reminder-lifecycle", "outcome": "confirmed"])
         case "Native iOS foreground activation refreshed":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-foreground-activation", "outcome": "refreshed"])
+        case "Native iOS Inbox paging recovered":
+            valid = Set(context.keys) == Set(["releaseCheck", "outcome", "count"])
+                && context["releaseCheck"] as? String == "v1.3.5/ios-inbox-paging"
+                && context["outcome"] as? String == "recovered"
+                && Self.isInteger(context["count"])
+                && (context["count"] as? NSNumber).map { (0.0...Double(Int.max)).contains($0.doubleValue) } == true
         case "Native iOS calendar event dialog dismissed":
             valid = Set(context.keys) == Set(["releaseCheck", "outcome"])
                 && context["releaseCheck"] as? String == "v1.3.5/ios-calendar-event-open"

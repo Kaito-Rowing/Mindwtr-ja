@@ -29886,4 +29886,75 @@ extension FoundationUITests {
         XCTAssertTrue(app.buttons["persistence-retry"].exists)
         XCTAssertTrue(app.staticTexts["persistence-error"].exists)
     }
+
+    // Task736 uses externally staged independent fixtures and authors no screenshots.
+    func testInboxSortNormalAndColdRead() throws { try task736InboxSort("NORMAL") }
+    func testInboxSortLargestTextAndColdRead() throws { try task736InboxSort("LARGEST", largest: true) }
+
+    private func task736InboxSort(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_INBOX_SORT_UI_" + role + "_LIBRARY"],
+              let uuid = UUID(uuidString: library), uuid.uuidString.lowercased() == library else {
+            throw XCTSkip("An externally staged canonical Inbox sort library is required")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US",
+            "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); defer { app.terminate() }
+        task736OpenInbox(app)
+        task736AssertFirst(app, "001")
+        boardTap(app, "inbox-sort-open"); boardEnabled(app.buttons["inbox-sort-default"])
+        XCTAssertTrue(app.buttons["inbox-sort-default"].isSelected)
+        XCTAssertTrue(!app.buttons["tab-menu"].exists || !app.buttons["tab-menu"].isEnabled)
+        boardTap(app, "inbox-sort-close"); task736AssertFirst(app, "001")
+        for _ in 0..<2 {
+            boardTap(app, "inbox-sort-open")
+            task736SortTap(app, "inbox-sort-title")
+            boardEnabled(app.buttons["inbox-sort-open"])
+            XCTAssertTrue(app.buttons["tab-inbox"].isSelected)
+            task736AssertFirst(app, "055")
+        }
+        // Reaching item001 traverses the first50 plus the revision-checked5-row continuation.
+        let tail = app.buttons["task-title-inbox-sort-001"]
+        revealPagedElement(app, tail, in: app.scrollViews["inbox-scroll"], more: "inbox-more", ready: app.buttons["inbox-sort-open"])
+        XCTAssertTrue(tail.exists); XCTAssertTrue(tail.isHittable)
+        let previous = app.buttons["task-title-inbox-sort-002"]
+        XCTAssertTrue(previous.exists); XCTAssertLessThan(previous.frame.minY, tail.frame.minY)
+        openReferenceSortTest(app); openReferenceSortChoices(app)
+        let referenceTitle = app.buttons["reference-sort-title"]
+        if !referenceTitle.isHittable { revealPagedElement(app, referenceTitle, in: app.scrollViews["reference-panel-scroll"]) }
+        XCTAssertTrue(referenceTitle.isSelected)
+        referenceSortTap(app, "reference-menu-close"); boardTap(app, "reference-back")
+        task736OpenInbox(app); task736AssertFirst(app, "055")
+        app.terminate(); app.launch(); task736OpenInbox(app); task736AssertFirst(app, "055")
+        boardTap(app, "inbox-sort-open")
+        let title = app.buttons["inbox-sort-title"]
+        if !title.isHittable { revealPagedElement(app, title, in: app.scrollViews["inbox-sort-scroll"]) }
+        XCTAssertTrue(title.isSelected)
+        boardTap(app, "inbox-sort-close")
+    }
+
+    private func task736OpenInbox(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["tab-inbox"], timeout: 40)
+        if !app.buttons["tab-inbox"].isSelected { boardTap(app, "tab-inbox") }
+        boardEnabled(app.buttons["inbox-sort-open"])
+    }
+
+    private func task736SortTap(_ app: XCUIApplication, _ identifier: String) {
+        let button = app.buttons[identifier]
+        if !button.isHittable { revealPagedElement(app, button, in: app.scrollViews["inbox-sort-scroll"]) }
+        boardEnabled(button); XCTAssertTrue(button.isHittable)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44); button.tap()
+    }
+
+    private func task736AssertFirst(_ app: XCUIApplication, _ suffix: String) {
+        let title = app.buttons["task-title-inbox-sort-" + suffix]
+        boardEnabled(app.buttons["inbox-sort-open"])
+        expectation(for: NSPredicate { _, _ in title.exists && title.isHittable }, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        let titles = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "task-title-inbox-sort-"))
+            .allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
+        XCTAssertEqual(titles.min(by: { $0.frame.minY < $1.frame.minY })?.identifier, title.identifier)
+    }
 }

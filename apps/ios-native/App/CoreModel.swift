@@ -228,6 +228,8 @@ final class CoreModel: ObservableObject {
     @Published private(set) var selectedSurface: Surface = .inbox {
         didSet {
             if selectedSurface != .inbox { foregroundSyncIntent = nil }
+            if referenceSortRequest == nil, let caller = taskListSortCaller,
+               selectedSurface != taskListSortSurface(caller) { retireTaskListSort() }
             if oldValue == .project && selectedSurface != .project {
                 invalidateProjectAttachmentOpen()
                 cancelProjectFileImport()
@@ -1229,6 +1231,10 @@ final class CoreModel: ObservableObject {
     private var referenceBulkRemoveRevision = ""
     private var referenceTasksRemoveTagRequest: String?
     @Published var referencePanel = ""
+    enum TaskListSortCaller: Equatable { case inbox, reference }
+    @Published private(set) var taskListSortCaller: TaskListSortCaller?
+    private var taskListSortPresentationID = UUID()
+    private var taskListSortHost: CoreHost?
     @Published private(set) var referenceSortOptions: CoreObject = [:]
     @Published private(set) var referenceSortError: String?
     private var referenceSortRequest: String?
@@ -1718,6 +1724,8 @@ final class CoreModel: ObservableObject {
                 #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
                 settingsAIProofTask?.cancel(); settingsAIProofState = ""; settingsAIProofReadAttempts = 0
                 #endif
+                // Warm list ownership never crosses a Host replacement; durable recovery still opens Reference.
+                retireTaskListSortHost()
                 pomodoroWork?.cancel(); pomodoroWake?.cancel()
                 pomodoroWork = nil; pomodoroWake = nil; pomodoroWorkHost = nil
                 pomodoroCommand = nil; pomodoroFeedback = nil; pomodoroPanel = [:]
@@ -20186,29 +20194,100 @@ final class CoreModel: ObservableObject {
         await refresh()
     }
 
+    // MARK: Task736 shared list-sort presentation owner
+    var inboxSortPresented: Bool { taskListSortCaller == .inbox }
+    var inboxSortEnabled: Bool { taskListSortCaller == nil && canOpenTaskListSort(.inbox) }
+    var taskListSortActionsEnabled: Bool {
+        guard let caller = taskListSortCaller, let owner = taskListSortHost else { return false }
+        return taskListSortCurrent(caller, presentation: taskListSortPresentationID, host: owner)
+            && !busy && !retryNeeded && referenceSortRequest == nil
+    }
+
+    private func taskListSortSurface(_ caller: TaskListSortCaller) -> Surface {
+        caller == .inbox ? .inbox : .reference
+    }
+
+    private func canOpenTaskListSort(_ caller: TaskListSortCaller) -> Bool {
+        guard ready, host != nil, !busy, !retryNeeded, !appLock.concealed,
+              !capturePresented, !areaPickerPresented, !taskPresented, !morePresented,
+              !mindSweepPresented, !processInboxPresented, !calendarComposerPresented,
+              referenceSortRequest == nil, taskListSortCaller == nil else { return false }
+        if caller == .reference { return referenceActionsEnabled }
+        return selectedSurface == .inbox && !inbox.isEmpty && referencePanel.isEmpty
+            && somedayPanel.isEmpty && historyPanel.isEmpty
+    }
+
+    private func taskListSortCurrent(_ caller: TaskListSortCaller, presentation: UUID, host owner: CoreHost) -> Bool {
+        host === owner && taskListSortHost === owner && taskListSortCaller == caller
+            && taskListSortPresentationID == presentation && ready && !appLock.concealed
+            && selectedSurface == taskListSortSurface(caller)
+            && (caller != .reference || referencePanel == "sort")
+            && !capturePresented && !areaPickerPresented && !taskPresented
+    }
+
+    private func retireTaskListSortHost() {
+        referenceSortRequest = nil
+        referenceSortExpectedResult = nil
+        retireTaskListSort()
+    }
+
+    private func retireTaskListSort() {
+        taskListSortPresentationID = UUID()
+        taskListSortCaller = nil
+        taskListSortHost = nil
+        referenceSortOptions = [:]
+        referenceSortError = nil
+        if referencePanel == "sort" { referencePanel = "" }
+    }
+
+    func closeInboxSort() {
+        guard taskListSortCaller == .inbox, !busy, !retryNeeded, referenceSortRequest == nil else { return }
+        retireTaskListSort()
+    }
+
     func closeReferencePanel() {
         guard !busy, !retryNeeded, referenceSortRequest == nil else { return }
+        if taskListSortCaller == .reference { retireTaskListSort() }
         referenceSortOptions = [:]
         referenceSortError = nil
         referencePanel = ""
         closeReferencePicker()
     }
 
-    func openReferenceSort() async {
-        guard referenceActionsEnabled, referenceSortRequest == nil else { return }
-        referencePanel = "sort"
-        await readReferenceSortOptions()
+    func backReferencePanel() {
+        guard !busy, !retryNeeded, referenceSortRequest == nil else { return }
+        if taskListSortCaller == .reference { retireTaskListSort() }
+        referencePanel = "menu"
     }
 
-    private func readReferenceSortOptions() async {
-        guard !busy, !retryNeeded, referencePanel == "sort" else { return }
+    func openReferenceSort() async { await openTaskListSort(.reference) }
+    func openInboxSort() async { await openTaskListSort(.inbox) }
+
+    private func openTaskListSort(_ caller: TaskListSortCaller) async {
+        guard canOpenTaskListSort(caller), let owner = host else { return }
+        taskListSortPresentationID = UUID()
+        taskListSortHost = owner
+        taskListSortCaller = caller
+        if caller == .reference { referencePanel = "sort" }
+        await readTaskListSortOptions()
+    }
+
+    private func readTaskListSortOptions() async {
+        guard let caller = taskListSortCaller, let owner = taskListSortHost,
+              !busy, !retryNeeded, referenceSortRequest == nil else { return }
+        let presentation = taskListSortPresentationID
+        guard taskListSortCurrent(caller, presentation: presentation, host: owner) else { return }
         busy = true
         referenceSortOptions = [:]
         referenceSortError = nil
-        defer { finishOperation() }
+        defer { if host === owner { finishOperation() } }
+        let current = { self.taskListSortCurrent(caller, presentation: presentation, host: owner) }
         do {
-            if !referenceCurrent, !(await readReference()) { throw CocoaError(.fileReadUnknown) }
-            let options = try await query("taskListSortOptions", ["{}"])
+            if caller == .inbox { try await readInbox(ownedGuard: current) }
+            else if !referenceCurrent, !(await readReference(ownedGuard: current)) { throw CocoaError(.fileReadUnknown) }
+            guard current() else { return }
+            let options = try await query("taskListSortOptions", ["{}"], beforeDispatch: current)
+            guard current() else { return }
             let expected = options.object("expected")
             let choices = options.objects("choices")
             guard Set(options.keys) == Set(["revision", "expected", "choices"]), !options.text("revision").isEmpty,
@@ -20219,53 +20298,80 @@ final class CoreModel: ObservableObject {
                 throw CocoaError(.coderReadCorrupt)
             }
             referenceSortOptions = options
-        } catch { referenceSortError = label("settings.feedback.actionFailed") }
+        } catch {
+            if current() { referenceSortError = label("settings.feedback.actionFailed") }
+        }
     }
 
-    func setReferenceSort(_ sortBy: String) async {
-        guard referenceActionsEnabled, referencePanel == "sort", referenceSortRequest == nil,
+    func setReferenceSort(_ sortBy: String) async { await setTaskListSort(sortBy, caller: .reference) }
+    func setInboxSort(_ sortBy: String) async { await setTaskListSort(sortBy, caller: .inbox) }
+
+    private func setTaskListSort(_ sortBy: String, caller: TaskListSortCaller) async {
+        guard taskListSortActionsEnabled, taskListSortCaller == caller, let owner = taskListSortHost,
               referenceSortOptions.objects("choices").contains(where: { $0.text("value") == sortBy }) else { return }
+        let presentation = taskListSortPresentationID
         busy = true
         referenceSortError = nil
-        defer { finishOperation() }
+        defer { if host === owner { finishOperation() } }
         do {
             let request = try json(["requestId": UUID().uuidString.lowercased(), "sortBy": sortBy,
                                     "expected": referenceSortOptions.object("expected")])
             referenceSortRequest = request
             referenceSortExpectedResult = ["sortBy": sortBy]
-            try acknowledgeReferenceSort(await query("taskListSortWrite", [request]))
-            await readReference()
-        } catch { await handleReferenceSortError(error) }
+            let result = try await query("taskListSortWrite", [request], beforeDispatch: {
+                self.taskListSortCurrent(caller, presentation: presentation, host: owner)
+            })
+            guard host === owner else { return }
+            let acknowledgedCaller = try acknowledgeReferenceSort(result)
+            await refreshTaskListSortCaller(acknowledgedCaller)
+        } catch {
+            if host === owner { await handleReferenceSortError(error) }
+        }
     }
 
-    private func acknowledgeReferenceSort(_ result: CoreObject) throws {
+    private func acknowledgeReferenceSort(_ result: CoreObject) throws -> TaskListSortCaller {
         guard referenceSortRequest != nil, let expected = referenceSortExpectedResult,
+              let caller = taskListSortCaller, host === taskListSortHost,
               try json(result).utf8.elementsEqual(json(expected).utf8) else { throw CocoaError(.coderReadCorrupt) }
         referenceSortRequest = nil
         referenceSortExpectedResult = nil
-        referenceSortOptions = [:]
-        referenceSortError = nil
-        referencePanel = ""
-        referenceLoadedDepth = pageSize
+        retireTaskListSort()
+        if caller == .reference { referenceLoadedDepth = pageSize }
         retryNeeded = false
         error = nil
+        return caller
+    }
+
+    private func refreshTaskListSortCaller(_ caller: TaskListSortCaller) async {
+        guard let owner = host, selectedSurface == taskListSortSurface(caller), !appLock.concealed else { return }
+        let current = { self.host === owner && self.selectedSurface == self.taskListSortSurface(caller) && !self.appLock.concealed }
+        if caller == .reference { await readReference(ownedGuard: current) }
+        else {
+            do { try await readInbox(ownedGuard: current) }
+            catch { if current() { self.error = error.localizedDescription } }
+        }
     }
 
     private func handleReferenceSortError(_ failure: Error) async {
         if referenceSortRequest != nil && isDefiniteRejection(failure) {
+            let caller = taskListSortCaller
             referenceSortRequest = nil
             referenceSortExpectedResult = nil
             referenceSortOptions = [:]
             retryNeeded = false
-            await readReference()
+            if let caller { await refreshTaskListSortCaller(caller) }
         } else { retryNeeded = referenceSortRequest != nil }
         referenceSortError = label(retryNeeded ? "settings.feedback.saveFailed" : "settings.feedback.actionFailed")
     }
 
-    func retryReferenceSort() async {
-        if retryNeeded { await retry() }
-        else { await readReferenceSortOptions() }
+    func retryReferenceSort() async { await retryTaskListSort(.reference) }
+    func retryInboxSort() async { await retryTaskListSort(.inbox) }
+    private func retryTaskListSort(_ caller: TaskListSortCaller) async {
+        guard taskListSortCaller == caller else { return }
+        if referenceSortRequest != nil { await retry() }
+        else { await readTaskListSortOptions() }
     }
+    // MARK: End Task736 shared list-sort presentation owner
 
     private func validReferenceGroup(_ value: String) -> Bool {
         ["none", "context", "area", "project", "tag"].contains(value)
@@ -20415,7 +20521,7 @@ final class CoreModel: ObservableObject {
         return try await query("menuRead", ["reference", try json(input)])
     }
 
-    @discardableResult private func readReference() async -> Bool {
+    @discardableResult private func readReference(ownedGuard: (() -> Bool)? = nil) async -> Bool {
         referenceCurrent = false
         referencePickerCurrent = false
         referenceError = nil
@@ -20453,7 +20559,7 @@ final class CoreModel: ObservableObject {
                 if referenceSelectionMode {
                     let selected = referenceSelectedIDs
                     let bulk = try await query("menuRead", ["bulk", try json(referenceTaskBulkInput(params: params))])
-                    guard selectedSurface == .reference, referenceSelectionMode else { return false }
+                    guard ownedGuard?() != false, selectedSurface == .reference, referenceSelectionMode else { return false }
                     guard bulk.text("revision").utf8.elementsEqual(next.text("revision").utf8),
                           let ids = bulk["selectedIds"] as? [String],
                           ids.allSatisfy({ id in selected.contains { $0.utf8.elementsEqual(id.utf8) } }) else {
@@ -20472,6 +20578,7 @@ final class CoreModel: ObservableObject {
                         }
                     }
                 }
+                guard ownedGuard?() != false else { return false }
                 referenceParams = params
                 referencePendingEdit = nil
                 reference = next
@@ -20486,6 +20593,7 @@ final class CoreModel: ObservableObject {
                 if !referencePickerName.isEmpty { referencePickerNeedsRead = true }
                 return true
             } catch {
+                guard ownedGuard?() != false else { return false }
                 if attempt == 1 { referenceError = error.localizedDescription }
             }
         }
@@ -26737,17 +26845,63 @@ final class CoreModel: ObservableObject {
     }
 
     func loadMore() async {
-        guard ready, selectedSurface == .inbox, !busy, !retryNeeded, items.count < inbox.number("total") else { return }
+        guard ready, let owner = host, selectedSurface == .inbox, !busy, !retryNeeded,
+              items.count < inbox.number("total") else { return }
+        let snapshot = inbox, offset = items.count
+        let target = offset + min(pageSize, snapshot.number("total") - offset)
+        let current = {
+            self.host === owner && self.ready && self.selectedSurface == .inbox && !self.retryNeeded
+                && !self.appLock.concealed && !Task.isCancelled
+                && self.inbox.text("revision") == snapshot.text("revision") && self.items.count == offset
+        }
         busy = true
-        defer { finishOperation() }
+        defer { if host === owner { finishOperation() } }
         do {
             let next = try await query("inboxView", [try json([
-                "offset": items.count, "limit": pageSize, "revision": inbox.text("revision")])])
-            guard next.text("revision") == inbox.text("revision") else { try await readInbox(); return }
-            inbox["items"] = items + next.objects("items")
+                "offset": offset, "limit": target - offset, "revision": snapshot.text("revision")])], beforeDispatch: current)
+            guard current() else { return }
+            try validateInboxPage(next, revision: snapshot.text("revision"), total: snapshot.number("total"), count: target - offset)
+            var staged = snapshot
+            staged["items"] = snapshot.objects("items") + next.objects("items")
+            inbox = staged
+            error = nil
         } catch {
-            // A minute or data revision can expire between windows. Restart the query, never mix revisions.
-            do { try await readInbox() } catch { self.error = error.localizedDescription }
+            guard current() else { return }
+            do {
+                // Rebuild the requested depth once against a fresh minute/data revision.
+                // Keep both windows local until they agree; a second failure leaves the saved projection intact.
+                var staged = try await query("inboxView", [try json(["offset": 0, "limit": pageSize])], beforeDispatch: current)
+                guard current() else { return }
+                let total = staged.number("total"), revision = staged.text("revision")
+                try validateInboxPage(staged, revision: revision, total: total, count: min(pageSize, total))
+                var rows = staged.objects("items")
+                let freshTarget = min(target, total)
+                while rows.count < freshTarget {
+                    let limit = min(pageSize, freshTarget - rows.count)
+                    let page = try await query("inboxView", [try json([
+                        "offset": rows.count, "limit": limit, "revision": revision])], beforeDispatch: current)
+                    guard current() else { return }
+                    try validateInboxPage(page, revision: revision, total: total, count: limit)
+                    rows += page.objects("items")
+                }
+                guard current() else { return }
+                staged["items"] = rows
+                inbox = staged
+                self.error = nil
+                let count = rows.count
+                Task {
+                    _ = try? await owner.call("logLine", argumentsJSON: self.json([
+                        "Native iOS Inbox paging recovered", self.json([
+                            "releaseCheck": "v1.3.5/ios-inbox-paging", "outcome": "recovered", "count": count])]))
+                }
+            } catch { if current() { self.error = error.localizedDescription } }
+        }
+    }
+
+    private func validateInboxPage(_ page: CoreObject, revision: String, total: Int, count: Int) throws {
+        guard !revision.isEmpty, page.text("revision") == revision, total >= 0,
+              page.number("total") == total, page.objects("items").count == count else {
+            throw CocoaError(.coderReadCorrupt)
         }
     }
 
@@ -30924,8 +31078,8 @@ final class CoreModel: ObservableObject {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
                 else { result = try await query("taskListSortRetryOutcome", [request]) }
-                try acknowledgeReferenceSort(result)
-                await readReference()
+                let caller = try acknowledgeReferenceSort(result)
+                await refreshTaskListSortCaller(caller)
                 return
             }
             if let request = somedaySectionCreateRequest {
@@ -32137,7 +32291,7 @@ final class CoreModel: ObservableObject {
     }
     #endif
 
-    private func readInbox(foregroundSyncOwner ownerID: UUID? = nil) async throws {
+    private func readInbox(foregroundSyncOwner ownerID: UUID? = nil, ownedGuard: (() -> Bool)? = nil) async throws {
         if let ownerID {
             guard let owner = foregroundSyncOwner, owner.id == ownerID, foregroundSyncCurrent(owner) else {
                 throw CancellationError()
@@ -32155,7 +32309,9 @@ final class CoreModel: ObservableObject {
             inbox = nextInbox
             return
         }
-        inbox = try await query("inboxView", [try json(["offset": 0, "limit": pageSize])])
+        let nextInbox = try await query("inboxView", [try json(["offset": 0, "limit": pageSize])], beforeDispatch: ownedGuard)
+        guard ownedGuard?() != false else { throw CancellationError() }
+        inbox = nextInbox
     }
 
     func openFocusSavedFilter(_ operation: CoreObject, message: String = "") async {

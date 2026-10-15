@@ -18,7 +18,7 @@ struct InboxScreen: View {
         model.area.objects("options").first(where: { $0.text("id") == "__all__" })?.text("state") == "included"
     }
     private var menuPanelPresented: Bool {
-        model.morePresented || !model.somedayPanel.isEmpty || !model.referencePanel.isEmpty || !model.historyPanel.isEmpty
+        model.inboxSortPresented || model.morePresented || !model.somedayPanel.isEmpty || !model.referencePanel.isEmpty || !model.historyPanel.isEmpty
     }
     private var menuListPrefix: String {
         model.selectedSurface == .savedSearch ? "saved-search" : model.selectedSurface == .contexts ? "contexts" : model.selectedSurface == .trash ? "trash" : model.selectedSurface == .history ? "history" : model.selectedSurface == .reference ? "reference" : model.selectedSurface == .someday ? "someday" : "waiting"
@@ -130,6 +130,7 @@ struct InboxScreen: View {
                     if model.morePresented { MoreMenuSheet(model: model, palette: palette) }
                     if !model.somedayPanel.isEmpty { SomedayPanel(model: model, palette: palette) }
                     if !model.referencePanel.isEmpty { ReferencePanel(model: model, palette: palette) }
+                    if model.inboxSortPresented { InboxSortPanel(model: model, palette: palette) }
                     if !model.historyPanel.isEmpty { HistoryPanel(model: model, palette: palette) }
                 }
                 if model.selectedSurface != .search && model.selectedSurface != .project && model.selectedSurface != .waiting
@@ -137,12 +138,12 @@ struct InboxScreen: View {
                     && model.selectedSurface != .trash && model.selectedSurface != .savedSearch
                     && (model.selectedSurface != .contexts || model.quickAccessView == "contexts")
                     && model.selectedSurface != .settings {
-                    tabBar
+                    tabBar.disabled(model.inboxSortPresented).accessibilityHidden(model.inboxSortPresented)
                 }
             }
             // More's content, dismissal backdrop and visible tabs share one modal boundary.
             .accessibilityElement(children: .contain)
-            .accessibilityAddTraits(model.morePresented ? .isModal : [])
+            .accessibilityAddTraits(model.morePresented || model.inboxSortPresented ? .isModal : [])
             .disabled(model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
                 && (model.reviewGuidePresented || model.reviewPickerPresented)))
             .accessibilityHidden(model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
@@ -342,10 +343,20 @@ struct InboxScreen: View {
                                 }
                         }
                     }
+                    if model.items.count < model.inbox.number("total") {
+                        Button { Task { await model.loadMore() } } label: {
+                            Text(model.label("common.more")).rnFont(12, .semibold)
+                                .padding(.horizontal, 12).frame(minHeight: 44)
+                                .background(palette.filter, in: Capsule()).contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || menuPanelPresented)
+                        .accessibilityIdentifier("inbox-more")
+                    }
                     if model.busy && !model.capturePresented { ProgressView().frame(maxWidth: .infinity).padding(12) }
                 }
                 .padding(12)
             }
+            .accessibilityIdentifier("inbox-scroll")
             .refreshable { await model.refresh() }
         }
     }
@@ -874,15 +885,16 @@ struct InboxScreen: View {
     private var toolbar: some View {
         HStack(spacing: 0) {
             ForEach([("sort", "sort"), ("folder", "group"), ("sliders", "filters")], id: \.0) { icon, field in
-                Button {} label: {
+                Button { if field == "sort" { Task { await model.openInboxSort() } } } label: {
                     AppIcon(name: icon, size: 16).foregroundStyle(palette.secondary)
                         .frame(width: 32, height: 32)
                         .background(palette.filter, in: Circle())
                         .overlay(Circle().stroke(palette.border, lineWidth: 1))
                         .frame(width: 44, height: 44)
                 }
-                .buttonStyle(.plain).disabled(true)
+                .buttonStyle(.plain).disabled(field != "sort" || !model.inboxSortEnabled)
                 .accessibilityLabel(model.inbox.object("toolbar").object(field).text("accessibilityLabel"))
+                .accessibilityIdentifier("inbox-" + field + "-open")
             }
             Spacer(minLength: 8)
             if model.inbox.object("mindSweep").text("placement") == "accessory" {
@@ -1665,5 +1677,43 @@ private struct ReferenceProjectNextActionPrompt: View {
         }
         .disabled(!model.referenceProjectNextActionControlsEnabled || !enabled)
         .accessibilityIdentifier(prefix + "-" + suffix)
+    }
+}
+
+private struct InboxSortPanel: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Button { model.closeInboxSort() } label: { Color.black.opacity(0.28).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).ignoresSafeArea().accessibilityLabel(model.label("common.close"))
+                    .accessibilityIdentifier("inbox-sort-dismiss").disabled(model.busy || model.retryNeeded)
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 8) {
+                        Text(model.label("sort.label")).rnFont(17, .bold).frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityAddTraits(.isHeader)
+                        Button { model.closeInboxSort() } label: { AppIcon(name: "x", size: 20).frame(width: 44, height: 44).contentShape(Rectangle()) }
+                            .buttonStyle(.plain).accessibilityLabel(model.label("common.close"))
+                            .accessibilityIdentifier("inbox-sort-close").disabled(model.busy || model.retryNeeded)
+                    }
+                    .frame(minHeight: 44).padding(.bottom, 12)
+                    ViewThatFits(in: .vertical) {
+                        TaskListSortChoices(model: model, palette: palette, caller: .inbox).fixedSize(horizontal: false, vertical: true)
+                        ScrollView { TaskListSortChoices(model: model, palette: palette, caller: .inbox) }
+                            .accessibilityIdentifier("inbox-sort-scroll")
+                    }
+                }
+                .padding(12).frame(maxWidth: 440, maxHeight: geometry.size.height * 0.82, alignment: .top)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(palette.border, lineWidth: 1))
+                .padding(.horizontal, 12)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) { model.closeInboxSort() }
+        }
     }
 }
