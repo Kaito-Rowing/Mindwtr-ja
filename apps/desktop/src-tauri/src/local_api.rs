@@ -6441,18 +6441,64 @@ mod tests {
         } else {
             body.to_string()
         };
-        let mut stream = TcpStream::connect((LOCAL_API_HOST, port)).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
+        // HTTP framing completes the response without waiting for a clean socket EOF.
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .retry(reqwest::retry::never())
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(5))
+            .build()
             .unwrap();
-        write!(stream, "{method} /areas/{id} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
-        let mut response = String::new();
-        stream.read_to_string(&mut response).unwrap();
-        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
-        (
-            headers.split_whitespace().nth(1).unwrap().parse().unwrap(),
-            serde_json::from_str(body).unwrap(),
-        )
+        let response = client
+            .request(
+                method.parse().unwrap(),
+                format!("http://{LOCAL_API_HOST}:{port}/areas/{id}"),
+            )
+            .bearer_auth(token)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .unwrap();
+        (response.status().as_u16(), response.json().unwrap())
+    }
+
+    #[test]
+    fn area_http_request_requires_a_complete_framed_response_without_waiting_for_eof() {
+        for content_length in [2, 3] {
+            let listener = TcpListener::bind((LOCAL_API_HOST, 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let (finished, completion) = std::sync::mpsc::channel();
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                read_request(&mut stream, far_future_deadline())
+                    .unwrap()
+                    .unwrap();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {content_length}\r\n\r\n{{}}"
+                )
+                .unwrap();
+                if content_length == 2 {
+                    completion.recv_timeout(Duration::from_secs(2)).unwrap();
+                }
+            });
+            let result = std::panic::catch_unwind(|| {
+                area_http_request(port, "GET", "area-1", Value::Null, "token")
+            });
+            if content_length == 2 {
+                assert_eq!(result.unwrap(), (200, json!({})));
+                finished.send(()).unwrap();
+            } else {
+                assert!(
+                    result.is_err(),
+                    "a truncated body must fail even if it is valid JSON"
+                );
+            }
+            server.join().unwrap();
+        }
     }
 
     #[test]
