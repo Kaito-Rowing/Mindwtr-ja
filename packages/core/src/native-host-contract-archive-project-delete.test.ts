@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, onTestFinished } from 'vitest';
 import { openSqliteHost } from './screen-parity.replay';
 import { revisionOf } from './native-request-receipts';
-import { flushPendingSave, resetForTests, useTaskStore } from './store';
+import { flushPendingSave, resetForTests, useTaskStore, setSaveRetrySleepForTests } from './store';
 import type { AppData, Project, Section, Task } from './types';
 
 const AT = '2026-09-30T12:00:00.000Z';
@@ -229,6 +229,10 @@ describe('Archive Project Delete through the prepared Project Delete writer', ()
     });
 
     it('cold-retries failed SQLite COMMIT without partial Project, children or receipt', async () => {
+        // The store's retry waits (250, 500, 1000, 2000 ms) are recorded, not slept: the test stays well inside its budget.
+        const retryWaits: number[] = [];
+        setSaveRetrySleepForTests(async (ms) => { retryWaits.push(ms); });
+        onTestFinished(() => setSaveRetrySleepForTests(null));
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date(NOW));
         const fault = { commits: 0 };
