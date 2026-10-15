@@ -59,6 +59,8 @@ type TaskEditActivitySession = {
     taskEditDraft: TaskEditDraft;
     taskId: string;
     titleDraft: string;
+    /** The task the draft was opened or last saved on: its save's merge base (absent in older snapshots). */
+    baseTask?: Task;
 };
 
 const isTaskEditActivityInputRecovery = (value: unknown): value is TaskEditActivityInputRecovery => {
@@ -91,7 +93,9 @@ const isTaskEditActivitySession = (value: unknown): value is TaskEditActivitySes
         && typeof editDraft.draft === 'object'
         && editDraft.draft !== null
         && (editDraft.checklist === undefined || Array.isArray(editDraft.checklist))
-        && (editDraft.attachments === undefined || Array.isArray(editDraft.attachments));
+        && (editDraft.attachments === undefined || Array.isArray(editDraft.attachments))
+        && (snapshot.baseTask === undefined || (!!snapshot.baseTask && typeof snapshot.baseTask === 'object'
+            && snapshot.baseTask.id === snapshot.taskId));
 };
 
 export type SetTaskEditDraftValue<T> = (
@@ -292,8 +296,10 @@ export function useTaskEditState({
         const snapshot = taskEditActivitySessionRef.current;
         if (!snapshot) return null;
         const activeInput = activityInputRef.current;
+        const baseTask = baseTaskRef.current;
         return {
             ...snapshot,
+            ...(baseTask?.id === snapshot.taskId ? { baseTask } : {}),
             activeInput: activeInput ? {
                 field: activeInput.field,
                 selection: { ...activeInput.selection },
@@ -304,7 +310,9 @@ export function useTaskEditState({
         if (!visible || !recoverableLiveTask || snapshot.taskId !== recoverableLiveTask.id) return;
         taskEditDraftRef.current = snapshot.taskEditDraft;
         setTaskEditDraftState(snapshot.taskEditDraft);
-        baseTaskRef.current = recoverableLiveTask;
+        // The draft's own base, not the live task: a sync that landed while the activity was recreated must read
+        // as another device's change, or the save would put the draft's copy back over it.
+        baseTaskRef.current = snapshot.baseTask?.id === recoverableLiveTask.id ? snapshot.baseTask : recoverableLiveTask;
         attachmentDraftSettledRef.current = false;
         isDirtyRef.current = snapshot.isDirty;
         titleDraftRef.current = snapshot.titleDraft;

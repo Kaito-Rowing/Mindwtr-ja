@@ -775,6 +775,47 @@ describe('useTaskEditState', () => {
         expect(onSave.mock.calls[0][1].tags).toEqual(['#a', '#remote', '#b']);
     });
 
+    it('keeps the base the draft was opened on across an Android activity restore, so a tag synced meanwhile stays', async () => {
+        let state!: ReturnType<typeof useTaskEditState>;
+        const onSave = vi.fn((_id: string, _updates: Partial<Task>) => true);
+        const tagged: Task = { ...task, tags: ['#a'] };
+        let shown: Task = tagged;
+        function Probe() {
+            state = useTaskEditState({
+                onClose: vi.fn(),
+                onSave,
+                onSaveError: vi.fn(),
+                resetCopilotStateRef: { current: vi.fn() },
+                settleAttachmentDraft: vi.fn(),
+                sections: [],
+                task: shown,
+                tasks: [shown],
+                visible: true,
+            });
+            return null;
+        }
+        const previous = useTaskStore.getState()._allTasks;
+        useTaskStore.setState({ _allTasks: [tagged] });
+        try {
+            nativeActivityState.current = { activityId: 201, isChangingConfigurations: false };
+            let firstTree!: renderer.ReactTestRenderer;
+            renderer.act(() => { firstTree = renderer.create(React.createElement(Probe)); });
+            renderer.act(() => state.setDraftField('tags', '#a, #b'));
+            nativeActivityState.destroyed.set(201, { activityId: 201, isChangingConfigurations: true });
+            nativeActivityState.current = { activityId: 202, isChangingConfigurations: false };
+            renderer.act(() => { firstTree.unmount(); });
+            // Another device's tag lands while the activity is recreated.
+            shown = { ...tagged, rev: 3, tags: ['#a', '#remote'] };
+            useTaskStore.setState({ _allTasks: [shown] });
+            renderer.act(() => { renderer.create(React.createElement(Probe)); });
+            await renderer.act(async () => { expect(await state.draftLifecycle.save()).toBe(true); });
+        } finally {
+            useTaskStore.setState({ _allTasks: previous });
+        }
+        expect(onSave).toHaveBeenCalledTimes(1);
+        expect(onSave.mock.calls[0][1].tags).toEqual(['#a', '#remote', '#b']);
+    });
+
     // The task has a stored reminder policy, so core's draft patch carries it; the save writes it only when changed.
     it('does not write an unchanged reminder policy over one another device synced', async () => {
         let state!: ReturnType<typeof useTaskEditState>;
