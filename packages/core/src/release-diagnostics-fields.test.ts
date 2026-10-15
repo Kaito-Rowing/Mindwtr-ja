@@ -221,6 +221,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'imeVisible', 'imeMetricsX', 'imeMetricsY', 'imeMetricsWidth', 'imeMetricsHeight',
     'imeEventX', 'imeEventY', 'imeEventWidth', 'imeEventHeight',
     'inputX', 'inputY', 'inputWidth', 'inputHeight', 'inputBottom',
+    // sqlite-adapter-lock reuses operation above; waitMs is how long the caller waited for the lock.
+    'waitMs',
 ];
 
 describe('release diagnostics field names', () => {

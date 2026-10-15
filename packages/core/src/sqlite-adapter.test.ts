@@ -1707,7 +1707,7 @@ describeSqlite('SqliteAdapter', () => {
             all: allMock,
         };
         const lightweightAdapter = new SqliteAdapter(client);
-        (lightweightAdapter as unknown as { ensureSchema: () => Promise<void> }).ensureSchema = async () => {};
+        (lightweightAdapter as unknown as { ensureSchemaNow: () => Promise<void> }).ensureSchemaNow = async () => {};
 
         const results = await lightweightAdapter.searchAll('Searchable');
 
@@ -1887,7 +1887,7 @@ describeSqlite('SqliteAdapter', () => {
             all: allMock,
         };
         const lightweightAdapter = new SqliteAdapter(client);
-        (lightweightAdapter as unknown as { ensureSchema: () => Promise<void> }).ensureSchema = async () => {};
+        (lightweightAdapter as unknown as { ensureSchemaNow: () => Promise<void> }).ensureSchemaNow = async () => {};
 
         const results = await lightweightAdapter.searchAll('anything');
 
@@ -2833,7 +2833,7 @@ describe('SqliteAdapter saveData pruning', () => {
             exec: vi.fn().mockResolvedValue(undefined),
         };
         const lightweightAdapter = new SqliteAdapter(client);
-        (lightweightAdapter as unknown as { ensureSchema: () => Promise<void> }).ensureSchema = async () => {};
+        (lightweightAdapter as unknown as { ensureSchemaNow: () => Promise<void> }).ensureSchemaNow = async () => {};
 
         const now = '2026-03-04T12:00:00.000Z';
         const data: AppData = {
@@ -2894,7 +2894,7 @@ describe('SqliteAdapter empty-snapshot backstop (#852)', () => {
             exec: vi.fn().mockResolvedValue(undefined),
         };
         const adapter = new SqliteAdapter(client);
-        (adapter as unknown as { ensureSchema: () => Promise<void> }).ensureSchema = async () => {};
+        (adapter as unknown as { ensureSchemaNow: () => Promise<void> }).ensureSchemaNow = async () => {};
         return { adapter, run };
     };
 
