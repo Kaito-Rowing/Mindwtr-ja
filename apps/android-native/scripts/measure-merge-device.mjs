@@ -18,7 +18,10 @@
 //       Per trace: the sync's engine-thread sections (sync:*, io:*, sql:*), the engine's uninterrupted blocks during sync,
 //       the engine thread's states, and each screen command's wait (core:wait on its own thread) with its queue time and the
 //       tap before it. With --budget=<ms> it exits 1 unless the p90 tap-to-answer of the taps whose wait began inside the
-//       sync's span is at most <ms> (D9's target is 300); no such tap also fails.
+//       sync's span is at most <ms> (D9's target is 300); no such tap also fails. Each trace also counts the taps inside the
+//       sync's span (one tap is a DOWN and an UP event with the same eventTimeNano), the taps some wait matched, the taps two or
+//       more waits matched, and the unmatched taps: late (a host call began after it, before the next tap, so its answer went
+//       unmeasured) or no call. A series whose late share is above 5% fails the budget too.
 //
 // Every phone command runs inside the coordinator's lock: flock -o -w 14400 /home/dd/scratch/s23.lock node ...
 // Only the benchmark package (its own application id): the dev app's data is never touched.
@@ -259,25 +262,55 @@ WHERE utid = ${engine} AND ts < ${span.end} AND ts + dur > ${span.start} GROUP B
      AND NOT EXISTS (SELECT 1 FROM ancestor_slice(d.id) a WHERE a.name GLOB 'sync:*' OR a.name GLOB 'io:*'))`;
         const own = `FROM slice e JOIN thread_track et ON e.track_id = et.id WHERE et.utid = ${engine} AND e.depth = 0 AND e.name GLOB 'core:*'
      AND e.name != 'core:idlePump' AND e.ts >= s.ts AND e.ts + e.dur <= s.ts + s.dur ORDER BY e.ts + e.dur DESC LIMIT 1`;
+        const inputs = `FROM slice i JOIN thread_track it ON i.track_id = it.id JOIN thread ti USING (utid) JOIN process pi USING (upid)
+     WHERE pi.name GLOB '${PKG_GLOB}' AND ti.tid = pi.pid AND i.name GLOB 'deliverInputEvent*'`;
+        const tapBefore = `${inputs} AND i.ts <= s.ts AND i.ts > s.ts - 150e6 ORDER BY i.ts DESC LIMIT 1`;
+        const tapOf = (name) => /eventTimeNano=(\d+)/.exec(String(name ?? ''))?.[1] ?? null;
         const waits = query(trace, `
 SELECT s.ts, round(s.dur / 1e6, 1) AS waitMs, t.name AS thread,
   (SELECT e.name ${own}) AS op,
   (SELECT round((e.ts - s.ts) / 1e6, 1) ${own}) AS queueMs,
   (SELECT round(e.dur / 1e6, 1) ${own}) AS runMs,
   round(${syncWork} / 1e6, 1) AS syncWorkMs,
-  (SELECT round((s.ts + s.dur - i.ts) / 1e6, 1) FROM slice i JOIN thread_track it ON i.track_id = it.id JOIN thread ti USING (utid) JOIN process pi USING (upid)
-     WHERE pi.name GLOB '${PKG_GLOB}' AND ti.tid = pi.pid AND i.name GLOB 'deliverInputEvent*' AND i.ts <= s.ts AND i.ts > s.ts - 150e6 ORDER BY i.ts DESC LIMIT 1) AS tapToAnswerMs,
+  (SELECT round((s.ts + s.dur - i.ts) / 1e6, 1) ${tapBefore}) AS tapToAnswerMs,
+  (SELECT i.name ${tapBefore}) AS tapEvent,
   round((s.ts - ${span.start}) / 1e6, 1) AS atSyncMs
 FROM slice s JOIN thread_track tt ON s.track_id = tt.id JOIN thread t USING (utid) JOIN process p USING (upid)
 WHERE p.name GLOB '${PKG_GLOB}' AND s.name = 'core:wait' AND tt.utid != ${engine} ORDER BY s.ts;`)
-            .map((w) => Object.fromEntries(Object.entries(w).map(([k, v]) => [k, v === '[NULL]' ? null : v])));
+            .map((w) => Object.fromEntries(Object.entries(w).map(([k, v]) => [k, v === '[NULL]' ? null : v])))
+            .map(({ tapEvent, ...w }) => ({ ...w, tap: tapOf(tapEvent) }));
+        // The matcher's accounting: every tap inside the sync's span, and how many waits each one answered.
+        // Every tap's first and last event (DOWN, UP), in time order, from the whole trace (the next tap may fall after the span).
+        const tapEvents = new Map();
+        for (const row of query(trace, `SELECT i.name, i.ts ${inputs} ORDER BY i.ts;`)) {
+            const tap = tapOf(row.name);
+            if (!tap) continue;
+            const known = tapEvents.get(tap);
+            tapEvents.set(tap, { first: known?.first ?? row.ts, last: row.ts });
+        }
+        const ordered = [...tapEvents].sort((a, b) => a[1].first - b[1].first);
+        const inSpan = ordered.filter(([, t]) => t.last >= span.start && t.last <= span.end);
+        const matches = new Map();
+        for (const w of waits) if (w.tap && inSpan.some(([tap]) => tap === w.tap)) matches.set(w.tap, (matches.get(w.tap) ?? 0) + 1);
+        // An unmatched tap is late when a host call began after it but before the next tap: its answer is hidden from the
+        // budget, so a late share above 5% fails it. Otherwise the tap made no call (a tab already shown) and only counts.
+        let late = 0;
+        const lateGapsMs = [];
+        for (const [tap, t] of inSpan) {
+            if (matches.has(tap)) continue;
+            const nextTap = ordered.find(([, other]) => other.first > t.last)?.[1].first ?? Infinity;
+            const call = waits.find((w) => w.ts >= t.last && w.ts < nextTap);
+            if (call) { late += 1; lateGapsMs.push(Math.round((call.ts - t.last) / 1e5) / 10); }
+        }
+        const taps = { inSpan: inSpan.length, matched: matches.size, late, noCall: inSpan.length - matches.size - late,
+            duplicate: [...matches.values()].filter((n) => n > 1).length, lateGapsMs };
         const steps = query(trace, `
 SELECT round((ts - ${span.start}) / 1e6, 1) AS atSyncMs, replace(replace(msg, ',', ';'), '"', '') AS msg FROM android_logs WHERE tag = '${TAG}'
   AND (msg GLOB '*Sync step*' OR msg GLOB '*Full sync merge*' OR msg GLOB '*Sync local reconcile*' OR msg GLOB '*sync state*') ORDER BY ts;`);
         results.push({
             trace, syncSpanMs: Math.round((span.end - span.start) / 1e5) / 10,
             longestBlocks: blocks.slice(0, 6).map(({ name, ms, inner }) => ({ name, ms, inner })),
-            sections, states, waits, steps,
+            sections, states, waits, steps, taps,
         });
     }
     // Across traces: the sync's sections (median of each sample's total), its longest block, and the waits behind sync vs idle.
@@ -301,11 +334,22 @@ SELECT round((ts - ${span.start}) / 1e6, 1) AS atSyncMs, replace(replace(msg, ',
         // Every host call that waited while sync work ran on the engine (taps, the screens' own reads, workers).
         // A tap whose wait began inside the sync's span (its first to last sync section), whatever ran in the wait.
         tapsInSyncSpan: stats(ok.flatMap((r) => r.waits.filter((w) => w.tapToAnswerMs != null && w.atSyncMs >= 0 && w.atSyncMs <= r.syncSpanMs).map((w) => w.tapToAnswerMs))),
+        taps: (() => {
+            const sum = (key) => ok.reduce((total, r) => total + r.taps[key], 0);
+            const inSpan = sum('inSpan');
+            return { inSpan, matched: sum('matched'), late: sum('late'), noCall: sum('noCall'), duplicate: sum('duplicate'),
+                lateShare: inSpan ? Math.round((sum('late') / inSpan) * 1000) / 1000 : null,
+                lateGapMs: stats(ok.flatMap((r) => r.taps.lateGapsMs)) };
+        })(),
         callsDuringSync: { n: waits.filter((w) => w.syncWorkMs > 10).length, waitMs: stats(waits.filter((w) => w.syncWorkMs > 10).map((w) => w.waitMs)), syncWorkMs: stats(waits.filter((w) => w.syncWorkMs > 10).map((w) => w.syncWorkMs)) },
     };
     console.log(JSON.stringify({ summary, results }, null, 2));
     if (budgetMs !== null && !(summary.tapsInSyncSpan.p90 <= budgetMs)) {
         console.error(`budget failed: tap in sync span p90 ${summary.tapsInSyncSpan.p90 ?? 'none'} ms > ${budgetMs} ms (n ${summary.tapsInSyncSpan.n})`);
+        process.exitCode = 1;
+    }
+    if (budgetMs !== null && !(summary.taps.lateShare <= 0.05)) {
+        console.error(`budget failed: ${summary.taps.late} of ${summary.taps.inSpan} taps in the sync span started their call more than 150 ms later, unmeasured (share ${summary.taps.lateShare} > 0.05)`);
         process.exitCode = 1;
     }
 } else {
