@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
 import { consoleLogger, setLogger } from './logger';
 import {
-    batchUpdateTasksFromLatest, mergeTaskDraftOntoLatest, updateProjectFromDraft, updateProjectFromLatest, updateSettingsFromLatest,
+    batchUpdateTasksFromLatest, mergeTaskDraftOntoLatest, saveTaskDraftOntoLatest, updateProjectFromDraft, updateProjectFromLatest, updateSettingsFromLatest,
     updateTaskFromDraft, updateTaskFromLatest,
 } from './store-latest-updates';
 import { runSyncStoreSave } from './store-write-gate';
@@ -144,6 +144,25 @@ describe('a draft saved field by field on the latest row', () => {
             // Only a single value both sides changed: the draft wins it, and nothing was kept, so nothing is logged.
             await updateTaskFromDraft('t1', task({ priority: 'medium' }), { priority: 'low' });
             expect(logs.filter((entry) => entry.message === 'Draft saved onto a synced change')).toEqual([]);
+        } finally {
+            setLogger(consoleLogger);
+        }
+    });
+
+    it('logs nothing when the write fails, or when no item from the other device survived the merge', async () => {
+        const logs: Array<{ message?: string }> = [];
+        setLogger((entry) => { logs.push(entry as never); });
+        const kept = () => logs.filter((entry) => entry.message === 'Draft saved onto a synced change');
+        try {
+            const base = task({ tags: ['a'] });
+            useTaskStore.setState({ _allTasks: [task({ rev: 3, tags: ['a', 'remote'] })] });
+            await saveTaskDraftOntoLatest('t1', base, { tags: ['a', 'mine'] }, { write: async () => ({ success: false, error: 'disk full' }) });
+            expect(kept()).toEqual([]);
+            // The other device removed tag a; the draft removed it too and added b: nothing of the other side's is left.
+            useTaskStore.setState({ _allTasks: [task({ rev: 4, tags: [] })] });
+            await saveTaskDraftOntoLatest('t1', base, { tags: ['b'] });
+            expect(useTaskStore.getState()._tasksById.get('t1')?.tags).toEqual(['b']);
+            expect(kept()).toEqual([]);
         } finally {
             setLogger(consoleLogger);
         }

@@ -120,7 +120,6 @@ const mergeTaskDraft = (
             continue;
         }
         if (!syncedChange) { merged[key] = value; continue; }
-        if (TASK_LIST_FIELDS.has(key)) keptLists.push(key);
         merged[key] = key === 'tags' || key === 'contexts'
             ? mergeTokenList(base[key], value as string[] | undefined, latest[key])
             : key === 'checklist'
@@ -128,6 +127,8 @@ const mergeTaskDraft = (
                 : key === 'attachments'
                     ? mergeTaskDraftAttachments(latest.attachments ?? [], base.attachments ?? [], (value as Attachment[] | undefined) ?? [])
                     : value;
+        // Logged only when something of the other side's survived: the merge wrote more than the draft alone.
+        if (TASK_LIST_FIELDS.has(key) && !taskEditValuesEqual(merged[key], value)) keptLists.push(key);
     }
     // The store reads a start or due change that comes without the offset as a hand-set start and ends the relative
     // link (task-draft.ts, task-relative-start.ts): a draft that keeps the link sends it with its date change.
@@ -198,10 +199,10 @@ export const updateProjectFromDraft = (id: string, base: Project, updates: Parti
             const value = updates[key];
             if (taskEditValuesEqual(value, base[key])) continue;
             const synced = key === 'tagIds' && !taskEditValuesEqual(latest.tagIds, base.tagIds);
-            if (synced) keptTags = true;
             (merged as Record<string, unknown>)[key] = synced
                 ? mergeTokenList(base.tagIds, value as string[] | undefined, latest.tagIds)
                 : value;
+            if (synced && !taskEditValuesEqual(merged.tagIds, value)) keptTags = true;
         }
         if (Object.keys(merged).length === 0) return { success: true, id };
         const result = await useTaskStore.getState().updateProject(id, merged);
