@@ -3,6 +3,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View
 import { RotateCcw, X } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+    updateSettingsFromLatest,
     DEFAULT_TASK_EDITOR_ORDER,
     DEFAULT_TASK_EDITOR_HIDDEN,
     flushPendingSave,
@@ -18,7 +19,6 @@ import {
 
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { logInfo } from '@/lib/app-log';
-import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 import { buildTaskEditorPresetConfig, resolveTaskEditorPresetId, type TaskEditorPresetId } from '@/components/task-edit/task-edit-modal.utils';
 import { SettingToggleRow } from './setting-row';
 import { useSettingsLocalization, useSettingsScrollContent } from './settings.hooks';
@@ -85,7 +85,7 @@ export function SandboxSettingsScreen() {
         if (!isSandboxMode()) return;
         setSettingsFailed(false);
         try {
-            await writeSettingsFromLatest(updateSettings, (latest) => (typeof updates === 'function' ? updates(latest) : updates));
+            await updateSettingsFromLatest((latest) => (typeof updates === 'function' ? updates(latest) : updates), { write: updateSettings, read: () => useTaskStore.getState().settings });
             await flushPendingSave();
             void logInfo('Sandbox setting applied', {
                 scope: 'sandbox',

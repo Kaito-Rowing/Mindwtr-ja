@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+    updateSettingsFromLatest,
     generateUUID,
     normalizeExternalCalendarColor,
     type AppData,
@@ -14,7 +15,6 @@ import {
 import { isTauriRuntime } from '../../../lib/runtime';
 import { useLanguage } from '../../../contexts/language-context';
 import { reportSettingsFailure, resolveSettingsFeedback } from './settings-feedback';
-import { updateSettingsFromLatestWith } from './settings-from-latest';
 import {
     enableDesktopCalendarPush,
     getDesktopCalendarPushEnabled,
@@ -157,10 +157,10 @@ export function useCalendarSettings({ loadEnabled = true, showSaved, settings, u
         setCalendarError(null);
         try {
             let next: ExternalCalendarSubscription[] = [];
-            await updateSettingsFromLatestWith(updateSettings, (latest) => {
+            await updateSettingsFromLatest((latest) => {
                 next = edit(Array.isArray(latest.externalCalendars) ? latest.externalCalendars : externalCalendars);
                 return { externalCalendars: next };
-            });
+            }, { write: updateSettings });
             setExternalCalendars(next);
             await ExternalCalendarService.setCalendars(next);
             showSaved();

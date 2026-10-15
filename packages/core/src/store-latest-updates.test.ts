@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
+import { consoleLogger, setLogger } from './logger';
 import {
     batchUpdateTasksFromLatest, mergeTaskDraftOntoLatest, updateProjectFromDraft, updateProjectFromLatest, updateSettingsFromLatest,
     updateTaskFromDraft, updateTaskFromLatest,
@@ -121,6 +122,44 @@ describe('a draft saved field by field on the latest row', () => {
             attachments: [att('X'), att('K'), att('Z')] }, task({ ...remoteRemoved, attachments: [att('K')] }))).toEqual({
             tags: ['k', 'z'], contexts: ['@k', '@z'], checklist: [item('k'), item('z')], attachments: [att('K'), att('Z')],
         });
+    });
+
+    it('keeps untouched fields only when asked and nobody else changed them', () => {
+        const base = task({ title: 'Same', tags: ['a'] });
+        const latest = task({ title: 'Same', tags: ['a', 'remote'], priority: 'high' });
+        expect(mergeTaskDraftOntoLatest(base, { title: 'Same', tags: ['a', 'mine'], priority: undefined }, latest, { keepUntouched: true }))
+            .toEqual({ title: 'Same', tags: ['a', 'remote', 'mine'] });
+    });
+
+    it('logs a kept synced change only for a list both sides changed, and only after the write', async () => {
+        const logs: Array<{ message?: string; context?: Record<string, unknown> }> = [];
+        setLogger((entry) => { logs.push(entry as never); });
+        try {
+            const base = task({ tags: ['a'], priority: 'low' });
+            useTaskStore.setState({ _allTasks: [task({ rev: 3, tags: ['a', 'remote'], priority: 'high' })] });
+            await updateTaskFromDraft('t1', base, { tags: ['a', 'mine'], priority: 'medium' });
+            const kept = logs.filter((entry) => entry.message === 'Draft saved onto a synced change');
+            expect(kept).toEqual([expect.objectContaining({ context: expect.objectContaining({ releaseCheck: 'v1.3.7/sync-field-merge', entity: 'task', fields: 'tags' }) })]);
+            logs.length = 0;
+            // Only a single value both sides changed: the draft wins it, and nothing was kept, so nothing is logged.
+            await updateTaskFromDraft('t1', task({ priority: 'medium' }), { priority: 'low' });
+            expect(logs.filter((entry) => entry.message === 'Draft saved onto a synced change')).toEqual([]);
+        } finally {
+            setLogger(consoleLogger);
+        }
+    });
+
+    it('sends the relative start with a due change the draft made, so the store keeps the link', () => {
+        const offset = { amount: -3, unit: 'day' } as Task['relativeStartOffset'];
+        const base = task({ dueDate: '2026-10-20', startTime: '2026-10-17', relativeStartOffset: offset });
+        expect(mergeTaskDraftOntoLatest(base, { dueDate: '2026-10-25', startTime: '2026-10-22', relativeStartOffset: offset }, base))
+            .toEqual({ dueDate: '2026-10-25', startTime: '2026-10-22', relativeStartOffset: offset });
+    });
+
+    it('merges a checklist item both sides edited by field: the rename and the tick both stay', () => {
+        const base = task({ checklist: [{ id: 'c1', title: 'One', isCompleted: false }] });
+        expect(mergeTaskDraftOntoLatest(base, { checklist: [{ id: 'c1', title: 'Renamed', isCompleted: false }] },
+            task({ checklist: [{ id: 'c1', title: 'One', isCompleted: true }] }))).toEqual({ checklist: [{ id: 'c1', title: 'Renamed', isCompleted: true }] });
     });
 
     it('saves a task draft and a project draft on the rows a sync save published while they waited', async () => {

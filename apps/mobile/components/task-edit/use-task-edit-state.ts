@@ -6,7 +6,7 @@ import {
     collectFocusEligibilityTasks,
     getFocusStarBlockedText,
     generateUUID,
-    mergeTaskDraftOntoLatest,
+    saveTaskDraftOntoLatest,
     normalizeFocusTaskLimit,
     resolveTaskEditorFocusStar,
     runStoreCommand,
@@ -447,22 +447,22 @@ export function useTaskEditState({
         const hasListField = (patch: Partial<Task>) => (
             'tags' in patch || 'contexts' in patch || 'checklist' in patch || 'attachments' in patch
         );
-        const writeMerged = (patch: Partial<Task>) => (!hasListField(patch) ? writePatch(currentTask.id, patch) : runStoreCommand(async () => {
-            const storedTask = useTaskStore.getState()._tasksById?.get(currentTask.id);
-            if (!storedTask) return writePatch(currentTask.id, patch);
-            // Fields equal to the base stay as the patch sends them (a kept relative start offset).
-            const merged: Partial<Task> = { ...patch, ...mergeTaskDraftOntoLatest(currentTask, patch, storedTask) };
-            if (patch.attachments) {
-                savedAttachments = merged.attachments ?? savedAttachments;
-                if (JSON.stringify(merged.attachments) !== JSON.stringify(patch.attachments)) {
-                    void logInfo('Editor attachment save kept a newer stored change', {
-                        scope: 'task-edit',
-                        extra: { releaseCheck: 'v1.3.4/editor-attachment-save-merge', outcome: 'merged' },
-                    });
-                }
-            }
-            return writePatch(currentTask.id, merged);
-        }));
+        const writeMerged = (patch: Partial<Task>) => (!hasListField(patch) ? writePatch(currentTask.id, patch)
+            : saveTaskDraftOntoLatest(currentTask.id, currentTask, patch, {
+                read: (taskId) => useTaskStore.getState()._tasksById?.get(taskId),
+                write: (taskId, merged) => {
+                    if (patch.attachments) {
+                        savedAttachments = merged.attachments ?? savedAttachments;
+                        if (JSON.stringify(merged.attachments) !== JSON.stringify(patch.attachments)) {
+                            void logInfo('Editor attachment save kept a newer stored change', {
+                                scope: 'task-edit',
+                                extra: { releaseCheck: 'v1.3.4/editor-attachment-save-merge', outcome: 'merged' },
+                            });
+                        }
+                    }
+                    return writePatch(taskId, merged);
+                },
+            }));
         if (mode === 'cancel') {
             if (!updates) return false;
             updates = {

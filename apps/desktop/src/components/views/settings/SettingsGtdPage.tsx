@@ -1,5 +1,6 @@
 import type { AppSettings, Area, DefaultProjectFlowMode, FeatureSettings, GtdSettings, TaskEditorFieldId, TaskEditorPresentation, TaskEditorSectionId } from '@mindwtr/core';
 import {
+    updateSettingsFromLatest,
     DEFAULT_TASK_EDITOR_ORDER,
     DEFAULT_TASK_EDITOR_VISIBLE,
     DEFAULT_TASK_EDITOR_SECTION_BY_FIELD,
@@ -22,7 +23,6 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { reportSettingsFailure } from './settings-feedback';
-import { updateSettingsFromLatestWith } from './settings-from-latest';
 import { dispatchDesktopOnboardingEvent } from '../../../lib/desktop-onboarding-events';
 import { useUiStore } from '../../../store/ui-store';
 import type { Language } from '../../../contexts/language-context';
@@ -266,7 +266,7 @@ export function SettingsGtdPage({
         failure: string,
         onSaved: () => void = showSaved,
     ) => {
-        updateSettingsFromLatestWith(updateSettings, build)
+        updateSettingsFromLatest(build, { write: updateSettings })
             .then(onSaved)
             .catch((error) => reportSettingsFailure(failure, error, t.settingsSaveFailed));
     };
@@ -391,12 +391,14 @@ export function SettingsGtdPage({
         }, 'Failed to update task editor layout');
     };
     const toggleFieldVisibility = (fieldId: TaskEditorFieldId) => {
+        // The value the page shows decides, as the feature toggles do: another device's change since is not flipped back.
+        const hide = !hiddenSet.has(fieldId);
         saveTaskEditor((latest) => {
             const { order, hidden: nextHidden } = resolveTaskEditorLayout(latest);
-            if (nextHidden.has(fieldId)) {
-                nextHidden.delete(fieldId);
-            } else {
+            if (hide) {
                 nextHidden.add(fieldId);
+            } else {
+                nextHidden.delete(fieldId);
             }
             const nextFeatures = { ...(latest.features ?? {}) };
             if (fieldId === 'priority') {

@@ -14,9 +14,8 @@ import {
     isDueForReview,
     isProcessInboxReturningTask,
     parseProcessInboxTitleInput,
-    mergeTaskDraftOntoLatest,
+    saveTaskDraftOntoLatest,
     prepareProcessInboxCommit,
-    runStoreCommand,
     setTaskViewSectionId,
     startProcessInboxSession,
     tFallback,
@@ -331,14 +330,15 @@ export function useInboxProcessingController({
             return false;
         }
         // The write as one store command, merged field by field onto the row as stored when it is admitted, against
-        // the task the draft was hydrated from (core's mergeTaskDraftOntoLatest): only the fields the step changed are
-        // written, tags and contexts merge by token, and attachments by mergeTaskDraftAttachments, which appends the
-        // title's /link attachments to the latest list. A token or an attachment a sync save brought stays.
+        // the task the draft was hydrated from (core's mergeTaskDraftOntoLatest, as mobile's): a field another device
+        // changed is written only if the step changed it too; tags and contexts merge by token, and
+        // attachments by mergeTaskDraftAttachments, which appends the title's /link attachments to the latest list. A
+        // token or an attachment a sync save brought stays.
         const base = processingBaseRef.current?.id === processingTask.id ? processingBaseRef.current : processingTask;
-        const updateTaskFromDraft = (id: string, updates: Partial<Task>) => runStoreCommand(async (): Promise<StoreActionResult> => {
-            const latest = useTaskStore.getState()._tasksById.get(id);
-            const merged = latest ? mergeTaskDraftOntoLatest(base, updates, latest) : updates;
-            return Object.keys(merged).length > 0 ? updateTask(id, merged) : { success: true, id };
+        const updateTaskFromDraft = (id: string, updates: Partial<Task>) => saveTaskDraftOntoLatest(id, base, updates, {
+            write: (taskId, merged): Promise<StoreActionResult> | StoreActionResult => (Object.keys(merged).length > 0
+                ? updateTask(taskId, merged) : { success: true, id: taskId }),
+            keepUntouched: true,
         });
         try {
             const outcome = await commitProcessInboxWorkflowEvent(

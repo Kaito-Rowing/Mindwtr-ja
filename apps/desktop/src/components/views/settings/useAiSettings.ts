@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AIProviderId, AIReasoningEffort, AiSettings, AppData, AudioCaptureMode, AudioFieldStrategy } from '@mindwtr/core';
 import {
+    updateSettingsFromLatest,
     canDiscoverAIModels,
     DEFAULT_ANTHROPIC_THINKING_BUDGET,
     DEFAULT_GEMINI_THINKING_BUDGET,
@@ -22,7 +23,6 @@ import { markSettingsOpenTrace, measureSettingsOpenStep } from '../../../lib/set
 import { useUiStore } from '../../../store/ui-store';
 import { useLanguage } from '../../../contexts/language-context';
 import { reportSettingsFailure, resolveSettingsFeedback } from './settings-feedback';
-import { updateSettingsFromLatestWith } from './settings-from-latest';
 import {
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_WHISPER_MODEL,
@@ -138,18 +138,18 @@ export function useAiSettings({ isTauri, settings, updateSettings, showSaved, en
 
     // Built on the AI settings as stored when the write is admitted, so a key another device synced stays.
     const updateAISettings = useCallback((next: AiSettingsUpdate) => {
-        updateSettingsFromLatestWith(updateSettings, (latest) => ({ ai: { ...(latest.ai ?? {}), ...next } }))
+        updateSettingsFromLatest((latest) => ({ ai: { ...(latest.ai ?? {}), ...next } }), { write: updateSettings })
             .then(showSaved)
             .catch((error) => reportSettingsFailure('Failed to update AI settings', error, saveFailedMessage));
     }, [saveFailedMessage, showSaved, updateSettings]);
 
     const updateSpeechSettings = useCallback((next: SpeechSettingsUpdate) => {
-        updateSettingsFromLatestWith(updateSettings, (latest) => ({
+        updateSettingsFromLatest((latest) => ({
             ai: {
                 ...(latest.ai ?? {}),
                 speechToText: { ...(latest.ai?.speechToText ?? {}), ...next },
             },
-        }))
+        }), { write: updateSettings })
             .then(showSaved)
             .catch((error) => reportSettingsFailure('Failed to update speech settings', error, saveFailedMessage));
     }, [saveFailedMessage, showSaved, updateSettings]);

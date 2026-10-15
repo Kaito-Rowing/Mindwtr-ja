@@ -6,6 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+    updateSettingsFromLatest,
     fetchProviderModelsCached,
     formatOpenAIExtraBodyParams,
     mergeModelOptions,
@@ -47,7 +48,6 @@ import {
 import { useToast } from '@/contexts/toast-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { logSettingsError, logSettingsWarn } from '@/lib/settings-utils';
-import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 import * as whisperModelStore from '@/lib/whisper-model-store';
 import type { WhisperModelLocation } from '@/lib/whisper-model-store';
 
@@ -135,7 +135,7 @@ export function AISettingsScreen() {
     // copy: two changes in one render (the FOSS corrections) would otherwise undo each other, and a sync
     // save's newer keys stay.
     const updateAISettings = useCallback((next: Partial<NonNullable<AppSettings['ai']>>) => {
-        writeSettingsFromLatest(updateSettings, (latest) => ({ ai: { ...(latest.ai ?? {}), ...next } })).catch(logSettingsError);
+        updateSettingsFromLatest((latest) => ({ ai: { ...(latest.ai ?? {}), ...next } }), { write: updateSettings, read: () => useTaskStore.getState().settings }).catch(logSettingsError);
     }, [updateSettings]);
 
     useEffect(() => {
@@ -221,9 +221,9 @@ export function AISettingsScreen() {
     const updateSpeechSettings = useCallback((
         next: Partial<NonNullable<NonNullable<AppSettings['ai']>['speechToText']>>
     ) => {
-        writeSettingsFromLatest(updateSettings, (latest) => ({
+        updateSettingsFromLatest((latest) => ({
             ai: { ...(latest.ai ?? {}), speechToText: { ...(latest.ai?.speechToText ?? {}), ...next } },
-        })).catch(logSettingsError);
+        }), { write: updateSettings, read: () => useTaskStore.getState().settings }).catch(logSettingsError);
     }, [updateSettings]);
 
     useEffect(() => {

@@ -166,6 +166,29 @@ describe('useTaskItemSubmit attachment durability', () => {
         expect(updateTask).toHaveBeenCalledWith(task.id, { title: 'Edited title' });
     });
 
+    it('keeps a relative start when the editor saves a new due date', async () => {
+        const offset = { amount: -3, unit: 'day' } as Task['relativeStartOffset'];
+        const opened: Task = { ...task, rev: 1, dueDate: '2026-10-20', startTime: '2026-10-17', relativeStartOffset: offset };
+        useTaskStore.setState({ _allTasks: [opened] });
+        const { result } = renderHook(() => useTaskItemSubmit({
+            baselineTask: opened,
+            // The editor moves the start with the due date, as its relative start says.
+            draft: createTaskDraft({ ...opened, dueDate: '2026-10-25', startTime: '2026-10-22' }),
+            editAttachments: undefined,
+            editingTaskId: task.id,
+            setEditingTaskId: vi.fn(),
+            setIsEditing: vi.fn(),
+            showToast: vi.fn(),
+            t: (key) => key,
+            task: opened,
+            beginAttachmentSave: vi.fn(() => false),
+            cancelAttachmentSaveBeforeStoreUpdate: vi.fn(),
+            settlePersistedAttachmentSave: vi.fn(),
+        }));
+        await act(async () => { await result.current(); });
+        expect(useTaskStore.getState()._tasksById.get(task.id)).toMatchObject({ dueDate: '2026-10-25', relativeStartOffset: offset });
+    });
+
     describe('behind a sync save', () => {
         const file = (id: string): Attachment => ({
             id, kind: 'file', title: `${id}.pdf`, uri: `/data/attachments/${id}.pdf`,

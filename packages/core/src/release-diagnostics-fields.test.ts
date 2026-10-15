@@ -13,6 +13,8 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // sync-field-merge reuses entity below; fields is a comma list of task/project field names, never values.
+    'fields',
     // timeline-shared-order reuses releaseCheck, kind, and outcome below; no content or IDs.
     // mcp-access-controls: device-local grants, loopback port, fixed denied category; no payload.
     'allowWrite', 'allowArchive', 'allowDelete', 'port', 'category',

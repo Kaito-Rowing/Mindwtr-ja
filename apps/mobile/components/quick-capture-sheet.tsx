@@ -13,6 +13,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 
 import {
+  updateSettingsFromLatest,
   CaptureSessionCoordinator,
   prepareCaptureTask,
   filterCaptureAreas,
@@ -66,7 +67,6 @@ import { useQuickCaptureKeyboardDiagnostics } from '../lib/use-quick-capture-key
 import { logError, logWarn } from '../lib/app-log';
 import { createMobileRecoverySnapshot } from '../lib/recovery-snapshot';
 import { openTaskScreen } from '@/lib/task-meta-navigation';
-import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 import { buildCaptureExtra } from './quick-capture-sheet.utils';
 import { styles } from './quick-capture-sheet/quick-capture-sheet.styles';
 import { QuickAddPreview } from './QuickAddPreview';
@@ -410,7 +410,7 @@ export function QuickCaptureSheet({
   const updateSpeechSettings = useCallback(
     (next: Partial<NonNullable<NonNullable<typeof settings.ai>['speechToText']>>) => {
       // Built from the latest stored settings, so an ai key another device changed stays.
-      writeSettingsFromLatest(updateSettings, (latest) => ({
+      updateSettingsFromLatest((latest) => ({
         ai: {
           ...(latest.ai ?? {}),
           speechToText: {
@@ -418,7 +418,7 @@ export function QuickCaptureSheet({
             ...next,
           },
         },
-      })).catch((error) => logCaptureWarn('Failed to update speech settings', error));
+      }), { write: updateSettings, read: () => useTaskStore.getState().settings }).catch((error) => logCaptureWarn('Failed to update speech settings', error));
     },
     [settings, updateSettings]
   );

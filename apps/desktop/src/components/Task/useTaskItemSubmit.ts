@@ -2,10 +2,10 @@ import { useCallback, useRef } from 'react';
 import {
     taskDraftToChangedUpdatePatch,
     flushPendingSave,
-    mergeTaskDraftOntoLatest,
-    runStoreCommand,
+    saveTaskDraftOntoLatest,
     useTaskStore,
     type Attachment,
+    type StoreActionResult,
     type Task,
     type TaskDraft,
     type TaskStatus,
@@ -27,20 +27,25 @@ type UseTaskItemSubmitParams = {
 };
 
 /**
- * The editor save as one store command, merged field by field onto the latest row by core's mergeTaskDraftOntoLatest:
+ * The editor save as one store command, merged field by field onto the latest row by core's saveTaskDraftOntoLatest:
  * only the fields the draft changed since [base] are written, and a list another device changed too is merged (tags and
  * contexts by token, the checklist by item id, attachments by mergeTaskDraftAttachments). A single value takes the
  * draft's (last write wins). Answers the row it saved, read before any sync save can publish over it, as the base for
  * the next save of this session.
  */
-const saveDraftOnLatest = (id: string, base: Task, patch: Partial<Task>) => runStoreCommand(async () => {
-    const latest = useTaskStore.getState()._tasksById.get(id);
-    const updates = latest ? mergeTaskDraftOntoLatest(base, patch, latest) : patch;
-    const result = Object.keys(updates).length > 0
-        ? await useTaskStore.getState().updateTask(id, updates)
-        : { success: true as const, id };
-    return { result, saved: useTaskStore.getState()._tasksById.get(id) };
-});
+const saveDraftOnLatest = async (id: string, base: Task, patch: Partial<Task>) => {
+    let saved: Task | undefined;
+    const result = await saveTaskDraftOntoLatest(id, base, patch, {
+        write: async (taskId, updates): Promise<StoreActionResult> => {
+            const written = Object.keys(updates).length > 0
+                ? await useTaskStore.getState().updateTask(taskId, updates)
+                : { success: true, id: taskId };
+            saved = useTaskStore.getState()._tasksById.get(taskId);
+            return written;
+        },
+    });
+    return { result, saved };
+};
 
 type TaskItemSubmitOptions = {
     statusOverride?: TaskStatus;

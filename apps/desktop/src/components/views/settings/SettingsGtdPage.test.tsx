@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor, within } from '@testing-library/react';
 import { useTaskStore } from '@mindwtr/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -38,6 +38,25 @@ describe('SettingsGtdPage', () => {
 
         await waitFor(() => {
             expect(useTaskStore.getState().settings.gtd).toEqual({ defaultProjectFlowMode: 'sequential', autoArchiveDays: 3 });
+        });
+    });
+
+    it('hides a task editor field the page showed, even when another device hid it meanwhile', async () => {
+        const updateSettings = useTaskStore.getState().updateSettings;
+        const t = getEnglishSettingsLabels();
+        useTaskStore.setState({ settings: { gtd: { taskEditor: { hidden: [] } } } });
+        const { getByRole, getByText } = render(
+            <SettingsGtdPage t={t} language="en" settings={useTaskStore.getState().settings} updateSettings={updateSettings}
+                showSaved={vi.fn()} autoArchiveDays={7} areas={[]} />
+        );
+        fireEvent.click(getByRole('button', { name: new RegExp(t.taskEditorLayout) }));
+        // The other device hid Status after this page rendered it as visible.
+        useTaskStore.setState({ settings: { gtd: { taskEditor: { hidden: ['status'] } } } });
+        const row = getByText(t.taskEditorFieldStatus).closest('div.flex') as HTMLElement;
+        fireEvent.click(within(row).getByRole('button', { name: t.visible }));
+
+        await waitFor(() => {
+            expect(useTaskStore.getState().settings.gtd?.taskEditor?.hidden).toContain('status');
         });
     });
 

@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Beaker } from 'lucide-react-native';
 
 import {
+    updateSettingsFromLatest,
     getDocsGuideUrl,
     useTaskStore,
 } from '@mindwtr/core';
@@ -45,7 +46,6 @@ import {
     formatClockSkew,
     logSettingsError,
 } from '@/lib/settings-utils';
-import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 import {
     isMobileAnalyticsHeartbeatConfigured,
     resetMobileAnalyticsOptOutMarker,
@@ -200,7 +200,7 @@ function SyncSettingsView({
 
     const updateSyncPreferences = (partial: Partial<Record<SyncPreferenceKey, boolean>>) => {
         // Built from the latest stored preferences, so one another device changed stays.
-        writeSettingsFromLatest(updateSettings, (latest) => buildSyncPreferencesUpdate(latest.syncPreferences, partial))
+        updateSettingsFromLatest((latest) => buildSyncPreferencesUpdate(latest.syncPreferences, partial), { write: updateSettings, read: () => useTaskStore.getState().settings })
             .catch(logSettingsError);
     };
 
@@ -215,12 +215,12 @@ function SyncSettingsView({
                     text: tr('filters.clear'),
                     style: 'destructive',
                     onPress: () => {
-                        writeSettingsFromLatest(updateSettings, (latest) => ({
+                        updateSettingsFromLatest((latest) => ({
                             attachments: {
                                 ...(latest.attachments ?? {}),
                                 pendingRemoteDeletes: undefined,
                             },
-                        })).catch(logSettingsError);
+                        }), { write: updateSettings, read: () => useTaskStore.getState().settings }).catch(logSettingsError);
                     },
                 },
             ],

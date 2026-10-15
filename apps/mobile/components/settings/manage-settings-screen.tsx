@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+    updateSettingsFromLatest,
     AREA_PRESET_COLORS,
     DEFAULT_AREA_COLOR,
     DEFAULT_MANAGE_OPEN_SECTIONS,
@@ -36,7 +37,6 @@ import { useRouter } from 'expo-router';
 
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { CompactText } from '@/components/compact-text';
-import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 
 import { useSettingsLocalization, useSettingsScrollContent } from './settings.hooks';
 import { SettingsTopBar } from './settings.shell';
@@ -206,10 +206,10 @@ export function ManageSettingsScreen() {
                 return;
             }
             // Built from the settings as stored when the write is admitted, so a sync save's newer keys stay.
-            void writeSettingsFromLatest(updateSettings, (latest) => buildSomedaySectionsSettingsUpdate(
+            void updateSettingsFromLatest((latest) => buildSomedaySectionsSettingsUpdate(
                 latest,
                 removeSomedaySection(latest.gtd?.viewSections?.someday, id),
-            ));
+            ), { write: updateSettings, read: () => useTaskStore.getState().settings });
         });
     };
 
@@ -219,14 +219,14 @@ export function ManageSettingsScreen() {
         const edited = definitions.filter((section) => shown.get(section.id) !== JSON.stringify(section));
         if (edited.length === 0) return;
         const editedById = new Map(edited.map((section) => [section.id, section]));
-        return writeSettingsFromLatest(updateSettings, (latest) => {
+        return updateSettingsFromLatest((latest) => {
             const stored = latest.gtd?.viewSections?.someday ?? [];
             const storedIds = new Set(stored.map((section) => section.id));
             return buildSomedaySectionsSettingsUpdate(latest, [
                 ...stored.map((section) => editedById.get(section.id) ?? section),
                 ...edited.filter((section) => !shown.has(section.id) && !storedIds.has(section.id)),
             ]);
-        }).then(() => undefined);
+        }, { write: updateSettings, read: () => useTaskStore.getState().settings }).then(() => undefined);
     };
 
     const closeEditor = () => {

@@ -53,8 +53,7 @@ import {
   tFallback,
   toggleProcessInboxToken,
   undoTaskCompletion,
-  updateTaskAppendingAttachments,
-  mergeTaskDraftOntoLatest,
+  saveTaskDraftOntoLatest,
   runStoreCommand,
   resolveAutoTextDirection,
   useTaskStore,
@@ -251,6 +250,7 @@ export function useInboxProcessingController({
     () => getProcessInboxRemainingCandidates(processingSession, inboxTasks),
     [inboxTasks, processingSession],
   );
+  const processingBaseRef = useRef<Task | null>(null);
   const currentTask = useMemo(
     () => getProcessInboxCurrentCandidate(processingSession, inboxTasks),
     [inboxTasks, processingSession],
@@ -410,6 +410,9 @@ export function useInboxProcessingController({
   }, []);
 
   const primeTaskState = useCallback((task: Task | null | undefined) => {
+    // The task the draft is filled from: the base its save merges against. currentTask follows the live store, so a
+    // sync that lands before the decision would read as the draft's own change.
+    processingBaseRef.current = task ?? null;
     const defaults = getProcessInboxTaskDefaults(task);
     const { startTime, dueDate, reviewAt } = defaults.dates;
     dirtyScheduleFieldsRef.current.clear();
@@ -683,24 +686,14 @@ export function useInboxProcessingController({
       if (projectConversionInFlightRef.current) return false;
       projectConversionInFlightRef.current = true;
     }
-    // The draft is saved field by field onto the row as stored when the write is admitted (base: the task on
-    // screen), so a field, tag or context another device synced since stays. The title's /link: commands still
-    // append to the latest row's attachments, so an attachment a sync save brought stays too.
-    const shownTask = currentTask;
-    const appendAttachments = updateTaskAppendingAttachments(shownTask.attachments, updateTask);
-    const updateTaskKeepingAttachments: typeof updateTask = (id, updates) => runStoreCommand(async () => {
-      const latest = id === shownTask.id ? useTaskStore.getState()._tasksById?.get(id) : undefined;
-      if (!latest) return appendAttachments(id, updates);
-      const { attachments, ...fields } = updates;
-      const merged: Partial<Task> = mergeTaskDraftOntoLatest(shownTask, fields, latest);
-      // A field no other device changed is written as the draft has it, as before; one it changed is written
-      // only when the draft changed it too.
-      const kept = Object.fromEntries(Object.entries(fields).flatMap(([field, value]) => {
-        const key = field as keyof Task;
-        if (key in merged) return [[field, merged[key]]];
-        return JSON.stringify(latest[key] ?? null) === JSON.stringify(shownTask[key] ?? null) ? [[field, value]] : [];
-      })) as Partial<Task>;
-      return appendAttachments(id, attachments ? { ...kept, attachments } : kept);
+    // The draft is saved field by field onto the row as stored when the write is admitted (base: the task the draft
+    // was filled from), so a field, tag or context another device synced since stays. Attachments merge the same way,
+    // which appends the title's /link: attachments to the latest list. Fields nobody changed are written as before.
+    const base = processingBaseRef.current?.id === currentTask.id ? processingBaseRef.current : currentTask;
+    const updateTaskKeepingAttachments: typeof updateTask = (id, updates) => saveTaskDraftOntoLatest(id, base, updates, {
+      write: updateTask,
+      read: (taskId) => (taskId === base.id ? useTaskStore.getState()._tasksById?.get(taskId) : undefined),
+      keepUntouched: true,
     });
     try {
       const result = await commitProcessInboxDecision(kind, {

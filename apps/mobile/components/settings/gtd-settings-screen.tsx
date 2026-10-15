@@ -9,9 +9,9 @@ import { useFilledButtonColors } from '@/hooks/use-filled-button-colors';
 import { CompactText } from '@/components/compact-text';
 import { dispatchMobileOnboardingEvent } from '@/lib/mobile-onboarding-events';
 import { logSettingsError } from '@/lib/settings-utils';
-import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 import { useToast } from '@/contexts/toast-context';
 import {
+    updateSettingsFromLatest,
     DEFAULT_TASK_EDITOR_SECTION_OPEN,
     buildGtdSettingsModel,
     buildGtdSettingsUpdate,
@@ -128,9 +128,9 @@ export function GtdSettingsScreen({
     // a repeat write saves the whole document again for no change.
     // The group is rebuilt from the latest stored settings, so a key another device changed stays.
     const writeSetting = (edit: GtdSettingsEdit, afterWrite?: () => void) => {
-        writeSettingsFromLatest(updateSettings, (latest) => (
+        updateSettingsFromLatest((latest) => (
             isGtdSettingStored(latest, edit) ? null : buildGtdSettingsUpdate(latest, edit)
-        )).then((wrote) => { if (wrote) afterWrite?.(); }).catch(logSettingsError);
+        ), { write: updateSettings, read: () => useTaskStore.getState().settings }).then((wrote) => { if (wrote) afterWrite?.(); }).catch(logSettingsError);
     };
 
     const showPomodoroAutoStartNotice = () => {
