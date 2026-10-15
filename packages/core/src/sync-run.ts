@@ -120,6 +120,9 @@ type SharedSyncRunState = {
     fastSyncStateCache: { scope: string; value: FastSyncState | null } | null;
     preSyncedLocalData: AppData | null;
     wroteLocal: boolean;
+    /** Each store publish's wait for the write gate, in ms, and the step of the first: the cycle's one published line. */
+    publishedGateWaitsMs: number[];
+    publishedStep: string | null;
     remoteDataForCompare: AppData | null;
     /** The authoritative remote read repaired a legacy attachment shape and
      *  must be rewritten even when its repaired view equals the merge output. */
@@ -595,6 +598,8 @@ class SharedSyncRunMachine {
         fastSyncStateCache: null,
         preSyncedLocalData: null,
         wroteLocal: false,
+        publishedGateWaitsMs: [],
+        publishedStep: null,
         remoteDataForCompare: null,
         remoteLegacyAttachmentsChanged: false,
         readCheckRemoteData: undefined,
@@ -633,6 +638,7 @@ class SharedSyncRunMachine {
                 result = await this.handleRunError(error);
             }
         } finally {
+            this.logSavesPublished();
             // A retained native cleanup owner forbids another remote request; the lease expires naturally.
             if (!cleanupUnconfirmed) cleanupRetryAfterMs = await this.releaseRemoteMutationFence();
         }
@@ -1003,7 +1009,7 @@ class SharedSyncRunMachine {
      */
     private async persistLocalDataWithTracking(data: AppData | (() => AppData)): Promise<AppData> {
         await this.assertRemoteMutationFenceHeld();
-        return runSyncStoreSave(async () => {
+        return runSyncStoreSave(async (gateWaitMs) => {
             // Pending store saves land first; a command they carry moved the change stamp, which the
             // check below turns into a requeue before anything of this cycle is written.
             await this.store.flushPendingSave();
@@ -1017,7 +1023,7 @@ class SharedSyncRunMachine {
             // document is published anyway, so the store matches the disk; then the cycle requeues.
             let staleDuringSave: unknown = null;
             try { this.ensureLocalSnapshotFresh(persisted); } catch (error) { staleDuringSave = error; }
-            this.publishToStore(persisted);
+            this.publishToStore(persisted, gateWaitMs);
             this.state.wroteLocal = true;
             if (staleDuringSave) throw staleDuringSave;
             await this.storage.afterPersistLocal?.();
@@ -1025,22 +1031,30 @@ class SharedSyncRunMachine {
         });
     }
 
-    private publishToStore(data: AppData): void {
+    private publishToStore(data: AppData, gateWaitMs: number): void {
         if (!this.storage.applyDataToStore) return;
-        this.storage.applyDataToStore(data);
-        const currentChangeAt = this.store.getLastDataChangeAt();
-        this.state.localSnapshotChangeAt = currentChangeAt;
-        this.state.localDataCache = {
-            changeAt: currentChangeAt,
-            data: normalizeAppData(data),
-        };
-        if (!this.state.wroteLocal) {
-            this.notifier.logInfo('Sync save published to the store', {
-                backend: this.backend,
-                step: this.state.step ?? '-',
-                releaseCheck: 'v1.3.7/sync-write-gate',
-            });
-        }
+        traceSection('sync:storePublish', () => {
+            this.storage.applyDataToStore!(data);
+            const currentChangeAt = this.store.getLastDataChangeAt();
+            this.state.localSnapshotChangeAt = currentChangeAt;
+            this.state.localDataCache = {
+                changeAt: currentChangeAt,
+                data: normalizeAppData(data),
+            };
+        });
+        if (this.state.publishedStep === null) this.state.publishedStep = this.state.step ?? '-';
+        this.state.publishedGateWaitsMs.push(gateWaitMs);
+    }
+
+    /** Once per cycle that published a save, when it ends: every save's gate wait, so none is lost to a later save. */
+    private logSavesPublished(): void {
+        if (this.state.publishedStep === null) return;
+        this.notifier.logInfo('Sync save published to the store', {
+            backend: this.backend,
+            step: this.state.publishedStep,
+            gateWaitMs: this.state.publishedGateWaitsMs.join(','),
+            releaseCheck: 'v1.3.7/sync-write-gate',
+        });
     }
 
     private async persistPreSyncedDataAfterAbort(): Promise<void> {

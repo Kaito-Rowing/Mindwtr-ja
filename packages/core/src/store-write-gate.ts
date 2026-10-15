@@ -79,15 +79,19 @@ export const gateStoreCommands = <T extends object>(methods: T, options: {
     return methods;
 };
 
-/** Run a sync save and its store publish with no command in between. It must not call a store command. */
-export const runSyncStoreSave = async <T>(save: () => Promise<T>): Promise<T> => {
+/**
+ * Run a sync save and its store publish with no command in between. It must not call a store command. [save] gets how long
+ * this save waited for the gate (earlier sync saves and running commands), in ms.
+ */
+export const runSyncStoreSave = async <T>(save: (gateWaitMs: number) => Promise<T>): Promise<T> => {
+    const askedAt = Date.now();
     while (syncSave) await syncSave;
     let release!: () => void;
     syncSave = new Promise<void>((resolve) => { release = resolve; });
     try {
         while (commands > 0) await new Promise<void>((resolve) => { onCommandsDrained = resolve; });
         onCommandsDrained = null;
-        return await save();
+        return await save(Date.now() - askedAt);
     } finally {
         onCommandsDrained = null;
         syncSave = null;

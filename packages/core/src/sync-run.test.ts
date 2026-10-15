@@ -13,6 +13,7 @@ import type {
     SyncStatusUpdates,
 } from './sync-run-ports';
 import { SyncRemoteWriteConflict } from './sync-run-ports';
+import { runStoreCommand } from './store-write-gate';
 import { clearIdleSyncCycleSnapshot, normalizeRemoteWriteResult, runSharedSyncCycle } from './sync-run';
 import { normalizeAppData } from './sync-normalization';
 import { cloneAppData } from './sync-runtime-utils';
@@ -2630,6 +2631,43 @@ describe('runSharedSyncCycle', () => {
         expect(io.writeRemote).not.toHaveBeenCalled();
         expect(hooks.requestFollowUp).toHaveBeenCalled();
         expect(hooks.onStaleSnapshot).toHaveBeenCalled();
+    });
+
+    it('traces each store publish and logs every local save\'s gate wait on the one published line', async () => {
+        const applyDataToStore = vi.fn((data: AppData) => {
+            harness.inMemory = cloneAppData(data);
+        });
+        const { harness, io, run } = createHarness({
+            local: createData([createTask('t-local', 'Local task')]),
+            remote: createData([createTask('t-remote', 'Remote task')]),
+            storage: { applyDataToStore },
+        });
+        const sections: string[] = [];
+        const traced = globalThis as { __mindwtrTraceSection?: (name: string) => void };
+        traced.__mindwtrTraceSection = (name) => { if (name) sections.push(name); };
+        // A command holds the gate from the remote read on, so the first save waits for it.
+        let release!: () => void;
+        const held = runStoreCommand(() => new Promise<void>((resolve) => { release = resolve; }));
+        vi.mocked(io.readRemote).mockImplementationOnce(async () => {
+            // Date is faked in this suite: the command's 40 ms pass on the clock as it ends.
+            setTimeout(() => { vi.setSystemTime(Date.now() + 40); release(); }, 5);
+            return cloneAppData(harness.remote!);
+        });
+        try {
+            expect((await run()).success).toBe(true);
+        } finally {
+            delete traced.__mindwtrTraceSection;
+            await held;
+        }
+        const saves = applyDataToStore.mock.calls.length;
+        expect(saves).toBeGreaterThanOrEqual(2);
+        expect(sections.filter((name) => name === 'sync:storePublish')).toHaveLength(saves);
+        const lines = harness.infos.filter((entry) => entry.message === 'Sync save published to the store');
+        expect(lines).toHaveLength(1);
+        const waits = String(lines[0].extra?.gateWaitMs).split(',').map(Number);
+        expect(waits).toHaveLength(saves);
+        expect(waits[0]).toBeGreaterThanOrEqual(40);
+        expect(lines[0].extra).toMatchObject({ step: 'write-local', releaseCheck: 'v1.3.7/sync-write-gate' });
     });
 
     it('accepts a covered snapshot instead of aborting when the platform hook approves it', async () => {
