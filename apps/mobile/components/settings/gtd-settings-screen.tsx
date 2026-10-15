@@ -9,6 +9,7 @@ import { useFilledButtonColors } from '@/hooks/use-filled-button-colors';
 import { CompactText } from '@/components/compact-text';
 import { dispatchMobileOnboardingEvent } from '@/lib/mobile-onboarding-events';
 import { logSettingsError } from '@/lib/settings-utils';
+import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 import { useToast } from '@/contexts/toast-context';
 import {
     DEFAULT_TASK_EDITOR_SECTION_OPEN,
@@ -125,10 +126,11 @@ export function GtdSettingsScreen({
 
     // Re-picking the stored value writes nothing, as the native host's contract:
     // a repeat write saves the whole document again for no change.
+    // The group is rebuilt from the latest stored settings, so a key another device changed stays.
     const writeSetting = (edit: GtdSettingsEdit, afterWrite?: () => void) => {
-        const update = buildGtdSettingsUpdate(settings, edit);
-        if (!update || isGtdSettingStored(settings, edit)) return;
-        updateSettings(update).then(afterWrite).catch(logSettingsError);
+        writeSettingsFromLatest(updateSettings, (latest) => (
+            isGtdSettingStored(latest, edit) ? null : buildGtdSettingsUpdate(latest, edit)
+        )).then((wrote) => { if (wrote) afterWrite?.(); }).catch(logSettingsError);
     };
 
     const showPomodoroAutoStartNotice = () => {

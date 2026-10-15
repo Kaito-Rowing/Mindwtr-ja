@@ -29,12 +29,14 @@ import {
     type ManageSectionKey,
     type ManageUntranslatedText,
     type Person,
+    type ViewSectionDefinition,
     useTaskStore,
 } from '@mindwtr/core';
 import { useRouter } from 'expo-router';
 
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { CompactText } from '@/components/compact-text';
+import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 
 import { useSettingsLocalization, useSettingsScrollContent } from './settings.hooks';
 import { SettingsTopBar } from './settings.shell';
@@ -203,11 +205,28 @@ export function ManageSettingsScreen() {
                 confirmSomedaySectionDelete(id);
                 return;
             }
-            void updateSettings(buildSomedaySectionsSettingsUpdate(
-                current,
-                removeSomedaySection(current.gtd?.viewSections?.someday, id),
+            // Built from the settings as stored when the write is admitted, so a sync save's newer keys stay.
+            void writeSettingsFromLatest(updateSettings, (latest) => buildSomedaySectionsSettingsUpdate(
+                latest,
+                removeSomedaySection(latest.gtd?.viewSections?.someday, id),
             ));
         });
+    };
+
+    // The manager edits the shown list; only the sections it changed (by id) go onto the latest stored list.
+    const saveSomedaySections = (definitions: ViewSectionDefinition[]) => {
+        const shown = new Map((settings.gtd?.viewSections?.someday ?? []).map((section) => [section.id, JSON.stringify(section)]));
+        const edited = definitions.filter((section) => shown.get(section.id) !== JSON.stringify(section));
+        if (edited.length === 0) return;
+        const editedById = new Map(edited.map((section) => [section.id, section]));
+        return writeSettingsFromLatest(updateSettings, (latest) => {
+            const stored = latest.gtd?.viewSections?.someday ?? [];
+            const storedIds = new Set(stored.map((section) => section.id));
+            return buildSomedaySectionsSettingsUpdate(latest, [
+                ...stored.map((section) => editedById.get(section.id) ?? section),
+                ...edited.filter((section) => !shown.has(section.id) && !storedIds.has(section.id)),
+            ]);
+        }).then(() => undefined);
     };
 
     const closeEditor = () => {
@@ -509,7 +528,7 @@ export function ManageSettingsScreen() {
                             // every other entry, including ones this build cannot show.
                             definitions={settings.gtd?.viewSections?.someday ?? []}
                             onDelete={confirmSomedaySectionDelete}
-                            onChange={(definitions) => updateSettings(buildSomedaySectionsSettingsUpdate(settings, definitions))}
+                            onChange={saveSomedaySections}
                             t={t}
                             themeColors={tc}
                         />

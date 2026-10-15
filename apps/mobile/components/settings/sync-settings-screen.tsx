@@ -45,6 +45,7 @@ import {
     formatClockSkew,
     logSettingsError,
 } from '@/lib/settings-utils';
+import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 import {
     isMobileAnalyticsHeartbeatConfigured,
     resetMobileAnalyticsOptOutMarker,
@@ -198,7 +199,9 @@ function SyncSettingsView({
     }, [updateSettings]);
 
     const updateSyncPreferences = (partial: Partial<Record<SyncPreferenceKey, boolean>>) => {
-        updateSettings(buildSyncPreferencesUpdate(settings.syncPreferences, partial)).catch(logSettingsError);
+        // Built from the latest stored preferences, so one another device changed stays.
+        writeSettingsFromLatest(updateSettings, (latest) => buildSyncPreferencesUpdate(latest.syncPreferences, partial))
+            .catch(logSettingsError);
     };
 
     const handleClearPendingRemoteDeletes = useCallback(() => {
@@ -212,17 +215,17 @@ function SyncSettingsView({
                     text: tr('filters.clear'),
                     style: 'destructive',
                     onPress: () => {
-                        updateSettings({
+                        writeSettingsFromLatest(updateSettings, (latest) => ({
                             attachments: {
-                                ...(settings.attachments ?? {}),
+                                ...(latest.attachments ?? {}),
                                 pendingRemoteDeletes: undefined,
                             },
-                        }).catch(logSettingsError);
+                        })).catch(logSettingsError);
                     },
                 },
             ],
         );
-    }, [tr, pendingRemoteDeleteCount, settings.attachments, t, updateSettings]);
+    }, [tr, pendingRemoteDeleteCount, t, updateSettings]);
 
     const toggleAnalyticsHeartbeatOptOut = useCallback((optedOut: boolean) => {
         if (!analyticsHeartbeatAvailable) return;

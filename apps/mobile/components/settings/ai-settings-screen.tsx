@@ -47,6 +47,7 @@ import {
 import { useToast } from '@/contexts/toast-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { logSettingsError, logSettingsWarn } from '@/lib/settings-utils';
+import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 import * as whisperModelStore from '@/lib/whisper-model-store';
 import type { WhisperModelLocation } from '@/lib/whisper-model-store';
 
@@ -130,11 +131,11 @@ export function AISettingsScreen() {
     const speechApiKey = speechKey.provider === speechProvider ? speechKey.value : '';
     const speechModelOptions = mergeModelOptions(fetchedSpeechModels, staticSpeechModelOptions, speechModel);
 
-    // Each change merges into the settings stored when it is made, never into this render's
-    // copy: two changes in one render (the FOSS corrections) would otherwise undo each other.
+    // Each change merges into the settings stored when its write is admitted, never into this render's
+    // copy: two changes in one render (the FOSS corrections) would otherwise undo each other, and a sync
+    // save's newer keys stay.
     const updateAISettings = useCallback((next: Partial<NonNullable<AppSettings['ai']>>) => {
-        const stored = useTaskStore.getState().settings.ai;
-        updateSettings({ ai: { ...(stored ?? {}), ...next } }).catch(logSettingsError);
+        writeSettingsFromLatest(updateSettings, (latest) => ({ ai: { ...(latest.ai ?? {}), ...next } })).catch(logSettingsError);
     }, [updateSettings]);
 
     useEffect(() => {
@@ -220,9 +221,10 @@ export function AISettingsScreen() {
     const updateSpeechSettings = useCallback((
         next: Partial<NonNullable<NonNullable<AppSettings['ai']>['speechToText']>>
     ) => {
-        const stored = useTaskStore.getState().settings.ai?.speechToText;
-        updateAISettings({ speechToText: { ...(stored ?? {}), ...next } });
-    }, [updateAISettings]);
+        writeSettingsFromLatest(updateSettings, (latest) => ({
+            ai: { ...(latest.ai ?? {}), speechToText: { ...(latest.ai?.speechToText ?? {}), ...next } },
+        })).catch(logSettingsError);
+    }, [updateSettings]);
 
     useEffect(() => {
         if (needsFossAIProviderReset(settings.ai?.provider, isFossBuild)) {

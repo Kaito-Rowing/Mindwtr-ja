@@ -76,10 +76,10 @@ vi.mock('@mindwtr/core', async (importOriginal) => ({
     DEFAULT_MANAGE_OPEN_SECTIONS, MANAGE_OPEN_SECTIONS_STORAGE_KEY, buildManagePersonRow, getManageDeleteConfirm,
     getManageEditorDraft, getManageEditorText, getManageSettingsText, isManageAreaNameTaken, isManageEditorSaveDisabled,
     normalizeManageOpenSections, planManageEditorSave, sortManageAreas, sortManagePeople,
-    buildSomedaySectionsSettingsUpdate, removeSomedaySection, sortViewSectionDefinitions,
+    buildSomedaySectionsSettingsUpdate, removeSomedaySection, sortViewSectionDefinitions, runStoreCommand,
   }) => ({
     buildSomedaySectionManagerRows, getSomedaySectionManagerText, moveSomedaySection, renameSomedaySection,
-    buildSomedaySectionsSettingsUpdate, removeSomedaySection, sortViewSectionDefinitions,
+    buildSomedaySectionsSettingsUpdate, removeSomedaySection, sortViewSectionDefinitions, runStoreCommand,
     DEFAULT_MANAGE_OPEN_SECTIONS, MANAGE_OPEN_SECTIONS_STORAGE_KEY, buildManagePersonRow, getManageDeleteConfirm,
     getManageEditorDraft, getManageEditorText, getManageSettingsText, isManageAreaNameTaken, isManageEditorSaveDisabled,
     normalizeManageOpenSections, planManageEditorSave, sortManageAreas, sortManagePeople,

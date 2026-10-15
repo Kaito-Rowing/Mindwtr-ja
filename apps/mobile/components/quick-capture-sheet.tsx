@@ -66,6 +66,7 @@ import { useQuickCaptureKeyboardDiagnostics } from '../lib/use-quick-capture-key
 import { logError, logWarn } from '../lib/app-log';
 import { createMobileRecoverySnapshot } from '../lib/recovery-snapshot';
 import { openTaskScreen } from '@/lib/task-meta-navigation';
+import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 import { buildCaptureExtra } from './quick-capture-sheet.utils';
 import { styles } from './quick-capture-sheet/quick-capture-sheet.styles';
 import { QuickAddPreview } from './QuickAddPreview';
@@ -408,15 +409,16 @@ export function QuickCaptureSheet({
 
   const updateSpeechSettings = useCallback(
     (next: Partial<NonNullable<NonNullable<typeof settings.ai>['speechToText']>>) => {
-      updateSettings({
+      // Built from the latest stored settings, so an ai key another device changed stays.
+      writeSettingsFromLatest(updateSettings, (latest) => ({
         ai: {
-          ...(settings.ai ?? {}),
+          ...(latest.ai ?? {}),
           speechToText: {
-            ...(settings.ai?.speechToText ?? {}),
+            ...(latest.ai?.speechToText ?? {}),
             ...next,
           },
         },
-      }).catch((error) => logCaptureWarn('Failed to update speech settings', error));
+      })).catch((error) => logCaptureWarn('Failed to update speech settings', error));
     },
     [settings, updateSettings]
   );

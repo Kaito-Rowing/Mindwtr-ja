@@ -18,6 +18,7 @@ import {
 
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { logInfo } from '@/lib/app-log';
+import { writeSettingsFromLatest } from '@/lib/settings-latest-write';
 import { buildTaskEditorPresetConfig, resolveTaskEditorPresetId, type TaskEditorPresetId } from '@/components/task-edit/task-edit-modal.utils';
 import { SettingToggleRow } from './setting-row';
 import { useSettingsLocalization, useSettingsScrollContent } from './settings.hooks';
@@ -79,11 +80,12 @@ export function SandboxSettingsScreen() {
     const [failed, setFailed] = React.useState(false);
     const [settingsFailed, setSettingsFailed] = React.useState(false);
 
-    const save = async (updates: Partial<AppSettings>, setting: string) => {
+    // A built update reads the settings as stored when its write is admitted, so a newer key stays.
+    const save = async (updates: Partial<AppSettings> | ((latest: AppSettings) => Partial<AppSettings>), setting: string) => {
         if (!isSandboxMode()) return;
         setSettingsFailed(false);
         try {
-            await updateSettings(updates);
+            await writeSettingsFromLatest(updateSettings, (latest) => (typeof updates === 'function' ? updates(latest) : updates));
             await flushPendingSave();
             void logInfo('Sandbox setting applied', {
                 scope: 'sandbox',
@@ -114,12 +116,12 @@ export function SandboxSettingsScreen() {
 
     const choosePreset = (value: string) => {
         const preset = buildTaskEditorPresetConfig(value as Exclude<TaskEditorPresetId, 'custom'>, featureHiddenFields);
-        void save({
+        void save((latest) => ({
             gtd: {
-                ...(settings.gtd ?? {}),
-                taskEditor: { ...(editor ?? {}), ...preset },
+                ...(latest.gtd ?? {}),
+                taskEditor: { ...(latest.gtd?.taskEditor ?? {}), ...preset },
             },
-        }, 'editor-layout');
+        }), 'editor-layout');
     };
 
     const run = (action: 'reset' | 'exit') => {
