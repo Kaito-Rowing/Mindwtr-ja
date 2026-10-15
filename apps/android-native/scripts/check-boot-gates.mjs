@@ -650,9 +650,19 @@ assert.match(hostEntry, /createNativeSync\(nativeSyncBindings\)/);
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await adapter.withConnection(() => loadNativeRequestReceipts(sqlite), { write: true })', "else await adapter.withConnection(() => loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] }), { write: true })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
-    assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
+    assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await withHostConnection\(\(\) => pruneNativeRequestReceipts\(sqlite\)\) \}\)\);/);
+    // D9b change 1 (design.md W2): the host's own SQL runs inside core's adapter lock, and the read check runs in the read's
+    // own hold (afterReadNow), never after a public getData returned: a queued write then could fake "Incomplete … load".
+    const validatedAdapter = hostEntry.slice(hostEntry.indexOf('class ValidatedSqliteAdapter'), hostEntry.indexOf('type Pending = '));
+    assert.match(validatedAdapter, /protected override afterReadNow\(loaded: \(table: EntityTable\) => number, settings: LoadedData\['settings'\]\): Promise<void> \{\s*return this\.validate\(loaded, settings\);/);
+    assert.doesNotMatch(validatedAdapter, /override async (getData|readRowBaseline|saveData|saveTask)\(/);
+    assert.equal(validatedAdapter.match(/this\.validate\(/g)?.length, 1, 'validation only through afterReadNow');
+    const rawSql = hostEntry.replace(validatedAdapter, '').split('\n')
+        .filter((line) => /\(sqlite\b|\bsqlite\.(get|all|run|exec)\b/.test(line) && !line.includes('new ValidatedSqliteAdapter(sqlite'));
+    assert(rawSql.length >= 6 && rawSql.every((line) => /withConnection\(|withHostConnection\(/.test(line)), `host SQL outside the adapter lock: ${rawSql.filter((line) => !/withConnection\(|withHostConnection\(/.test(line)).join(' | ')}`);
+    assert.match(hostEntry, /const withHostConnection = <T,>\(work: \(\) => Promise<T>\): Promise<T> => \(bootAdapter \? bootAdapter\.withConnection\(work, \{ write: true \}\) : work\(\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
     assert.match(coreAdapter, /await this\.beforeCommit\(\{ data \}\);\s*saveStep = 'commit';\s*const commitStartedAt = Date\.now\(\);\s*await runTimed\('COMMIT'\);/);
     assert.match(coreAdapter, /await this\.beforeCommit\(\{ task \}\);\s*await this\.client\.run\('COMMIT'\);/);
@@ -3923,18 +3933,25 @@ export function setLogger(logger) { globalThis.coreLogger = logger; setRealLogge
 export function consoleLogger() {}
 export class SqliteAdapter {
   async ensureSchema() { globalThis.events.push('schema'); }
+  async withConnection(work) { return work(); }
+  async afterReadNow() {}
   // core's row-version read after activation: the ids and the mapped settings a full read would give (rowBaseline overrides;
   // rowBaselineNull is another connection's commit since the last full read).
   async readRowBaseline() {
     globalThis.events.push('baseline');
     if (globalThis.rowBaselineNull) return null;
     const data = globalThis.fakeData;
-    return globalThis.rowBaseline || { ids: Object.fromEntries(['tasks', 'projects', 'sections', 'areas', 'people'].map((table) =>
+    const light = globalThis.rowBaseline || { ids: Object.fromEntries(['tasks', 'projects', 'sections', 'areas', 'people'].map((table) =>
       [table, data[table].map((row) => row.id)])), settings: data.settings };
+    await this.afterReadNow((table) => light.ids[table].length, light.settings);
+    return light;
   }
-  async getData() {
+  // core's public read runs its protected body, which ends with the subclass's check (afterReadNow) in the same hold.
+  async getData(options) { return this.getDataNow(options); }
+  async getDataNow() {
     globalThis.events.push('load');
     globalThis.lastLoaded = globalThis.fakeDataSequence.shift() || globalThis.fakeData;
+    await this.afterReadNow((table) => globalThis.lastLoaded[table].length, globalThis.lastLoaded.settings);
     return globalThis.lastLoaded;
   }
   async saveData(data) {

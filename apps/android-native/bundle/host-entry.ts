@@ -411,11 +411,11 @@ const ENTITY_TABLES = ['tasks', 'projects', 'sections', 'areas', 'people'] as co
 type EntityTable = typeof ENTITY_TABLES[number];
 // Core's receipt adapter: a write's request receipt commits in the same transaction as its data.
 // It caches no document: a cached read would keep a whole library alive past the store's own reload (pass D1c, cut i).
+// Its check of each read runs in the read's own lock hold (afterReadNow), so a write queued during the read never makes the
+// counts look incomplete.
 class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter {
-    override async getData(options?: { rawTasks?: true }): Promise<LoadedData> {
-        const data = await super.getData(options);
-        await this.validate((table) => data[table].length, data.settings);
-        return data;
+    protected override afterReadNow(loaded: (table: EntityTable) => number, settings: LoadedData['settings']): Promise<void> {
+        return this.validate(loaded, settings);
     }
 
     /**
@@ -425,11 +425,11 @@ class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter {
      * connection's commit, a full validated read instead.
      */
     async verifyActivation(store: Record<EntityTable, readonly { id: string }[]>): Promise<void> {
+        // Both reads are validated inside their own hold (afterReadNow).
         const light = await this.readRowBaseline();
         let ids: Record<EntityTable, readonly string[]>;
         if (light) {
             ids = light.ids;
-            await this.validate((table) => light.ids[table].length, light.settings);
         } else {
             const data = await this.getData();
             ids = Object.fromEntries(ENTITY_TABLES.map((table) => [table, data[table].map((row) => row.id)])) as Record<EntityTable, string[]>;
@@ -805,7 +805,7 @@ const importLegacyJson = async (adapter: ValidatedSqliteAdapter, loaded: LoadedD
         reconciled: state.reconciled,
         backupVersion: state.backupVersion,
         backupJson: state.backupPresent ? backup : null,
-    }, loaded, await sqliteHasAnyData(sqlite));
+    }, loaded, await adapter.withConnection(() => sqliteHasAnyData(sqlite)));
     if (plan.merged && legacyImportMismatch(plan.merged, loaded)) {
         await adapter.saveData(plan.merged);
         const mismatch = legacyImportMismatch(plan.merged, await adapter.getData());
@@ -1371,11 +1371,13 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Reply | Promise<Reply
 };
 
 let bootAdapter: ValidatedSqliteAdapter | null = null;
+/** Host receipt maintenance on the booted adapter's connection, inside its lock; a write voids earlier read tokens. */
+const withHostConnection = <T,>(work: () => Promise<T>): Promise<T> => (bootAdapter ? bootAdapter.withConnection(work, { write: true }) : work());
 /** A current, settled Settings-only read for device-key reconciliation; null never authorizes a mirror. */
 const savedSettingsIfSettled = async (settingsReference: unknown): Promise<Record<string, unknown> | null> => {
     const before = getPersistenceStatus();
     if (!bootAdapter || before.failed || before.queued || before.inFlight || before.immediate || before.retrying) return null;
-    const row = await sqlite.get<{ data: string }>('SELECT data FROM settings WHERE id = 1');
+    const row = await bootAdapter.withConnection(() => sqlite.get<{ data: string }>('SELECT data FROM settings WHERE id = 1'));
     let saved: unknown = {};
     if (row) {
         try { saved = JSON.parse(row.data); }
@@ -1416,8 +1418,8 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // Before the journal's replay (Kotlin, after boot): a landed request answers from its receipt. A host without
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
-    if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] });
+    if (journaled) await adapter.withConnection(() => loadNativeRequestReceipts(sqlite), { write: true });
+    else await adapter.withConnection(() => loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] }), { write: true });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -4601,7 +4603,7 @@ globalThis.MindwtrHost = {
     },
     /** After the journal's boot replay: drops request receipts older than 30 days. */
     pruneReceipts(): string {
-        return submit(async () => ({ pruned: await pruneNativeRequestReceipts(sqlite) }));
+        return submit(async () => ({ pruned: await withHostConnection(() => pruneNativeRequestReceipts(sqlite)) }));
     },
     /** Private iOS startup: unfinished response ownership outranks receipt expiry. */
     iosPruneReceipts(rawRetentionJSON: string): string {
@@ -4614,9 +4616,9 @@ globalThis.MindwtrHost = {
             if (retained !== null && (!Array.isArray(retained) || retained.length > 128
                 || retained.some((id) => typeof id !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id))
                 || new Set(retained).size !== retained.length)) throw invalid();
-            const pruned = await pruneNativeRequestReceipts(sqlite, new Date(), retained === null
+            const pruned = await withHostConnection(() => pruneNativeRequestReceipts(sqlite, new Date(), retained === null
                 ? { retainedCommands: ['reminderComplete', 'reminderSnooze'] }
-                : { retainedRequestIds: retained as string[] });
+                : { retainedRequestIds: retained as string[] }));
             try { await diagnosticsLog.append({ ts: new Date().toISOString(), level: 'info', scope: 'native-ios',
                 message: 'Native iOS reminder receipt retention applied',
                 context: { releaseCheck: 'v1.3.5/ios-reminder-receipt-retention', outcome: retained === null ? 'conservative' : 'snapshot' },
