@@ -1,11 +1,46 @@
 import { fireEvent, render, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { useTaskStore } from '@mindwtr/core';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { getEnglishSettingsLabels } from './labels';
 import { SettingsGtdPage } from './SettingsGtdPage';
 import { useUiStore } from '../../../store/ui-store';
+import { holdSyncSave } from '../../../test/hold-sync-save';
+
+const initialTaskState = useTaskStore.getState();
 
 describe('SettingsGtdPage', () => {
+    afterEach(() => {
+        useTaskStore.setState(initialTaskState, true);
+    });
+
+    it('keeps a GTD key another device synced while the page showed older settings', async () => {
+        const updateSettings = useTaskStore.getState().updateSettings;
+        useTaskStore.setState({ settings: { gtd: { defaultProjectFlowMode: 'parallel' } } });
+        const { getByRole } = render(
+            <SettingsGtdPage
+                t={getEnglishSettingsLabels()}
+                language="en"
+                settings={useTaskStore.getState().settings}
+                updateSettings={updateSettings}
+                showSaved={vi.fn()}
+                autoArchiveDays={7}
+                areas={[]}
+            />
+        );
+        // A sync save holds the gate while the user clicks, then publishes another device's auto-archive change.
+        const finish = holdSyncSave(() => useTaskStore.setState({
+            settings: { gtd: { defaultProjectFlowMode: 'parallel', autoArchiveDays: 3 } },
+        }));
+
+        fireEvent.click(getByRole('button', { name: /sequential/i }));
+        await finish();
+
+        await waitFor(() => {
+            expect(useTaskStore.getState().settings.gtd).toEqual({ defaultProjectFlowMode: 'sequential', autoArchiveDays: 3 });
+        });
+    });
+
     it('saves the task editor presentation setting', async () => {
         const updateSettings = vi.fn().mockResolvedValue(undefined);
         const showSaved = vi.fn();

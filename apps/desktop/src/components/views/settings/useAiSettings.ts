@@ -22,6 +22,7 @@ import { markSettingsOpenTrace, measureSettingsOpenStep } from '../../../lib/set
 import { useUiStore } from '../../../store/ui-store';
 import { useLanguage } from '../../../contexts/language-context';
 import { reportSettingsFailure, resolveSettingsFeedback } from './settings-feedback';
+import { updateSettingsFromLatestWith } from './settings-from-latest';
 import {
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_WHISPER_MODEL,
@@ -135,22 +136,23 @@ export function useAiSettings({ isTauri, settings, updateSettings, showSaved, en
             ? PARAKEET_MODELS.find((model) => model.id === speechModel)?.sizeBytes ?? null
             : null;
 
+    // Built on the AI settings as stored when the write is admitted, so a key another device synced stays.
     const updateAISettings = useCallback((next: AiSettingsUpdate) => {
-        updateSettings({ ai: { ...(settings?.ai ?? {}), ...next } })
+        updateSettingsFromLatestWith(updateSettings, (latest) => ({ ai: { ...(latest.ai ?? {}), ...next } }))
             .then(showSaved)
             .catch((error) => reportSettingsFailure('Failed to update AI settings', error, saveFailedMessage));
-    }, [saveFailedMessage, settings?.ai, showSaved, updateSettings]);
+    }, [saveFailedMessage, showSaved, updateSettings]);
 
     const updateSpeechSettings = useCallback((next: SpeechSettingsUpdate) => {
-        updateSettings({
+        updateSettingsFromLatestWith(updateSettings, (latest) => ({
             ai: {
-                ...(settings?.ai ?? {}),
-                speechToText: { ...(settings?.ai?.speechToText ?? {}), ...next },
+                ...(latest.ai ?? {}),
+                speechToText: { ...(latest.ai?.speechToText ?? {}), ...next },
             },
-        })
+        }))
             .then(showSaved)
             .catch((error) => reportSettingsFailure('Failed to update speech settings', error, saveFailedMessage));
-    }, [saveFailedMessage, settings?.ai, showSaved, updateSettings]);
+    }, [saveFailedMessage, showSaved, updateSettings]);
 
     const handleAIProviderChange = useCallback((provider: AIProviderId) => {
         updateAISettings({
