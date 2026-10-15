@@ -804,7 +804,8 @@ export default function ProjectsScreen() {
     const updates: Partial<Project> = { areaId: project.areaId || undefined, tagIds: project.tagIds || [] };
     if (nextTitle) updates.title = nextTitle;
     const opened = selectedProjectBaseRef.current?.id === project.id ? selectedProjectBaseRef.current : original;
-    const base = { ...opened, areaId: opened.areaId || undefined, tagIds: opened.tagIds || [] };
+    // Compared as saved (trimmed), so outer spaces in the stored title do not read as the user's rename.
+    const base = { ...opened, title: opened.title.trim(), areaId: opened.areaId || undefined, tagIds: opened.tagIds || [] };
     selectedProjectBaseRef.current = { ...base, ...updates };
     // Only the fields changed since the sheet opened are written, onto the latest row.
     return updateProjectFromDraft(project.id, base, updates);
