@@ -1,7 +1,8 @@
 // RN's app shortcuts for the native app, one resource set per build type: the XML and strings of
 // apps/mobile/plugins/android-app-shortcuts.js (its own builder, so the ids, capabilities, labels and Add task's target, RN's quick
 // capture dialog QuickCaptureActivity in the build's package, stay RN's), with one change: RN's mindwtr:/// links use the build's
-// scheme (the development build's mindwtr-native-dev, so RN's app on the same phone keeps mindwtr://).
+// scheme (the development build's mindwtr-native-dev, so RN's app on the same phone keeps mindwtr://). Each build type also gets
+// the manifest entry RN's plugin adds for a shortcut's own target, its detailed capture activity (#1333), as one more manifest.
 // Usage: node build-shortcuts.mjs <out dir> <build type>=<scheme>@<applicationId> ...
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -10,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { __testables: rn } = require('../../mobile/plugins/android-app-shortcuts.js');
+const { Builder } = require('xml2js');
 
 export function buildShortcuts(scheme, applicationId) {
     if (!/^[a-z][a-z0-9+.-]*$/.test(scheme)) throw new Error(`invalid scheme ${scheme}`);
@@ -21,6 +23,17 @@ export function buildShortcuts(scheme, applicationId) {
         throw new Error('shortcut links were not all moved to the build\'s scheme');
     }
     return { xml, strings: rn.SHORTCUTS_STRINGS_XML };
+}
+
+/** The activities RN's plugin adds beside its MainActivity (ensureManifestAppActions), as a variant's extra manifest. */
+export function buildShortcutsManifest() {
+    const main = { $: { 'android:name': '.MainActivity' } };
+    const manifest = { manifest: { $: { 'xmlns:android': 'http://schemas.android.com/apk/res/android' }, application: [{ activity: [main] }] } };
+    rn.ensureManifestAppActions(manifest);
+    const application = manifest.manifest.application[0];
+    application.activity = application.activity.filter((activity) => activity !== main);
+    if (application.activity.length === 0) throw new Error('RN\'s shortcuts plugin no longer adds a target activity');
+    return new Builder({ renderOpts: { pretty: true, indent: '    ' }, xmldec: { version: '1.0', encoding: 'utf-8' } }).buildObject(manifest);
 }
 
 const [out, ...variants] = process.argv.slice(2);
@@ -36,4 +49,5 @@ for (const variant of import.meta.url === pathToFileURL(process.argv[1]).href ? 
     mkdirSync(resolve(res, 'values'), { recursive: true });
     writeFileSync(resolve(res, 'xml', 'mindwtr_shortcuts.xml'), xml);
     writeFileSync(resolve(res, 'values', 'mindwtr_shortcuts_strings.xml'), strings);
+    writeFileSync(resolve(out, type, 'AndroidManifest.xml'), buildShortcutsManifest());
 }

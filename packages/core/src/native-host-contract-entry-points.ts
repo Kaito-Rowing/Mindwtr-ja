@@ -191,6 +191,8 @@ export function createEntryPointMethods(deps: EntryPointDeps) {
             case 'quickCapture':
                 return opened({ captureModal: { params: { origin: 'system' } } });
             case 'path':
+                // The detailed capture shortcut's link (#1333) is the capture-quick tab route, as the capture feature's.
+                if (route.path.startsWith('/capture-quick')) return opened({ route: '/inbox', capture: emptyPopup() });
                 break;
         }
         // Any other link is Expo Router's route by its path (host and path): a list, or the global search with its query.

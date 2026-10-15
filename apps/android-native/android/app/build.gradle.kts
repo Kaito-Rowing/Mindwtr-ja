@@ -164,10 +164,12 @@ android {
 
 // A build type cannot replace applicationId; the variant API can. 152 = RN v1.3.2, 154 = RN recovery build.
 androidComponents {
-    // RN's widget components' manifest entries (buildWidgets), merged as one more manifest of each variant, so a build type's own
-    // manifest (the debug build's check entries) stays.
+    // RN's widget components' manifest entries (buildWidgets) and its shortcuts' target activity (buildShortcuts), merged as more
+    // manifests of each variant, so a build type's own manifest (the debug build's check entries) stays.
     onVariants { variant ->
-        variant.sources.manifests?.addStaticManifestFile(layout.buildDirectory.file("generated/widgets/${variant.buildType}/AndroidManifest.xml").get().asFile.path)
+        listOf("widgets", "shortcuts").forEach { set ->
+            variant.sources.manifests?.addStaticManifestFile(layout.buildDirectory.file("generated/$set/${variant.buildType}/AndroidManifest.xml").get().asFile.path)
+        }
     }
     onVariants(selector().withBuildType("upgradetest")) { variant ->
         variant.applicationId.set("tech.dongdongbh.mindwtr.upgradetest")

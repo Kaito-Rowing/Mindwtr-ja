@@ -259,6 +259,12 @@ describe('native host contract: resolveNativeEntryPoint', () => {
         expect(value(host.resolveNativeEntryPoint({ kind: 'share', text: 'é'.repeat(90_000), title: null, subject: null }))).toEqual({ ...none, notice });
     });
 
+    it('opens the capture popup for the detailed capture shortcut (#1333), as React Native\'s capture-quick tab route does', () => {
+        // RN's DetailedCaptureActivity sends this link; the widget's own quick capture link keeps the capture screen.
+        expect(link('mindwtr:///capture-quick?mode=text&entry=details')).toEqual({ ...none, route: '/inbox', capture: { text: '', options: fresh() } });
+        expect(link('mindwtr:///capture-quick?mode=text')).toEqual({ ...none, captureModal: { params: { origin: 'system' } } });
+    });
+
     it('opens nothing for another scheme, and refuses malformed input', () => {
         expect(value(host.resolveNativeEntryPoint({ kind: 'link', url: 'mindwtr://focus', scheme: SCHEME }))).toEqual(none);
         expect(value(host.resolveNativeEntryPoint({ kind: 'link', url: 'MINDWTR-NATIVE-DEV://focus', scheme: SCHEME })).route).toBe('/focus');
