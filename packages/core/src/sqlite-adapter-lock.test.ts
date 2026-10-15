@@ -7,6 +7,7 @@ import { consoleLogger, setLogger, type LogPayload } from './logger';
 import { createNativeRequestReceipts, loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts } from './native-request-receipts';
 import { openScratchSqlite } from './screen-parity.replay';
 import { SqliteAdapter, type SqliteClient, type SqliteReadToken } from './sqlite-adapter';
+import { runStoreCommand, runSyncStoreSave } from './store-write-gate';
 import type { AppData, Task } from './types';
 
 // D9b change 1 (design.md W2-W4): one lock over a guarded adapter's SQL, a read token per snapshot, and the epoch
@@ -107,7 +108,7 @@ describe('SqliteAdapter lock, read tokens and epoch bracket', () => {
         setLogger(consoleLogger);
         // The tester's proof: one line per adapter, for the first caller that waited.
         expect(logs.filter((entry) => entry.context?.releaseCheck === 'v1.3.7/sqlite-adapter-lock')
-            .map((entry) => [entry.message, entry.context?.operation])).toEqual([['SQLite adapter lock serialized a caller', 'queryTasks']]);
+            .map((entry) => [entry.message, entry.context?.operation, entry.force])).toEqual([['SQLite adapter lock serialized a caller', 'queryTasks', true]]);
         expect((tasks as Task[]).find((row) => row.id === 'a')?.title).toBe('renamed');
         expect(io.log.indexOf('COMMIT')).toBeLessThan(io.log.findIndex((sql, index) => index > at && sql.startsWith('SELECT * FROM tasks')));
     });
@@ -278,33 +279,185 @@ describe('SqliteAdapter lock, read tokens and epoch bracket', () => {
 
     it('runs no public adapter method or store command from inside a lock hold', () => {
         const source = (name: string) => readFileSync(fileURLToPath(new URL(name, import.meta.url)), 'utf8');
-        const hostEntry = fileURLToPath(new URL('../../../apps/android-native/bundle/host-entry.ts', import.meta.url));
-        // A body that runs while the lock is held: a …Now body, the commit and read hooks, host validation.
+        const hostEntry = readFileSync(fileURLToPath(new URL('../../../apps/android-native/bundle/host-entry.ts', import.meta.url)), 'utf8');
+        const block = (text: string, open: number, [opener, closer]: [string, string] = ['{', '}']) => {
+            let depth = 0;
+            for (let end = open; end < text.length; end += 1) {
+                if (text[end] === opener) depth += 1;
+                else if (text[end] === closer && --depth === 0) return text.slice(open, end + 1);
+            }
+            throw new Error('unbalanced');
+        };
+        // The public API runs outside any hold (each public method only takes the lock and runs its body). Every other method
+        // of the three adapter classes can run inside a hold: …Now bodies, hooks, and the private helpers they call.
+        const outsideHold = new Set(['constructor', 'getData', 'saveData', 'saveTask', 'readRowBaseline', 'queryTasks', 'searchAll',
+            'ensureSchema', 'libraryBytes', 'commitReceiptOnly', 'readDurableReceipt', 'hasForeignKeyViolations', 'withConnection',
+            'saveDocumentWithReceipt', 'getCalendarSyncEntry', 'upsertCalendarSyncEntry', 'deleteCalendarSyncEntry',
+            'getAllCalendarSyncEntries', 'verifyActivation', 'armReceiptPrerequisite', 'clearReceiptPrerequisite',
+            'getLastSaveDataStats', 'readTokenOf', 'concurrentWritesGuarded']);
         const held: string[] = [];
-        for (const text of [source('./sqlite-adapter.ts'), source('./native-request-receipts.ts'), readFileSync(hostEntry, 'utf8')]) {
-            const starts = /\n {4}(?:protected |private )?(?:override )?(?:async )?(\w+Now|beforeCommit|afterReadNow|validate)\(/g;
-            for (let match = starts.exec(text); match; match = starts.exec(text)) {
-                const open = text.indexOf('{', text.indexOf(')', match.index) );
-                let depth = 0;
-                let end = open;
-                for (; end < text.length; end += 1) {
-                    if (text[end] === '{') depth += 1;
-                    else if (text[end] === '}' && --depth === 0) break;
-                }
-                held.push(`${match[1]}: ${text.slice(open, end)}`);
+        const classes: [string, string][] = [[source('./sqlite-adapter.ts'), 'export class SqliteAdapter {'],
+            [source('./native-request-receipts.ts'), 'export class NativeReceiptSqliteAdapter extends SqliteAdapter {'],
+            [hostEntry, 'class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter {']];
+        for (const [text, header] of classes) {
+            const body = block(text, text.indexOf('{', text.indexOf(header)));
+            const methods = /\n {4}(?:(?:protected|private|public|override|async|static|get)\s+)*(\w+)\s*(?:<[^\n(]*>)?\(/g;
+            for (let match = methods.exec(body); match; match = methods.exec(body)) {
+                if (outsideHold.has(match[1])) continue;
+                held.push(`${match[1]}: ${block(body, body.indexOf(' {\n', match.index) + 1)}`);
             }
             // The document save's whole hold.
-            const document = text.indexOf("this.exclusive('saveDocumentWithReceipt'");
-            if (document >= 0) held.push(`saveDocumentWithReceipt: ${text.slice(document, text.indexOf('}); } finally {', document))}`);
+            const document = body.indexOf("this.exclusive('saveDocumentWithReceipt'");
+            if (document >= 0) held.push(`saveDocumentWithReceipt: ${block(body, body.indexOf('(', document), ['(', ')'])}`);
+        }
+        // The host's own SQL: each callback it hands withConnection.
+        const calls = /\b(?:withConnection|withHostConnection)\(/g;
+        for (let match = calls.exec(hostEntry); match; match = calls.exec(hostEntry)) {
+            held.push(`withConnection: ${block(hostEntry, match.index + match[0].length - 1, ['(', ')'])}`);
         }
         const names = held.map((body) => body.slice(0, body.indexOf(':')));
-        for (const name of ['ensureSchemaNow', 'getDataNow', 'readRowBaselineNow', 'saveTaskNow', 'saveDataNow', 'libraryBytesNow',
-            'commitReceiptOnlyNow', 'beforeCommit', 'afterReadNow', 'validate', 'saveDocumentWithReceipt']) expect(names).toContain(name);
-        const publicMethods = ['getData', 'saveData', 'saveTask', 'readRowBaseline', 'queryTasks', 'searchAll', 'ensureSchema', 'libraryBytes',
-            'commitReceiptOnly', 'readDurableReceipt', 'hasForeignKeyViolations', 'withConnection', 'saveDocumentWithReceipt',
-            'getCalendarSyncEntry', 'upsertCalendarSyncEntry', 'deleteCalendarSyncEntry', 'getAllCalendarSyncEntries'];
-        const reentry = new RegExp(`\\b(?:this|super)\\.(?:${publicMethods.join('|')})\\(|\\brunStoreCommand\\(|\\brunSyncStoreSave\\(|\\buseTaskStore\\b`);
-        expect(held.filter((body) => reentry.test(body)).map((body) => body.slice(0, 60))).toEqual([]);
+        for (const name of ['ensureSchemaNow', 'ensureSchemaInternal', 'ensureFtsPopulated', 'getDataNow', 'readRowBaselineNow', 'saveTaskNow',
+            'saveDataNow', 'libraryBytesNow', 'commitReceiptOnlyNow', 'readCurrentReceipt', 'beforeCommit', 'afterReadNow', 'validate',
+            'saveDocumentWithReceipt']) expect(names).toContain(name);
+        expect(names.filter((name) => name === 'withConnection').length).toBeGreaterThanOrEqual(7);
+        const publicCall = [...outsideHold].filter((name) => name !== 'constructor' && name !== 'readTokenOf').join('|');
+        const reentry = new RegExp(`\\.(?:${publicCall})\\(|\\brunStoreCommand\\(|\\brunSyncStoreSave\\(|\\buseTaskStore\\b|\\bfetchData\\(`);
+        expect(held.filter((body) => reentry.test(body)).map((body) => body.slice(0, 80))).toEqual([]);
+    });
+
+    it('runs the SQL of every public method of the three adapter classes inside a lock hold', async () => {
+        const path = await seeded();
+        const raw = open(path);
+        resetNativeRequestReceipts();
+        await loadNativeRequestReceipts(raw, { durableCommands: ['appLock', 'backupDocument'] });
+        let adapter: CountingAdapter | null = null;
+        const outside: string[] = [];
+        const held = () => (adapter as unknown as { lockHeld: boolean } | null)?.lockHeld === true;
+        const check = (sql: string) => { if (!held()) outside.push(sql.trim().slice(0, 60)); };
+        const strict: SqliteClient = {
+            run: async (sql, params) => { check(sql); return raw.run(sql, params); },
+            all: async <T,>(sql: string, params?: unknown[]) => { check(sql); return raw.all<T>(sql, params); },
+            get: async <T,>(sql: string, params?: unknown[]) => { check(sql); return raw.get<T>(sql, params); },
+            exec: async (sql) => { check(sql); return raw.exec!(sql); },
+        };
+        // CountingAdapter stands in for host-entry's ValidatedSqliteAdapter: its check reads the raw client, in the hold.
+        adapter = new CountingAdapter(strict, { rejectConcurrentWrites: true });
+        const receipts = createNativeRequestReceipts({
+            save: async () => ({ ok: true, value: null }),
+            receiptOnly: (requestId, payload) => adapter!.commitReceiptOnly(requestId, payload),
+        });
+        const calls: [string, () => Promise<unknown>][] = [
+            ['ensureSchema', () => adapter!.ensureSchema()],
+            ['getData', () => adapter!.getData()],
+            ['readRowBaseline', () => adapter!.readRowBaseline()],
+            ['queryTasks', () => adapter!.queryTasks({})],
+            ['searchAll', () => adapter!.searchAll('a')],
+            ['saveTask', () => adapter!.saveTask(task('c'))],
+            ['saveData', async () => adapter!.saveData(await adapter!.getData())],
+            ['upsertCalendarSyncEntry', () => adapter!.upsertCalendarSyncEntry({ taskId: 'a', calendarEventId: 'e', calendarId: 'c', platform: 'android', lastSyncedAt: AT })],
+            ['getCalendarSyncEntry', () => adapter!.getCalendarSyncEntry('a', 'android')],
+            ['getAllCalendarSyncEntries', () => adapter!.getAllCalendarSyncEntries('android')],
+            ['deleteCalendarSyncEntry', () => adapter!.deleteCalendarSyncEntry('a', 'android')],
+            ['withConnection', () => adapter!.withConnection(() => strict.get('SELECT 1 AS one'))],
+            ['readDurableReceipt', () => adapter!.readDurableReceipt('11111111-1111-4111-8111-111111111111', '["appLock",true]')],
+            ['hasForeignKeyViolations', () => adapter!.hasForeignKeyViolations()],
+            ['libraryBytes', () => adapter!.libraryBytes()],
+            ['commitReceiptOnly', () => receipts.run('11111111-1111-4111-8111-111111111111', JSON.stringify(['appLock', true]), async () => ({ ok: true, value: 'locked' }))],
+            ['saveDocumentWithReceipt', async () => adapter!.saveDocumentWithReceipt({
+                requestId: '33333333-3333-4333-8333-333333333333',
+                payload: JSON.stringify(['backupDocument', 'merge', '22222222-2222-4222-8222-222222222222', 'a'.repeat(64)]),
+                expectedCurrent: await adapter!.getData(), data: doc([task('a', 'imported'), task('b'), task('c')]),
+                reply: { snapshotName: 'data.2026-10-15T00-00-00.000.snapshot.json', added: 0, updated: 1 },
+            })],
+        ];
+        for (const [name, call] of calls) {
+            outside.length = 0;
+            await call();
+            expect([name, outside]).toEqual([name, []]);
+        }
+        expect(await raw.all('SELECT request_id FROM native_request_receipts')).toHaveLength(2);
+    });
+
+    it('turns two moved read attempts into onStale, and keeps today\'s error without one', async () => {
+        const raw = open(await seeded());
+        let epoch = 0;
+        const moving: SqliteClient = {
+            ...raw,
+            // Another connection commits between every two reads of data_version.
+            get: async <T,>(sql: string, params?: unknown[]) => (sql === 'PRAGMA data_version'
+                ? ({ data_version: ++epoch } as T) : raw.get<T>(sql, params)),
+        };
+        const adapter = new SqliteAdapter(moving, { rejectConcurrentWrites: true });
+        await expect(adapter.getData({ onStale: stale })).rejects.toThrow('stale-db');
+        await expect(adapter.getData()).rejects.toThrow(/^SQLITE_BUSY: .*database changed while loading/);
+    });
+
+    it('refuses a stale token without onStale with the external-change error, not a TypeError', async () => {
+        const adapter = new SqliteAdapter(open(await seeded()), { rejectConcurrentWrites: true });
+        const read = await adapter.getData();
+        await adapter.saveTask(task('capture'));
+        await expect(adapter.saveData(read, { token: adapter.readTokenOf(read) })).rejects.toThrow(/^SQLITE_BUSY: .*stale read token/);
+    });
+
+    it('lets a command wait on the lock inside the store gate while a host body holds it, and a sync save wait on the gate', async () => {
+        const adapter = new SqliteAdapter(open(await seeded()), { rejectConcurrentWrites: true });
+        await adapter.getData();
+        const order: string[] = [];
+        const held = gate();
+        const host = adapter.withConnection(async () => { order.push('host'); await held.wait; });
+        // Gate, then lock: the command holds the gate and queues on the adapter lock behind the host body.
+        const command = runStoreCommand(async () => { const data = await adapter.getData(); order.push('command'); return data; });
+        const save = runSyncStoreSave(async () => { await adapter.saveData(doc([task('a', 'synced'), task('b')])); order.push('save'); });
+        for (let i = 0; i < 5; i += 1) await tick();
+        expect(order).toEqual(['host']);
+        held.open();
+        const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('deadlock')), 2000));
+        await expect(Promise.race([Promise.all([host, command, save]), timeout])).resolves.toBeTruthy();
+        expect(order).toEqual(['host', 'command', 'save']);
+    });
+
+    it('keeps queued callers out of a guarded save that rolls back, and commits their writes after it', async () => {
+        const path = await seeded();
+        const io = instrumented(open(path));
+        const adapter = new SqliteAdapter(io.client, { rejectConcurrentWrites: true });
+        await adapter.getData();
+        const held = gate();
+        let paused = false;
+        let wroteTask = false;
+        io.hooks.before = async (sql) => {
+            // The renamed row is written inside the transaction; the statement after it fails and rolls the save back.
+            if (wroteTask && !paused) {
+                paused = true;
+                await held.wait;
+                throw new Error('injected commit failure');
+            }
+            if (sql.startsWith('INSERT INTO tasks')) wroteTask = true;
+        };
+        const save = adapter.saveData(doc([task('a', 'renamed'), task('b')]));
+        while (!paused) await tick();
+        const read = adapter.queryTasks({});
+        const capture = adapter.saveTask(task('capture'));
+        held.open();
+        await expect(save).rejects.toThrow('injected commit failure');
+        expect((await read).map((row) => row.title).sort()).toEqual(['a', 'b']);
+        await capture;
+        expect((await new SqliteAdapter(open(path)).getData()).tasks.map((row) => row.title).sort()).toEqual(['a', 'b', 'capture']);
+    });
+
+    it('gives no row baseline when another connection commits during the row-version read\'s check', async () => {
+        const path = await seeded();
+        const other = new SqliteAdapter(open(path));
+        await other.getData();
+        let commit = false;
+        const adapter = new (class extends CountingAdapter {
+            protected override async afterReadNow(loaded: (table: 'tasks' | 'projects' | 'sections' | 'areas' | 'people') => number): Promise<void> {
+                await super.afterReadNow(loaded);
+                if (commit) await other.saveData(doc([task('a', 'external'), task('b')]));
+            }
+        })(open(path), { rejectConcurrentWrites: true });
+        await adapter.getData();
+        commit = true;
+        expect(await adapter.readRowBaseline()).toBeNull();
     });
 
     it('requeues an external commit through onStale on a token save, and keeps today\'s error without one', async () => {

@@ -509,8 +509,9 @@ export class SqliteAdapter {
         if (await this.acquireLock() && !this.serializedLogged) {
             // Once per adapter (per boot on the phones): proof the lock kept one caller's SQL out of another's.
             this.serializedLogged = true;
+            // Forced: the line is written even while detailed logging is off, or the one chance per boot would be lost.
             logInfo('SQLite adapter lock serialized a caller', {
-                scope: 'sqlite', category: 'storage',
+                scope: 'sqlite', category: 'storage', force: true,
                 context: { releaseCheck: 'v1.3.7/sqlite-adapter-lock', operation, waitMs: Date.now() - askedAt },
             });
         }
@@ -1340,6 +1341,8 @@ export class SqliteAdapter {
             settings: this.mapSettings(settingsRow, savedFilterRows),
         };
         await this.afterReadNow((table) => light.ids[table].length, light.settings);
+        // As getData's e3: another connection's commit during the check makes this read no baseline.
+        if (this.afterReadNow !== SqliteAdapter.prototype.afterReadNow && await this.readExternalChangeEpoch() !== accepted) return null;
         this.lastKnownRowVersions = new Map<SqliteEntityTable, Map<string, SqliteKnownRowVersion>>([
             ...SQLITE_ENTITY_TABLES.map((table, index) => [table, this.knownRowVersionsFromRows(entityRows[index])] as const),
             ['saved_filters', this.knownRowVersionsFromRows(savedFilterRows)],
@@ -1579,7 +1582,7 @@ export class SqliteAdapter {
             }
             if (!current) {
                 await this.client.run('ROLLBACK').catch(() => undefined);
-                throw options!.onStale!();
+                throw options?.onStale?.() ?? this.concurrentWriteError('stale read token');
             }
             claimBaselines();
         }
