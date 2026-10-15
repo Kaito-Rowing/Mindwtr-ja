@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
-import { batchUpdateTasksFromLatest, updateProjectFromLatest, updateTaskFromLatest } from './store-latest-updates';
+import {
+    batchUpdateTasksFromLatest, mergeTaskDraftOntoLatest, updateProjectFromDraft, updateProjectFromLatest, updateSettingsFromLatest,
+    updateTaskFromDraft, updateTaskFromLatest,
+} from './store-latest-updates';
 import { runSyncStoreSave } from './store-write-gate';
 import type { Attachment, Project, Task } from './types';
 
@@ -63,5 +66,52 @@ describe('writes built from the latest row', () => {
         );
         expect(useTaskStore.getState()._tasksById.get('t1')?.checklist?.map((item) => [item.id, item.isCompleted]))
             .toEqual([['c1', true], ['c2', false]]);
+    });
+
+    it('saves a settings group built from the settings a sync save published while the write waited', async () => {
+        useTaskStore.setState({ settings: { gtd: { defaultScheduleTime: '09:00' } } as never });
+        await behindSyncSave(
+            () => useTaskStore.setState({ settings: { gtd: { defaultScheduleTime: '09:00', autoArchiveDays: 3 } } as never }),
+            () => updateSettingsFromLatest((latest) => ({ gtd: { ...latest.gtd, defaultScheduleTime: '10:00' } })),
+        );
+        expect(useTaskStore.getState().settings.gtd).toMatchObject({ defaultScheduleTime: '10:00', autoArchiveDays: 3 });
+    });
+});
+
+describe('a draft saved field by field on the latest row', () => {
+    afterEach(async () => { await flushPendingSave(); resetForTests(); });
+    const item = (id: string, isCompleted = false) => ({ id, title: id, isCompleted });
+
+    it('writes only the fields the draft changed, and merges a list both sides changed', () => {
+        const base = task({ title: 'Old', tags: ['a', 'b'], checklist: [item('c1'), item('c2')], priority: 'low' });
+        const latest = task({ title: 'Remote title', tags: ['a', 'b', 'remote'], checklist: [item('c1'), item('c2', true), item('c3')], priority: 'high' });
+        const draft = { title: 'Old', tags: ['b', 'mine'], checklist: [item('c1', true), item('c2'), item('c4')], priority: 'medium' as const };
+        expect(mergeTaskDraftOntoLatest(base, draft, latest)).toEqual({
+            // The draft kept the title: the other device's title stays (nothing written).
+            tags: ['b', 'remote', 'mine'],
+            checklist: [item('c1', true), item('c2', true), item('c3'), item('c4')],
+            priority: 'medium',
+        });
+    });
+
+    it('writes the draft list as it is (a reorder stays) when nobody else changed that list', () => {
+        const base = task({ checklist: [item('c1'), item('c2')] });
+        expect(mergeTaskDraftOntoLatest(base, { checklist: [item('c2'), item('c1')] }, task({ title: 'Remote', checklist: [item('c1'), item('c2')] })))
+            .toEqual({ checklist: [item('c2'), item('c1')] });
+    });
+
+    it('saves a task draft and a project draft on the rows a sync save published while they waited', async () => {
+        const base = task({ tags: ['a'] });
+        const projectBase = project({ tagIds: ['t1'] });
+        useTaskStore.setState({ _allTasks: [base], _allProjects: [projectBase] });
+        await behindSyncSave(
+            () => useTaskStore.setState({ _allTasks: [task({ rev: 3, title: 'Remote', tags: ['a', 'remote'] })], _allProjects: [project({ rev: 3, title: 'Remote', tagIds: ['t1', 't2'] })] }),
+            async () => {
+                await updateTaskFromDraft('t1', base, { title: base.title, tags: ['a', 'mine'] });
+                await updateProjectFromDraft('p1', projectBase, { title: projectBase.title, tagIds: ['t1', 't3'] });
+            },
+        );
+        expect(useTaskStore.getState()._tasksById.get('t1')).toMatchObject({ title: 'Remote', tags: ['a', 'remote', 'mine'] });
+        expect(useTaskStore.getState()._projectsById.get('p1')).toMatchObject({ title: 'Remote', tagIds: ['t1', 't2', 't3'] });
     });
 });
