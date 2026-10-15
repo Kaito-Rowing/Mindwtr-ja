@@ -11,7 +11,7 @@
     <application
         android:networkSecurityConfig="@xml/network_security_config"
         android:name=".MindwtrApplication"
-        android:label="Mindwtr Native Dev"
+        android:label="${appLabel}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="false"
@@ -49,7 +49,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="false"
-            android:label="Mindwtr Native Dev"
+            android:label="${appLabel}"
             android:launchMode="singleTask"
             android:theme="@style/Theme.App.SplashScreen"
             android:windowSoftInputMode="adjustResize" />
@@ -61,7 +61,7 @@
         <activity-alias
             android:name="${applicationId}.MainActivity"
             android:exported="true"
-            android:label="Mindwtr Native Dev"
+            android:label="${appLabel}"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

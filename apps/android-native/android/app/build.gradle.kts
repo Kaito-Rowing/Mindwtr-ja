@@ -12,18 +12,6 @@ val tracedBundleAssets = layout.buildDirectory.dir("generated/traced-bundle/asse
 // shortcuts (scripts/build-shortcuts.mjs), and BuildConfig.URL_SCHEME (the scheme core reads links for) use it.
 val urlSchemes = mapOf("debug" to "mindwtr-native-dev", "upgradetest" to "mindwtr-upgradetest", "release" to "mindwtr") +
     mapOf("benchmark" to "mindwtr-native-bench", "benchmarkSeed" to "mindwtr-native-bench", "benchmarkTrace" to "mindwtr-native-bench")
-// Each build type's package (defaultConfig's; the upgradetest one is set in androidComponents below, the benchmarks' by their
-// suffix), which RN's shortcuts and legacy widget class name, and the widgets' launcher label.
-val packages = mapOf("debug" to "tech.dongdongbh.mindwtr.nativeclient.dev", "upgradetest" to "tech.dongdongbh.mindwtr.upgradetest",
-    "release" to "tech.dongdongbh.mindwtr.nativeclient.dev") +
-    listOf("benchmark", "benchmarkSeed", "benchmarkTrace").associateWith { "tech.dongdongbh.mindwtr.nativeclient.dev.benchmark" }
-val widgetLabels = mapOf("debug" to "Mindwtr Native Dev", "upgradetest" to "Mindwtr Native Dev", "release" to "Mindwtr") +
-    listOf("benchmark", "benchmarkSeed", "benchmarkTrace").associateWith { "Mindwtr" }
-fun com.android.build.api.dsl.ApplicationBuildType.urlScheme() {
-    val scheme = urlSchemes.getValue(name)
-    buildConfigField("String", "URL_SCHEME", "\"$scheme\"")
-    manifestPlaceholders["urlScheme"] = scheme
-}
 
 // RN's build facts (apps/mobile/app.json and app.config.ts), so About, feedback and the heartbeat report what RN's same build
 // reports: the version and build number, the release tag (release-version.json, else ANALYTICS_RELEASE_VERSION), and the
@@ -45,6 +33,21 @@ val rnHeartbeatUrl = if (System.getenv("ANALYTICS_HEARTBEAT_DISABLED") in setOf(
 val rnHeartbeatChannel = System.getenv("ANALYTICS_HEARTBEAT_CHANNEL")
 fun quoted(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
+// Each build type's package (defaultConfig's for debug, the benchmarks' with their suffix; upgradetest's and release's are set in
+// androidComponents below), which names RN's shortcut targets and legacy widget class, and its launcher label (the app's and the
+// widgets'). A release is RN's app (O3): RN's package and name, so it installs over RN's store app in place.
+val packages = mapOf("debug" to "tech.dongdongbh.mindwtr.nativeclient.dev", "upgradetest" to "tech.dongdongbh.mindwtr.upgradetest",
+    "release" to rnPackage) +
+    listOf("benchmark", "benchmarkSeed", "benchmarkTrace").associateWith { "tech.dongdongbh.mindwtr.nativeclient.dev.benchmark" }
+val launcherLabels = mapOf("debug" to "Mindwtr Native Dev", "upgradetest" to "Mindwtr Native Dev", "release" to rnName) +
+    listOf("benchmark", "benchmarkSeed", "benchmarkTrace").associateWith { "Mindwtr" }
+fun com.android.build.api.dsl.ApplicationBuildType.launcherIdentity() {
+    val scheme = urlSchemes.getValue(name)
+    buildConfigField("String", "URL_SCHEME", "\"$scheme\"")
+    manifestPlaceholders["urlScheme"] = scheme
+    manifestPlaceholders["appLabel"] = launcherLabels.getValue(name)
+}
+
 android {
     namespace = "tech.dongdongbh.mindwtr.pilot"
     compileSdk = 36
@@ -55,7 +58,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "native-dev"
-        // false: the isolated dev database. Only the upgradetest build type opens the RN app's storage.
+        // false: the isolated dev database. Only the upgradetest and release build types open the RN app's storage.
         buildConfigField("boolean", "RN_STORAGE", "false")
         // The QuickJS wrapper's version (the dependency below): a key of the bundle's bytecode cache (BytecodeCache.kt).
         buildConfigField("String", "QUICKJS_WRAPPER", "\"3.2.0\"")
@@ -69,14 +72,18 @@ android {
     }
 
     buildTypes {
-        getByName("debug") { urlScheme() }
-        getByName("release") { urlScheme() }
+        getByName("debug") { launcherIdentity() }
+        // RN's app (its id is set in androidComponents below): it opens RN's files where RN left them.
+        getByName("release") {
+            buildConfigField("boolean", "RN_STORAGE", "true")
+            launcherIdentity()
+        }
         // Upgrade harness only (scripts/check-upgrade-device.mjs): installs in place over the
         // RN v1.3.2 harness build, package tech.dongdongbh.mindwtr.upgradetest, and opens its files.
         create("upgradetest") {
             initWith(getByName("debug"))
             buildConfigField("boolean", "RN_STORAGE", "true")
-            urlScheme()
+            launcherIdentity()
         }
         // Startup measurement only (scripts/measure-startup-device.mjs): a release build (R8, not debuggable)
         // that the shell may profile, signed with the debug key, under its own id so it never shares the dev app's data.
@@ -84,11 +91,13 @@ android {
             initWith(getByName("release"))
             applicationIdSuffix = ".benchmark"
             signingConfig = signingConfigs.getByName("debug")
+            // The dev database (run-as seeds it), not the release's RN files.
+            buildConfigField("boolean", "RN_STORAGE", "false")
             isMinifyEnabled = true
             isProfileable = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             buildConfigField("String", "ANALYTICS_HEARTBEAT_URL", "\"\"")
-            urlScheme()
+            launcherIdentity()
         }
         // The benchmark's debuggable twin (same id and key): installed first so run-as can seed a database, then the
         // benchmark build installs over it and keeps that data.
@@ -96,12 +105,12 @@ android {
             initWith(getByName("benchmark"))
             isDebuggable = true
             isMinifyEnabled = false
-            urlScheme()
+            launcherIdentity()
         }
         // The benchmark build with the module-traced bundle (buildTracedCoreBundle below): startup measurement only.
         create("benchmarkTrace") {
             initWith(getByName("benchmark"))
-            urlScheme()
+            launcherIdentity()
         }
     }
 
@@ -164,7 +173,30 @@ androidComponents {
         variant.applicationId.set("tech.dongdongbh.mindwtr.upgradetest")
         variant.outputs.forEach { it.versionCode.set(153) }
     }
+    // A release is RN's app (O3): RN's package, version and number (app.json), so it installs over RN's store app in place.
+    // defaultConfig stays the dev app's, so the debug and benchmark builds keep their own ids beside RN's on the same phone.
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.applicationId.set(rnPackage)
+        variant.outputs.forEach { it.versionCode.set(rnVersionCode.toInt()); it.versionName.set(rnVersion) }
+    }
+    // checkVariantIdentity: each variant's identity as its merged manifest, shortcuts and BuildConfig have it (scripts/check-variant-identity.mjs).
+    val identityScript = rootProject.projectDir.resolve("../scripts/check-variant-identity.mjs").path
+    onVariants { variant ->
+        if (variant.buildType !in setOf("debug", "release", "upgradetest", "benchmark")) return@onVariants
+        val manifest = variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)
+        val shortcuts = layout.buildDirectory.file("generated/shortcuts/${variant.buildType}/res/xml/mindwtr_shortcuts.xml")
+        val name = variant.name.replaceFirstChar(Char::uppercase)
+        val buildConfig = layout.buildDirectory.file("generated/source/buildConfig/${variant.flavorName}/${variant.buildType}/tech/dongdongbh/mindwtr/pilot/BuildConfig.java")
+        val check = tasks.register<Exec>("check${name}Identity") {
+            dependsOn("buildShortcuts", "generate${name}BuildConfig")
+            inputs.file(manifest)
+            commandLine("node", identityScript, variant.buildType!!)
+            argumentProviders.add(CommandLineArgumentProvider { listOf(manifest, shortcuts, buildConfig).map { it.get().asFile.path } })
+        }
+        tasks.named("checkVariantIdentity") { dependsOn(check) }
+    }
 }
+val checkVariantIdentity by tasks.registering
 
 dependencies {
     implementation("wang.harlon.quickjs:wrapper-android:3.2.0")
@@ -249,7 +281,7 @@ val buildShortcuts by tasks.registering(Exec::class) {
 val buildWidgets by tasks.registering(Exec::class) {
     workingDir = rootProject.projectDir.resolve("../../..")
     val out = layout.buildDirectory.dir("generated/widgets").get().asFile
-    commandLine(listOf("node", "apps/android-native/scripts/build-widgets.mjs", out.path) + packages.map { (type, id) -> "$type=$id:${widgetLabels.getValue(type)}" })
+    commandLine(listOf("node", "apps/android-native/scripts/build-widgets.mjs", out.path) + packages.map { (type, id) -> "$type=$id:${launcherLabels.getValue(type)}" })
     inputs.files(
         fileTree(workingDir.resolve("apps/mobile/plugins")),
         fileTree(workingDir.resolve("apps/mobile/modules/android-widget/android/src/main/res/layout")),
@@ -258,7 +290,7 @@ val buildWidgets by tasks.registering(Exec::class) {
         workingDir.resolve("apps/android-native/scripts/build-widgets.mjs"),
     )
     inputs.property("packages", packages.toString())
-    inputs.property("widgetLabels", widgetLabels.toString())
+    inputs.property("launcherLabels", launcherLabels.toString())
     outputs.dir(out)
 }
 // RN's attachment installer (apps/mobile/modules/attachment-file-installer): its install, hash and journal recovery policy and its
@@ -282,5 +314,5 @@ val rnPersistentCapture by tasks.registering(Sync::class) {
 tasks.named("preBuild") { dependsOn(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller, rnPersistentCapture) }
 tasks.matching { it.name.startsWith("pre") && it.name.endsWith("BenchmarkTraceBuild") }.configureEach { dependsOn(buildTracedCoreBundle) }
 // Both channels' JVM tests under the one name the gates and CI run (flavors leave no testDebugUnitTest), with the widget module's
-// RN tests (Robolectric).
-tasks.register("testDebugUnitTest") { dependsOn("testPlayDebugUnitTest", "testFossDebugUnitTest", ":widget:testDebugUnitTest") }
+// RN tests (Robolectric) and every variant's identity check.
+tasks.register("testDebugUnitTest") { dependsOn("testPlayDebugUnitTest", "testFossDebugUnitTest", ":widget:testDebugUnitTest", checkVariantIdentity) }

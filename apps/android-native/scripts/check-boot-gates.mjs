@@ -3127,8 +3127,9 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // D6: each build type's scheme, and the scheme reaches the manifest, the shortcuts and BuildConfig from one map.
     assert.match(gradle, /val urlSchemes = mapOf\("debug" to "mindwtr-native-dev", "upgradetest" to "mindwtr-upgradetest", "release" to "mindwtr"\)/);
     assert.match(gradle, /buildConfigField\("String", "URL_SCHEME", "\\"\$scheme\\""\)\s+manifestPlaceholders\["urlScheme"\] = scheme/);
-    for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
-    assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
+    assert.match(gradle, /getByName\("debug"\) \{ launcherIdentity\(\) \}/);
+    assert.match(gradle, /getByName\("release"\) \{[^}]*launcherIdentity\(\)\s+\}/);
+    assert.match(gradle, /create\("upgradetest"\) \{[^}]*launcherIdentity\(\)\s+\}/);
     assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller, rnPersistentCapture\) \}/);
     // The bytecode cache's keys (BytecodeCache.kt): the engine version is the QuickJS dependency's, and the bundle carries the
     // SHA-256 of its own body in its first line, written with it in one file (build-bundle.mjs), so a bundle and a hash from
