@@ -6,7 +6,7 @@ import {
     collectFocusEligibilityTasks,
     getFocusStarBlockedText,
     generateUUID,
-    mergeTaskDraftAttachments,
+    mergeTaskDraftOntoLatest,
     normalizeFocusTaskLimit,
     resolveTaskEditorFocusStar,
     runStoreCommand,
@@ -437,24 +437,31 @@ export function useTaskEditState({
             title: titleDraftRef.current,
             description: descriptionDraftRef.current,
         });
-        // The draft's attachments go over the task as stored when the write is admitted, not the
-        // copy the editor opened: a cloudKey, new content or removal sync recorded meanwhile stays.
-        // One store command merges and writes, so a sync save admitted first is merged too.
-        // The list Save writes: the file cleanup after Save settles against it.
+        // A save with a list field (tags, contexts, checklist, attachments) goes over the task as stored when
+        // the write is admitted, not the copy the editor opened: the patch is merged field by field onto the
+        // latest row (base: the task the editor opened or last saved on), so a tag, item, cloudKey or removal
+        // another device synced meanwhile stays. One store command merges and writes, so a sync save admitted
+        // first is merged too. The list Save writes: the file cleanup after Save settles against it.
         let savedAttachments = saveDraftState.attachments ?? currentTask.attachments;
-        // Only an attachment save waits for admission; any other save reaches onSave in this tick, so the modal closes at once.
-        const writeMerged = (patch: Partial<Task>) => (!patch.attachments ? writePatch(currentTask.id, patch) : runStoreCommand(async () => {
+        // Only a list save waits for admission; any other save reaches onSave in this tick, so the modal closes at once.
+        const hasListField = (patch: Partial<Task>) => (
+            'tags' in patch || 'contexts' in patch || 'checklist' in patch || 'attachments' in patch
+        );
+        const writeMerged = (patch: Partial<Task>) => (!hasListField(patch) ? writePatch(currentTask.id, patch) : runStoreCommand(async () => {
             const storedTask = useTaskStore.getState()._tasksById?.get(currentTask.id);
             if (!storedTask) return writePatch(currentTask.id, patch);
-            const merged = mergeTaskDraftAttachments(storedTask.attachments ?? [], currentTask.attachments ?? [], patch.attachments ?? []);
-            savedAttachments = merged;
-            if (JSON.stringify(merged) !== JSON.stringify(patch.attachments)) {
-                void logInfo('Editor attachment save kept a newer stored change', {
-                    scope: 'task-edit',
-                    extra: { releaseCheck: 'v1.3.4/editor-attachment-save-merge', outcome: 'merged' },
-                });
+            // Fields equal to the base stay as the patch sends them (a kept relative start offset).
+            const merged: Partial<Task> = { ...patch, ...mergeTaskDraftOntoLatest(currentTask, patch, storedTask) };
+            if (patch.attachments) {
+                savedAttachments = merged.attachments ?? savedAttachments;
+                if (JSON.stringify(merged.attachments) !== JSON.stringify(patch.attachments)) {
+                    void logInfo('Editor attachment save kept a newer stored change', {
+                        scope: 'task-edit',
+                        extra: { releaseCheck: 'v1.3.4/editor-attachment-save-merge', outcome: 'merged' },
+                    });
+                }
             }
-            return writePatch(currentTask.id, { ...patch, attachments: merged });
+            return writePatch(currentTask.id, merged);
         }));
         if (mode === 'cancel') {
             if (!updates) return false;
