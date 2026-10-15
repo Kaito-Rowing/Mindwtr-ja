@@ -495,7 +495,10 @@ const deadlineRows = async (part) => {
             noDelays(); control('');
             if (name === 'control') check(failedToast && !made, `(DL4 control) with the old 30 s deadline the slow export fails and makes no file (${ms} ms)`);
             else check(made && pickedMs > 60_000, `(DL4) the slow export was written in ${pickedMs} ms, past the old 30 s, and the file made`);
-            if (!pid()) await launch();
+            // The control's export outlived its old deadline while it waited, so the host stopped for good ("Core host stopped",
+            // batch4): only a new process serves the next run.
+            await device.stopApp();
+            await launch();
         }
         setProp('export_tree', '');
 
@@ -517,13 +520,22 @@ const deadlineRows = async (part) => {
             const started = Date.now();
             await tap(button(nodes, en['quickAdd.bulkConfirmCreate']) ?? fail('no Create tasks'));
             let stored = false;
-            try { await until(`the lines (DL5 ${name})`, () => rowsLike(`dl5-${name}`, `d1dl5a${name}`) === 1, 300_000, 5000); stored = true; } catch { /* the control stores nothing */ }
+            // The control fails at its old 30 s deadline (and the drain after it); the real run's snapshot waits 60 s first.
+            try { await until(`the lines (DL5 ${name})`, () => rowsLike(`dl5-${name}`, `d1dl5a${name}`) === 1, name === 'control' ? 150_000 : 300_000, 5000); stored = true; } catch { /* the control stores nothing */ }
             const ms = Date.now() - started;
             noDelays(); control('');
             const written = snapshots().filter((file) => !snapshotsBefore.includes(file));
             if (name === 'control') check(!stored && written.length === 0, `(DL5 control) with the old 30 s deadline the slow snapshot fails: no snapshot, no lines (${ms} ms)`);
             else check(stored && written.length === 1 && ms > 60_000, `(DL5) the slow snapshot was written (${written[0]}) and the lines stored, in ${ms} ms`);
             await device.stopApp();
+            if (name === 'control') {
+                // The control stopped the host and left its capture request on disk to be sent again: a fresh install and the
+                // same large library, so the real run starts from a clean popup.
+                await setup();
+                await restore(large);
+                await toastWith(en['settings.backupMobile.restoreComplete'], 600_000);
+                await device.stopApp();
+            }
             await launch();
         }
     }
