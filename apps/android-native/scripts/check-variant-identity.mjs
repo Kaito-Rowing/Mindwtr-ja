@@ -1,7 +1,8 @@
 // One native Android variant's identity (plan pass O3), as its merged manifest and its app shortcuts have it: the names that
 // launchers, widget hosts, the Quick Settings panel and automations stored for RN's app (inventory section 6); for a release,
 // RN's package, version, number and name (apps/mobile/app.json), so it installs over RN's store app in place; and which storage
-// its BuildConfig opens (RN's files in a release and the upgrade harness build, the dev database elsewhere).
+// its BuildConfig opens (RN's files in a release and the upgrade harness build, the dev database elsewhere); and RN's backup rules,
+// which back up and transfer nothing.
 // Gradle's checkVariantIdentity runs it for each variant (app/build.gradle.kts); it prints every problem and fails on any.
 // Usage: node check-variant-identity.mjs <build type> <merged AndroidManifest.xml> <mindwtr_shortcuts.xml> <BuildConfig.java>
 import { readFileSync } from 'node:fs';
@@ -12,6 +13,8 @@ import { pathToFileURL } from 'node:url';
 const require = createRequire(import.meta.url);
 const { parseStringPromise } = require('xml2js');
 const app = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../mobile/app.json'), 'utf8')).expo;
+const rnManifest = require('../../mobile/plugins/android-manifest-fixes.js').__testables;
+const resXml = (name) => readFileSync(resolve(import.meta.dirname, `../android/app/src/main/res/xml/${name}.xml`), 'utf8');
 
 const attr = (node, name) => node?.$?.[`android:${name}`];
 const named = (nodes, name) => (nodes ?? []).find((node) => attr(node, 'name') === name);
@@ -35,6 +38,12 @@ export async function identityProblems(type, manifest, shortcuts, buildConfig) {
         expect('the versionName', attr(root, 'versionName'), app.version);
         expect('the app label', attr(application, 'label'), app.name);
     }
+    // RN's "back up nothing" rules (android-manifest-fixes.js), the same files.
+    expect('allowBackup', attr(application, 'allowBackup'), 'true');
+    expect('fullBackupContent', attr(application, 'fullBackupContent'), '@xml/mindwtr_backup_rules');
+    expect('dataExtractionRules', attr(application, 'dataExtractionRules'), '@xml/mindwtr_data_extraction_rules');
+    if (resXml('mindwtr_backup_rules') !== rnManifest.BACKUP_RULES_XML) problems.push('the backup rules are not RN\'s');
+    if (resXml('mindwtr_data_extraction_rules') !== rnManifest.DATA_EXTRACTION_RULES_XML) problems.push('the data extraction rules are not RN\'s');
     // The launcher's, pinned shortcuts' and widgets' component (WidgetRenderer.appIntent): RN's MainActivity name.
     const alias = named(application['activity-alias'], `${pkg}.MainActivity`);
     if (!alias) problems.push(`no ${pkg}.MainActivity`);
