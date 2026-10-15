@@ -389,7 +389,8 @@ const readNotificationsEdit = (value: unknown): NotificationsSettingsEdit | null
     const v = value.value;
     const ok = NOTIFICATIONS_BOOLEANS.has(value.type) ? typeof v === 'boolean'
         : NOTIFICATIONS_TIMES.has(value.type) ? typeof v === 'string' && NOTIFICATIONS_TIME_PATTERN.test(v)
-            : value.type === 'weeklyReviewDay' && Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 6;
+            : value.type === 'taskReminderDefault' ? v === 'send' || v === 'skip'
+                : value.type === 'weeklyReviewDay' && Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 6;
     return ok ? { type: value.type, value: v } as NotificationsSettingsEdit : null;
 };
 

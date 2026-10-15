@@ -2893,7 +2893,15 @@ fn patch_task_in_data_at(
     let was_counted = local_api_task_is_counted_as_focused(&candidate, now, local_wall);
     let star_turning_on = patch.get("isFocusedToday").and_then(Value::as_bool) == Some(true)
         && candidate.get("isFocusedToday").and_then(Value::as_bool) != Some(true);
-    apply_task_patch_with_containers(&mut candidate, patch, &device_id, &live_containers)?;
+    apply_task_patch_with_containers(
+        &mut candidate,
+        patch,
+        &device_id,
+        &live_containers,
+        data.pointer("/settings/taskReminderDefault")
+            .and_then(Value::as_str)
+            == Some("skip"),
+    )?;
     if star_turning_on {
         if candidate.get("status").and_then(Value::as_str) == Some("inbox") {
             candidate.insert("status".to_string(), Value::String("next".to_string()));
@@ -3384,6 +3392,7 @@ fn create_next_recurring_task_for_local_api(
             "areaId",
             "timeEstimate",
             "repeatReminderMinutes",
+            "reminderPolicy",
         ],
     );
     if let Some(value) = next_start_time {
@@ -4199,6 +4208,17 @@ fn create_task_from_body(
     }
     sanitize_task_patch_map(&mut task)?;
     task.retain(|_, value| !value.is_null());
+    if task.get("reminderPolicy").is_none_or(Value::is_null)
+        && !task.contains_key("suppressMindwtrReminders")
+    {
+        task.insert("reminderPolicy".to_string(), json!("inherit"));
+    }
+    normalize_task_reminder_patch(
+        &mut task,
+        data.pointer("/settings/taskReminderDefault")
+            .and_then(Value::as_str)
+            == Some("skip"),
+    );
     normalize_created_task_containers(&mut task, &LiveContainers::from_data(data))?;
     let had_explicit_status = task.contains_key("status");
     let now = now_iso();
@@ -4240,7 +4260,7 @@ pub(crate) fn apply_task_patch(
     patch: &Map<String, Value>,
     device_id: &str,
 ) -> Result<(), String> {
-    apply_task_patch_internal(task, patch, device_id, None)
+    apply_task_patch_internal(task, patch, device_id, None, false)
 }
 
 fn apply_task_patch_with_containers(
@@ -4248,8 +4268,9 @@ fn apply_task_patch_with_containers(
     patch: &Map<String, Value>,
     device_id: &str,
     live_containers: &LiveContainers,
+    default_skip: bool,
 ) -> Result<(), String> {
-    apply_task_patch_internal(task, patch, device_id, Some(live_containers))
+    apply_task_patch_internal(task, patch, device_id, Some(live_containers), default_skip)
 }
 
 fn apply_task_patch_internal(
@@ -4257,6 +4278,7 @@ fn apply_task_patch_internal(
     patch: &Map<String, Value>,
     device_id: &str,
     live_containers: Option<&LiveContainers>,
+    default_skip: bool,
 ) -> Result<(), String> {
     let previous_status = task
         .get("status")
@@ -4306,6 +4328,7 @@ fn apply_task_patch_internal(
     };
     let mut sanitized = patch.clone();
     sanitize_task_patch_map(&mut sanitized)?;
+    normalize_task_reminder_patch(&mut sanitized, default_skip);
     let explicit_order = if sanitized.contains_key("order") {
         sanitized.get("order").cloned()
     } else {
@@ -4443,6 +4466,23 @@ fn normalize_task_triage_patch(
     }
 }
 
+fn normalize_task_reminder_patch(patch: &mut Map<String, Value>, default_skip: bool) {
+    if let Some(policy) = patch.get("reminderPolicy").and_then(Value::as_str) {
+        let skip = policy == "skip" || (policy == "inherit" && default_skip);
+        patch.insert("suppressMindwtrReminders".to_string(), Value::Bool(skip));
+    } else if patch.contains_key("reminderPolicy") {
+        patch.remove("reminderPolicy");
+    } else if let Some(skip) = patch
+        .get("suppressMindwtrReminders")
+        .and_then(Value::as_bool)
+    {
+        patch.insert(
+            "reminderPolicy".to_string(),
+            json!(if skip { "skip" } else { "send" }),
+        );
+    }
+}
+
 pub(crate) fn sanitize_task_patch_map(patch: &mut Map<String, Value>) -> Result<(), String> {
     for key in ["tags", "contexts"] {
         if let Some(items) = patch.get_mut(key).and_then(Value::as_array_mut) {
@@ -4494,6 +4534,12 @@ pub(crate) fn sanitize_task_patch_map(patch: &mut Map<String, Value>) -> Result<
                     || value
                         .as_str()
                         .is_some_and(|item| matches!(item, "task" | "list"))
+            }
+            "reminderPolicy" => {
+                value.is_null()
+                    || value
+                        .as_str()
+                        .is_some_and(|policy| matches!(policy, "inherit" | "send" | "skip"))
             }
             "textDirection" => {
                 value.is_null()
@@ -5275,6 +5321,69 @@ fn hex_value(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reminder_policy_create_and_patch_preserve_legacy_intent_and_inherit_default() {
+        let data = json!({"tasks": [], "projects": [], "sections": [], "areas": [],
+            "settings": {"taskReminderDefault": "skip"}});
+        for (props, expected, skip) in [
+            (json!({}), "inherit", true),
+            (json!({"suppressMindwtrReminders": false}), "send", false),
+            (json!({"suppressMindwtrReminders": true}), "skip", true),
+            (
+                json!({"reminderPolicy": "send", "suppressMindwtrReminders": true}),
+                "send",
+                false,
+            ),
+        ] {
+            let body = json!({"title": "Reminder policy", "props": props});
+            let mut task =
+                create_task_from_body(body.as_object().unwrap(), "device-a", &data).unwrap();
+            assert_eq!(task["reminderPolicy"], expected);
+            assert_eq!(task["suppressMindwtrReminders"], skip);
+            let patch = json!({"title": "Unrelated edit"});
+            apply_task_patch(&mut task, patch.as_object().unwrap(), "device-a").unwrap();
+            assert_eq!(task["reminderPolicy"], expected);
+            assert_eq!(task["suppressMindwtrReminders"], skip);
+        }
+        let mut data = json!({"tasks": [{"id":"policy", "title":"Policy", "status":"next", "reminderPolicy":"send"}],
+            "settings":{"taskReminderDefault":"skip"}});
+        patch_task_in_data(
+            &mut data,
+            "policy",
+            json!({"reminderPolicy":"inherit"}).as_object().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(data["tasks"][0]["reminderPolicy"], "inherit");
+        assert_eq!(data["tasks"][0]["suppressMindwtrReminders"], true);
+        patch_task_in_data(
+            &mut data,
+            "policy",
+            json!({"suppressMindwtrReminders":false})
+                .as_object()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(data["tasks"][0]["reminderPolicy"], "send");
+        assert_eq!(data["tasks"][0]["suppressMindwtrReminders"], false);
+        let mut legacy = json!({"id":"legacy", "title":"Legacy", "status":"next", "suppressMindwtrReminders":false}).as_object().unwrap().clone();
+        apply_task_patch(
+            &mut legacy,
+            json!({"title":"Retitled"}).as_object().unwrap(),
+            "device-a",
+        )
+        .unwrap();
+        assert!(!legacy.contains_key("reminderPolicy"));
+        for policy in [json!(true), json!("sometimes"), json!(1)] {
+            assert!(sanitize_task_patch_map(
+                &mut json!({"reminderPolicy":policy})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            )
+            .is_err());
+        }
+    }
 
     #[test]
     fn local_api_patch_focus_accepts_past_no_offset_review_for_rest_and_mcp() {

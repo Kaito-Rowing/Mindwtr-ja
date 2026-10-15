@@ -229,6 +229,7 @@ const sanitizeSettingsForRemote = (settings: AppData['settings']): AppData['sett
     if (isSettingsSyncGroupEnabled(prefs, 'gtd')) {
         const gtdSnapshot = getGtdSyncSnapshot(settings);
         next.gtd = gtdSnapshot.gtd;
+        next.taskReminderDefault = gtdSnapshot.taskReminderDefault;
         next.quickAddAutoClean = gtdSnapshot.quickAddAutoClean;
         next.markdownEditorAssist = gtdSnapshot.markdownEditorAssist;
         next.features = gtdSnapshot.features;

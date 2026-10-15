@@ -827,6 +827,10 @@ export const createSettingsActions = ({
      * @param updates Settings to update
      */
     updateSettings: async (updates: Partial<AppData['settings']>) => {
+        if (updates.taskReminderDefault !== undefined && updates.taskReminderDefault !== 'send' && updates.taskReminderDefault !== 'skip') {
+            set({ error: 'Task reminder default must be send or skip' });
+            return;
+        }
         const focusStartDates = updates.gtd?.focusIncludeStartDates;
         if (focusStartDates !== undefined && typeof focusStartDates !== 'boolean') {
             set({ error: 'Focus start-date inclusion must be a boolean' });
@@ -1178,7 +1182,12 @@ export const createSettingsActions = ({
             const current = notificationSettingWitness(durable.settings, request.edit.type);
             if (!current || !taskEditValuesEqual(current, request.expected)
                 || current.present && current.value === request.edit.value) return memory;
-            const settings = { ...durable.settings, [request.edit.type]: request.edit.value };
+            const settings = { ...durable.settings, [request.edit.type]: request.edit.value,
+                ...(request.edit.type === 'taskReminderDefault' ? {
+                    syncPreferencesUpdatedAt: { ...(durable.settings.syncPreferencesUpdatedAt ?? {}),
+                        gtd: timestampAtLeastAfter(new Date().toISOString(), durable.settings.syncPreferencesUpdatedAt?.gtd) },
+                } : {}),
+            };
             const rawSnapshot = { ...durable, settings };
             const freshTasks = durable.tasks.map((row) => normalizeTaskForLoad(row));
             const freshProjects = durable.projects.map(normalizeProjectLifecycleFields);

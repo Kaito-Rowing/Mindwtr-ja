@@ -732,6 +732,23 @@ describeSqlite('SqliteAdapter', () => {
         ]);
     });
 
+    it('migrates nullable reminder policy without changing legacy behavior and persists inherited values', async () => {
+        db.exec(SQLITE_BASE_SCHEMA.replace('  purgedAt TEXT,\n  reminderPolicy TEXT\n);', '  purgedAt TEXT\n);'));
+        runSql(db, "INSERT INTO tasks (id,title,status,createdAt,updatedAt,suppressMindwtrReminders) VALUES ('legacy','Legacy','next','2026-01-01','2026-01-01',0)");
+        const loaded = await adapter.getData();
+        expect(loaded.tasks[0]).toMatchObject({ id: 'legacy', suppressMindwtrReminders: false });
+        expect(loaded.tasks[0].reminderPolicy).toBeUndefined();
+        expect(allSql(db, 'SELECT reminderPolicy FROM tasks')).toEqual([{ reminderPolicy: null }]);
+        for (const reminderPolicy of ['inherit', 'send', 'skip'] as const) {
+            await adapter.saveTask({ ...loaded.tasks[0], id: reminderPolicy, reminderPolicy, repeatReminderMinutes: 15 });
+        }
+        const reloaded = await adapter.getData();
+        for (const reminderPolicy of ['inherit', 'send', 'skip'] as const) {
+            expect(reloaded.tasks.find((task) => task.id === reminderPolicy)).toMatchObject({ reminderPolicy, repeatReminderMinutes: 15 });
+        }
+        expect(reloaded.tasks.find((task) => task.id === 'legacy')?.reminderPolicy).toBeUndefined();
+    });
+
     it('declares repeat reminder minutes in the base task schema', () => {
         db.exec(SQLITE_BASE_SCHEMA);
 

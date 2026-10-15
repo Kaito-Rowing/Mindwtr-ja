@@ -1,3 +1,4 @@
+import { normalizeTaskReminderPolicy } from './task-reminder-policy';
 import type { AppData, Area, Attachment, Person, Project, Section, Task } from './types';
 import { isSha256Hex } from './attachment-hash';
 import { normalizePersonName, normalizePersonNote, normalizePersonReferenceLink } from './people';
@@ -248,6 +249,7 @@ export const normalizeTaskForSyncMerge = (
         timeSpentMinutes: normalized.timeSpentMinutes,
         showFutureRecurrence: hasRecurrence && normalizeSyncedBoolean(normalized.showFutureRecurrence) ? true : undefined,
         suppressMindwtrReminders: normalizeSyncedBoolean(normalized.suppressMindwtrReminders),
+        reminderPolicy: normalizeTaskReminderPolicy(normalized.reminderPolicy),
         repeatReminderMinutes: normalized.repeatReminderMinutes,
         reviewAt: normalized.reviewAt,
         completedAt: normalized.completedAt,

@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { NotificationSettings } from '@mindwtr/core';
+import { requestNotificationPermission } from '@/lib/notification-service';
 
 import { NotificationsSettingsScreen } from './notifications-settings-screen';
 
@@ -79,6 +80,7 @@ describe('NotificationsSettingsScreen exact-alarm feature boundary', () => {
   beforeEach(() => {
     exactAlarmPermission.mockClear();
     storeState.settings = { notificationsEnabled: false };
+    vi.mocked(requestNotificationPermission).mockClear();
   });
 
   it.each([
@@ -97,4 +99,19 @@ describe('NotificationsSettingsScreen exact-alarm feature boundary', () => {
     expect(exactAlarmPermission).toHaveBeenLastCalledWith(active);
     act(() => tree.unmount());
   });
+  it('lets the default change to Skip without enabling this device or asking permission', () => {
+    storeState.updateSettings.mockClear();
+    let tree!: renderer.ReactTestRenderer;
+    act(() => { tree = renderer.create(<NotificationsSettingsScreen />); });
+    const row = tree.root.findByProps({ testID: 'task-reminder-default' });
+    act(() => row.props.onPress());
+    const skip = tree.root.findAllByProps({ accessibilityRole: 'radio' })
+      .find((option) => option.props.accessibilityLabel === 'settings.taskReminderDefaultSkip')!;
+    act(() => skip.props.onPress());
+    expect(storeState.updateSettings).toHaveBeenCalledExactlyOnceWith({ taskReminderDefault: 'skip' });
+    expect(storeState.settings.notificationsEnabled).toBe(false);
+    expect(requestNotificationPermission).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
 });

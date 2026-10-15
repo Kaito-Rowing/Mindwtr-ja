@@ -225,7 +225,8 @@ const normalizeExistingStarterTask = (
 const buildFreshInstallGettingStartedData = (
     nowIso: string,
     deviceId: string | undefined,
-    lang: Language
+    lang: Language,
+    settings: AppData['settings']
 ): Pick<AppData, 'projects' | 'tasks'> => {
     const projectId = uuidv4();
     const revisionMeta = deviceId ? { revBy: deviceId } : {};
@@ -264,7 +265,8 @@ const buildFreshInstallGettingStartedData = (
         order: index,
         orderNum: index,
         isFocusedToday: template.isFocusedToday ?? false,
-        suppressMindwtrReminders: false,
+        reminderPolicy: 'inherit',
+        suppressMindwtrReminders: settings.taskReminderDefault === 'skip',
         pushCount: 0,
         rev: 1,
         ...revisionMeta,
@@ -280,7 +282,8 @@ const buildFreshInstallGettingStartedData = (
         tags: [],
         contexts: [],
         isFocusedToday: false,
-        suppressMindwtrReminders: false,
+        reminderPolicy: 'inherit',
+        suppressMindwtrReminders: settings.taskReminderDefault === 'skip',
         pushCount: 0,
         rev: 1,
         ...revisionMeta,
@@ -311,7 +314,7 @@ export const createSeedGettingStartedAction = (
             options?.language,
             typeof state.settings.language === 'string' ? state.settings.language : undefined
         );
-        const starterData = buildFreshInstallGettingStartedData(nowIso, deviceState.deviceId, lang);
+        const starterData = buildFreshInstallGettingStartedData(nowIso, deviceState.deviceId, lang, state.settings);
         const starterTemplateProject = starterData.projects[0];
         if (!starterTemplateProject) return state;
         const starterProjectTitles = getStarterProjectTitles();

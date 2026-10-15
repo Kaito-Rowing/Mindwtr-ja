@@ -53,6 +53,7 @@ const {
       startTime?: string;
       repeatReminderMinutes?: number;
       suppressMindwtrReminders?: boolean;
+      reminderPolicy?: 'inherit' | 'send' | 'skip';
     }>,
     projects: [] as Array<Record<string, unknown>>,
   },
@@ -441,6 +442,38 @@ describe('notification-service-local', () => {
     }
   });
 
+  it('reconciles pending native alarms when the inherited default changes from Send to Skip and back', async () => {
+    mockStoreState.tasks = [{ id: 'inherit', title: 'Inherited', reminderPolicy: 'inherit',
+      dueDate: new Date(Date.now() + 3600000).toISOString(), repeatReminderMinutes: 30 }];
+    mockStoreState.settings = { taskReminderDefault: 'send' };
+    await startLocalMobileNotifications();
+    const listener = (mockStoreSubscribe.mock.calls as unknown[][])[0]?.[0] as (state: unknown, prevState: unknown) => void;
+    const before = { ...mockStoreState, settings: mockStoreState.settings };
+    expect(mockAlarmScheduleAlarm).toHaveBeenCalledTimes(5);
+    mockAlarmScheduleAlarm.mockClear();
+    mockAlarmDeleteAlarm.mockClear();
+    vi.useFakeTimers();
+    try {
+      mockStoreState.settings = { taskReminderDefault: 'skip' };
+      listener(mockStoreState, before);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(mockAlarmDeleteAlarm).toHaveBeenCalledTimes(5);
+      expect(__localNotificationTestUtils.getAlarmMapSnapshot().size).toBe(0);
+      expect(mockAlarmScheduleAlarm).not.toHaveBeenCalled();
+      const skipped = { ...mockStoreState, settings: mockStoreState.settings };
+      mockStoreState.settings = { taskReminderDefault: 'send' };
+      listener(mockStoreState, skipped);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(mockAlarmScheduleAlarm).toHaveBeenCalledTimes(5);
+      expect(__localNotificationTestUtils.getAlarmMapSnapshot().size).toBe(5);
+      expect(mockLogInfo).toHaveBeenCalledWith('[Local Notifications] Task reminder policy reconciled', expect.objectContaining({
+        extra: { releaseCheck: 'v1.3.7/task-reminder-policy', outcome: 'reconciled' },
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reschedules when a settings update changes a reminder-relevant field', async () => {
     await startLocalMobileNotifications();
     const listener = (mockStoreSubscribe.mock.calls as unknown[][])[0]?.[0] as (state: unknown, prevState: unknown) => void;
@@ -729,6 +762,18 @@ describe('notification-service-local', () => {
       expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(101);
       expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(104);
       expect(mockAlarmDeleteAlarm.mock.invocationCallOrder.at(-1)).toBeLessThan(mockNativeModule.rearmAlarms!.mock.invocationCallOrder[0]);
+    });
+
+    it('prunes effectively skipped legacy rows and preserves a task-review carryforward on boot', async () => {
+      mockStoreState.tasks = [{ id: 'live', title: 'Live', reminderPolicy: 'inherit' }];
+      mockStoreState.settings = { taskReminderDefault: 'skip' };
+      const row = (id: number, kind: string) => ({ id, data: `kind==>${kind};;alarmKey==>task:live;;`,
+        scheduleType: 'once', year: 2099, month: 1, day: 1, hour: 9, minute: 0, second: 0 });
+      mockAlarmGetScheduledAlarms.mockResolvedValue([row(100, 'task-due'), row(101, 'task-review')]);
+      await startLocalMobileNotifications();
+      expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(100);
+      expect(mockAlarmDeleteAlarm).not.toHaveBeenCalledWith(101);
+      expect(mockNativeModule.rearmAlarms).toHaveBeenCalledExactlyOnceWith([101]);
     });
 
     it('recovers a persisted unchanged signature on cold startup without allocating a new row', async () => {

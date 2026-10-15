@@ -1,3 +1,4 @@
+import { normalizeTaskReminderPolicy, shouldSendTaskReminders } from './task-reminder-policy';
 import type { ProjectTaskSummary } from './project-row-meta';
 import { buildNextRecurringTask, canonicalRecurringFollowUp, createNextRecurringTask, normalizeRecurrenceForLoad, type RecurrenceProjection } from './recurrence';
 import { getTaskDateCoherenceIssues } from './task-date-coherence';
@@ -295,6 +296,21 @@ export const normalizeTaskUpdate = (
         futureDates?: import('./task-utils').FocusDateLookup },
 ): Partial<Task> => {
     let adjustedUpdates = updates;
+    if (hasOwnField(updates, 'reminderPolicy')) {
+        const policy = normalizeTaskReminderPolicy(updates.reminderPolicy);
+        if (policy) {
+            adjustedUpdates = { ...adjustedUpdates, reminderPolicy: policy,
+                suppressMindwtrReminders: !shouldSendTaskReminders({ reminderPolicy: policy }, context?.settings) };
+        } else {
+            adjustedUpdates = { ...adjustedUpdates };
+            delete adjustedUpdates.reminderPolicy;
+        }
+    } else if (hasOwnField(updates, 'suppressMindwtrReminders')) {
+        // A legacy client/API changing this boolean still expresses an explicit choice.
+        adjustedUpdates = { ...adjustedUpdates,
+            reminderPolicy: updates.suppressMindwtrReminders === true ? 'skip' : 'send' };
+    }
+
     if (hasOwnField(updates, 'cancelledAt')) {
         const cancelledAt = normalizeCancellationTimestamp(updates.cancelledAt);
         adjustedUpdates = {

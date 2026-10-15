@@ -50,7 +50,7 @@ export function NotificationsSettingsScreen() {
     const scrollContentStyle = useSettingsScrollContent();
     const [timePicker, setTimePicker] = useState<TimeRow['type'] | null>(null);
     const [timeDraft, setTimeDraft] = useState<Date | null>(null);
-    const [weeklyReviewDayPickerOpen, setWeeklyReviewDayPickerOpen] = useState(false);
+    const [choicePicker, setChoicePicker] = useState<'weeklyReviewDay' | 'taskReminderDefault' | null>(null);
     const [persistentCaptureEnabled, setPersistentCaptureEnabled] = useState(false);
     const persistentCaptureSupported = isPersistentCaptureSupported();
 
@@ -65,6 +65,7 @@ export function NotificationsSettingsScreen() {
         persistentCapture: persistentCaptureSupported ? { enabled: persistentCaptureEnabled } : undefined,
     }), [language, persistentCaptureEnabled, persistentCaptureSupported, settings, systemLocale, t]);
     const { reminders, weeklyReview, dailyDigest } = model;
+    const choiceRow = choicePicker === 'taskReminderDefault' ? reminders.taskDefault : weeklyReview.day;
     const { showNotice: showExactAlarmNotice } = useExactAlarmPermission(reminders.exactAlarmNotice !== null);
     const timeRows: Record<TimeRow['type'], TimeRow> = {
         weeklyReviewTime: weeklyReview.time,
@@ -154,6 +155,15 @@ export function NotificationsSettingsScreen() {
             <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                 <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
                     {toggleRow(reminders.enable, false)}
+                    <SettingRow
+                        testID="task-reminder-default"
+                        divider
+                        onPress={() => setChoicePicker('taskReminderDefault')}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${reminders.taskDefault.label}: ${reminders.taskDefault.description}`}
+                        label={reminders.taskDefault.label}
+                        description={reminders.taskDefault.description}
+                    />
                     {toggleRow(reminders.startReminders)}
                     {toggleRow(reminders.dueReminders)}
 
@@ -175,7 +185,7 @@ export function NotificationsSettingsScreen() {
                     <SettingRow
                         divider
                         dimmed={weeklyReview.day.disabled}
-                        onPress={() => setWeeklyReviewDayPickerOpen(true)}
+                        onPress={() => setChoicePicker('weeklyReviewDay')}
                         disabled={weeklyReview.day.disabled}
                         label={weeklyReview.day.label}
                         description={weeklyReview.day.description}
@@ -186,27 +196,30 @@ export function NotificationsSettingsScreen() {
 
                 <Modal
                     transparent
-                    visible={weeklyReviewDayPickerOpen}
+                    visible={choicePicker !== null}
                     animationType="fade"
-                    onRequestClose={() => setWeeklyReviewDayPickerOpen(false)}
+                    onRequestClose={() => setChoicePicker(null)}
                 >
-                    <Pressable style={styles.pickerOverlay} onPress={() => setWeeklyReviewDayPickerOpen(false)}>
+                    <Pressable style={styles.pickerOverlay} onPress={() => setChoicePicker(null)}>
                         <View
                             style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
                             onStartShouldSetResponder={() => true}
                         >
-                            <Text style={[styles.pickerTitle, { color: tc.text }]}>{weeklyReview.day.pickerTitle}</Text>
+                            <Text style={[styles.pickerTitle, { color: tc.text }]}>{choiceRow.pickerTitle}</Text>
                             <ScrollView style={styles.pickerList} contentContainerStyle={styles.pickerListContent}>
-                                {weeklyReview.day.options.map((option) => (
+                                {choiceRow.options.map((option) => (
                                     <TouchableOpacity
                                         key={option.label}
+                                        accessibilityRole="radio"
+                                        accessibilityLabel={option.label}
+                                        accessibilityState={{ checked: option.selected }}
                                         style={[
                                             styles.pickerOption,
                                             { borderColor: tc.border, backgroundColor: option.selected ? tc.filterBg : 'transparent' },
                                         ]}
                                         onPress={() => {
                                             applyEdit(option.edit);
-                                            setWeeklyReviewDayPickerOpen(false);
+                                            setChoicePicker(null);
                                         }}
                                     >
                                         <Text style={[styles.pickerOptionText, { color: option.selected ? tc.tint : tc.text }]}>

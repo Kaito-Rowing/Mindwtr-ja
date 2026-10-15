@@ -19,6 +19,7 @@ import { resolveTaskSortByForFeatures, sortTasksBy, splitTodayTasksByStartTime }
 import { isCustomTimeEstimate, TIME_ESTIMATE_OPTIONS } from './calendar-scheduling';
 import { isRecurrenceRule, parseRRuleString } from './recurrence';
 import { createTaskDraft, isTaskDraftDateInputBaseline, resolveTaskDraftTitle, serializeTaskDraftTokens, TASK_DRAFT_FIELD_KEYS, type TaskDraft, type TaskDraftField } from './task-draft';
+import { getTaskReminderPolicy } from './task-reminder-policy';
 import { getRetainedTaskContexts, getUsedTaskTokens } from './task-token-usage';
 import {
     applyTaskDraftPatch,
@@ -776,6 +777,7 @@ const DRAFT_VALUE_CHECKS: Record<TaskDraftField, (value: unknown) => boolean> = 
     reviewAt: isDraftDate,
     repeatReminderMinutes: isUnsetOrMinutes,
     suppressMindwtrReminders: isBoolean,
+    reminderPolicy: (value) => value === 'inherit' || value === 'send' || value === 'skip',
 };
 const toDraftValues = (input: Record<string, unknown>): Partial<TaskDraft> => Object.fromEntries(
     Object.entries(input).map(([field, value]) => [field, value === null && UNSET_DRAFT_FIELDS.has(field) ? undefined : value]),
@@ -839,8 +841,9 @@ const readTaskDraft = (value: unknown): TaskDraft | null => {
     if (!isObjectRecord(value) || Object.keys(value).some((field) => !DRAFT_FIELD_SET.has(field) && field !== 'dateInputBaseline')) return null;
     if (Object.prototype.hasOwnProperty.call(value, 'dateInputBaseline') && !isTaskDraftDateInputBaseline(value.dateInputBaseline)) return null;
     const draft = toDraftValues(value) as TaskDraft;
+    if (!Object.prototype.hasOwnProperty.call(value, 'reminderPolicy')) draft.reminderPolicy = getTaskReminderPolicy(draft);
     return TASK_DRAFT_FIELD_KEYS.every((field) => (
-        (Object.prototype.hasOwnProperty.call(value, field) || UNSET_DRAFT_FIELDS.has(field))
+        (Object.prototype.hasOwnProperty.call(value, field) || UNSET_DRAFT_FIELDS.has(field) || field === 'reminderPolicy')
         // Stored history must round-trip without making Archived an editable status.
         && ((field === 'status' && draft.status === 'archived') || DRAFT_VALUE_CHECKS[field](draft[field]))
     )) ? draft : null;

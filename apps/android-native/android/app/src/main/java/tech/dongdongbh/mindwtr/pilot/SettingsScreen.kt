@@ -1141,11 +1141,12 @@ private fun Picker(model: InboxViewModel, view: JSONObject, picker: String) = wi
         "language" -> view.getJSONObject("language")
         "defaultArea" -> view.getJSONObject("capture").getJSONObject("defaultArea")
         "weeklyReviewDay" -> view.getJSONObject("weeklyReview").getJSONObject("day")
+        "taskReminderDefault" -> view.getJSONObject("reminders").getJSONObject("taskDefault")
         else -> view.getJSONObject("regional").optJSONObject(picker)
     } ?: return@with
     val groups = if (picker == "theme") source.getJSONArray("groups").let { all -> List(all.length()) { all.getJSONArray(it).let { g -> List(g.length()) { g.getJSONObject(it) } } } }
         else listOf(source.menuObjects("options"))
-    val write = { edit: JSONObject -> keepDialog(null); when (picker) { "defaultArea" -> settings.gtd(edit); "weeklyReviewDay" -> settings.notifications(edit); else -> settings.general(edit) } }
+    val write = { edit: JSONObject -> keepDialog(null); when (picker) { "defaultArea" -> settings.gtd(edit); "weeklyReviewDay", "taskReminderDefault" -> settings.notifications(edit); else -> settings.general(edit) } }
     BackHandler { keepDialog(null) }
     Box(Modifier.fillMaxSize().background(theme.settingsScrim).pointerInput(Unit) { detectTapGestures { keepDialog(null) } }.padding(20.dp),
         contentAlignment = Alignment.Center) {

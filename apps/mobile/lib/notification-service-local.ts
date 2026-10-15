@@ -8,6 +8,7 @@ import {
   isWeeklyReviewReminderEnabled,
   loadStoredLanguage,
   nameNotifyListener,
+  shouldSendTaskReminders,
   type Language,
   useTaskStore,
 } from '@mindwtr/core';
@@ -513,10 +514,11 @@ async function deleteStaleNativeAlarms(api: AlarmNotificationsApi): Promise<void
     logNotificationError('Failed to read native alarms', error);
     return;
   }
-  const { tasks, projects } = useTaskStore.getState();
+  const { settings, tasks, projects } = useTaskStore.getState();
   const stale = findStaleNativeReminderAlarms({
     rows,
     trackedIds: new Set(Array.from(alarmMap.values(), (entry) => entry.id)),
+    settings,
     tasks,
     projects,
     now: new Date(),
@@ -572,7 +574,7 @@ async function rearmRetainedNativeAlarms(api: AlarmNotificationsApi): Promise<vo
     const ids = new Set(Array.from(alarmMap, ([key, entry]) => (
       isReminderOwnerGone(key, taskMap, projectMap) ? 0 : entry.id
     )).filter((id) => Number.isSafeInteger(id) && id > 0));
-    const stale = new Set(findStaleNativeReminderAlarms({ rows, trackedIds: ids, tasks, projects, now: new Date() }).map(({ id }) => id));
+    const stale = new Set(findStaleNativeReminderAlarms({ rows, trackedIds: ids, settings, tasks, projects, now: new Date() }).map(({ id }) => id));
     for (const row of rows) {
       if (!row || typeof row !== 'object') continue;
       const id = Number(row.id);
@@ -584,7 +586,7 @@ async function rearmRetainedNativeAlarms(api: AlarmNotificationsApi): Promise<vo
       if (Number.isSafeInteger(id) && id > 0 && !stale.has(id) && row.scheduleType === 'once'
         && areTaskRemindersEnabled(settings)
         && data.kind?.startsWith('task-') && data.alarmKey?.startsWith('task:')
-        && !taskMap.get(data.alarmKey.slice('task:'.length).replace(/:r\d+$/, ''))?.suppressMindwtrReminders
+        && (data.kind === 'task-review' || shouldSendTaskReminders(taskMap.get(data.alarmKey.slice('task:'.length).replace(/:r\d+$/, '')) ?? {}, settings))
         && !isReminderOwnerGone(data.alarmKey, taskMap, projectMap)) ids.add(id);
     }
     const result = await native.rearmAlarms(Array.from(ids));
@@ -753,7 +755,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
     weeklyReviewEnabled,
   });
 
-  if (options.deleteStale) await deleteStaleNativeAlarms(api);
+  if (options.deleteStale || tasks.some((task) => !shouldSendTaskReminders(task, settings))) await deleteStaleNativeAlarms(api);
 
   const port = toReminderAlarmPort(api);
   const delivered = activeFeature ? await readDeliveredCandidates(Date.now()) : [];
@@ -823,6 +825,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
     });
   }
   await withdrawDeliveredReminders(api, {
+    settings,
     diagnostics,
     tasks: new Map(tasks.map((task) => [task.id, task])),
     projects: new Map(projects.map((project) => [project.id, project])),
@@ -847,6 +850,9 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
     }
   }
   logCancelReasons(plan);
+  if (settings.taskReminderDefault || tasks.some((task) => task.reminderPolicy)) {
+    logNotificationInfo('Task reminder policy reconciled', { releaseCheck: 'v1.3.7/task-reminder-policy', outcome: 'reconciled' });
+  }
   logNotificationInfo('Reschedule cycle complete', {
     activeFeature,
     scheduledAlarmCount: alarmMap.size,
