@@ -245,6 +245,11 @@ function TaskEditModalInner({
             sequentialWithinSectionProjectIds: derived.sequentialWithinSectionProjectIds,
         };
     }, shallow);
+    const referenceTaskId = useMemo(
+        () => task && !isProjectedRecurringTask(task)
+            && allTasks.some((savedTask) => savedTask.id === task.id) ? task.id : undefined,
+        [allTasks, task],
+    );
     const contextHistory = useMemo(
         () => getRetainedTaskContexts(allTasks),
         [allTasks],
@@ -1149,6 +1154,7 @@ function TaskEditModalInner({
                         onClose={() => setProjectConversionOpen(false)} />}
                     <SandboxWorkspaceCue />
                     <TaskEditHeader
+                        taskId={referenceTaskId}
                         onDone={readOnly ? onClose : handleDone}
                         onClose={readOnly ? onClose : handleAttemptClose}
                         onShare={handleShare}
