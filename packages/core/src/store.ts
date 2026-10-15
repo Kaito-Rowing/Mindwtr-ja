@@ -103,7 +103,7 @@ export const setSaveRetrySleepForTests = (wait: ((ms: number) => Promise<void>) 
  */
 const waitBeforeSaveRetry = (ms: number): Promise<void> => {
     if (saveRetrySleepForTests) return saveRetrySleepForTests(ms);
-    return (globalThis as { __mindwtrSkipSaveRetryWait?: boolean }).__mindwtrSkipSaveRetryWait ? Promise.resolve() : sleep(ms);
+    return (globalThis as { __mindwtrSkipSaveRetryWait?: unknown }).__mindwtrSkipSaveRetryWait === true ? Promise.resolve() : sleep(ms);
 };
 const isPersistentStoreError = (error: string | null | undefined): boolean => (
     typeof error === 'string' && error.startsWith(SAVE_QUEUE_OVERFLOW_ERROR_PREFIX)

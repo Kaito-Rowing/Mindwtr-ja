@@ -4434,9 +4434,10 @@ describe('TaskStore', () => {
 
     it('waits the real retry schedule between failed saves (250, 500, 1000, 2000 ms)', async () => {
         // vitest.setup.ts skips these waits for every other test; this one runs them on fake timers.
-        const flags = globalThis as { __mindwtrSkipSaveRetryWait?: boolean };
+        // Only exactly true skips them: a truthy stray value still waits.
+        const flags = globalThis as { __mindwtrSkipSaveRetryWait?: unknown };
         const skipped = flags.__mindwtrSkipSaveRetryWait;
-        flags.__mindwtrSkipSaveRetryWait = false;
+        flags.__mindwtrSkipSaveRetryWait = 'yes';
         try {
             const attemptsAt: number[] = [];
             mockStorage.saveData = vi.fn(async () => { attemptsAt.push(Date.now()); throw new Error('disk full'); });
