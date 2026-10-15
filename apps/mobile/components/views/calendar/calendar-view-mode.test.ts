@@ -152,6 +152,35 @@ describe('calendar view mode helpers', () => {
     })).toBe(0);
   });
 
+  it('opens on the selected day when deadline-wide columns hold fewer days than the density', () => {
+    const weekDays = Array.from({ length: 7 }, (_, index) => new Date(2026, 9, 11 + index));
+
+    // 260pt deadline columns on a 304pt canvas: one day fits, so Thursday can lead (the density's clamp put Tuesday there).
+    expect(getCalendarWeekInitialScrollX({
+      availableWidth: 304,
+      columnWidth: 260,
+      selectedDate: new Date(2026, 9, 15, 12),
+      visibleDays: 5,
+      weekDays,
+    })).toBe(1040);
+    // Saturday stops where the week's last column meets the right edge.
+    expect(getCalendarWeekInitialScrollX({
+      availableWidth: 304,
+      columnWidth: 260,
+      selectedDate: new Date(2026, 9, 17, 12),
+      visibleDays: 5,
+      weekDays,
+    })).toBe(7 * 260 - 304);
+    // Density-sized columns keep the density's clamp.
+    expect(getCalendarWeekInitialScrollX({
+      availableWidth: 300,
+      columnWidth: 60,
+      selectedDate: new Date(2026, 9, 17, 12),
+      visibleDays: 5,
+      weekDays,
+    })).toBe(120);
+  });
+
   it('accounts for the week gutter when aligning visible day columns', () => {
     const weekDays = Array.from({ length: 7 }, (_, index) => new Date(2026, 4, 3 + index));
 

@@ -103,12 +103,15 @@ export const getCalendarWeekColumnWidth = (
 };
 
 export const getCalendarWeekInitialScrollX = ({
+  availableWidth,
   columnWidth,
   leadingInset = 0,
   selectedDate,
   visibleDays,
   weekDays,
 }: {
+  /** The day columns' viewport. Deadline weeks widen columns past the density, so fewer days fit than it names. */
+  availableWidth?: number;
   columnWidth: number;
   leadingInset?: number;
   selectedDate: Date | null;
@@ -117,9 +120,11 @@ export const getCalendarWeekInitialScrollX = ({
 }): number => {
   const resolvedVisibleDays = coerceCalendarWeekVisibleDays(visibleDays);
   const dayIndex = getCalendarWeekInitialVisibleDayIndex(weekDays, selectedDate);
-  const maxStartIndex = Math.max(0, weekDays.length - resolvedVisibleDays);
-  const startIndex = Math.min(dayIndex, maxStartIndex);
-  return Math.max(0, leadingInset) + startIndex * Math.max(0, columnWidth);
+  const width = Math.max(0, columnWidth);
+  const maxStartX = availableWidth === undefined
+    ? Math.max(0, weekDays.length - resolvedVisibleDays) * width
+    : Math.max(0, weekDays.length * width - availableWidth);
+  return Math.max(0, leadingInset) + Math.min(dayIndex * width, maxStartX);
 };
 
 /**

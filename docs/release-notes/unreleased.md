@@ -12,3 +12,4 @@ Changes collected since the latest stable release.
 - Mobile: an import or backup preview and its result leave a blank line before the project list and before the warnings, as they always meant to; the lines ran together before.
 - Mobile: while Settings › Data › Getting Started is adding its tutorial project, the export, restore and import rows wait. Before, a restore started at that moment could replace the library under the new project.
 - Imports: a ZIP export whose recorded file sizes do not match its contents is refused as damaged. Before, such a file could import only part of a list, or count one file many times.
+- Mobile: a Calendar week with a deadline opens on the selected day (else today). Deadlines widen each day column, so fewer days fit; the week used to open on an earlier day, with the selected day off screen.
