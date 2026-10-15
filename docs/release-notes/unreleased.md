@@ -2,6 +2,7 @@
 
 Changes collected since the latest stable release.
 
+- Sync: settings pages, saved filters, the task editor, Process Inbox and the project sheet no longer put back values another device synced while they were open. Only what you changed is saved, and lists (tags, contexts, checklist items, attachments) merge item by item, so nothing another device added or removed is lost.
 - Sync: an edit made while a sync was saving no longer overwrites what another device had just synced. Attachments, checklist items, tags and contexts, Someday section moves and Undo now apply to the task or project as sync left it, so the other device's change stays.
 - Mobile: a recovery snapshot taken right after the phone's clock went back is no longer deleted at once. Before, five snapshots named for the later time outranked it, so Undo on that import or restore could not find its snapshot.
 - Mobile: restoring a recovery snapshot larger than the backup limit (128 MB) now stops with the backup's "file is too large" message before it is read into memory, as a picked backup file already does.
