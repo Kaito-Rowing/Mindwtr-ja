@@ -638,7 +638,8 @@ class SharedSyncRunMachine {
                 result = await this.handleRunError(error);
             }
         } finally {
-            this.logSavesPublished();
+            // A refused native cleanup quarantines the cycle: nothing more is logged or written.
+            if (!cleanupUnconfirmed) this.logSavesPublished();
             // A retained native cleanup owner forbids another remote request; the lease expires naturally.
             if (!cleanupUnconfirmed) cleanupRetryAfterMs = await this.releaseRemoteMutationFence();
         }
