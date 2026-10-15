@@ -232,6 +232,7 @@ final class CoreModel: ObservableObject {
                 inboxGeneration += 1
                 inboxCurrent = false
                 inboxGroupPresented = false
+                retireInboxFilterPresentation()
             }
             if referenceSortRequest == nil, let caller = taskListSortCaller,
                selectedSurface != taskListSortSurface(caller) { retireTaskListSort() }
@@ -266,7 +267,32 @@ final class CoreModel: ObservableObject {
     @Published private(set) var inboxCurrent = false
     @Published private(set) var inboxGroupPresented = false
     @Published private(set) var inboxReadError: String?
-    private var inboxParams: CoreObject = ["groupBy": "none", "collapsedGroupIds": [String]()]
+    private var inboxParams: CoreObject = ["groupBy": "none", "collapsedGroupIds": [String](), "filters": CoreObject()]
+    @Published private(set) var inboxFiltersPresented = false
+    @Published private(set) var inboxFilterPresentation = UUID()
+    @Published private(set) var inboxSearchText = ""
+    @Published private(set) var inboxLocationText = ""
+    @Published private(set) var inboxFilterPickerName = ""
+    @Published private(set) var inboxFilterPickerQuery = ""
+    @Published private(set) var inboxFilterPicker: CoreObject = [:]
+    @Published private(set) var inboxFilterPickerCurrent = false
+    @Published private(set) var inboxFilterPickerError: String?
+    private var inboxFilterSequence: UInt64 = 0
+    private var inboxFilterTextEdits: [String: (sequence: UInt64, value: String)] = [:]
+    private struct InboxFilterIntent {
+        let id: UInt64
+        let edit: CoreObject
+        let base: CoreObject
+        let textType: String?
+        let textSequence: UInt64?
+    }
+    private var inboxPendingFilterEdit: InboxFilterIntent?
+    private var inboxFilterNeedsRead = false
+    private var inboxFilterReadTask: Task<Void, Never>?
+    private var inboxFilterReadID: UUID?
+    private var inboxFilterPickerGeneration: UInt64 = 0
+    private var inboxFilterPickerDepth = 100
+    private var inboxFilterPickerNeedsRead = false
     private var inboxGeneration = 0
     private var inboxCollapsedGroups: CoreObject = [:]
     private var initialInboxCollapsedGroupsRaw: String?
@@ -1744,7 +1770,10 @@ final class CoreModel: ObservableObject {
                 // Warm list ownership never crosses a Host replacement; durable recovery still opens Reference.
                 retireTaskListSortHost()
                 inboxGeneration += 1
-                inboxParams = ["groupBy": "none", "collapsedGroupIds": [String]()]
+                inboxParams = ["groupBy": "none", "collapsedGroupIds": [String](), "filters": CoreObject()]
+                retireInboxFilterPresentation()
+                inboxPendingFilterEdit = nil; inboxFilterTextEdits = [:]; inboxFilterNeedsRead = false
+                inboxSearchText = ""; inboxLocationText = ""
                 inboxCurrent = false; inboxGroupPresented = false; inboxReadError = nil
                 inboxPreferencesLoaded = false; inboxCollapsedGroups = [:]
                 inboxPendingFold = nil; inboxGroupingOperation = nil
@@ -5760,7 +5789,7 @@ final class CoreModel: ObservableObject {
 
     private var operationContextClean: Bool {
         !capturePresented && !capturePending && draft.isEmpty && noteDraft.isEmpty
-            && !inboxGroupPresented
+            && !inboxGroupPresented && !inboxFiltersPresented && !inboxFilterWorkPending
             && calendarEventOpenPresentation == nil
             && !processInboxPresented && processInboxRequest == nil && !processInboxTransitioning
             && !mindSweepPresented && mindSweepRequest == nil && mindSweepDraft.isEmpty
@@ -7351,7 +7380,7 @@ final class CoreModel: ObservableObject {
 
     func selectSurface(_ surface: Surface) async {
         guard !settingsSyncPresented, !settingsSyncRestartRequired else { return }
-        guard !inboxGroupPresented else { return }
+        guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
         guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
@@ -7375,7 +7404,7 @@ final class CoreModel: ObservableObject {
 
     func toggleMore() async {
         guard !settingsSyncPresented, !settingsSyncRestartRequired else { return }
-        guard !inboxGroupPresented else { return }
+        guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
         guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
               !projectRenameEditing, somedaySectionRenameIndex == nil,
@@ -9445,6 +9474,9 @@ final class CoreModel: ObservableObject {
         guard diagnosticsLockObserver == nil else { return }
         diagnosticsLockObserver = appLock.$enabled.combineLatest(appLock.$locked).sink { [weak self] enabled, locked in
             if enabled == nil || locked {
+                self?.inboxGeneration += 1
+                self?.inboxCurrent = false
+                self?.retireInboxFilterPresentation()
                 self?.invalidateTaskAttachmentOpen()
                 self?.invalidateProjectAttachmentOpen()
                 self?.cancelProjectFileImport()
@@ -20237,12 +20269,12 @@ final class CoreModel: ObservableObject {
 
     private func canOpenTaskListSort(_ caller: TaskListSortCaller) -> Bool {
         guard ready, host != nil, !busy, !retryNeeded, !appLock.concealed,
-              !inboxGroupPresented,
+              !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending, !taskStatusMenuPresented,
               !capturePresented, !areaPickerPresented, !taskPresented, !morePresented,
               !mindSweepPresented, !processInboxPresented, !calendarComposerPresented,
               referenceSortRequest == nil, taskListSortCaller == nil else { return false }
         if caller == .reference { return referenceActionsEnabled }
-        return selectedSurface == .inbox && !inbox.isEmpty && referencePanel.isEmpty
+        return selectedSurface == .inbox && inboxCurrent && !inbox.isEmpty && referencePanel.isEmpty
             && somedayPanel.isEmpty && historyPanel.isEmpty
     }
 
@@ -20408,7 +20440,7 @@ final class CoreModel: ObservableObject {
     var inboxActionsEnabled: Bool {
         ready && selectedSurface == .inbox && inboxCurrent && !busy && !retryNeeded && !appLock.concealed
             && !taskPresented && !capturePresented && !areaPickerPresented && !morePresented
-            && !inboxGroupPresented && !inboxSortPresented
+            && !inboxGroupPresented && !inboxSortPresented && !inboxFiltersPresented && !inboxFilterWorkPending
     }
     var inboxGroupActionsEnabled: Bool {
         inboxGroupPresented && ready && selectedSurface == .inbox && inboxCurrent && !busy && !retryNeeded
@@ -20466,7 +20498,9 @@ final class CoreModel: ObservableObject {
               let choice = inbox.object("toolbar").object("group").objects("options").first(where: { $0.text("value") == axis }),
               Set(choice.object("edit").keys) == Set(["groupBy"]),
               choice.object("edit").text("groupBy") == axis, validReferenceGroup(axis) else { return }
-        inboxParams = ["groupBy": axis, "collapsedGroupIds": inboxFoldIDs(inboxCollapsedGroups[axis]) ?? []]
+        inboxParams["groupBy"] = axis
+        inboxParams["collapsedGroupIds"] = inboxFoldIDs(inboxCollapsedGroups[axis]) ?? []
+        invalidateInboxFilterPicker()
         inboxGeneration += 1
         inboxCurrent = false
         inboxGroupPresented = false
@@ -20493,13 +20527,281 @@ final class CoreModel: ObservableObject {
 
     func retryInboxGrouping() async {
         guard ready, let owner = host, selectedSurface == .inbox, !busy, !retryNeeded,
-              !taskPresented, !capturePresented, !areaPickerPresented, !inboxSortPresented else { return }
+              !taskPresented, !capturePresented, !areaPickerPresented, !inboxSortPresented, !inboxFiltersPresented else { return }
         busy = true
         error = nil
         defer { if host === owner { finishOperation() } }
         do { try await readInbox() } catch { /* The read owner retains its params and error. */ }
     }
     // MARK: End Task737 Inbox grouping owner
+
+    // MARK: Task738 Inbox session filters
+    private var inboxFilterWorkPending: Bool {
+        inboxPendingFilterEdit != nil || !inboxFilterTextEdits.isEmpty || inboxFilterNeedsRead
+    }
+    var inboxFiltersEnabled: Bool { canOpenTaskListSort(.inbox) }
+    var inboxFilterControlsEnabled: Bool {
+        inboxFiltersPresented && ready && selectedSurface == .inbox && inboxCurrent
+            && !busy && !retryNeeded && !appLock.concealed && !inboxFilterWorkPending
+            && !taskPresented && !capturePresented && !areaPickerPresented && !inboxSortPresented
+    }
+    var inboxFilterPickerActionsEnabled: Bool {
+        inboxFilterControlsEnabled && inboxFilterPickerCurrent && inboxFilterPickerName == "tokens"
+    }
+
+    func openInboxFilters() {
+        guard inboxFiltersEnabled else { return }
+        observeDiagnosticsConcealment()
+        inboxFilterPresentation = UUID()
+        inboxFiltersPresented = true
+        closeInboxFilterPicker()
+        syncInboxFilterText()
+    }
+
+    func closeInboxFilters() {
+        inboxFiltersPresented = false
+        inboxFilterPresentation = UUID()
+        closeInboxFilterPicker()
+        // Closing dismisses presentation; already admitted list intent still drains.
+        if inboxFilterNeedsRead { scheduleInboxFilterRead(delay: 0) }
+    }
+
+    private func retireInboxFilterPresentation() {
+        inboxFilterNeedsRead = inboxFilterNeedsRead || inboxPendingFilterEdit != nil || !inboxFilterTextEdits.isEmpty
+        closeInboxFilters()
+        inboxFilterReadTask?.cancel()
+        inboxFilterReadTask = nil
+        inboxFilterReadID = nil
+    }
+
+    private func effectiveInboxParams(_ snapshot: CoreObject) -> CoreObject {
+        ["groupBy": snapshot.text("groupBy"), "collapsedGroupIds": snapshot["collapsedGroupIds"] as? [String] ?? [],
+         "filters": snapshot.object("filters").object("state")]
+    }
+
+    private func syncInboxFilterText() {
+        let state = inbox.object("filters").object("state")
+        if inboxFilterTextEdits["setSearch"] == nil { inboxSearchText = state.text("searchQuery") }
+        if inboxFilterTextEdits["setLocation"] == nil { inboxLocationText = state.text("location") }
+    }
+
+    private func inboxOffersFilterEdit(_ edit: CoreObject) -> Bool {
+        guard !edit.isEmpty, let encoded = try? json(edit) else { return false }
+        let filters = inbox.object("filters")
+        var offered = [filters.object("clearEdit"), inbox.object("empty").object("action").object("filterEdit")]
+        offered += inbox.objects("chips").map { $0.object("action").object("filterEdit") }
+        for field in ["priorities", "energyLevels", "timeEstimates"] {
+            offered += filters.objects(field).map { $0.object("edit") }
+        }
+        offered += filters.objects("matchModes").flatMap { $0.objects("options").map { $0.object("edit") } }
+        if inboxFilterPickerActionsEnabled { offered += inboxFilterPicker.objects("items").map { $0.object("edit") } }
+        return offered.contains { (try? json($0)) == encoded }
+    }
+
+    func editInboxFilter(_ edit: CoreObject) async {
+        guard inboxFiltersPresented ? inboxFilterControlsEnabled : inboxActionsEnabled,
+              inboxOffersFilterEdit(edit) else { return }
+        inboxFilterSequence &+= 1
+        inboxPendingFilterEdit = InboxFilterIntent(id: inboxFilterSequence, edit: edit, base: inboxParams,
+                                                   textType: nil, textSequence: nil)
+        inboxCurrent = false
+        inboxFilterNeedsRead = true
+        inboxReadError = nil
+        inboxAutomaticPageAttempt = nil
+        invalidateInboxFilterPicker()
+        scheduleInboxFilterRead(delay: 0)
+    }
+
+    func applyInboxChipAction(_ action: CoreObject) async {
+        guard inbox.objects("chips").contains(where: { (try? json($0.object("action"))) == (try? json(action)) }) else { return }
+        await editInboxFilter(action.object("filterEdit"))
+    }
+
+    func setInboxFilterText(_ text: String, location: Bool = false) {
+        guard inboxFiltersPresented, ready, selectedSurface == .inbox, !appLock.concealed,
+              !retryNeeded, !taskPresented, !capturePresented, !areaPickerPresented,
+              text.utf16.count <= (location ? 500 : 2000),
+              text != (location ? inboxLocationText : inboxSearchText) else { return }
+        if location { inboxLocationText = text } else { inboxSearchText = text }
+        let type = location ? "setLocation" : "setSearch"
+        inboxFilterSequence &+= 1
+        inboxFilterTextEdits[type] = (inboxFilterSequence, text)
+        inboxFilterNeedsRead = true
+        inboxCurrent = false
+        inboxReadError = nil
+        inboxAutomaticPageAttempt = nil
+        invalidateInboxFilterPicker()
+        scheduleInboxFilterRead()
+    }
+
+    func retryInboxFilters() {
+        guard ready, selectedSurface == .inbox, !busy, !retryNeeded, !appLock.concealed,
+              !taskPresented, !capturePresented, !areaPickerPresented, !inboxSortPresented else { return }
+        inboxFilterNeedsRead = true
+        inboxReadError = nil
+        scheduleInboxFilterRead(delay: 0)
+    }
+
+    private func scheduleInboxFilterRead(delay: UInt64 = 200_000_000) {
+        guard ready, selectedSurface == .inbox, !busy, !retryNeeded, !appLock.concealed,
+              !taskPresented, !capturePresented, !areaPickerPresented, !inboxGroupPresented, !inboxSortPresented,
+              inboxFilterNeedsRead || inboxFilterPickerNeedsRead, let owner = host else { return }
+        inboxFilterReadTask?.cancel()
+        let id = UUID()
+        inboxFilterReadID = id
+        inboxFilterReadTask = Task {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard inboxFilterReadID == id, host === owner, selectedSurface == .inbox, ready,
+                  !busy, !retryNeeded, !appLock.concealed, !Task.isCancelled,
+                  !taskPresented, !capturePresented, !areaPickerPresented, !inboxGroupPresented, !inboxSortPresented else { return }
+            busy = true
+            defer {
+                if inboxFilterReadID == id { inboxFilterReadTask = nil; inboxFilterReadID = nil }
+                if host === owner { finishOperation() }
+            }
+            if inboxFilterNeedsRead {
+                inboxFilterNeedsRead = false
+                repeat {
+                    if inboxPendingFilterEdit == nil, let type = inboxFilterTextEdits.keys.sorted().first,
+                       let latest = inboxFilterTextEdits[type] {
+                        inboxFilterSequence &+= 1
+                        inboxPendingFilterEdit = InboxFilterIntent(id: inboxFilterSequence,
+                            edit: ["type": type, "value": latest.value], base: inboxParams,
+                            textType: type, textSequence: latest.sequence)
+                    }
+                    do { try await readInbox() }
+                    catch { return }
+                    guard host === owner, selectedSurface == .inbox, !appLock.concealed, !Task.isCancelled else { return }
+                } while inboxPendingFilterEdit != nil || !inboxFilterTextEdits.isEmpty
+                inboxFilterNeedsRead = false
+                inboxCurrent = true
+            }
+            if inboxFilterPickerNeedsRead { await readInboxFilterPicker() }
+        }
+    }
+
+    private func invalidateInboxFilterPicker() {
+        inboxFilterPickerGeneration &+= 1
+        inboxFilterPickerCurrent = false
+        inboxFilterPickerError = nil
+        inboxFilterPickerDepth = 100
+        inboxFilterPickerNeedsRead = inboxFiltersPresented && !inboxFilterPickerName.isEmpty
+    }
+
+    func openInboxFilterPicker(_ name: String) {
+        guard inboxFilterControlsEnabled, name == "tokens" else { return }
+        inboxFilterPickerGeneration &+= 1
+        inboxFilterPickerName = name
+        inboxFilterPickerQuery = ""
+        inboxFilterPickerDepth = 100
+        inboxFilterPicker = inbox.object("filters").object("tokens")
+        inboxFilterPickerCurrent = true
+        inboxFilterPickerError = nil
+        inboxFilterPickerNeedsRead = false
+    }
+
+    func closeInboxFilterPicker() {
+        inboxFilterPickerGeneration &+= 1
+        inboxFilterPickerName = ""
+        inboxFilterPickerQuery = ""
+        inboxFilterPickerDepth = 100
+        inboxFilterPicker = [:]
+        inboxFilterPickerCurrent = false
+        inboxFilterPickerError = nil
+        inboxFilterPickerNeedsRead = false
+    }
+
+    func setInboxFilterPickerQuery(_ text: String) {
+        guard inboxFiltersPresented, inboxFilterPickerName == "tokens", !appLock.concealed, !retryNeeded,
+              text.utf16.count <= 500, text != inboxFilterPickerQuery else { return }
+        inboxFilterPickerQuery = text
+        invalidateInboxFilterPicker()
+        scheduleInboxFilterRead()
+    }
+
+    func loadMoreInboxFilterPicker() {
+        guard inboxFilterPickerActionsEnabled,
+              inboxFilterPicker.objects("items").count < inboxFilterPicker.number("total") else { return }
+        inboxFilterPickerDepth = inboxFilterPicker.objects("items").count + 100
+        retryInboxFilterPicker()
+    }
+
+    func retryInboxFilterPicker() {
+        guard inboxFiltersPresented, inboxFilterPickerName == "tokens", !busy, !retryNeeded, !appLock.concealed else { return }
+        inboxFilterPickerGeneration &+= 1
+        inboxFilterPickerCurrent = false
+        inboxFilterPickerError = nil
+        inboxFilterPickerNeedsRead = true
+        scheduleInboxFilterRead(delay: 0)
+    }
+
+    private func readInboxFilterPicker() async {
+        guard let owner = host, inboxFiltersPresented, inboxFilterPickerName == "tokens", !inboxFilterWorkPending else { return }
+        let presentation = inboxFilterPresentation, generation = inboxFilterPickerGeneration, text = inboxFilterPickerQuery
+        let requestedDepth = inboxFilterPickerDepth
+        let pickerCurrent = {
+            self.host === owner && self.ready && self.selectedSurface == .inbox && !self.appLock.concealed && !Task.isCancelled
+                && self.inboxFiltersPresented && self.inboxFilterPresentation == presentation
+                && self.inboxFilterPickerGeneration == generation && self.inboxFilterPickerName == "tokens"
+                && self.inboxFilterPickerQuery == text && !self.inboxFilterWorkPending
+        }
+        inboxFilterPickerNeedsRead = false
+        inboxFilterPickerCurrent = false
+        inboxFilterPickerError = nil
+        for attempt in 0..<2 {
+            guard pickerCurrent() else { return }
+            let params = inboxParams, revision = inbox.text("revision"), listGeneration = inboxGeneration
+            let current = {
+                pickerCurrent() && self.inboxReadCurrent(owner, generation: listGeneration, params: params)
+                    && self.inbox.text("revision") == revision
+            }
+            do {
+                var next = try await inboxFilterTokenPage(params: params, revision: revision, query: text,
+                                                          offset: 0, limit: 100, current: current)
+                var items = next.objects("items")
+                let target = min(requestedDepth, next.number("total"))
+                while items.count < target {
+                    let limit = min(100, target - items.count)
+                    let page = try await inboxFilterTokenPage(params: params, revision: revision, query: text,
+                                                              offset: items.count, limit: limit, current: current)
+                    guard page.number("total") == next.number("total") else { throw CocoaError(.coderReadCorrupt) }
+                    items += page.objects("items")
+                }
+                guard current() else { return }
+                next["items"] = items
+                inboxFilterPicker = next
+                inboxFilterPickerCurrent = true
+                return
+            } catch {
+                guard current() else { return }
+                if attempt == 0, error.localizedDescription.hasPrefix("STALE_REVISION:") {
+                    do {
+                        try await readInbox(refreshingFilterPicker: true)
+                        guard pickerCurrent() else { return }
+                        continue
+                    } catch {
+                        guard pickerCurrent() else { return }
+                    }
+                }
+                inboxFilterPickerNeedsRead = false
+                inboxFilterPickerError = label("settings.feedback.actionFailed")
+                return
+            }
+        }
+    }
+
+    private func inboxFilterTokenPage(params: CoreObject, revision: String, query text: String,
+                                      offset: Int, limit: Int, current: @escaping @MainActor () -> Bool) async throws -> CoreObject {
+        let page = try await query("menuRead", ["inboxTokens", try json([
+            "params": params, "offset": offset, "limit": limit, "revision": revision, "query": text])], beforeDispatch: current)
+        guard current() else { throw CancellationError() }
+        guard Set(page.keys) == Set(["version", "revision", "total", "items"]), page.number("version") == 1,
+              page.text("revision") == revision, let total = page["total"] as? Int, total >= 0,
+              let items = page["items"] as? [CoreObject],
+              items.count == min(limit, max(0, total - offset)) else { throw CocoaError(.coderReadCorrupt) }
+        return page
+    }
+    // MARK: End Task738 Inbox session filters
 
     private func validReferenceGroup(_ value: String) -> Bool {
         ["none", "context", "area", "project", "tag"].contains(value)
@@ -26809,6 +27111,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openSearch() {
+        guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
         guard !savedSearchWritePresented, ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, selectedSurface != .search else { return }
         if selectedSurface == .savedSearch {
@@ -26935,7 +27238,7 @@ final class CoreModel: ObservableObject {
 
     func openAreaPicker() async {
         guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !taskPresented,
-              !inboxGroupPresented,
+              !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending,
               !projectRenameEditing,
               !calendarComposerPresented, !mindSweepPresented else { return }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -26996,7 +27299,7 @@ final class CoreModel: ObservableObject {
             let next = try await query("inboxView", [try json(params.merging([
                 "offset": offset, "limit": target - offset, "revision": snapshot.text("revision")]) { _, next in next })], beforeDispatch: current)
             guard current() else { return }
-            try validateInboxPage(next, revision: snapshot.text("revision"), total: snapshot.number("total"), count: target - offset)
+            try validateInboxPage(next, revision: snapshot.text("revision"), total: snapshot.number("total"), count: target - offset, against: snapshot)
             var staged = snapshot
             staged["items"] = snapshot.objects("items") + next.objects("items")
             inbox = staged
@@ -27010,19 +27313,29 @@ final class CoreModel: ObservableObject {
                 guard current() else { return }
                 let total = staged.number("total"), revision = staged.text("revision")
                 try validateInboxPage(staged, revision: revision, total: total, count: min(pageSize, total))
+                let freshParams = effectiveInboxParams(staged)
+                guard freshParams.text("groupBy") == params.text("groupBy"),
+                      try json(freshParams["collapsedGroupIds"] ?? NSNull()) == json(params["collapsedGroupIds"] ?? NSNull()) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
                 var rows = staged.objects("items")
                 let freshTarget = min(target, total)
                 while rows.count < freshTarget {
                     let limit = min(pageSize, freshTarget - rows.count)
-                    let page = try await query("inboxView", [try json(params.merging([
+                    let page = try await query("inboxView", [try json(freshParams.merging([
                         "offset": rows.count, "limit": limit, "revision": revision]) { _, next in next })], beforeDispatch: current)
                     guard current() else { return }
-                    try validateInboxPage(page, revision: revision, total: total, count: limit)
+                    try validateInboxPage(page, revision: revision, total: total, count: limit, against: staged)
                     rows += page.objects("items")
                 }
                 guard current() else { return }
                 staged["items"] = rows
+                inboxParams = freshParams
                 inbox = staged
+                syncInboxFilterText()
+                inboxGeneration += 1
+                inboxAutomaticPageAttempt = nil
+                invalidateInboxFilterPicker()
                 self.error = nil
                 let count = rows.count
                 Task {
@@ -27034,10 +27347,21 @@ final class CoreModel: ObservableObject {
         }
     }
 
-    private func validateInboxPage(_ page: CoreObject, revision: String, total: Int, count: Int) throws {
-        guard !revision.isEmpty, page.text("revision") == revision, total >= 0,
-              page.number("total") == total, page.objects("items").count == count else {
+    private func validateInboxPage(_ page: CoreObject, revision: String, total: Int, count: Int,
+                                   against snapshot: CoreObject? = nil) throws {
+        guard page.number("version") == 1, !revision.isEmpty, page.text("revision") == revision, total >= 0,
+              let returnedTotal = page["total"] as? Int, returnedTotal == total,
+              let taskCount = page["count"] as? Int, taskCount >= 0,
+              let rows = page["items"] as? [CoreObject], rows.count == count,
+              validReferenceGroup(page.text("groupBy")), inboxFoldIDs(page["collapsedGroupIds"]) != nil,
+              page.object("filters")["state"] is CoreObject, !page.text("sortBy").isEmpty else {
             throw CocoaError(.coderReadCorrupt)
+        }
+        if let snapshot {
+            guard page.number("count") == snapshot.number("count"), page.text("sortBy") == snapshot.text("sortBy"),
+                  try json(effectiveInboxParams(page)) == json(effectiveInboxParams(snapshot)) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
         }
     }
 
@@ -27070,6 +27394,8 @@ final class CoreModel: ObservableObject {
     }
 
     func openTask(_ id: String, descriptionSourceID: String? = nil) async {
+        guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
+        if selectedSurface == .inbox { guard inboxActionsEnabled else { return } }
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
         guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !projectRenameEditing, selectedSurface != .trash else { return }
@@ -29727,7 +30053,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openCapture() async {
-        guard !inboxGroupPresented else { return }
+        guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
         if let submitted = captureSubmission, host !== submitted.host {
             captureSubmission = nil; capturePending = false; captureBusyOwner = nil
             retryNeeded = false
@@ -29763,7 +30089,7 @@ final class CoreModel: ObservableObject {
 
     func openProcessInbox() async {
         let caller = selectedSurface
-        let fromInbox = caller == .inbox && !inbox.object("process").text("label").isEmpty
+        let fromInbox = caller == .inbox && inboxActionsEnabled && !inbox.object("process").text("label").isEmpty
         let reviewInbox = reviewGuide.object("content")
         let fromReview = caller == .review && reviewGuidePresented && reviewActionsEnabled
             && reviewInbox.text("step") == "inbox"
@@ -30117,7 +30443,7 @@ final class CoreModel: ObservableObject {
         let entry = inbox.object("mindSweep")
         let caller = selectedSurface
         let reviewStep = reviewGuide.object("content").text("step")
-        let fromInbox = caller == .inbox && !entry.text("label").isEmpty
+        let fromInbox = caller == .inbox && inboxActionsEnabled && !entry.text("label").isEmpty
             && ["accessory", "primary"].contains(entry.text("placement"))
         let fromWeeklyReview = caller == .review && reviewGuidePresented && reviewKind == "weekly"
             && reviewActionsEnabled && ["inbox", "completed"].contains(reviewStep)
@@ -30522,6 +30848,8 @@ final class CoreModel: ObservableObject {
     }
 
     func complete(_ id: String, taskRevision: String) async {
+        guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
+        if selectedSurface == .inbox { guard inboxActionsEnabled else { return } }
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
         guard ready, !busy, !retryNeeded, !taskPresented, !projectRenameEditing,
               !taskRevision.isEmpty, taskRevision.utf16.count <= 200,
@@ -32428,19 +32756,25 @@ final class CoreModel: ObservableObject {
     }
     #endif
 
-    private func readInbox(foregroundSyncOwner ownerID: UUID? = nil, ownedGuard: (() -> Bool)? = nil) async throws {
+    private func readInbox(foregroundSyncOwner ownerID: UUID? = nil, ownedGuard: (() -> Bool)? = nil,
+                           refreshingFilterPicker: Bool = false) async throws {
         guard let owner = host, selectedSurface == .inbox, !appLock.concealed, !Task.isCancelled,
               ownedGuard?() != false,
               ownerID == nil || foregroundSyncOwner.map({
                   $0.id == ownerID && foregroundSyncCurrent($0)
               }) == true else { throw CancellationError() }
+        observeDiagnosticsConcealment()
         loadInboxPreferences()
-        let params = inboxParams
+        let intent = inboxPendingFilterEdit
+        let params = intent?.base ?? inboxParams
+        let fold = inboxPendingFold
         inboxGeneration += 1
         let generation = inboxGeneration
         let defaults = preferenceDefaults, preference = inboxFoldPreference
         let current = {
             self.inboxReadCurrent(owner, generation: generation, params: params)
+                && self.inboxPendingFilterEdit?.id == intent?.id
+                && self.inboxPendingFold?.axis == fold?.axis && self.inboxPendingFold?.ids == fold?.ids
                 && self.preferenceDefaults === defaults && self.inboxFoldPreference == preference
                 && ownedGuard?() != false
                 && (ownerID == nil || self.foregroundSyncOwner.map {
@@ -32452,15 +32786,26 @@ final class CoreModel: ObservableObject {
         do {
             var nextArea: CoreObject?, nextMore: CoreObject?
             if ownerID != nil {
-                // Navigation and Inbox publish together under the same captured parameters.
                 nextArea = try await query("areaFilter", beforeDispatch: current)
                 guard current() else { throw CancellationError() }
                 nextMore = try await query("menuRead", ["more", "{}"], beforeDispatch: current)
             }
-            let nextInbox = try await query("inboxView", [try json(params.merging([
-                "offset": 0, "limit": pageSize]) { _, next in next })], beforeDispatch: current)
+            var input = params.merging(["offset": 0, "limit": pageSize]) { _, next in next }
+            if let intent { input["filterEdit"] = intent.edit }
+            let nextInbox = try await query("inboxView", [try json(input)], beforeDispatch: current)
             guard current() else { throw CancellationError() }
-            if let fold = inboxPendingFold {
+            try validateInboxPage(nextInbox, revision: nextInbox.text("revision"), total: nextInbox.number("total"),
+                                  count: min(pageSize, nextInbox.number("total")))
+            let acceptedParams = effectiveInboxParams(nextInbox)
+            let tokens = nextInbox.object("filters").object("tokens")
+            guard acceptedParams.text("groupBy") == params.text("groupBy"),
+                  try json(acceptedParams["collapsedGroupIds"] ?? NSNull()) == json(params["collapsedGroupIds"] ?? NSNull()),
+                  nextInbox.object("filters")["state"] is CoreObject,
+                  let tokenTotal = tokens["total"] as? Int, tokenTotal >= 0,
+                  let tokenItems = tokens["items"] as? [CoreObject], tokenItems.count == min(100, tokenTotal) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if let fold {
                 guard inboxFoldPreferenceWritable, fold.axis == params.text("groupBy"),
                       let ids = inboxFoldIDs(params["collapsedGroupIds"]), ids == fold.ids else {
                     throw CocoaError(.coderReadCorrupt)
@@ -32471,23 +32816,65 @@ final class CoreModel: ObservableObject {
                 inboxCollapsedGroups = map
                 inboxPendingFold = nil
             }
+            // Validate against the captured base before core normalization changes the accepted params.
+            inboxParams = acceptedParams
+            if let intent {
+                inboxPendingFilterEdit = nil
+                if let type = intent.textType, inboxFilterTextEdits[type]?.sequence == intent.textSequence {
+                    inboxFilterTextEdits.removeValue(forKey: type)
+                }
+            }
             if let nextArea, let nextMore { area = nextArea; moreMenu = nextMore }
             inbox = nextInbox
-            inboxCurrent = true
+            if !inboxFilterTextEdits.isEmpty { inboxFilterNeedsRead = true }
+            syncInboxFilterText()
+            inboxCurrent = !inboxFilterWorkPending
             inboxReadError = nil
-            if let operation = inboxGroupingOperation {
-                inboxGroupingOperation = nil
-                let axis = params.text("groupBy"), collapsedCount = inboxFoldIDs(params["collapsedGroupIds"])?.count ?? 0
+            if !refreshingFilterPicker { invalidateInboxFilterPicker() }
+            let groupingOperation = inboxGroupingOperation
+            inboxGroupingOperation = nil
+            let acceptedCurrent = {
+                self.inboxReadCurrent(owner, generation: generation, params: acceptedParams)
+                    && self.preferenceDefaults === defaults && self.inboxFoldPreference == preference
+                    && self.inbox.text("revision") == nextInbox.text("revision")
+            }
+            if let operation = groupingOperation {
+                let axis = acceptedParams.text("groupBy")
+                let collapsedCount = inboxFoldIDs(acceptedParams["collapsedGroupIds"])?.count ?? 0
                 Task {
-                    guard current() else { return }
+                    guard acceptedCurrent() else { return }
                     _ = try? await owner.call("logLine", argumentsJSON: self.json([
                         "Native iOS Inbox grouping applied", self.json([
                             "releaseCheck": "v1.3.5/ios-inbox-group", "operation": operation,
                             "axis": axis, "collapsedCount": collapsedCount])]))
                 }
             }
+            if intent != nil {
+                let count = nextInbox.number("filterActiveCount")
+                if (0...1000).contains(count), acceptedCurrent() {
+                    _ = try? await owner.call("logLine", argumentsJSON: self.json([
+                        "Native iOS Inbox filters applied", self.json([
+                            "releaseCheck": "v1.3.5/ios-inbox-filters", "operation": "edit", "count": count])]))
+                }
+            }
         } catch {
-            if current() { inboxReadError = label("settings.feedback.actionFailed") }
+            if current() {
+                inboxReadError = label("settings.feedback.actionFailed")
+                inboxFilterNeedsRead = false
+                inboxFilterPickerNeedsRead = false
+                if let intent, error.localizedDescription.hasPrefix("INVALID_INPUT:") {
+                    // A refused pure edit cannot succeed on Retry; retain only newer desired text.
+                    inboxPendingFilterEdit = nil
+                    if let type = intent.textType, inboxFilterTextEdits[type]?.sequence == intent.textSequence {
+                        inboxFilterTextEdits.removeValue(forKey: type)
+                    }
+                    inboxFilterNeedsRead = !inboxFilterTextEdits.isEmpty
+                    syncInboxFilterText()
+                    let projectionMatches = !inbox.isEmpty && (try? json(effectiveInboxParams(inbox))) == (try? json(params))
+                    inboxCurrent = projectionMatches && !inboxFilterWorkPending
+                    inboxFilterPickerNeedsRead = projectionMatches && inboxFiltersPresented && !inboxFilterPickerName.isEmpty
+                }
+            }
             throw error
         }
     }
@@ -33875,6 +34262,9 @@ final class CoreModel: ObservableObject {
         }
         if selectedSurface == .history && (historyNeedsRead || historyPickerNeedsRead) && !retryNeeded && !taskPresented {
             scheduleHistoryRead()
+        }
+        if selectedSurface == .inbox && (inboxFilterNeedsRead || inboxFilterPickerNeedsRead) {
+            scheduleInboxFilterRead()
         }
         if selectedSurface == .reference && (referenceTextNeedsRead || referencePickerNeedsRead) && !retryNeeded && !taskPresented {
             scheduleReferenceRead()

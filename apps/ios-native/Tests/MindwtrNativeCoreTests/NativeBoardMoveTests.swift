@@ -897,6 +897,61 @@ final class NativeBoardMoveTests: XCTestCase {
         XCTAssertThrowsError(try NativeBoardOrderJournalBudget.require(exact, acknowledged: excess))
     }
 
+    func testInboxTokenReadValidatesWindowWithoutWriting() async throws {
+        let faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        var writes = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let view = try object(await core.call("inboxView", argumentsJSON: json([json(["offset": 0, "limit": 100])])))
+        let revision = try XCTUnwrap(view["revision"] as? String)
+        let sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        func snapshot(_ sql: String) throws -> String {
+            // Preserve raw cell values while ignoring dictionary key order in the bridge's JSON envelope.
+            try json(NativeJSON.jsonObject(with: Data(sqlite.execute(sql).utf8)))
+        }
+        let before = try snapshot("SELECT * FROM settings ORDER BY id")
+        let receipts = try snapshot("SELECT * FROM native_request_receipts ORDER BY rowid")
+        let input: [String: Any] = ["offset": 0, "limit": 100, "revision": revision]
+        let result = try object(await core.call("menuRead", argumentsJSON: json(["inboxTokens", json(input)])))
+        XCTAssertEqual(result["revision"] as? String, revision)
+        XCTAssertEqual(result["total"] as? Int, 0)
+        XCTAssertEqual((result["items"] as? [Any])?.count, 0)
+        let filters: [String: Any] = ["tokens": (0..<100).map { "@token-\($0)" }]
+        let bounded = try object(await core.call("inboxView", argumentsJSON: json([json([
+            "filters": filters, "offset": 0, "limit": 100])])) )
+        _ = try await core.call("menuRead", argumentsJSON: json(["inboxTokens", json([
+            "params": ["filters": filters], "offset": 0, "limit": 100,
+            "revision": XCTUnwrap(bounded["revision"] as? String)])]))
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("inboxView", argumentsJSON: self.json([self.json([
+                "filters": filters, "filterEdit": ["type": "toggleToken", "value": "@overflow"],
+                "offset": 0, "limit": 100])]))
+        }
+        let invalidChanges: [[String: Any]] = [
+            ["offset": -1], ["offset": true], ["limit": 0], ["limit": 101],
+            ["query": String(repeating: "x", count: 501)],
+            ["params": ["filterEdit": ["type": "clear"]]],
+            ["params": ["filters": ["tokens": Array(repeating: "@test", count: 101)]]],
+        ]
+        for change in invalidChanges {
+            let invalid = input.merging(change) { _, next in next }
+            await expectFailure("INVALID_INPUT") {
+                _ = try await core.call("menuRead", argumentsJSON: self.json(["inboxTokens", self.json(invalid)]))
+            }
+        }
+        let duplicate = "{\"offset\":0,\"offset\":1,\"limit\":100,\"revision\":\"ignored\"}"
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("menuRead", argumentsJSON: self.json(["inboxTokens", duplicate]))
+        }
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try snapshot("SELECT * FROM settings ORDER BY id"), before)
+        XCTAssertEqual(try snapshot("SELECT * FROM native_request_receipts ORDER BY rowid"), receipts)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
     func testBoardDragSubmittedDiagnosticIsContentFreeAndDoesNotClaimSavedEffect() async throws {
         let ids = try await seedBoardOrderFixture(), faults = HostIOFaults(), core = host(faults)
         _ = try await core.start()
@@ -973,6 +1028,19 @@ final class NativeBoardMoveTests: XCTestCase {
             var forged = pagingContext; forged[field] = value
             await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([pagingMessage, json(forged)])) }
         }
+        let filterMessage = "Native iOS Inbox filters applied"
+        let filterContext: [String: Any] = ["releaseCheck": "v1.3.5/ios-inbox-filters", "operation": "edit", "count": 3]
+        _ = try await core.call("logLine", argumentsJSON: json([filterMessage, json(filterContext)]))
+        for (field, value) in [("count", true), ("count", "3"), ("count", -1), ("count", 1001),
+            ("count", 0.5), ("count", NSNull()), ("operation", "saved"), ("releaseCheck", "v1.3.5/ios-inbox-group"),
+            ("query", "private"), ("token", "private"), ("location", "private"), ("revision", "private")] as [(String, Any)] {
+            var forged = filterContext; forged[field] = value
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([filterMessage, json(forged)])) }
+        }
+        for field in filterContext.keys {
+            var forged = filterContext; forged.removeValue(forKey: field)
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([filterMessage, json(forged)])) }
+        }
         let groupMessage = "Native iOS Inbox grouping applied"
         var groupContexts: [[String: Any]] = []
         for operation in ["group", "fold"] {
@@ -1011,6 +1079,11 @@ final class NativeBoardMoveTests: XCTestCase {
         XCTAssertEqual(paging.count, 1)
         XCTAssertEqual(try json(XCTUnwrap(paging.first?["context"])), try json([
             "releaseCheck": "v1.3.5/ios-inbox-paging", "outcome": "recovered", "count": "55"]))
+        let filtering = lines.filter { $0["message"] as? String == filterMessage }
+        XCTAssertEqual(filtering.count, 1)
+        XCTAssertEqual(filtering.first?["scope"] as? String, "native-ios")
+        XCTAssertEqual(try json(XCTUnwrap(filtering.first?["context"])), try json([
+            "releaseCheck": "v1.3.5/ios-inbox-filters", "operation": "edit", "count": "3"]))
         let grouping = lines.filter { $0["message"] as? String == groupMessage }
         XCTAssertEqual(grouping.count, groupContexts.count)
         let exportedGroupContexts = groupContexts.map { context -> [String: Any] in

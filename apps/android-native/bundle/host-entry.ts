@@ -4827,7 +4827,7 @@ globalThis.MindwtrHost = {
     logLine(message: string, contextJson: string): string {
         return submit(async () => {
             try {
-                logInfo(message, { scope: 'native-android', context: JSON.parse(contextJson) as Record<string, unknown> });
+                logInfo(message, { scope: globalThis.__mindwtrHostPlatform === 'ios' ? 'native-ios' : 'native-android', context: JSON.parse(contextJson) as Record<string, unknown> });
             } catch { /* a diagnostic line must never fail its caller */ }
             return {};
         });

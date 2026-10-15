@@ -296,6 +296,61 @@ describe('native host contract: the Inbox view', () => {
         expect(value(host.getInboxView({ offset: 0, limit: 100 })).revision).not.toBe(after.revision);
     });
 
+    it('searches the complete Inbox token pool and keeps filter reads out of SQLite', async () => {
+        freezeClock();
+        const tokens = Array.from({ length: 103 }, (_, index) => `@context-${String(index).padStart(3, '0')}`);
+        const stamp = '2026-09-01T12:00:00.000Z';
+        const tasks: Task[] = tokens.map((token, index) => ({
+            id: `filter-${index}`, title: `Filter ${index}`, status: 'inbox', contexts: [token], tags: [],
+            createdAt: stamp, updatedAt: stamp, rev: 1, revBy: 'filter-fixture',
+        }));
+        const sqlite = await openSqliteHost({ tasks, settings: { taskSortBy: 'title' } });
+        try {
+            const data = () => new SqliteAdapter(sqlite.client()).getData({ rawTasks: true });
+            const before = await data();
+            const rows = await sqlite.sql('SELECT rowid AS evidence_rowid, * FROM tasks ORDER BY rowid');
+            const receipts = await sqlite.sql('SELECT * FROM native_request_receipts ORDER BY rowid');
+            const first = value(sqlite.host.getInboxView({ offset: 0, limit: 100 }));
+            expect(first.filters.tokens.total).toBe(103);
+            expect(first.filters.tokens.items).toHaveLength(100);
+            const tail = value(sqlite.host.getInboxFilterTokens({ offset: 100, limit: 100, revision: first.revision }));
+            expect(tail.items.map((item) => item.value)).toEqual(tokens.slice(100));
+            const searched = value(sqlite.host.getInboxFilterTokens({ offset: 0, limit: 100, revision: first.revision, query: 'CONTEXT-102' }));
+            expect(searched.total).toBe(1);
+            expect(searched.items.map((item) => item.value)).toEqual([tokens[102]]);
+            const fullSelection = { tokens: tokens.slice(0, 100) };
+            expect(sqlite.host.getInboxView({ filters: fullSelection,
+                filterEdit: { type: 'toggleToken', value: tokens[100] }, offset: 0, limit: 100 }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            const fullExcluded = { tokens: [tokens[100]], excludedTokens: tokens.slice(0, 100) };
+            expect(sqlite.host.getInboxView({ filters: fullExcluded,
+                filterEdit: { type: 'toggleToken', value: tokens[100] }, offset: 0, limit: 100 }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            const bounded = value(sqlite.host.getInboxView({ filters: { tokens: tokens.slice(0, 99) },
+                filterEdit: { type: 'toggleToken', value: tokens[99] }, offset: 0, limit: 100 }));
+            expect(bounded.filters.state.tokens).toHaveLength(100);
+            expect(value(sqlite.host.getInboxFilterTokens({ params: { filters: bounded.filters.state },
+                offset: 100, limit: 100, revision: bounded.revision })).items).toHaveLength(3);
+            let filters = first.filters.state;
+            for (const [included, excluded, count] of [[true, false, 1], [false, true, 102], [false, false, 103]] as const) {
+                const next = value(sqlite.host.getInboxView({ filters, filterEdit: { type: 'toggleToken', value: tokens[102] }, offset: 0, limit: 100 }));
+                filters = next.filters.state;
+                expect(filters.tokens.includes(tokens[102])).toBe(included);
+                expect(filters.excludedTokens.includes(tokens[102])).toBe(excluded);
+                expect(next.total).toBe(count);
+            }
+            const empty = value(sqlite.host.getInboxView({ filterEdit: { type: 'setSearch', value: 'absent-fixture-title' }, offset: 0, limit: 100 }));
+            expect(empty.total).toBe(0);
+            expect(empty.empty.action).toEqual({ filterEdit: { type: 'clear' } });
+            const cleared = value(sqlite.host.getInboxView({ filters: empty.filters.state, ...empty.empty.action, offset: 0, limit: 100 }));
+            expect(cleared.total).toBe(103);
+            expect(cleared.hasActiveFilters).toBe(false);
+            expect(await data()).toEqual(before);
+            expect(await sqlite.sql('SELECT rowid AS evidence_rowid, * FROM tasks ORDER BY rowid')).toEqual(rows);
+            expect(await sqlite.sql('SELECT * FROM native_request_receipts ORDER BY rowid')).toEqual(receipts);
+        } finally { await sqlite.close(); }
+    });
+
     it('reads back a sort set through setTaskListSort, the command its sort options name', async () => {
         freezeClock();
         const { host } = await openHost(scenario('base'));

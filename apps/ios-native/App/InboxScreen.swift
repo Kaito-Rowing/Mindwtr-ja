@@ -18,7 +18,7 @@ struct InboxScreen: View {
         model.area.objects("options").first(where: { $0.text("id") == "__all__" })?.text("state") == "included"
     }
     private var menuPanelPresented: Bool {
-        model.inboxSortPresented || model.inboxGroupPresented || model.morePresented || !model.somedayPanel.isEmpty || !model.referencePanel.isEmpty || !model.historyPanel.isEmpty
+        model.inboxSortPresented || model.inboxGroupPresented || model.inboxFiltersPresented || model.morePresented || !model.somedayPanel.isEmpty || !model.referencePanel.isEmpty || !model.historyPanel.isEmpty
     }
     private var menuListPrefix: String {
         model.selectedSurface == .savedSearch ? "saved-search" : model.selectedSurface == .contexts ? "contexts" : model.selectedSurface == .trash ? "trash" : model.selectedSurface == .history ? "history" : model.selectedSurface == .reference ? "reference" : model.selectedSurface == .someday ? "someday" : "waiting"
@@ -125,7 +125,7 @@ struct InboxScreen: View {
                             FailureBanner(model: model, palette: palette)
                         }
                     }
-                    .allowsHitTesting(!model.inboxGroupPresented)
+                    .allowsHitTesting(!model.inboxGroupPresented && !model.inboxFiltersPresented)
                     .accessibilityElement(children: menuPanelPresented ? .ignore : .contain)
                     .accessibilityHidden(menuPanelPresented)
                     if model.morePresented { MoreMenuSheet(model: model, palette: palette) }
@@ -133,6 +133,9 @@ struct InboxScreen: View {
                     if !model.referencePanel.isEmpty { ReferencePanel(model: model, palette: palette) }
                     if model.inboxSortPresented { InboxSortPanel(model: model, palette: palette) }
                     if model.inboxGroupPresented { InboxGroupPanel(model: model, palette: palette) }
+                    if model.inboxFiltersPresented {
+                        InboxFiltersPanel(model: model, palette: palette).id(model.inboxFilterPresentation)
+                    }
                     if !model.historyPanel.isEmpty { HistoryPanel(model: model, palette: palette) }
                 }
                 if model.selectedSurface != .search && model.selectedSurface != .project && model.selectedSurface != .waiting
@@ -140,13 +143,13 @@ struct InboxScreen: View {
                     && model.selectedSurface != .trash && model.selectedSurface != .savedSearch
                     && (model.selectedSurface != .contexts || model.quickAccessView == "contexts")
                     && model.selectedSurface != .settings {
-                    tabBar.disabled(model.inboxSortPresented || model.inboxGroupPresented)
-                        .accessibilityHidden(model.inboxSortPresented || model.inboxGroupPresented)
+                    tabBar.disabled(model.inboxSortPresented || model.inboxGroupPresented || model.inboxFiltersPresented)
+                        .accessibilityHidden(model.inboxSortPresented || model.inboxGroupPresented || model.inboxFiltersPresented)
                 }
             }
             // More's content, dismissal backdrop and visible tabs share one modal boundary.
             .accessibilityElement(children: .contain)
-            .accessibilityAddTraits(model.morePresented || model.inboxSortPresented || model.inboxGroupPresented ? .isModal : [])
+            .accessibilityAddTraits(model.morePresented || model.inboxSortPresented || model.inboxGroupPresented || model.inboxFiltersPresented ? .isModal : [])
             .disabled(model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
                 && (model.reviewGuidePresented || model.reviewPickerPresented)))
             .accessibilityHidden(model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
@@ -333,6 +336,7 @@ struct InboxScreen: View {
     private var inboxContent: some View {
         VStack(spacing: 0) {
             toolbar
+            inboxFilterChips
             primaryAction.disabled(!model.inboxActionsEnabled)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
@@ -354,6 +358,7 @@ struct InboxScreen: View {
                             else if item.text("type") == "task" {
                                 TaskCard(row: item.object("row"), model: model, palette: palette)
                                     .disabled(!model.inboxActionsEnabled)
+                                    .accessibilityIdentifier("inbox-item-" + item.text("groupId") + "-" + item.object("row").text("id"))
                             }
                         }
                         .onAppear {
@@ -930,16 +935,25 @@ struct InboxScreen: View {
                 Button {
                     if field == "sort" { Task { await model.openInboxSort() } }
                     else if field == "group" { Task { await model.openInboxGroup() } }
+                    else { model.openInboxFilters() }
                 } label: {
-                    AppIcon(name: icon, size: 16).foregroundStyle(palette.secondary)
-                        .frame(width: 32, height: 32)
-                        .background(palette.filter, in: Circle())
-                        .overlay(Circle().stroke(palette.border, lineWidth: 1))
-                        .frame(width: 44, height: 44)
+                    let selected = field == "filters" && model.inbox.object("toolbar").object(field).flag("selected")
+                    let count = model.inbox.object("toolbar").object(field).text("countLabel")
+                    Group {
+                        if field == "filters" && !count.isEmpty { Text(count).rnFont(12, .semibold) }
+                        else { AppIcon(name: icon, size: 16) }
+                    }
+                    .foregroundStyle(selected ? palette.tint : palette.secondary)
+                    .frame(width: 32, height: 32)
+                    .background(palette.filter, in: Circle())
+                    .overlay(Circle().stroke(selected ? palette.tint : palette.border, lineWidth: 1))
+                    .frame(width: 44, height: 44)
                 }
-                .buttonStyle(.plain).disabled(field == "sort" ? !model.inboxSortEnabled : field == "group" ? !model.inboxGroupEnabled : true)
+                .buttonStyle(.plain).disabled(field == "sort" ? !model.inboxSortEnabled : field == "group" ? !model.inboxGroupEnabled : !model.inboxFiltersEnabled)
                 .accessibilityLabel(model.inbox.object("toolbar").object(field).text("accessibilityLabel"))
                 .accessibilityIdentifier("inbox-" + field + "-open")
+                .accessibilityAddTraits(field == "filters" && model.inbox.object("toolbar").object(field).flag("selected") ? .isSelected : [])
+                .accessibilityValue(field == "filters" ? model.inbox.object("toolbar").object(field).text("countLabel") : "")
             }
             Spacer(minLength: 8)
             if model.inbox.object("mindSweep").text("placement") == "accessory" {
@@ -949,11 +963,47 @@ struct InboxScreen: View {
                         .background(palette.filter, in: Capsule())
                         .overlay(Capsule().stroke(palette.border, lineWidth: 1))
                 }
-                .buttonStyle(.plain).disabled(!model.ready || model.busy || model.retryNeeded || model.inbox.object("mindSweep").text("label").isEmpty)
+                .buttonStyle(.plain).disabled(!model.inboxActionsEnabled || model.inbox.object("mindSweep").text("label").isEmpty)
                 .accessibilityIdentifier("inbox-mind-sweep-accessory")
             }
         }
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 6)
+    }
+
+    @ViewBuilder private var inboxFilterChips: some View {
+        let chips = model.inbox.objects("chips")
+        if !chips.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                ForEach(chips.indices, id: \.self) { index in
+                    let chip = chips[index]
+                    let tone = chip.flag("excluded") ? palette.danger : palette.tint
+                    Button { Task { await model.applyInboxChipAction(chip.object("action")) } } label: {
+                        HStack(spacing: 4) {
+                            Text(chip.text("label")).rnFont(12, .semibold).strikethrough(chip.flag("excluded"))
+                            AppIcon(name: "x", size: 12)
+                        }
+                        .foregroundStyle(tone).padding(.horizontal, 12).frame(minHeight: 44)
+                        .background(palette.filter, in: Capsule()).overlay(Capsule().stroke(tone, lineWidth: 1))
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain).disabled(!model.inboxActionsEnabled)
+                    .accessibilityLabel(chip.text("accessibilityLabel")).accessibilityAddTraits(.isSelected)
+                    .accessibilityValue(chip.flag("excluded") ? model.label("filters.excluded") : "")
+                    .accessibilityIdentifier("inbox-chip-" + chip.text("id"))
+                }
+                Button { Task { await model.editInboxFilter(model.inbox.object("filters").object("clearEdit")) } } label: {
+                    Text(model.inbox.text("clearLabel")).rnFont(12, .semibold).padding(.horizontal, 12)
+                        .frame(minHeight: 44).contentShape(Capsule())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.inboxActionsEnabled)
+                .accessibilityIdentifier("inbox-chips-clear")
+                }
+                .padding(.horizontal, 16)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("inbox-chips-scroll")
+        }
     }
 
     private var primaryAction: some View {
@@ -982,14 +1032,22 @@ struct InboxScreen: View {
         VStack(spacing: 8) {
             Text(model.inbox.object("empty").text("message")).rnFont(15, .semibold)
             Text(model.inbox.object("empty").text("hint")).rnFont(13).foregroundStyle(palette.secondary.opacity(0.8))
-            Button { Task { await model.openCapture() } } label: {
+            Button {
+                Task {
+                    let edit = model.inbox.object("empty").object("action").object("filterEdit")
+                    if !edit.isEmpty { await model.editInboxFilter(edit) }
+                    else { await model.openCapture() }
+                }
+            } label: {
                 Text(model.inbox.object("empty").text("actionLabel"))
                     .rnFont(13, .bold).padding(.horizontal, 16).padding(.vertical, 9)
+                    .frame(minHeight: 44).contentShape(Capsule())
                     .overlay(Capsule().stroke(palette.text, lineWidth: 1))
             }
             .buttonStyle(.plain).padding(.top, 8)
-            .disabled(model.busy || model.retryNeeded)
-            .accessibilityIdentifier("inbox-empty-capture")
+            .disabled(!model.inboxActionsEnabled)
+            .accessibilityIdentifier(model.inbox.object("empty").object("action").object("filterEdit").isEmpty
+                ? "inbox-empty-capture" : "inbox-empty-clear")
         }
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity).padding(.horizontal, 20).padding(.vertical, 36)
@@ -1826,4 +1884,43 @@ private struct InboxGroupPanel: View {
             if model.busy { ProgressView().frame(maxWidth: .infinity).padding(12) }
         }
     }
+}
+
+private struct InboxFiltersPanel: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @FocusState private var focusedField: String?
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Button { close() } label: { Color.black.opacity(0.28).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).ignoresSafeArea().accessibilityLabel(model.label("common.close"))
+                    .accessibilityIdentifier("inbox-filters-dismiss")
+                ListFilterControls(
+                    data: model.inbox, strings: model.strings, palette: palette, prefix: "inbox",
+                    enabled: model.inboxFilterControlsEnabled, busy: model.busy, frozen: model.retryNeeded,
+                    error: model.inboxReadError,
+                    searchText: Binding(get: { model.inboxSearchText }, set: { model.setInboxFilterText($0) }),
+                    locationText: Binding(get: { model.inboxLocationText }, set: { model.setInboxFilterText($0, location: true) }),
+                    pickerName: model.inboxFilterPickerName, picker: model.inboxFilterPicker,
+                    pickerCurrent: model.inboxFilterPickerCurrent, pickerEnabled: model.inboxFilterPickerActionsEnabled,
+                    pickerError: model.inboxFilterPickerError,
+                    pickerQuery: Binding(get: { model.inboxFilterPickerQuery }, set: model.setInboxFilterPickerQuery),
+                    onEdit: { edit in Task { await model.editInboxFilter(edit) } },
+                    onChipAction: { action in Task { await model.applyInboxChipAction(action) } },
+                    onArchived: { _ in }, onOpenPicker: model.openInboxFilterPicker, onBack: model.closeInboxFilterPicker,
+                    onMore: model.loadMoreInboxFilterPicker, onRetry: model.retryInboxFilters,
+                    onRetryPicker: model.retryInboxFilterPicker, onClose: close, focusedField: $focusedField)
+                    .padding(12).frame(maxWidth: 440, maxHeight: geometry.size.height * 0.9, alignment: .top)
+                    .background(palette.card, in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(palette.border, lineWidth: 1))
+                    .padding(.horizontal, 12)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+        }
+    }
+
+    private func close() { focusedField = nil; model.closeInboxFilters() }
 }

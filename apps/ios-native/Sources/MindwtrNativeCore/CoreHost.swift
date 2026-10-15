@@ -20773,6 +20773,12 @@ private final class Engine: @unchecked Sendable {
                 && context["outcome"] as? String == "recovered"
                 && Self.isInteger(context["count"])
                 && (context["count"] as? NSNumber).map { (0.0...Double(Int.max)).contains($0.doubleValue) } == true
+        case "Native iOS Inbox filters applied":
+            valid = Set(context.keys) == Set(["releaseCheck", "operation", "count"])
+                && context["releaseCheck"] as? String == "v1.3.5/ios-inbox-filters"
+                && context["operation"] as? String == "edit"
+                && Self.isInteger(context["count"])
+                && (context["count"] as? NSNumber).map { (0.0...1000.0).contains($0.doubleValue) } == true
         case "Native iOS Inbox grouping applied":
             valid = Set(context.keys) == Set(["releaseCheck", "operation", "axis", "collapsedCount"])
                 && context["releaseCheck"] as? String == "v1.3.5/ios-inbox-group"
@@ -22798,9 +22804,15 @@ private final class Engine: @unchecked Sendable {
             }
         }
         if method == "menuRead" {
-            guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "bulk", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "dataSettings", "dataBackup", "dataCsvExport", "dataTaskNotesExport", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
+            guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "bulk", "archive", "archiveTokens", "inboxTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "dataSettings", "dataBackup", "dataCsvExport", "dataTaskNotesExport", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
                   let json = args[1] as? String else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
+            }
+            if name == "inboxTokens" {
+                guard json.utf8.count <= 2_000_000,
+                      (try? NativeJSON.hasUniqueObjectKeys(json)) == true else {
+                    throw HostFailure("INVALID_INPUT: Inbox tokens require a bounded JSON object")
+                }
             }
             if ["calendar", "calendarItem"].contains(name) {
                 guard json.utf8.count <= 2_000_000,
@@ -22810,6 +22822,24 @@ private final class Engine: @unchecked Sendable {
             }
             guard let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
+            }
+            if name == "inboxTokens" {
+                guard Set(input.keys).isSubset(of: ["params", "offset", "limit", "revision", "query"]),
+                      Self.isInteger(input["offset"]),
+                      (0...9_007_199_254_740_991).contains((input["offset"] as? NSNumber)?.doubleValue ?? -1),
+                      Self.isInteger(input["limit"]),
+                      (1...100).contains((input["limit"] as? NSNumber)?.doubleValue ?? 0),
+                      input["revision"] is String,
+                      input["query"] == nil || (input["query"] as? String).map({ $0.utf16.count <= 500 }) == true else {
+                    throw HostFailure("INVALID_INPUT: Inbox tokens require a bounded revision window")
+                }
+                if let params = input["params"] {
+                    // Core validates optional filter fields and selection limits; no edit can be replayed by paging.
+                    guard let params = params as? [String: Any],
+                          Set(params.keys).isSubset(of: ["groupBy", "collapsedGroupIds", "filters"]) else {
+                        throw HostFailure("INVALID_INPUT: Inbox tokens require canonical view params")
+                    }
+                }
             }
             if ["dataSettings", "dataBackup", "dataCsvExport", "dataTaskNotesExport"].contains(name), !input.isEmpty { throw HostFailure("INVALID_INPUT: Unsupported Data settings read") }
             if name == "bulk" {
