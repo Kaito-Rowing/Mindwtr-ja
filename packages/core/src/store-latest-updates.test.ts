@@ -100,6 +100,29 @@ describe('a draft saved field by field on the latest row', () => {
             .toEqual({ checklist: [item('c2'), item('c1')] });
     });
 
+    it('never brings back an item either side removed: tags, contexts, checklist and attachments', () => {
+        const att = (id: string, extra: Partial<Attachment> = {}) => file(id, extra);
+        const base = task({ tags: ['x', 'k'], contexts: ['@x', '@k'], checklist: [item('x'), item('k')], attachments: [att('X'), att('K')] });
+        // The user removes X; another device adds Y.
+        const remoteAdded = task({ tags: ['x', 'k', 'y'], contexts: ['@x', '@k', '@y'], checklist: [item('x'), item('k'), item('y')],
+            attachments: [att('X'), att('K'), att('Y')] });
+        const userRemoved = { tags: ['k'], contexts: ['@k'], checklist: [item('k')],
+            attachments: [att('X', { deletedAt: AT }), att('K')] };
+        expect(mergeTaskDraftOntoLatest(base, userRemoved, remoteAdded)).toEqual({
+            tags: ['k', 'y'], contexts: ['@k', '@y'], checklist: [item('k'), item('y')],
+            attachments: [att('X', { deletedAt: AT }), att('K'), att('Y')],
+        });
+        // Another device removes X; the user edits another field and leaves the lists as opened.
+        const remoteRemoved = task({ tags: ['k'], contexts: ['@k'], checklist: [item('k')], attachments: [att('X', { deletedAt: AT }), att('K')] });
+        expect(mergeTaskDraftOntoLatest(base, { title: 'Edited', tags: base.tags, contexts: base.contexts, checklist: base.checklist,
+            attachments: base.attachments }, remoteRemoved)).toEqual({ title: 'Edited' });
+        // Another device removes X; the user adds Z to every list: X stays removed.
+        expect(mergeTaskDraftOntoLatest(base, { tags: ['x', 'k', 'z'], contexts: ['@x', '@k', '@z'], checklist: [item('x'), item('k'), item('z')],
+            attachments: [att('X'), att('K'), att('Z')] }, task({ ...remoteRemoved, attachments: [att('K')] }))).toEqual({
+            tags: ['k', 'z'], contexts: ['@k', '@z'], checklist: [item('k'), item('z')], attachments: [att('K'), att('Z')],
+        });
+    });
+
     it('saves a task draft and a project draft on the rows a sync save published while they waited', async () => {
         const base = task({ tags: ['a'] });
         const projectBase = project({ tagIds: ['t1'] });
