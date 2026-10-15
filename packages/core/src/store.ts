@@ -92,10 +92,18 @@ const getSaveRetryDelayMs = (attempt: number): number => {
     const cappedAttempt = Math.max(0, attempt - 1);
     return Math.min(MAX_SAVE_RETRY_DELAY_MS, INITIAL_SAVE_RETRY_DELAY_MS * (2 ** cappedAttempt));
 };
-let saveRetrySleep: (ms: number) => Promise<void> = sleep;
-/** Tests only: replace the wait between save retries (the schedule above is unchanged); null restores the real sleep. */
+let saveRetrySleepForTests: ((ms: number) => Promise<void>) | null = null;
+/** Tests only: replace the wait between save retries (the schedule above is unchanged); null restores the default. */
 export const setSaveRetrySleepForTests = (wait: ((ms: number) => Promise<void>) | null): void => {
-    saveRetrySleep = wait ?? sleep;
+    saveRetrySleepForTests = wait;
+};
+/**
+ * The wait before a save retry. A test run sets `globalThis.__mindwtrSkipSaveRetryWait` (packages/core/vitest.setup.ts,
+ * which must not import the store, so test files' module mocks still apply) to skip it.
+ */
+const waitBeforeSaveRetry = (ms: number): Promise<void> => {
+    if (saveRetrySleepForTests) return saveRetrySleepForTests(ms);
+    return (globalThis as { __mindwtrSkipSaveRetryWait?: boolean }).__mindwtrSkipSaveRetryWait ? Promise.resolve() : sleep(ms);
 };
 const isPersistentStoreError = (error: string | null | undefined): boolean => (
     typeof error === 'string' && error.startsWith(SAVE_QUEUE_OVERFLOW_ERROR_PREFIX)
@@ -580,7 +588,7 @@ export const flushPendingSave = async (): Promise<void> => {
             if (hasQueuedSaves) continue;
             const hasRetriableSaveQueued = pendingSaves.some((item) => item.version === targetVersion);
             if (hasRetriableSaveQueued) {
-                await saveRetrySleep(getSaveRetryDelayMs(attempts + 1));
+                await waitBeforeSaveRetry(getSaveRetryDelayMs(attempts + 1));
                 continue;
             }
             const message = toSaveErrorMessage(saveError);

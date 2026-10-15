@@ -183,7 +183,7 @@ describe('Archive Task Delete through the prepared Task Delete writer', () => {
     });
 
     it('cold-retries a failed SQLite COMMIT without a partial Task or receipt', async () => {
-        // The store's retry waits (250, 500, 1000, 2000 ms) are recorded, not slept: the test stays well inside its budget.
+        // The store's retry waits are recorded (vitest.setup.ts skips them in every test): the schedule stays 250, 500, 1000, 2000 ms.
         const retryWaits: number[] = [];
         setSaveRetrySleepForTests(async (ms) => { retryWaits.push(ms); });
         onTestFinished(() => setSaveRetrySleepForTests(null));

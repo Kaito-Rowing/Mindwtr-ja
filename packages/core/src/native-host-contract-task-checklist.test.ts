@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi, onTestFinished } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
-import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore, setSaveRetrySleepForTests } from './store';
+import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppData, Area, Project, Section, Task } from './types';
 import { createTaskDraft } from './task-draft';
 import { en } from './i18n/locales/en';
@@ -1135,10 +1135,6 @@ describe('prepared task completion and Undo', () => {
     });
 
     it('cold-retries a failed SQLite completion COMMIT from the frozen request', async () => {
-        // The store's retry waits (250, 500, 1000, 2000 ms) are recorded, not slept: the test stays well inside its budget.
-        const retryWaits: number[] = [];
-        setSaveRetrySleepForTests(async (ms) => { retryWaits.push(ms); });
-        onTestFinished(() => setSaveRetrySleepForTests(null));
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date(clock));
         const fault = { commits: 0 };
@@ -1167,10 +1163,6 @@ describe('prepared task completion and Undo', () => {
     }, 30_000); // The injected failure exercises real exponential persistence backoff before cold recovery.
 
     it('cold-retries a failed SQLite completion Undo COMMIT without a partial child tombstone', async () => {
-        // The store's retry waits (250, 500, 1000, 2000 ms) are recorded, not slept: the test stays well inside its budget.
-        const retryWaits: number[] = [];
-        setSaveRetrySleepForTests(async (ms) => { retryWaits.push(ms); });
-        onTestFinished(() => setSaveRetrySleepForTests(null));
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date(clock));
         const fault = { commits: 0 };
