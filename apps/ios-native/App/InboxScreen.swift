@@ -18,7 +18,7 @@ struct InboxScreen: View {
         model.area.objects("options").first(where: { $0.text("id") == "__all__" })?.text("state") == "included"
     }
     private var menuPanelPresented: Bool {
-        model.inboxSortPresented || model.morePresented || !model.somedayPanel.isEmpty || !model.referencePanel.isEmpty || !model.historyPanel.isEmpty
+        model.inboxSortPresented || model.inboxGroupPresented || model.morePresented || !model.somedayPanel.isEmpty || !model.referencePanel.isEmpty || !model.historyPanel.isEmpty
     }
     private var menuListPrefix: String {
         model.selectedSurface == .savedSearch ? "saved-search" : model.selectedSurface == .contexts ? "contexts" : model.selectedSurface == .trash ? "trash" : model.selectedSurface == .history ? "history" : model.selectedSurface == .reference ? "reference" : model.selectedSurface == .someday ? "someday" : "waiting"
@@ -125,12 +125,14 @@ struct InboxScreen: View {
                             FailureBanner(model: model, palette: palette)
                         }
                     }
+                    .allowsHitTesting(!model.inboxGroupPresented)
                     .accessibilityElement(children: menuPanelPresented ? .ignore : .contain)
                     .accessibilityHidden(menuPanelPresented)
                     if model.morePresented { MoreMenuSheet(model: model, palette: palette) }
                     if !model.somedayPanel.isEmpty { SomedayPanel(model: model, palette: palette) }
                     if !model.referencePanel.isEmpty { ReferencePanel(model: model, palette: palette) }
                     if model.inboxSortPresented { InboxSortPanel(model: model, palette: palette) }
+                    if model.inboxGroupPresented { InboxGroupPanel(model: model, palette: palette) }
                     if !model.historyPanel.isEmpty { HistoryPanel(model: model, palette: palette) }
                 }
                 if model.selectedSurface != .search && model.selectedSurface != .project && model.selectedSurface != .waiting
@@ -138,12 +140,13 @@ struct InboxScreen: View {
                     && model.selectedSurface != .trash && model.selectedSurface != .savedSearch
                     && (model.selectedSurface != .contexts || model.quickAccessView == "contexts")
                     && model.selectedSurface != .settings {
-                    tabBar.disabled(model.inboxSortPresented).accessibilityHidden(model.inboxSortPresented)
+                    tabBar.disabled(model.inboxSortPresented || model.inboxGroupPresented)
+                        .accessibilityHidden(model.inboxSortPresented || model.inboxGroupPresented)
                 }
             }
             // More's content, dismissal backdrop and visible tabs share one modal boundary.
             .accessibilityElement(children: .contain)
-            .accessibilityAddTraits(model.morePresented || model.inboxSortPresented ? .isModal : [])
+            .accessibilityAddTraits(model.morePresented || model.inboxSortPresented || model.inboxGroupPresented ? .isModal : [])
             .disabled(model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
                 && (model.reviewGuidePresented || model.reviewPickerPresented)))
             .accessibilityHidden(model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
@@ -323,24 +326,41 @@ struct InboxScreen: View {
         .padding(.bottom, 8)
     }
 
+    private var inboxRows: [(id: [String], item: CoreObject)] {
+        model.items.map { (id: model.inboxItemIdentity($0), item: $0) }
+    }
+
     private var inboxContent: some View {
         VStack(spacing: 0) {
             toolbar
-            primaryAction
+            primaryAction.disabled(!model.inboxActionsEnabled)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     Text(model.inbox.text("scopeLabel"))
                         .rnFont(13, .semibold).foregroundStyle(palette.secondary)
                         .padding(.horizontal, 16).padding(.bottom, 2)
                     if model.items.isEmpty { emptyState }
-                    ForEach(model.items.indices, id: \.self) { index in
-                        let item = model.items[index]
-                        if item.text("type") == "task" {
-                            TaskCard(row: item.object("row"), model: model, palette: palette)
-                                .id(item.object("row").text("id"))
-                                .onAppear {
-                                    if index == model.items.count - 5 { Task { await model.loadMore() } }
-                                }
+                    if let error = model.inboxReadError {
+                        Text(error).rnFont(13).foregroundStyle(palette.danger)
+                            .accessibilityIdentifier("inbox-group-error")
+                        Button(model.label("common.retry")) { Task { await model.retryInboxGrouping() } }
+                            .frame(minHeight: 44).disabled(model.busy || model.retryNeeded || menuPanelPresented)
+                            .accessibilityIdentifier("inbox-group-retry")
+                    }
+                    ForEach(inboxRows, id: \.id) { entry in
+                        let item = entry.item
+                        Group {
+                            if item.text("type") == "section" { inboxSection(item) }
+                            else if item.text("type") == "task" {
+                                TaskCard(row: item.object("row"), model: model, palette: palette)
+                                    .disabled(!model.inboxActionsEnabled)
+                            }
+                        }
+                        .onAppear {
+                            Task { await model.loadMore(automaticRow: entry.id) }
+                        }
+                        .onChange(of: model.inboxActionsEnabled) { enabled in
+                            if enabled { Task { await model.loadMore(automaticRow: entry.id) } }
                         }
                     }
                     if model.items.count < model.inbox.number("total") {
@@ -359,6 +379,28 @@ struct InboxScreen: View {
             .accessibilityIdentifier("inbox-scroll")
             .refreshable { await model.refresh() }
         }
+    }
+
+    @ViewBuilder private func inboxSection(_ item: CoreObject) -> some View {
+        if item.flag("collapsible") {
+            Button { Task { await model.toggleInboxSection(item.text("id")) } } label: { inboxSectionLabel(item) }
+                .buttonStyle(.plain).disabled(!model.inboxActionsEnabled)
+                .accessibilityValue(model.label(item.flag("collapsed") ? "markdown.expand" : "markdown.collapse"))
+                .accessibilityIdentifier("inbox-section-" + item.text("id"))
+        } else { inboxSectionLabel(item).accessibilityAddTraits(.isHeader) }
+    }
+
+    private func inboxSectionLabel(_ item: CoreObject) -> some View {
+        HStack(spacing: 6) {
+            if item.flag("collapsible") {
+                AppIcon(name: "chevron", size: 15).rotationEffect(.degrees(item.flag("collapsed") ? -90 : 0))
+                    .foregroundStyle(palette.secondary)
+            }
+            Text(item.text("title")).rnFont(13, .bold).foregroundStyle(item.flag("muted") ? palette.secondary : palette.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(String(item.number("count"))).rnFont(12, .semibold).foregroundStyle(palette.secondary)
+        }
+        .frame(minHeight: 44).contentShape(Rectangle()).padding(.top, 4)
     }
 
     private var focusContent: some View {
@@ -885,14 +927,17 @@ struct InboxScreen: View {
     private var toolbar: some View {
         HStack(spacing: 0) {
             ForEach([("sort", "sort"), ("folder", "group"), ("sliders", "filters")], id: \.0) { icon, field in
-                Button { if field == "sort" { Task { await model.openInboxSort() } } } label: {
+                Button {
+                    if field == "sort" { Task { await model.openInboxSort() } }
+                    else if field == "group" { Task { await model.openInboxGroup() } }
+                } label: {
                     AppIcon(name: icon, size: 16).foregroundStyle(palette.secondary)
                         .frame(width: 32, height: 32)
                         .background(palette.filter, in: Circle())
                         .overlay(Circle().stroke(palette.border, lineWidth: 1))
                         .frame(width: 44, height: 44)
                 }
-                .buttonStyle(.plain).disabled(field != "sort" || !model.inboxSortEnabled)
+                .buttonStyle(.plain).disabled(field == "sort" ? !model.inboxSortEnabled : field == "group" ? !model.inboxGroupEnabled : true)
                 .accessibilityLabel(model.inbox.object("toolbar").object(field).text("accessibilityLabel"))
                 .accessibilityIdentifier("inbox-" + field + "-open")
             }
@@ -1714,6 +1759,71 @@ private struct InboxSortPanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
             .accessibilityAction(.escape) { model.closeInboxSort() }
+        }
+    }
+}
+
+private struct InboxGroupPanel: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Button { model.closeInboxGroup() } label: { Color.black.opacity(0.28).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).ignoresSafeArea().accessibilityLabel(model.label("common.close"))
+                    .accessibilityIdentifier("inbox-group-dismiss").disabled(model.busy || model.retryNeeded)
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 8) {
+                        Text(model.inbox.object("toolbar").object("group").text("title"))
+                            .rnFont(17, .bold).frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
+                        Button { model.closeInboxGroup() } label: {
+                            AppIcon(name: "x", size: 20).frame(width: 44, height: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).accessibilityLabel(model.label("common.close"))
+                        .accessibilityIdentifier("inbox-group-close").disabled(model.busy || model.retryNeeded)
+                    }
+                    .frame(minHeight: 44).padding(.bottom, 12)
+                    ViewThatFits(in: .vertical) {
+                        choices.fixedSize(horizontal: false, vertical: true)
+                        ScrollView { choices }.accessibilityIdentifier("inbox-group-scroll")
+                    }
+                }
+                .padding(12).frame(maxWidth: 440, maxHeight: geometry.size.height * 0.82, alignment: .top)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(palette.border, lineWidth: 1))
+                .padding(.horizontal, 12)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) { model.closeInboxGroup() }
+        }
+    }
+
+    private var choices: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let error = model.inboxReadError {
+                Text(error).rnFont(13).foregroundStyle(palette.danger).accessibilityIdentifier("inbox-group-error")
+                Button(model.label("common.retry")) { Task { await model.retryInboxGrouping() } }
+                    .frame(minHeight: 44).disabled(model.busy || model.retryNeeded)
+                    .accessibilityIdentifier("inbox-group-retry")
+            }
+            let options = model.inbox.object("toolbar").object("group").objects("options")
+            ForEach(options.indices, id: \.self) { index in
+                let choice = options[index]
+                Button { Task { await model.setInboxGroup(choice.text("value")) } } label: {
+                    HStack(spacing: 8) {
+                        Text(choice.text("label")).rnFont(15).frame(maxWidth: .infinity, alignment: .leading)
+                        if choice.flag("selected") { AppIcon(name: "check", size: 16) }
+                    }
+                    .frame(minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.inboxGroupActionsEnabled)
+                .accessibilityAddTraits(choice.flag("selected") ? .isSelected : [])
+                .accessibilityIdentifier("inbox-group-" + choice.text("value"))
+            }
+            if model.busy { ProgressView().frame(maxWidth: .infinity).padding(12) }
         }
     }
 }

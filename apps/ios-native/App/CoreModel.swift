@@ -228,6 +228,11 @@ final class CoreModel: ObservableObject {
     @Published private(set) var selectedSurface: Surface = .inbox {
         didSet {
             if selectedSurface != .inbox { foregroundSyncIntent = nil }
+            if oldValue != selectedSurface && (oldValue == .inbox || selectedSurface == .inbox) {
+                inboxGeneration += 1
+                inboxCurrent = false
+                inboxGroupPresented = false
+            }
             if referenceSortRequest == nil, let caller = taskListSortCaller,
                selectedSurface != taskListSortSurface(caller) { retireTaskListSort() }
             if oldValue == .project && selectedSurface != .project {
@@ -258,6 +263,18 @@ final class CoreModel: ObservableObject {
         }
     }
     @Published private(set) var inbox: CoreObject = [:]
+    @Published private(set) var inboxCurrent = false
+    @Published private(set) var inboxGroupPresented = false
+    @Published private(set) var inboxReadError: String?
+    private var inboxParams: CoreObject = ["groupBy": "none", "collapsedGroupIds": [String]()]
+    private var inboxGeneration = 0
+    private var inboxCollapsedGroups: CoreObject = [:]
+    private var initialInboxCollapsedGroupsRaw: String?
+    private var inboxPreferencesLoaded = false
+    private var inboxFoldPreferenceWritable = true
+    private var inboxPendingFold: (axis: String, ids: [String])?
+    private var inboxGroupingOperation: String?
+    private var inboxAutomaticPageAttempt: (generation: Int, offset: Int)?
     @Published private(set) var processInboxPresented = false {
         didSet { if processInboxPresented { foregroundSyncIntent = nil } }
     }
@@ -1726,6 +1743,12 @@ final class CoreModel: ObservableObject {
                 #endif
                 // Warm list ownership never crosses a Host replacement; durable recovery still opens Reference.
                 retireTaskListSortHost()
+                inboxGeneration += 1
+                inboxParams = ["groupBy": "none", "collapsedGroupIds": [String]()]
+                inboxCurrent = false; inboxGroupPresented = false; inboxReadError = nil
+                inboxPreferencesLoaded = false; inboxCollapsedGroups = [:]
+                inboxPendingFold = nil; inboxGroupingOperation = nil
+                if oldValue != nil { initialInboxCollapsedGroupsRaw = nil }
                 pomodoroWork?.cancel(); pomodoroWake?.cancel()
                 pomodoroWork = nil; pomodoroWake = nil; pomodoroWorkHost = nil
                 pomodoroCommand = nil; pomodoroFeedback = nil; pomodoroPanel = [:]
@@ -5294,6 +5317,7 @@ final class CoreModel: ObservableObject {
                         }
                     }
                     initialReferenceGroupBy = try legacy.value(forKey: "mindwtr:view:reference:groupBy:v1")
+                    initialInboxCollapsedGroupsRaw = try legacy.value(forKey: "mindwtr:view:group-collapse:inbox:v1")
                     if let raw = try legacy.value(forKey: "mindwtr:view:group-collapse:reference:v1"),
                        let data = raw.data(using: .utf8),
                        let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
@@ -5346,6 +5370,7 @@ final class CoreModel: ObservableObject {
                 }
             }
             collapsedFocusSections = Set(focusSectionKeys.filter { expanded[$0] == false })
+            loadInboxPreferences()
             if let stored = preferenceDefaults.object(forKey: referenceViewPreference) {
                 let view = stored as? [String: Any] ?? [:]
                 initialReferenceGroupBy = view["groupBy"] as? String
@@ -5735,6 +5760,7 @@ final class CoreModel: ObservableObject {
 
     private var operationContextClean: Bool {
         !capturePresented && !capturePending && draft.isEmpty && noteDraft.isEmpty
+            && !inboxGroupPresented
             && calendarEventOpenPresentation == nil
             && !processInboxPresented && processInboxRequest == nil && !processInboxTransitioning
             && !mindSweepPresented && mindSweepRequest == nil && mindSweepDraft.isEmpty
@@ -7325,6 +7351,7 @@ final class CoreModel: ObservableObject {
 
     func selectSurface(_ surface: Surface) async {
         guard !settingsSyncPresented, !settingsSyncRestartRequired else { return }
+        guard !inboxGroupPresented else { return }
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
         guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
@@ -7348,6 +7375,7 @@ final class CoreModel: ObservableObject {
 
     func toggleMore() async {
         guard !settingsSyncPresented, !settingsSyncRestartRequired else { return }
+        guard !inboxGroupPresented else { return }
         guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
               !projectRenameEditing, somedaySectionRenameIndex == nil,
@@ -20209,6 +20237,7 @@ final class CoreModel: ObservableObject {
 
     private func canOpenTaskListSort(_ caller: TaskListSortCaller) -> Bool {
         guard ready, host != nil, !busy, !retryNeeded, !appLock.concealed,
+              !inboxGroupPresented,
               !capturePresented, !areaPickerPresented, !taskPresented, !morePresented,
               !mindSweepPresented, !processInboxPresented, !calendarComposerPresented,
               referenceSortRequest == nil, taskListSortCaller == nil else { return false }
@@ -20372,6 +20401,105 @@ final class CoreModel: ObservableObject {
         else { await readTaskListSortOptions() }
     }
     // MARK: End Task736 shared list-sort presentation owner
+
+    // MARK: Task737 Inbox grouping owner
+    private var inboxFoldPreference: String { devicePreferencePrefix + "mindwtr:view:group-collapse:inbox:v1" }
+    var inboxGroupEnabled: Bool { canOpenTaskListSort(.inbox) }
+    var inboxActionsEnabled: Bool {
+        ready && selectedSurface == .inbox && inboxCurrent && !busy && !retryNeeded && !appLock.concealed
+            && !taskPresented && !capturePresented && !areaPickerPresented && !morePresented
+            && !inboxGroupPresented && !inboxSortPresented
+    }
+    var inboxGroupActionsEnabled: Bool {
+        inboxGroupPresented && ready && selectedSurface == .inbox && inboxCurrent && !busy && !retryNeeded
+            && !appLock.concealed && !taskPresented && !capturePresented && !areaPickerPresented
+    }
+
+    func inboxItemIdentity(_ item: CoreObject) -> [String] {
+        [inbox.text("groupBy"), item.text("type"), item.text("id"), item.text("groupId"), item.object("row").text("id")]
+    }
+
+    private func inboxFoldIDs(_ value: Any?) -> [String]? {
+        guard let ids = value as? [String], ids.count <= 200,
+              ids.allSatisfy({ $0.utf16.count <= 500 }) else { return nil }
+        return ids
+    }
+
+    private func loadInboxPreferences() {
+        guard !inboxPreferencesLoaded else { return }
+        inboxPreferencesLoaded = true
+        let stored = preferenceDefaults.object(forKey: inboxFoldPreference)
+        let raw = stored == nil ? initialInboxCollapsedGroupsRaw : stored as? String
+        if let raw, let data = raw.data(using: .utf8),
+           let map = (try? JSONSerialization.jsonObject(with: data)) as? CoreObject {
+            inboxCollapsedGroups = map
+            inboxFoldPreferenceWritable = true
+        } else {
+            inboxCollapsedGroups = [:]
+            // A malformed root cannot be merged without destroying the retained bytes.
+            inboxFoldPreferenceWritable = stored == nil && raw == nil
+        }
+        inboxParams["collapsedGroupIds"] = inboxFoldIDs(inboxCollapsedGroups[inboxParams.text("groupBy")]) ?? []
+    }
+
+    private func inboxReadCurrent(_ owner: CoreHost, generation: Int, params: CoreObject) -> Bool {
+        host === owner && selectedSurface == .inbox && inboxGeneration == generation
+            && !appLock.concealed && !Task.isCancelled
+            && (try? json(inboxParams)).map { encoded in
+                (try? json(params)).map { encoded.utf8.elementsEqual($0.utf8) } == true
+            } == true
+    }
+
+    func openInboxGroup() async {
+        guard inboxGroupEnabled else { return }
+        inboxGroupPresented = true
+        await retryInboxGrouping()
+    }
+
+    func closeInboxGroup() {
+        guard !busy, !retryNeeded else { return }
+        inboxGroupPresented = false
+    }
+
+    func setInboxGroup(_ axis: String) async {
+        guard inboxGroupActionsEnabled,
+              let choice = inbox.object("toolbar").object("group").objects("options").first(where: { $0.text("value") == axis }),
+              Set(choice.object("edit").keys) == Set(["groupBy"]),
+              choice.object("edit").text("groupBy") == axis, validReferenceGroup(axis) else { return }
+        inboxParams = ["groupBy": axis, "collapsedGroupIds": inboxFoldIDs(inboxCollapsedGroups[axis]) ?? []]
+        inboxGeneration += 1
+        inboxCurrent = false
+        inboxGroupPresented = false
+        inboxGroupingOperation = "group"
+        await retryInboxGrouping()
+    }
+
+    func toggleInboxSection(_ id: String) async {
+        guard inboxActionsEnabled, inboxFoldPreferenceWritable,
+              inboxCollapsedGroups[inboxParams.text("groupBy")] == nil
+                || inboxFoldIDs(inboxCollapsedGroups[inboxParams.text("groupBy")]) != nil,
+              let section = items.first(where: {
+                  $0.text("type") == "section" && $0.text("id").utf8.elementsEqual(id.utf8) && $0.flag("collapsible")
+              }), Set(section.object("collapseEdit").keys) == Set(["collapsedGroupIds"]),
+              validReferenceGroup(inboxParams.text("groupBy")),
+              let ids = inboxFoldIDs(section.object("collapseEdit")["collapsedGroupIds"]) else { return }
+        inboxParams["collapsedGroupIds"] = ids
+        inboxPendingFold = (inboxParams.text("groupBy"), ids)
+        inboxGroupingOperation = "fold"
+        inboxGeneration += 1
+        inboxCurrent = false
+        await retryInboxGrouping()
+    }
+
+    func retryInboxGrouping() async {
+        guard ready, let owner = host, selectedSurface == .inbox, !busy, !retryNeeded,
+              !taskPresented, !capturePresented, !areaPickerPresented, !inboxSortPresented else { return }
+        busy = true
+        error = nil
+        defer { if host === owner { finishOperation() } }
+        do { try await readInbox() } catch { /* The read owner retains its params and error. */ }
+    }
+    // MARK: End Task737 Inbox grouping owner
 
     private func validReferenceGroup(_ value: String) -> Bool {
         ["none", "context", "area", "project", "tag"].contains(value)
@@ -26807,6 +26935,7 @@ final class CoreModel: ObservableObject {
 
     func openAreaPicker() async {
         guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !taskPresented,
+              !inboxGroupPresented,
               !projectRenameEditing,
               !calendarComposerPresented, !mindSweepPresented else { return }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -26844,21 +26973,28 @@ final class CoreModel: ObservableObject {
         do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
     }
 
-    func loadMore() async {
-        guard ready, let owner = host, selectedSurface == .inbox, !busy, !retryNeeded,
+    func loadMore(automaticRow: [String]? = nil) async {
+        guard inboxActionsEnabled, let owner = host,
               items.count < inbox.number("total") else { return }
         let snapshot = inbox, offset = items.count
+        let params = inboxParams, generation = inboxGeneration
+        if let automaticRow {
+            guard let index = items.firstIndex(where: { inboxItemIdentity($0) == automaticRow }),
+                  index >= max(0, offset - 5),
+                  inboxAutomaticPageAttempt?.generation != generation || inboxAutomaticPageAttempt?.offset != offset else { return }
+            // Busy callbacks rearm a missed appearance, but a failed admitted window waits for More.
+            inboxAutomaticPageAttempt = (generation, offset)
+        }
         let target = offset + min(pageSize, snapshot.number("total") - offset)
         let current = {
-            self.host === owner && self.ready && self.selectedSurface == .inbox && !self.retryNeeded
-                && !self.appLock.concealed && !Task.isCancelled
+            self.inboxReadCurrent(owner, generation: generation, params: params) && self.ready && !self.retryNeeded
                 && self.inbox.text("revision") == snapshot.text("revision") && self.items.count == offset
         }
         busy = true
         defer { if host === owner { finishOperation() } }
         do {
-            let next = try await query("inboxView", [try json([
-                "offset": offset, "limit": target - offset, "revision": snapshot.text("revision")])], beforeDispatch: current)
+            let next = try await query("inboxView", [try json(params.merging([
+                "offset": offset, "limit": target - offset, "revision": snapshot.text("revision")]) { _, next in next })], beforeDispatch: current)
             guard current() else { return }
             try validateInboxPage(next, revision: snapshot.text("revision"), total: snapshot.number("total"), count: target - offset)
             var staged = snapshot
@@ -26870,7 +27006,7 @@ final class CoreModel: ObservableObject {
             do {
                 // Rebuild the requested depth once against a fresh minute/data revision.
                 // Keep both windows local until they agree; a second failure leaves the saved projection intact.
-                var staged = try await query("inboxView", [try json(["offset": 0, "limit": pageSize])], beforeDispatch: current)
+                var staged = try await query("inboxView", [try json(params.merging(["offset": 0, "limit": pageSize]) { _, next in next })], beforeDispatch: current)
                 guard current() else { return }
                 let total = staged.number("total"), revision = staged.text("revision")
                 try validateInboxPage(staged, revision: revision, total: total, count: min(pageSize, total))
@@ -26878,8 +27014,8 @@ final class CoreModel: ObservableObject {
                 let freshTarget = min(target, total)
                 while rows.count < freshTarget {
                     let limit = min(pageSize, freshTarget - rows.count)
-                    let page = try await query("inboxView", [try json([
-                        "offset": rows.count, "limit": limit, "revision": revision])], beforeDispatch: current)
+                    let page = try await query("inboxView", [try json(params.merging([
+                        "offset": rows.count, "limit": limit, "revision": revision]) { _, next in next })], beforeDispatch: current)
                     guard current() else { return }
                     try validateInboxPage(page, revision: revision, total: total, count: limit)
                     rows += page.objects("items")
@@ -29591,6 +29727,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openCapture() async {
+        guard !inboxGroupPresented else { return }
         if let submitted = captureSubmission, host !== submitted.host {
             captureSubmission = nil; capturePending = false; captureBusyOwner = nil
             retryNeeded = false
@@ -32292,26 +32429,67 @@ final class CoreModel: ObservableObject {
     #endif
 
     private func readInbox(foregroundSyncOwner ownerID: UUID? = nil, ownedGuard: (() -> Bool)? = nil) async throws {
-        if let ownerID {
-            guard let owner = foregroundSyncOwner, owner.id == ownerID, foregroundSyncCurrent(owner) else {
-                throw CancellationError()
-            }
-            // Inbox shares these cached projections with navigation. Publish
-            // them together only while the admitted foreground owner holds.
-            let nextArea = try await query("areaFilter")
-            guard foregroundSyncCurrent(owner) else { throw CancellationError() }
-            let nextMore = try await query("menuRead", ["more", "{}"])
-            guard foregroundSyncCurrent(owner) else { throw CancellationError() }
-            let nextInbox = try await query("inboxView", [try json(["offset": 0, "limit": pageSize])])
-            guard foregroundSyncCurrent(owner) else { throw CancellationError() }
-            area = nextArea
-            moreMenu = nextMore
-            inbox = nextInbox
-            return
+        guard let owner = host, selectedSurface == .inbox, !appLock.concealed, !Task.isCancelled,
+              ownedGuard?() != false,
+              ownerID == nil || foregroundSyncOwner.map({
+                  $0.id == ownerID && foregroundSyncCurrent($0)
+              }) == true else { throw CancellationError() }
+        loadInboxPreferences()
+        let params = inboxParams
+        inboxGeneration += 1
+        let generation = inboxGeneration
+        let defaults = preferenceDefaults, preference = inboxFoldPreference
+        let current = {
+            self.inboxReadCurrent(owner, generation: generation, params: params)
+                && self.preferenceDefaults === defaults && self.inboxFoldPreference == preference
+                && ownedGuard?() != false
+                && (ownerID == nil || self.foregroundSyncOwner.map {
+                    $0.id == ownerID && self.foregroundSyncCurrent($0)
+                } == true)
         }
-        let nextInbox = try await query("inboxView", [try json(["offset": 0, "limit": pageSize])], beforeDispatch: ownedGuard)
-        guard ownedGuard?() != false else { throw CancellationError() }
-        inbox = nextInbox
+        guard current() else { throw CancellationError() }
+        inboxCurrent = false
+        do {
+            var nextArea: CoreObject?, nextMore: CoreObject?
+            if ownerID != nil {
+                // Navigation and Inbox publish together under the same captured parameters.
+                nextArea = try await query("areaFilter", beforeDispatch: current)
+                guard current() else { throw CancellationError() }
+                nextMore = try await query("menuRead", ["more", "{}"], beforeDispatch: current)
+            }
+            let nextInbox = try await query("inboxView", [try json(params.merging([
+                "offset": 0, "limit": pageSize]) { _, next in next })], beforeDispatch: current)
+            guard current() else { throw CancellationError() }
+            if let fold = inboxPendingFold {
+                guard inboxFoldPreferenceWritable, fold.axis == params.text("groupBy"),
+                      let ids = inboxFoldIDs(params["collapsedGroupIds"]), ids == fold.ids else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                var map = inboxCollapsedGroups
+                map[fold.axis] = ids
+                defaults.set(try json(map), forKey: preference)
+                inboxCollapsedGroups = map
+                inboxPendingFold = nil
+            }
+            if let nextArea, let nextMore { area = nextArea; moreMenu = nextMore }
+            inbox = nextInbox
+            inboxCurrent = true
+            inboxReadError = nil
+            if let operation = inboxGroupingOperation {
+                inboxGroupingOperation = nil
+                let axis = params.text("groupBy"), collapsedCount = inboxFoldIDs(params["collapsedGroupIds"])?.count ?? 0
+                Task {
+                    guard current() else { return }
+                    _ = try? await owner.call("logLine", argumentsJSON: self.json([
+                        "Native iOS Inbox grouping applied", self.json([
+                            "releaseCheck": "v1.3.5/ios-inbox-group", "operation": operation,
+                            "axis": axis, "collapsedCount": collapsedCount])]))
+                }
+            }
+        } catch {
+            if current() { inboxReadError = label("settings.feedback.actionFailed") }
+            throw error
+        }
     }
 
     func openFocusSavedFilter(_ operation: CoreObject, message: String = "") async {

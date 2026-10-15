@@ -9,13 +9,16 @@ import {
     buildStatusListFilterSummary,
     buildStatusListModel,
     selectStatusListTasks,
+    type StatusListItem,
 } from './menu-views-model';
 import { createNativeHostContract, sortAreasForDisplay } from './native-host-contract';
-import { openSqliteHost } from './screen-parity.replay';
+import type { NativeInboxItem } from './native-host-contract-inbox-view';
+import { openScreenHost, openSqliteHost } from './screen-parity.replay';
+import type { TaskGroupBy } from './task-group-sections';
 import { SqliteAdapter } from './sqlite-adapter';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
-import type { Task } from './types';
+import type { Area, Project, Task } from './types';
 import { generateUUID } from './uuid';
 
 const fixture = loadInboxViewFixture();
@@ -117,6 +120,141 @@ describe('native host contract: the Inbox view', () => {
             .toEqual(window.rows.map((row) => ({ ...row, readOnly: undefined })));
         const gutter = window.rows.find((row) => row.id === 'i-gutter');
         expect(gutter?.meta).toBeTruthy();
+    });
+
+    // Task737 fixture design only: physical namespaces and initialized databases belong to root.
+    const groupedInboxData = () => {
+        const stamp = '2026-09-01T12:00:00.000Z', deviceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        const areas: Area[] = [
+            { id: 'area-alpha', name: 'Area Alpha', order: 0, createdAt: stamp, updatedAt: stamp, rev: 1, revBy: deviceId },
+            { id: 'area-beta', name: 'Area Beta', order: 1, createdAt: stamp, updatedAt: stamp, rev: 1, revBy: deviceId },
+        ];
+        const projects: Project[] = areas.map((area, index) => ({
+            id: 'project-' + (index === 0 ? 'alpha' : 'beta'), title: 'Project ' + (index === 0 ? 'Alpha' : 'Beta'),
+            areaId: area.id, status: 'active', color: '#123456', order: index, tagIds: [], createdAt: stamp, updatedAt: stamp, rev: 1, revBy: deviceId,
+        }));
+        const tasks: Task[] = Array.from({ length: 55 }, (_, index) => ({
+            id: `inbox-group-${String(index + 1).padStart(3, '0')}`,
+            title: `Inbox group ${String(55 - index).padStart(3, '0')}`, status: 'inbox',
+            contexts: index === 0 ? [' @alpha ', '@beta', '@alpha'] : index < 44 ? ['@alpha'] : index < 54 ? ['@beta'] : [],
+            tags: index === 0 ? ['alpha', 'beta', 'alpha'] : index < 49 ? ['alpha'] : index < 54 ? ['beta'] : [],
+            ...(index < 54 ? { projectId: projects[index < 27 ? 0 : 1].id } : {}),
+            createdAt: new Date(Date.parse(stamp) + index * 1000).toISOString(),
+            updatedAt: new Date(Date.parse(stamp) + index * 1000).toISOString(), pushCount: 0, rev: 1, revBy: deviceId,
+        }));
+        return { tasks, projects, areas, settings: { deviceId, theme: 'light' as const, quickAddAutoClean: true, diagnostics: { loggingEnabled: true } } };
+    };
+    const groupItem = (item: NativeInboxItem | StatusListItem) => item.type === 'section'
+        ? { type: item.type, id: item.id, title: item.title, count: item.count,
+            muted: item.muted, collapsible: item.collapsible, collapsed: item.collapsed }
+        : { type: item.type, id: 'row' in item ? item.row.id : item.task.id, groupId: item.groupId };
+    const groupedRN = (groupBy: TaskGroupBy, collapsedGroupIds: string[] = []) => {
+        const state = useTaskStore.getState();
+        return buildStatusListModel({ kind: 'inbox', tasks: state.tasks, projects: state.projects, areas: state.areas,
+            settings: state.settings, groupBy, collapsedGroupIds: new Set(collapsedGroupIds), criteria: {},
+            searchQuery: '', t, now: new Date(fixture.now) });
+    };
+
+    it.each(['none', 'context', 'area', 'project', 'tag'] as const)(
+        'pages complete RN %s groups, including repeated tasks with distinct group identities', async (groupBy) => {
+            freezeClock();
+            const saveData = vi.fn().mockResolvedValue(undefined), writes: unknown[] = [];
+            const host = await openScreenHost({ data: groupedInboxData(), record: { updateSettings: 1 }, log: writes, saveData });
+            saveData.mockClear();
+            const before = structuredClone(useTaskStore.getState()._allTasks);
+            const first = value(host.getInboxView({ groupBy, collapsedGroupIds: [], offset: 0, limit: 50 }));
+            const rest = value(host.getInboxView({ groupBy, collapsedGroupIds: [], offset: 50, limit: 50, revision: first.revision }));
+            const items = [...first.items, ...rest.items], rn = groupedRN(groupBy);
+            expect(first.items).toHaveLength(50);
+            expect(rest.total).toBe(first.total);
+            expect(rest.revision).toBe(first.revision);
+            expect(first.count).toBe(55); // Distinct tasks, not duplicated displayed rows or headings.
+            expect(first.total).toBe(rn.items.length);
+            expect(items.map(groupItem)).toEqual(rn.items.map(groupItem));
+            expect(first.toolbar.group.options.map(({ value: axis, edit, selected }) => ({ axis, edit, selected })))
+                .toEqual(['none', 'context', 'area', 'project', 'tag'].map((axis) => ({ axis, edit: { groupBy: axis }, selected: axis === groupBy })));
+            const identities = items.map((item) => item.type === 'section' ? 'section:' + item.id : item.groupId + ':' + item.row.id);
+            expect(new Set(identities).size).toBe(items.length);
+            if (groupBy === 'none') expect(items.every((item) => item.type === 'task' && item.groupId === null)).toBe(true);
+            if (groupBy === 'context' || groupBy === 'tag') {
+                expect(first.total).toBe(59); // 55 tasks + one legitimate second membership + three headings.
+                const duplicated = items.filter((item) => item.type === 'task' && item.row.id === 'inbox-group-001');
+                expect(duplicated.map((item) => item.type === 'task' && item.groupId))
+                    .toEqual(groupBy === 'context' ? ['context:@alpha', 'context:@beta'] : ['tag:alpha', 'tag:beta']);
+            }
+            if (groupBy === 'context') {
+                expect(first.items[45]).toMatchObject({ type: 'section', id: 'context:@beta', count: 11 });
+                expect(rest.items[0]).toMatchObject({ type: 'task', row: { id: 'inbox-group-048' }, groupId: 'context:@beta' });
+            }
+            if (groupBy === 'tag') expect(rest.items[0]).toMatchObject({ type: 'section', id: 'tag:beta', count: 6 });
+            expect(useTaskStore.getState()._allTasks).toEqual(before);
+            expect(writes).toEqual([]); expect(saveData).not.toHaveBeenCalled();
+        },
+    );
+
+    it('returns composable fold edits and refuses continuations under changed axis, folds or filters', async () => {
+        freezeClock();
+        const writes: unknown[] = [], saveData = vi.fn().mockResolvedValue(undefined);
+        const host = await openScreenHost({ data: groupedInboxData(), record: { updateSettings: 1 }, log: writes, saveData });
+        saveData.mockClear();
+        const params = { groupBy: 'context' as const, collapsedGroupIds: ['context:gone'] };
+        const first = value(host.getInboxView({ ...params, offset: 0, limit: 50 }));
+        const alpha = first.items.find((item) => item.type === 'section' && item.id === 'context:@alpha');
+        expect(alpha?.type).toBe('section');
+        if (alpha?.type !== 'section') throw new Error('Missing alpha heading');
+        expect(alpha.collapseEdit).toEqual({ collapsedGroupIds: ['context:gone', 'context:@alpha'] });
+        expect(params.collapsedGroupIds).toEqual(['context:gone']);
+        const folded = value(host.getInboxView({ groupBy: 'context', ...alpha.collapseEdit, offset: 0, limit: 50 }));
+        expect(folded.count).toBe(55); expect(folded.total).toBe(15);
+        expect(folded.items.map(groupItem)).toEqual(groupedRN('context', alpha.collapseEdit.collapsedGroupIds).items.map(groupItem));
+        expect(folded.items.filter((item) => item.type === 'task' && item.row.id === 'inbox-group-001'))
+            .toMatchObject([{ groupId: 'context:@beta' }]);
+        const foldedAlpha = folded.items.find((item) => item.type === 'section' && item.id === 'context:@alpha');
+        expect(foldedAlpha).toMatchObject({ count: 44, collapsed: true, collapseEdit: { collapsedGroupIds: ['context:gone'] } });
+        for (const changed of [
+            { ...params, groupBy: 'tag' as const },
+            { groupBy: 'context' as const, ...alpha.collapseEdit },
+            { ...params, filters: { tokens: ['@alpha'] } },
+            {}, // Omitting params defaults to none; never treat it as the previous grouped view.
+        ]) expect(host.getInboxView({ ...changed, offset: 50, limit: 50, revision: first.revision }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        const foldPage = value(host.getInboxView({ groupBy: 'context', ...alpha.collapseEdit, offset: 1, limit: 2, revision: folded.revision }));
+        expect(foldPage.items.map(groupItem)).toEqual(folded.items.slice(1, 3).map(groupItem));
+        const tagEdit = first.toolbar.group.options.find((option) => option.value === 'tag')!.edit;
+        expect(tagEdit).toEqual({ groupBy: 'tag' });
+        const tagParams = { ...tagEdit, collapsedGroupIds: ['tag:beta'] };
+        const tags = value(host.getInboxView({ ...tagParams, offset: 0, limit: 50 }));
+        const tagTail = value(host.getInboxView({ ...tagParams, offset: 50, limit: 50, revision: tags.revision }));
+        expect(tagTail.items[0]).toMatchObject({ type: 'section', id: 'tag:beta', collapsed: true });
+        expect(value(host.getInboxView({ ...params, ...alpha.collapseEdit, offset: 0, limit: 50 })).revision).toBe(folded.revision);
+        expect(writes).toEqual([]); expect(saveData).not.toHaveBeenCalled();
+        value(await host.setTaskListSort({ sortBy: 'title' }));
+        const sorted = value(host.getInboxView({ groupBy: 'context', ...alpha.collapseEdit, offset: 0, limit: 50 }));
+        expect(sorted.revision).not.toBe(folded.revision);
+        expect(sorted.items.map(groupItem)).toEqual(groupedRN('context', alpha.collapseEdit.collapsedGroupIds).items.map(groupItem));
+        expect(sorted.items.find((item) => item.type === 'task')).toMatchObject({ row: { id: 'inbox-group-054' } });
+    });
+
+    it('bounds fold transport without changing the prior read parameters or domain state', async () => {
+        freezeClock();
+        const writes: unknown[] = [], saveData = vi.fn().mockResolvedValue(undefined);
+        const host = await openScreenHost({ data: groupedInboxData(), record: { updateSettings: 1 }, log: writes, saveData });
+        saveData.mockClear();
+        const collapsedGroupIds = Array.from({ length: 200 }, (_, index) => 'context:old-' + index);
+        const params = { groupBy: 'context' as const, collapsedGroupIds };
+        const before = value(host.getInboxView({ ...params, offset: 0, limit: 50 }));
+        expect(before.collapsedGroupIds).toEqual(collapsedGroupIds);
+        const heading = before.items.find((item) => item.type === 'section');
+        if (heading?.type !== 'section') throw new Error('Missing heading');
+        expect(heading.collapseEdit.collapsedGroupIds).toHaveLength(201); // App must bound even core-offered edits before local persistence.
+        expect(host.getInboxView({ ...params, ...heading.collapseEdit, offset: 0, limit: 50 }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        for (const bad of [[...collapsedGroupIds, 'context:overflow'], [1], 'context:@alpha']) {
+            expect(host.getInboxView({ ...params, collapsedGroupIds: bad as never, offset: 0, limit: 50 }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        expect(value(host.getInboxView({ ...params, offset: 0, limit: 50 }))).toEqual(before);
+        expect(writes).toEqual([]); expect(saveData).not.toHaveBeenCalled();
     });
 
     it('pages items and tokens within one revision, and refuses a stale page after a relevant edit', async () => {

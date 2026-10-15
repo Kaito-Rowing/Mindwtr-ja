@@ -29957,4 +29957,101 @@ extension FoundationUITests {
             .allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
         XCTAssertEqual(titles.min(by: { $0.frame.minY < $1.frame.minY })?.identifier, title.identifier)
     }
+
+    // Task737 uses fresh externally staged libraries, including two heading paging boundaries.
+    func testInboxGroupNormalAndColdRead() throws { try task737InboxGroup("NORMAL") }
+    func testInboxGroupLargestTextAndColdRead() throws { try task737InboxGroup("LARGEST", largest: true) }
+
+    private func task737InboxGroup(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_INBOX_GROUP_UI_" + role + "_LIBRARY"],
+              let uuid = UUID(uuidString: library), uuid.uuidString.lowercased() == library else {
+            throw XCTSkip("An externally staged canonical Inbox grouping library is required")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US",
+            "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); defer { app.terminate() }
+        task736OpenInbox(app)
+        task737SelectedGroup(app, "none")
+        let headings = [("context", "context:@alpha"), ("area", "area-alpha"),
+            ("project", "project:project-alpha"), ("tag", "tag:alpha")]
+        for (axis, heading) in headings {
+            task737ChooseGroup(app, axis)
+            let button = app.buttons["inbox-section-" + heading]
+            boardEnabled(button); XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 1e-6)
+            XCTAssertEqual(button.value as? String, "Collapse")
+            boardTap(app, "inbox-section-" + heading)
+            boardEnabled(app.buttons["inbox-group-open"])
+            XCTAssertEqual(button.value as? String, "Expand")
+        }
+        // Each axis restores its own fold, then unfolds without touching the other maps.
+        for (axis, heading) in headings {
+            task737ChooseGroup(app, axis)
+            let button = app.buttons["inbox-section-" + heading]
+            boardEnabled(button); XCTAssertEqual(button.value as? String, "Expand")
+            boardTap(app, "inbox-section-" + heading)
+            boardEnabled(app.buttons["inbox-group-open"])
+            XCTAssertEqual(button.value as? String, "Collapse")
+        }
+        // Context beta is item45 (automatic trigger); Tag beta is item50 (a new-page heading).
+        for axis in ["context", "tag"] {
+            task737ChooseGroup(app, axis)
+            let tail = app.buttons["task-title-inbox-group-055"]
+            let scroll = app.scrollViews["inbox-scroll"]
+            for _ in 0..<45 {
+                if tail.exists && tail.isHittable { break }
+                scroll.swipeUp(); boardEnabled(app.buttons["inbox-group-open"])
+            }
+            XCTAssertTrue(tail.exists && tail.isHittable, "Grouped automatic paging must reach the tail without More")
+            XCTAssertTrue(!app.buttons["inbox-more"].exists || !app.buttons["inbox-more"].isHittable)
+        }
+        func revealHeading(_ id: String) {
+            let heading = app.buttons["inbox-section-" + id]
+            let scroll = app.scrollViews["inbox-scroll"]
+            for _ in 0..<45 where !heading.exists { scroll.swipeDown() }
+            revealPagedElement(app, heading, in: scroll)
+        }
+        task737ChooseGroup(app, "context")
+        boardTap(app, "inbox-sort-open"); task736SortTap(app, "inbox-sort-title")
+        boardEnabled(app.buttons["inbox-group-open"]); task737SelectedGroup(app, "context")
+        revealHeading("context:@alpha")
+        boardTap(app, "inbox-section-context:@alpha")
+        task737ChooseGroup(app, "tag"); revealHeading("tag:alpha"); boardTap(app, "inbox-section-tag:alpha")
+        task737ChooseGroup(app, "context")
+        revealHeading("context:@alpha")
+        XCTAssertEqual(app.buttons["inbox-section-context:@alpha"].value as? String, "Expand")
+        boardTap(app, "tab-focus"); task736OpenInbox(app)
+        task737SelectedGroup(app, "context")
+        revealHeading("context:@alpha")
+        XCTAssertEqual(app.buttons["inbox-section-context:@alpha"].value as? String, "Expand")
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        app.terminate(); app.launch(); task736OpenInbox(app)
+        task737SelectedGroup(app, "none")
+        for (axis, heading) in [("context", "context:@alpha"), ("tag", "tag:alpha")] {
+            task737ChooseGroup(app, axis)
+            revealHeading(heading)
+            XCTAssertEqual(app.buttons["inbox-section-" + heading].value as? String, "Expand")
+        }
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+
+    private func task737ChooseGroup(_ app: XCUIApplication, _ axis: String) {
+        boardEnabled(app.buttons["inbox-group-open"]); boardTap(app, "inbox-group-open")
+        let choice = app.buttons["inbox-group-" + axis]
+        if !choice.isHittable { revealPagedElement(app, choice, in: app.scrollViews["inbox-group-scroll"]) }
+        boardEnabled(choice); XCTAssertGreaterThanOrEqual(choice.frame.height, 44 - 1e-6); choice.tap()
+        boardEnabled(app.buttons["inbox-group-open"])
+        XCTAssertFalse(app.staticTexts["inbox-group-error"].exists)
+    }
+
+    private func task737SelectedGroup(_ app: XCUIApplication, _ axis: String) {
+        boardEnabled(app.buttons["inbox-group-open"]); boardTap(app, "inbox-group-open")
+        let choice = app.buttons["inbox-group-" + axis]
+        if !choice.isHittable { revealPagedElement(app, choice, in: app.scrollViews["inbox-group-scroll"]) }
+        boardEnabled(choice); XCTAssertTrue(choice.isSelected)
+        XCTAssertTrue(!app.buttons["tab-menu"].exists || !app.buttons["tab-menu"].isEnabled)
+        boardTap(app, "inbox-group-close"); boardEnabled(app.buttons["inbox-group-open"])
+    }
 }

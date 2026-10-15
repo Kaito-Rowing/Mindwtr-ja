@@ -973,6 +973,31 @@ final class NativeBoardMoveTests: XCTestCase {
             var forged = pagingContext; forged[field] = value
             await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([pagingMessage, json(forged)])) }
         }
+        let groupMessage = "Native iOS Inbox grouping applied"
+        var groupContexts: [[String: Any]] = []
+        for operation in ["group", "fold"] {
+            for axis in ["none", "context", "area", "project", "tag"] {
+                let context: [String: Any] = ["releaseCheck": "v1.3.5/ios-inbox-group",
+                    "operation": operation, "axis": axis, "collapsedCount": operation == "fold" ? 200 : 0]
+                _ = try await core.call("logLine", argumentsJSON: json([groupMessage, json(context)]))
+                groupContexts.append(context)
+            }
+        }
+        let groupContext = groupContexts[0]
+        for (field, value) in [("collapsedCount", true), ("collapsedCount", "1"), ("collapsedCount", -1),
+            ("collapsedCount", 201), ("collapsedCount", 0.5), ("collapsedCount", NSNull()),
+            ("releaseCheck", "v1.3.5/ios-inbox-paging"), ("axis", "private"), ("operation", "saved")] as [(String, Any)] {
+            var forged = groupContext; forged[field] = value
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([groupMessage, json(forged)])) }
+        }
+        for field in ["taskId", "text", "revision", "preferences", "path", "outcome"] {
+            var forged = groupContext; forged[field] = "private"
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([groupMessage, json(forged)])) }
+        }
+        for field in groupContext.keys {
+            var forged = groupContext; forged.removeValue(forKey: field)
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([groupMessage, json(forged)])) }
+        }
         let shared = try object(await core.diagnosticsFileAction("logShare"))
         let url = try await core.validatedDiagnosticsShareURL(XCTUnwrap(shared["path"] as? String))
         let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map { try object(String($0)) }
@@ -986,6 +1011,13 @@ final class NativeBoardMoveTests: XCTestCase {
         XCTAssertEqual(paging.count, 1)
         XCTAssertEqual(try json(XCTUnwrap(paging.first?["context"])), try json([
             "releaseCheck": "v1.3.5/ios-inbox-paging", "outcome": "recovered", "count": "55"]))
+        let grouping = lines.filter { $0["message"] as? String == groupMessage }
+        XCTAssertEqual(grouping.count, groupContexts.count)
+        let exportedGroupContexts = groupContexts.map { context -> [String: Any] in
+            var value = context; value["collapsedCount"] = String((context["collapsedCount"] as? Int) ?? -1); return value
+        }
+        XCTAssertEqual(try grouping.map { try json(XCTUnwrap($0["context"])) }.sorted(),
+            try exportedGroupContexts.map { try json($0) }.sorted())
         XCTAssertFalse(lines.contains { $0["message"] as? String == "Native iOS Board order saved" })
         XCTAssertEqual(writes, 0); XCTAssertEqual(try boardOrderRows(ids), before)
         XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))

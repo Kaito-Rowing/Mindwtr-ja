@@ -20773,6 +20773,13 @@ private final class Engine: @unchecked Sendable {
                 && context["outcome"] as? String == "recovered"
                 && Self.isInteger(context["count"])
                 && (context["count"] as? NSNumber).map { (0.0...Double(Int.max)).contains($0.doubleValue) } == true
+        case "Native iOS Inbox grouping applied":
+            valid = Set(context.keys) == Set(["releaseCheck", "operation", "axis", "collapsedCount"])
+                && context["releaseCheck"] as? String == "v1.3.5/ios-inbox-group"
+                && ["group", "fold"].contains(context["operation"] as? String ?? "")
+                && ["none", "context", "area", "project", "tag"].contains(context["axis"] as? String ?? "")
+                && Self.isInteger(context["collapsedCount"])
+                && (context["collapsedCount"] as? NSNumber).map { (0.0...200.0).contains($0.doubleValue) } == true
         case "Native iOS calendar event dialog dismissed":
             valid = Set(context.keys) == Set(["releaseCheck", "outcome"])
                 && context["releaseCheck"] as? String == "v1.3.5/ios-calendar-event-open"
