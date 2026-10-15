@@ -477,13 +477,24 @@ const deadlineRows = async (part) => {
             const started = Date.now();
             await openData();
             await tap(tagged(await screen(), 'data-transfer-export') ?? fail('no export row'));
-            await useTestFolder();
+            // The file is written before the folder picker opens (batch3: the picker waited behind the slow write), so wait for
+            // either the picker or the export's failure toast, then answer the picker.
+            let failedToast = false;
+            await until(`the folder picker or the export's failure (DL4 ${name})`, async () => {
+                if (otherAppFront()) return true;
+                failedToast = hasText(await screen().catch(() => []), en['settings.backupMobile.failedToExportBackup']);
+                return failedToast;
+            }, 300_000, 1000);
+            const pickedMs = Date.now() - started;
             let made = false;
-            try { await until(`the export (DL4 ${name})`, () => exportsOnPhone().some((file) => !before.includes(file) && file.endsWith('.json')), 300_000, 1000); made = true; } catch { /* the control's export fails */ }
-            const ms = Date.now() - started;
+            if (!failedToast) {
+                await useTestFolder();
+                try { await until(`the export (DL4 ${name})`, () => exportsOnPhone().some((file) => !before.includes(file) && file.endsWith('.json')), 120_000, 1000); made = true; } catch { /* no file */ }
+            }
+            const ms = Math.max(pickedMs, Date.now() - started);
             noDelays(); control('');
-            if (name === 'control') check(!made, `(DL4 control) with the old 30 s deadline the slow export makes no file (${ms} ms)`);
-            else check(made && ms > 60_000, `(DL4) the slow export finished in ${ms} ms, past the old 30 s`);
+            if (name === 'control') check(failedToast && !made, `(DL4 control) with the old 30 s deadline the slow export fails and makes no file (${ms} ms)`);
+            else check(made && pickedMs > 60_000, `(DL4) the slow export was written in ${pickedMs} ms, past the old 30 s, and the file made`);
             if (!pid()) await launch();
         }
         setProp('export_tree', '');
