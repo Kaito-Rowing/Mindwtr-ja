@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
-import { test } from 'node:test';
+import { after, before, test } from 'node:test';
 import { buildLinkSchemeXml, buildShortcuts, buildShortcutsManifest } from './build-shortcuts.mjs';
 import { buildManifest as buildWidgetManifest } from './build-widgets.mjs';
 import { identityProblems } from './check-variant-identity.mjs';
@@ -52,6 +52,12 @@ async function variant(type, { pkg, scheme, label, rn } = TYPES[type]) {
             + `  public static final String ANALYTICS_HEARTBEAT_URL = "${type === 'release' ? HEARTBEAT : ''}";\n`,
     };
 }
+// The checker reads the heartbeat environment (RN's rule); these files carry RN's default endpoint, so the tests run without
+// either variable and put the caller's back afterwards.
+const HEARTBEAT_ENV = ['ANALYTICS_HEARTBEAT_DISABLED', 'ANALYTICS_HEARTBEAT_URL'];
+const savedEnv = Object.fromEntries(HEARTBEAT_ENV.map((name) => [name, process.env[name]]));
+before(() => { for (const name of HEARTBEAT_ENV) delete process.env[name]; });
+after(() => { for (const [name, value] of Object.entries(savedEnv)) if (value === undefined) delete process.env[name]; else process.env[name] = value; });
 const problems = (type, files) => identityProblems(type, files.manifest, files.shortcuts, files.buildConfig, files.linkScheme);
 
 test('every build type\'s identity passes', async () => {
