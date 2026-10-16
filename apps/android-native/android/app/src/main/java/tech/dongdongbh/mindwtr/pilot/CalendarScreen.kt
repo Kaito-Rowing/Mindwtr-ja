@@ -157,9 +157,10 @@ internal fun HoldFor(millis: Long, content: @Composable () -> Unit) {
 }
 
 /**
- * RN's Pressable without hitSlop: each row takes touches only inside its own bounds. Compose widens a target under 48 dp (the
- * day's all-day rows are 19 dp) and reports that widened box, less the next row's, as the row's accessibility bounds, so every
- * stacked row's node sat about 14 dp above the row it names (TalkBack's box, and a tap at the node's centre missed).
+ * RN's Pressable without hitSlop (the day's and the week's all-day rows have none): each row takes touches only inside its own
+ * bounds, as in RN. Compose widens a target under 48 dp (the day's all-day rows are 19 dp) and reports that widened box, less
+ * the next row's, as the row's accessibility bounds, so every stacked row's node sat about 14 dp above the row it names
+ * (TalkBack's box, and a tap at the node's centre missed).
  */
 @Composable
 private fun ExactTargets(content: @Composable () -> Unit) {
@@ -636,7 +637,7 @@ private fun WeekAllDay(model: InboxViewModel, items: List<JSONObject>, width: Dp
     val theme = LocalTheme.current
     val c = theme.colors
     Column(Modifier.width(width).fillMaxHeight().leftBorder(c.border, 1.dp)
-        .padding(horizontal = if (compact) 2.dp else 5.dp, vertical = if (compact) 4.dp else 5.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        .padding(horizontal = if (compact) 2.dp else 5.dp, vertical = if (compact) 4.dp else 5.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) { ExactTargets {
         for (item in items) {
             val tones = item.getJSONObject("tones")
             val fill = if (tones.menuText("fill") == "secondary") theme.wash(c.secondaryText, 0.14f, 0.28f) else c.inputBg
@@ -651,7 +652,7 @@ private fun WeekAllDay(model: InboxViewModel, items: List<JSONObject>, width: Dp
                     .clickable(enabled = pressable && idle) { calendar.openItem(item) }
                     .padding(start = if (compact) 4.dp else 8.dp, end = if (compact) 2.dp else 5.dp, top = 2.dp, bottom = 2.dp))
         }
-    }
+    } }
 }
 
 /**
