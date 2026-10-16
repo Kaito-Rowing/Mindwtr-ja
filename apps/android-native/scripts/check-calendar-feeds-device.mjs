@@ -62,9 +62,10 @@ const URL = `http://127.0.0.1:${PORT}/${FEED}.ics`;
 const SECRET = `pw${run}`;
 const AUTH_URL = `http://u${run}:${SECRET}@127.0.0.1:${PORT}/auth${run}.ics`;
 const NAME = `Team${run}`;
-const EVENTS = { timed: `Standup ${run}`, allDay: `Offsite ${run}` };
+// Three all-day events stack in the day view's card: a tap on each row's node must open that row's event (10-14).
+const EVENTS = { timed: `Standup ${run}`, allDay: `Offsite ${run}`, moreAllDay: [`Retreat ${run}`, `Holiday ${run}`] };
 /** Events this month the Test counts (core's getCalendarTestRange): today's, and tomorrow's when it is still this month. */
-const thisMonth = new Date(Date.now() + 86_400_000).getMonth() === new Date().getMonth() ? 2 : 1;
+const thisMonth = new Date(Date.now() + 86_400_000).getMonth() === new Date().getMonth() ? 2 + EVENTS.moreAllDay.length : 1;
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
 const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, tapExpecting, settle } = device;
@@ -276,11 +277,21 @@ try {
     // The all-day event (always in view; the timed block may sit above the timeline's scroll), from a screen that holds still.
     nodes = await settle(await screen());
     const offsite = eventBlock(nodes, EVENTS.allDay) ?? fail(`no "${EVENTS.allDay}" on screen`);
-    // 10-14: Compose's widened touch target shifted each stacked row's node about 14 dp above its row, so the tap missed.
-    const heights = nodes.filter((node) => node['resource-id'] === 'calendar-block' && box(node)[0] === box(offsite)[0])
-        .map((node) => box(node)[3] - box(node)[1]);
-    check(heights.every((height) => height === heights[0]), `(4) each all-day row's node is the row's own box (heights ${heights.join(', ')})`);
+    // 10-14: Compose's widened touch target shifted each stacked row's node about 14 dp above its row, so the tap missed. The
+    // card's rows: one height, each starting where the one above ends; a tap on each row's node opens that row's event.
+    const rows = nodes.filter((node) => node['resource-id'] === 'calendar-block' && box(node)[0] === box(offsite)[0])
+        .sort((a, b) => box(a)[1] - box(b)[1]);
+    const stacked = rows.every((row, index) => box(row)[3] - box(row)[1] === box(rows[0])[3] - box(rows[0])[1]
+        && (index === 0 || box(row)[1] === box(rows[index - 1])[3]));
+    check(rows.length >= 3 && stacked, `(4) the all-day card stacks ${rows.length} rows, each node its own row's box (${rows.map((row) => row.bounds).join(' ')})`);
+    for (const title of EVENTS.moreAllDay) {
+        const row = eventBlock(nodes, title) ?? fail(`no "${title}" on screen`);
+        const sheet = await tapExpecting(row, (current) => Boolean(tagged(current, 'calendar-sheet')), `${title}'s sheet`);
+        check(sheet.some((node) => node.text === title), `(4) a tap on "${title}"'s row opens its own sheet`);
+        await tapExpecting(button(sheet, en['common.cancel']) ?? fail('no Cancel'), (current) => !tagged(current, 'calendar-sheet'), 'the sheet closed');
+    }
     nodes = await tapExpecting(offsite, (current) => Boolean(tagged(current, 'calendar-sheet')), 'the event\'s sheet');
+    check(nodes.some((node) => node.text === EVENTS.allDay), `(4) a tap on "${EVENTS.allDay}"'s row opens its own sheet`);
     check(Boolean(button(nodes, en['calendar.createTaskFromEvent'])) && !button(nodes, en['calendar.openInCalendar']),
         '(4) the event\'s sheet offers RN\'s Create task, and no Open in calendar for a subscription\'s event');
     await tapExpecting(button(nodes, en['common.cancel']) ?? fail('no Cancel'), (current) => !tagged(current, 'calendar-sheet'), 'the sheet closed');
