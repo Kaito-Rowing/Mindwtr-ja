@@ -113,7 +113,8 @@ export async function identityProblems(type, manifest, shortcuts, buildConfig, l
     expect('supportsRtl', attr(application, 'supportsRtl'), 'true');
     // RN's shortcuts for this build (their ids, labels, targets and links), each target a component the build declares.
     if (shortcuts !== buildShortcuts(identity.scheme, identity.pkg).xml) problems.push('the shortcuts are not RN\'s for this build');
-    // The detailed capture activity's link (RN's DetailedCaptureActivity) is of the build's own scheme, which core opens.
+    // The widget module's links (WidgetRenderer.appIntent: the widgets' header and row links, the detailed capture shortcut's) are
+    // of the build's own scheme, which core opens.
     if (linkScheme !== buildLinkSchemeXml(identity.scheme)) problems.push(`mindwtr_link_scheme is not ${identity.scheme}`);
     const components = [...(application.activity ?? []), ...(application['activity-alias'] ?? [])].map((node) => attr(node, 'name'));
     for (const [, target] of shortcuts.matchAll(/android:targetClass="([^"]*)"/g)) {

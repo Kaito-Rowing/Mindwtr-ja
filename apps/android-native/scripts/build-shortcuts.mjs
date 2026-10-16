@@ -3,7 +3,8 @@
 // capture dialog QuickCaptureActivity in the build's package, stay RN's), with one change: RN's mindwtr:/// links use the build's
 // scheme (the development build's mindwtr-native-dev, so RN's app on the same phone keeps mindwtr://). Each build type also gets
 // the manifest entry RN's plugin adds for a shortcut's own target, its detailed capture activity (#1333), as one more manifest, and
-// the build's scheme as RN's widget module's mindwtr_link_scheme, so that activity's link is one this build opens.
+// the build's scheme as RN's widget module's mindwtr_link_scheme, so the links its appIntent opens (that activity's, the widgets'
+// header and row links) are ones this build opens.
 // Usage: node build-shortcuts.mjs <out dir> <build type>=<scheme>@<applicationId> ...
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
