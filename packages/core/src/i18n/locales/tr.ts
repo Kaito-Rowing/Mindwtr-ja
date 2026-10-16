@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const trOverrides: Record<string, string> = {
+    'settings.importDiagnostics.unknownColumns': "{{count}} bilinmeyen sütun yok sayıldı.",
+    'settings.importDiagnostics.csvLocation': "satır {{row}}, sütun {{column}}",
+    'settings.importDiagnostics.csvArchiveLocation': "CSV girdisi {{entry}}, satır {{row}}, sütun {{column}}",
+    'settings.importDiagnostics.csvLocations': "Konumlar (CSV kayıtları; başlık = satır 1): {{locations}}.",
+    'settings.importDiagnostics.csvLocationsMore': "{{count}} konum daha gösterilmiyor.",
     "projects.convertBlocked.destination-section-sequence": "Sıralı → Bölümler içinde olarak ayarlanmış bir hedef proje seçin. Yeni bölüm görev sırasını korur; diğer bölümler bağımsız ilerlemeye devam eder.",
     'timeline.moveTaskDates': "Görev tarihlerini taşı",
     'timeline.moveProjectDates': "Proje tarihlerini taşı",

@@ -3106,6 +3106,11 @@ export const daOverrides: Record<string, string> = {
         '{{count}} ikke-understøttet arkivpost/entries blev sprunget over.',
     'settings.importDiagnostics.skippedExistingRecords':
         '{{count}} tidligere importerede eller slettede poster blev sprunget over.',
+    'settings.importDiagnostics.unknownColumns': "{{count}} ukendte kolonner blev ignoreret.",
+    'settings.importDiagnostics.csvLocation': "række {{row}}, kolonne {{column}}",
+    'settings.importDiagnostics.csvArchiveLocation': "CSV-element {{entry}}, række {{row}}, kolonne {{column}}",
+    'settings.importDiagnostics.csvLocations': "Placeringer (CSV-poster; overskrift = række 1): {{locations}}.",
+    'settings.importDiagnostics.csvLocationsMore': "{{count}} flere placeringer vises ikke.",
     'settings.importDiagnostics.unmappedDate': '{{count}} datoværdi(er) kunne ikke tilknyttes og blev udeladt.',
     'settings.importDiagnostics.unmappedStatus':
         '{{count}} statusværdi(er) kunne ikke kortlægges og bruges som en sikker standard.',

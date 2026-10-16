@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const koOverrides: Record<string, string> = {
+    'settings.importDiagnostics.unknownColumns': "알 수 없는 열 {{count}}개를 무시했습니다.",
+    'settings.importDiagnostics.csvLocation': "{{row}}행, {{column}}열",
+    'settings.importDiagnostics.csvArchiveLocation': "CSV 항목 {{entry}}, {{row}}행, {{column}}열",
+    'settings.importDiagnostics.csvLocations': "위치(CSV 레코드 기준, 머리글은 1행): {{locations}}.",
+    'settings.importDiagnostics.csvLocationsMore': "추가 위치 {{count}}개는 표시하지 않습니다.",
     "projects.convertBlocked.destination-section-sequence": "순차 → 섹션별로 설정된 대상 프로젝트를 선택하세요. 새 섹션은 작업 순서를 유지하고 다른 섹션은 독립적으로 진행됩니다.",
     'timeline.moveTaskDates': "작업 날짜 이동",
     'timeline.moveProjectDates': "프로젝트 날짜 이동",

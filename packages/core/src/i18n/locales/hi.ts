@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const hiOverrides: Record<string, string> = {
+    'settings.importDiagnostics.unknownColumns': "{{count}} अज्ञात स्तंभों को अनदेखा किया गया।",
+    'settings.importDiagnostics.csvLocation': "पंक्ति {{row}}, स्तंभ {{column}}",
+    'settings.importDiagnostics.csvArchiveLocation': "CSV प्रविष्टि {{entry}}, पंक्ति {{row}}, स्तंभ {{column}}",
+    'settings.importDiagnostics.csvLocations': "स्थान (CSV रिकॉर्ड; शीर्षक = पंक्ति 1): {{locations}}।",
+    'settings.importDiagnostics.csvLocationsMore': "{{count}} और स्थान नहीं दिखाए गए।",
     "projects.convertBlocked.destination-section-sequence": "क्रमिक → अनुभागों के भीतर पर सेट गंतव्य प्रोजेक्ट चुनें। नया अनुभाग कार्यों का क्रम बनाए रखता है; अन्य अनुभाग स्वतंत्र रूप से आगे बढ़ते हैं।",
     'timeline.moveTaskDates': "कार्य की तारीखें बदलें",
     'timeline.moveProjectDates': "परियोजना की तारीखें बदलें",

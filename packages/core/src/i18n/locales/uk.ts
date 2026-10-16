@@ -1,5 +1,10 @@
 // Ukrainian app strings. Keep placeholders and slash-command syntax in sync with en.ts.
 export const ukOverrides: Record<string, string> = {
+    'settings.importDiagnostics.unknownColumns': "Пропущено невідомих стовпців: {{count}}.",
+    'settings.importDiagnostics.csvLocation': "рядок {{row}}, стовпець {{column}}",
+    'settings.importDiagnostics.csvArchiveLocation': "запис CSV {{entry}}, рядок {{row}}, стовпець {{column}}",
+    'settings.importDiagnostics.csvLocations': "Позиції (записи CSV; заголовок = рядок 1): {{locations}}.",
+    'settings.importDiagnostics.csvLocationsMore': "Ще {{count}} позицій не показано.",
     "projects.convertBlocked.destination-section-sequence": "Виберіть цільовий проєкт із режимом Послідовний → В межах розділів. Новий розділ зберігає послідовність завдань; інші розділи продовжують роботу незалежно.",
     'timeline.moveTaskDates': "Зсунути дати завдання",
     'timeline.moveProjectDates': "Зсунути дати проєкту",

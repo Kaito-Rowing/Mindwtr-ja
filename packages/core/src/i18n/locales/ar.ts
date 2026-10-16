@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const arOverrides: Record<string, string> = {
+    'settings.importDiagnostics.unknownColumns': "تم تجاهل {{count}} من الأعمدة غير المعروفة.",
+    'settings.importDiagnostics.csvLocation': "الصف {{row}}، العمود {{column}}",
+    'settings.importDiagnostics.csvArchiveLocation': "إدخال CSV {{entry}}، الصف {{row}}، العمود {{column}}",
+    'settings.importDiagnostics.csvLocations': "المواضع (سجلات CSV؛ العنوان = الصف 1): {{locations}}.",
+    'settings.importDiagnostics.csvLocationsMore': "لم يتم عرض {{count}} من المواضع الإضافية.",
     "projects.convertBlocked.destination-section-sequence": "اختر مشروع وجهة مضبوطًا على متسلسل ← داخل الأقسام. يحتفظ القسم الجديد بتسلسل المهام، وتواصل الأقسام الأخرى التقدم بشكل مستقل.",
     'timeline.moveTaskDates': "نقل تواريخ المهمة",
     'timeline.moveProjectDates': "نقل تواريخ المشروع",

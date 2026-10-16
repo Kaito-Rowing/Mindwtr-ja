@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const faOverrides: Record<string, string> = {
+    'settings.importDiagnostics.unknownColumns': "{{count}} ستون ناشناخته نادیده گرفته شد.",
+    'settings.importDiagnostics.csvLocation': "ردیف {{row}}، ستون {{column}}",
+    'settings.importDiagnostics.csvArchiveLocation': "ورودی CSV {{entry}}، ردیف {{row}}، ستون {{column}}",
+    'settings.importDiagnostics.csvLocations': "موقعیت‌ها (رکوردهای CSV؛ سرستون = ردیف 1): {{locations}}.",
+    'settings.importDiagnostics.csvLocationsMore': "{{count}} موقعیت دیگر نمایش داده نشده است.",
     "projects.convertBlocked.destination-section-sequence": "پروژهٔ مقصد را با حالت ترتیبی ← درون بخش‌ها انتخاب کنید. بخش جدید ترتیب کارها را حفظ می‌کند و بخش‌های دیگر مستقل پیش می‌روند.",
     'timeline.moveTaskDates': "جابه‌جایی تاریخ‌های کار",
     'timeline.moveProjectDates': "جابه‌جایی تاریخ‌های پروژه",

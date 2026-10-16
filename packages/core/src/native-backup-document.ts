@@ -1,7 +1,7 @@
 import { MAX_BACKUP_SOURCE_BYTES, serializeBackupData } from './backup-transfer';
 import { base64ToBytes } from './base64-bytes';
 import { runSerializedSyncDocumentWriteOperation } from './data-transfer-transaction';
-import { createImportDiagnostic, createImportDiagnostics, formatImportDiagnostic, type ImportDiagnostic, type ImportDiagnosticCode, type ImportDiagnosticTranslator } from './import-diagnostics';
+import { createImportDiagnostic, createImportDiagnostics, formatImportDiagnostic, importDiagnosticLocationParams, type ImportDiagnostic, type ImportDiagnosticCode, type ImportDiagnosticTranslator } from './import-diagnostics';
 import { DEFAULT_IMPORT_SOURCE_LIMITS } from './import-source-reader';
 import { applyImportSource, parseImportSource, summarizeBackupMerge } from './import-runner';
 import { taskEditValuesEqual } from './json-value-equality';
@@ -113,25 +113,32 @@ const utf8Bytes = (value: string, limit = Number.POSITIVE_INFINITY): number => {
     return bytes;
 };
 /**
- * An import's warnings as stored (plan, receipt, result record): `<code>:<count>` per warning, never the file's words. A warning
- * can quote the source (an unsupported rule, a renamed project's name); RN's toast shows only counts for all but the renamed
- * container, whose names stay in this process's memory ([liveWarnings]) until its toast is built or the operation fails. iOS
+ * An import's warnings as stored (plan, receipt, result record): `<code>:<count>` plus bounded numeric CSV locations, never the file's words. A warning
+ * can quote the source (an unsupported rule, a renamed project's name); RN's toast shows counts and safe CSV positions.
+ * Renamed container names stay in this process's memory ([liveWarnings]) until its toast is built or the operation fails. iOS
  * still reads a string list. A plan, receipt or reply written before this form (English sentences, which can quote the file) is
  * read through [storedReply] at every boundary (plan, receipt, result), so its words are never stored or shown again.
  */
-const WARNING_TOKEN = /^([a-z]+(?:-[a-z]+)*):(\d{1,9})$/u;
-const persistedWarnings = (warnings: readonly string[]): string[] => warnings.map((warning) => WARNING_TOKEN.test(warning) ? warning
-    : createImportDiagnostics([warning], 'warning').map((diagnostic) => `${diagnostic.code}:${typeof diagnostic.params.count === 'number' ? diagnostic.params.count : 1}`)[0]);
+const WARNING_TOKEN = /^([a-z]+(?:-[a-z]+)*):(\d{1,9})(?: \[csv-locations=[\d:,]+; omitted=\d+\])?$/u;
+const persistedWarnings = (warnings: readonly string[]): string[] => warnings.map((warning) => {
+    const token = WARNING_TOKEN.exec(warning);
+    const diagnostic = token ? { code: token[1], params: { count: Number(token[2]) } } : createImportDiagnostic(warning, 'warning');
+    const { code } = diagnostic;
+    const count = typeof diagnostic.params.count === 'number' ? diagnostic.params.count : 1;
+    const { locations, omittedLocations } = code === 'unknown-columns' || code === 'unmapped-date'
+        ? importDiagnosticLocationParams(warning) : {};
+    return `${code}:${count}${typeof locations === 'string' ? ` [csv-locations=${locations}; omitted=${omittedLocations}]` : ''}`;
+});
 /** [reply] with its warnings in the stored form (an older reply's sentences become codes and counts). */
 const storedReply = <R extends NativeBackupDocumentReply>(reply: R): R => 'result' in reply
     ? { ...reply, result: { ...reply.result, warnings: persistedWarnings(reply.result.warnings) } } : reply;
 const COUNTED_WARNINGS = new Set<ImportDiagnosticCode>(['adjusted-records', 'duplicate-identity', 'empty-records', 'invalid-archive-entry',
-    'missing-parent', 'skipped-archive-entry', 'skipped-existing-records', 'unmapped-date', 'unmapped-status', 'unsupported-recurrence']);
+    'missing-parent', 'skipped-archive-entry', 'skipped-existing-records', 'unknown-columns', 'unmapped-date', 'unmapped-status', 'unsupported-recurrence']);
 const warningDiagnostic = (warning: string): ImportDiagnostic => {
     const token = WARNING_TOKEN.exec(persistedWarnings([warning])[0]);
     if (!token) return { code: 'adjusted-records', params: { count: 1 }, severity: 'warning' };
     const code = COUNTED_WARNINGS.has(token[1] as ImportDiagnosticCode) ? token[1] as ImportDiagnosticCode : 'adjusted-records';
-    return { code, params: { count: Number(token[2]) }, severity: 'warning' };
+    return { code, params: { count: Number(token[2]), ...importDiagnosticLocationParams(warning) }, severity: 'warning' };
 };
 /** The last prepared import's full warnings, only when one names a renamed container; one operation at a time. */
 let liveWarnings: { snapshotName: string; tokens: string[]; diagnostics: ImportDiagnostic[] } | null = null;

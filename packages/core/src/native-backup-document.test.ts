@@ -484,6 +484,31 @@ describe('native backup artifacts never hold a legacy AI key (D1a review P2-5)',
 });
 
 describe('native immutable Mindwtr CSV and ZIP import', () => {
+    it('retains safe localized CSV locations through persisted plans, commit and receipt replay', async () => {
+        const env = await open();
+        const source = csvInput('Title,Due Date,private-header\nprivate-title,private-date,private-cell');
+        const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'csv');
+        expect(preview.summary).toContain('row 1, column 3');
+        expect(preview.summary).toContain('row 2, column 2');
+        const prepared = await prepareNativeBackupDocument(env.adapter, source);
+        const plan = JSON.parse(prepared.planJSON);
+        expect(plan.reply.result.warnings).toEqual([
+            'unknown-columns:1 [csv-locations=0:1:3; omitted=0]',
+            'unmapped-date:1 [csv-locations=0:2:2; omitted=0]',
+        ]);
+        const reply = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        resetNativeRequestReceipts();
+        await loadNativeRequestReceipts(env.sql.client, { durableCommands: ['backupDocument'] });
+        const replay = await readNativeBackupDocumentOutcome(env.adapter, reference, prepared.planJSON, NAME);
+        expect(replay).toEqual(reply);
+        const model = buildNativeBackupDocumentResult(replay!, t);
+        expect(model.message).toContain('1 unknown column(s) were ignored.');
+        expect(model.message).toContain('row 1, column 3');
+        expect(model.message).toContain('row 2, column 2');
+        expect(model.message).not.toContain('needed an adjustment');
+        expect(JSON.stringify([plan.reply, reply, replay, model])).not.toContain('private-');
+    });
+
     it.each([
         [1, '1 task was skipped because it was imported earlier and then deleted here; deletions are kept on re-import.'],
         [2, '2 tasks were skipped because they were imported earlier and then deleted here; deletions are kept on re-import.'],

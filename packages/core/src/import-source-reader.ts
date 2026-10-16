@@ -212,11 +212,13 @@ export const parseCsvRows = (
     delimiter: string,
     limits: Readonly<ImportCsvLimits> = DEFAULT_IMPORT_CSV_LIMITS,
     archiveBudget?: ImportArchiveBudget,
+    recordNumbers?: number[],
 ): { hasUnclosedQuote: boolean; rows: string[][] } => {
     const rows: string[][] = [];
     let currentRow: string[] = [];
     let currentCell = '';
     let inQuotes = false;
+    let recordNumber = 0;
 
     const appendCharacter = (character: string): void => {
         if (currentCell.length >= limits.maxCellChars) {
@@ -240,6 +242,7 @@ export const parseCsvRows = (
     };
 
     const finishRow = (): void => {
+        recordNumber += 1;
         if (currentCell.length === 0 && currentRow.every((cell) => cell.length === 0)) {
             currentRow = [];
             return;
@@ -253,6 +256,7 @@ export const parseCsvRows = (
         }
         archiveBudget?.consumeRows();
         rows.push(currentRow);
+        recordNumbers?.push(recordNumber);
         currentRow = [];
     };
 

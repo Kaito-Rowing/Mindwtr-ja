@@ -10,6 +10,11 @@
 //   パーサのコマンドトークン (/due:, @context, #tag, +Project…) は英語のまま。
 // - 数値プレースホルダは詰める ({{count}}件)、英単語は前後に半角スペースを入れる (Dropbox に接続)。
 export const jaOverrides: Record<string, string> = {
+    'settings.importDiagnostics.unknownColumns': "不明な列 {{count}} 件を無視しました。",
+    'settings.importDiagnostics.csvLocation': "{{row}} 行目、{{column}} 列目",
+    'settings.importDiagnostics.csvArchiveLocation': "CSV 項目 {{entry}}、{{row}} 行目、{{column}} 列目",
+    'settings.importDiagnostics.csvLocations': "位置（CSV レコード単位、ヘッダーは 1 行目）：{{locations}}。",
+    'settings.importDiagnostics.csvLocationsMore': "他 {{count}} 件の位置は表示していません。",
     "projects.convertBlocked.destination-section-sequence": "「順次 → セクションごと」に設定した移動先プロジェクトを選んでください。新しいセクションはタスクの順序を維持し、他のセクションは独立して進められます。",
     'timeline.moveTaskDates': "タスクの日付を移動",
     'timeline.moveProjectDates': "プロジェクトの日付を移動",
