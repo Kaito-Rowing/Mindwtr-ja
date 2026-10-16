@@ -1387,9 +1387,12 @@ describe('native backup prepare and commit let their documents go (D1c)', () => 
             refs.expected = new WeakRef(document.expectedCurrent); refs.data = new WeakRef(document.data);
             return save(document);
         };
-        const read = env.adapter.getData.bind(env.adapter);
+        // Every full read runs the adapter's locked body (getDataNow): the stale check inside the document save's own lock
+        // hold, then the store reload through the public getData.
+        const reader = env.adapter as unknown as { getDataNow: SqliteAdapter['getData'] };
+        const read = reader.getDataNow.bind(env.adapter);
         let reads = 0; let alive: Record<string, boolean> | null = null;
-        env.adapter.getData = async (options) => {
+        reader.getDataNow = async (options) => {
             reads += 1;
             if (reads === 2) {
                 // The reload's read: before it builds the new library, nothing of the old operation may still be reachable.
@@ -1424,11 +1427,13 @@ describe('a sync cycle waits behind a native backup commit and its reload (D1c, 
         const env = await open();
         const prepared = await prepareNativeBackupDocument(env.adapter, input());
         const events: string[] = [];
-        const read = env.adapter.getData.bind(env.adapter);
+        // The stale check (read 1) and the reload (read 2) both run the adapter's locked body (getDataNow).
+        const reader = env.adapter as unknown as { getDataNow: SqliteAdapter['getData'] };
+        const read = reader.getDataNow.bind(env.adapter);
         let reads = 0;
         let reloadStarted!: () => void;
         const reloading = new Promise<void>((resolve) => { reloadStarted = resolve; });
-        env.adapter.getData = async (options) => {
+        reader.getDataNow = async (options) => {
             reads += 1;
             if (reads === 2) {
                 events.push('reload');
