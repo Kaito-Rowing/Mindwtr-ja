@@ -2703,6 +2703,24 @@ describe('runSharedSyncCycle', () => {
         expect(sliced.remote).toEqual(atOnce.remote);
     });
 
+    it('hands every attachment phase of one cycle the same transfer admission, and a new cycle a new one (D9b W7)', async () => {
+        const seen: unknown[] = [];
+        const syncAttachments = vi.fn(async (_data: AppData, helpers: { transferAdmission?: unknown; phase?: string }) => {
+            seen.push(helpers.transferAdmission);
+            return null;
+        });
+        const first = createHarness({ remote: createData([createTask('t-remote', 'Remote task')]), io: { syncAttachments } });
+        await first.run();
+        expect(seen.length).toBeGreaterThanOrEqual(2);
+        expect(seen[0]).toBeDefined();
+        expect(seen.every((admission) => admission === seen[0])).toBe(true);
+        const count = seen.length;
+        const second = createHarness({ remote: createData([createTask('t-remote', 'Remote task')]), io: { syncAttachments } });
+        await second.run();
+        expect(seen[count]).toBeDefined();
+        expect(seen[count]).not.toBe(seen[0]);
+    });
+
     it('accepts a covered snapshot instead of aborting when the platform hook approves it', async () => {
         const { harness, hooks, io, run } = createHarness({
             remote: createData([createTask('t-remote', 'Remote task')]),

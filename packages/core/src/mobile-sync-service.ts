@@ -13,6 +13,7 @@ import { SYNC_ENCRYPTION_LOG_EVENTS, buildSyncEncryptionActivationExtra, buildSy
 import { buildSyncLocationScope, isSyncEncryptionPartlyEncryptedError, markRemoteEncryptionDiscovered, SyncEncryptionPartlyEncryptedError, markRemotePlaintextDiscovered, restoreVerifiedRemoteEncryption, syncEncryptedArtifactName, SyncEncryptionRemoteConflictError, SyncEncryptionRemotePlaintextError, SyncEncryptionRemoteVersionUnavailableError, SyncEncryptionTerminalError, SyncEncryptionTransitionIncompleteError, type SyncEncryptionState } from './sync-encryption';
 import { SyncEncryptionNoKeyError, SyncEncryptionStateUnavailableError, type SyncEncryptionStateStore } from './sync-encryption-local-state';
 import type { SyncCryptoPrimitives, SyncKeyMaterial } from './sync-crypto';
+import type { AttachmentTransferAdmission } from './attachment-transfer';
 import type { SyncEncryptionService } from './sync-encryption-service';
 import { acquireSyncRemoteMutationFence, SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS } from './sync-remote-fence';
 import { createDropboxSyncRemoteMutationFencePort, createWebdavSyncRemoteMutationFencePort, webdavMutationFenceUrl } from './sync-remote-fence-providers';
@@ -312,6 +313,7 @@ export type MobileSyncAttachmentsPort = {
     assertRemoteMutationFenceHeld?: (minRemainingMs?: number) => Promise<void>;
     onTransferBatchDeferred?: () => void;
     material?: SyncKeyMaterial;
+    transferAdmission?: AttachmentTransferAdmission;
   }): AttachmentPassResult;
   syncCloud(data: AppData, config: MobileCloudSyncConfig, options: {
     activationProbe: boolean;
@@ -319,6 +321,7 @@ export type MobileSyncAttachmentsPort = {
     assertRemoteMutationFenceHeld?: (minRemainingMs?: number) => Promise<void>;
     phase?: 'prepare' | 'post-merge';
     signal: AbortSignal;
+    transferAdmission?: AttachmentTransferAdmission;
   }): AttachmentPassResult;
   syncDropbox(data: AppData, clientId: string, fetcher: typeof fetch, options: {
     activationProbe: boolean;
@@ -327,11 +330,13 @@ export type MobileSyncAttachmentsPort = {
     signal: AbortSignal;
     assertRemoteMutationFenceHeld?: (minRemainingMs?: number) => Promise<void>;
     material?: SyncKeyMaterial;
+    transferAdmission?: AttachmentTransferAdmission;
   }): AttachmentPassResult;
   syncFile(data: AppData, syncPath: string, signal: AbortSignal, options: {
     activationProbe: boolean;
     phase?: 'prepare' | 'post-merge';
     material?: SyncKeyMaterial;
+    transferAdmission?: AttachmentTransferAdmission;
   }): AttachmentPassResult;
   cleanupTempFiles(): Promise<void>;
   /** #1119: a completed attachment pass is recorded for the stored sync location. */
@@ -2396,6 +2401,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
             phase: helpers.phase,
             assertRemoteMutationFenceHeld: helpers.assertRemoteMutationFenceHeld,
             onTransferBatchDeferred: helpers.onTransferBatchDeferred,
+            transferAdmission: helpers.transferAdmission,
             ...(this.encryptionMaterial ? { material: this.encryptionMaterial } : {}),
           });
         },
@@ -2412,6 +2418,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
             assertRemoteMutationFenceHeld: helpers.assertRemoteMutationFenceHeld,
             phase: helpers.phase,
             signal: this.requestAbortController.signal,
+            transferAdmission: helpers.transferAdmission,
           });
         },
         syncDropboxAttachments: async (data, helpers) => {
@@ -2422,6 +2429,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
             resolveAccessToken: (forceRefresh) => this.resolveDropboxAccessToken(forceRefresh),
             signal: this.requestAbortController.signal,
             assertRemoteMutationFenceHeld: helpers.assertRemoteMutationFenceHeld,
+            transferAdmission: helpers.transferAdmission,
             ...(this.encryptionMaterial ? { material: this.encryptionMaterial } : {}),
           });
         },
@@ -2434,6 +2442,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
             {
               activationProbe: helpers.activationProbe,
               phase: helpers.phase,
+              transferAdmission: helpers.transferAdmission,
               ...(this.encryptionMaterial ? { material: this.encryptionMaterial } : {}),
             },
           );

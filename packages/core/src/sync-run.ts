@@ -26,7 +26,7 @@ import { SyncRemoteWriteConflict, type SyncFollowUpReason } from './sync-run-por
 import { LocalSyncAbort, captureInMemoryAppDataSnapshot, ensureFreshLocalSyncSnapshot, getInMemoryAppDataSnapshot, shouldRunAttachmentCleanup } from './sync-client-helpers';
 import { hasFreshAttachmentCleanupWork } from './attachment-cleanup';
 import { NativeAttachmentCleanupUnconfirmedError } from './native-attachment-cleanup';
-import { isAttachmentUploadTooLargeError, isCloudHostUploadLimitError, isWebdavHostUploadLimitError } from './attachment-transfer';
+import { createAttachmentTransferAdmission, isAttachmentUploadTooLargeError, isCloudHostUploadLimitError, isWebdavHostUploadLimitError } from './attachment-transfer';
 import { isSyncEncryptionPartlyEncryptedError } from './sync-encryption';
 import { isHostResponseTooLargeError } from './http-utils';
 import { flushPendingSave, useTaskStore } from './store';
@@ -592,6 +592,14 @@ class SharedSyncRunMachine {
     private carriedIdleSnapshot = takeIdleCycleSnapshot();
     /** A host that binds sliceYield (cooperative.ts) gets this run's long passes in slices; every other host at once. */
     private readonly slicer: Slicer | undefined;
+    // One run is one cycle: every attachment phase of it shares this admission (design D9b W7).
+    private readonly transferAdmission = createAttachmentTransferAdmission((attachment, direction) => {
+        this.notifier.logInfo('Attachment transfer already started this cycle; skipped', {
+            attachmentId: attachment.id,
+            kind: direction,
+            releaseCheck: 'v1.3.7/attachment-download-reuse',
+        });
+    });
     private readonly state: SharedSyncRunState = {
         backend: 'off',
         cloudProvider: 'selfhosted',
@@ -862,6 +870,7 @@ class SharedSyncRunMachine {
             ...(activationContinuation ? { activationContinuation: true } : {}),
             onTransferBatchDeferred,
             phase,
+            ...(this.options.activationProbe === true ? {} : { transferAdmission: this.transferAdmission }),
         };
     }
 

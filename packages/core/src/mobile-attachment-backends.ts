@@ -25,6 +25,7 @@ import {
   validateAttachmentHash,
   WebdavHostUploadLimitError,
   type AttachmentDownloadExpectation,
+  type AttachmentTransferAdmission,
 } from './attachment-transfer';
 import { markAttachmentUnrecoverable, validateAttachmentForUpload } from './attachment-validation';
 import { cloudAttachmentExists, cloudGetFile, cloudPutFile, isBlockedAttachmentContentRefusal } from './cloud';
@@ -160,6 +161,8 @@ export type MobileAttachmentBackendsHost = {
 
 export type CloudAttachmentSyncOptions = {
   activationProbe?: boolean;
+  /** The sync cycle's transfer admission, shared by its attachment phases (design D9b W7). */
+  transferAdmission?: AttachmentTransferAdmission;
   assertCurrent?: () => void;
   assertRemoteMutationFenceHeld?: (minRemainingMs?: number) => Promise<void>;
   phase?: 'prepare' | 'post-merge';
@@ -168,6 +171,8 @@ export type CloudAttachmentSyncOptions = {
 
 export type DropboxAttachmentSyncOptions = {
   activationProbe?: boolean;
+  /** The sync cycle's transfer admission, shared by its attachment phases (design D9b W7). */
+  transferAdmission?: AttachmentTransferAdmission;
   phase?: 'prepare' | 'post-merge';
   resolveAccessToken?: DropboxAccessTokenResolver;
   signal?: AbortSignal;
@@ -177,6 +182,11 @@ export type DropboxAttachmentSyncOptions = {
 };
 
 const CLOUD_REMOTE_MUTATION_REQUEST_HORIZON_MS = 35_000;
+
+/** The local file name a WebDAV or Dropbox download installs under: the cloud key's last segment. */
+const webdavDownloadFilename = (attachment: Attachment): string => (
+  attachment.cloudKey?.split('/').pop() || `${attachment.id}${extractExtension(attachment.title)}`
+);
 
 // Thrown only for a local file that has become unreadable (e.g. a revoked SAF permission).
 // Caught inside `onUpload`'s own catch below so `markAttachmentUnrecoverable`'s mutation is
@@ -222,6 +232,32 @@ const isAbortLikeError = (error: unknown, signal?: AbortSignal): boolean => (
 export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHost) => {
   const core: MobileAttachmentBackendsCoreFunctions = { ...CORE_FUNCTIONS, ...host.core };
   const { fs, files, common, installer } = host;
+
+  /**
+   * Design D9b W7: before a GET, a file already at the download's deterministic target path is adopted when its SHA-256
+   * (the host's native hash, never bytes read into JS) equals the attachment's fileHash. That is a download the last cycle
+   * installed before its save was refused. No fileHash, another hash or no native hash: the ordinary GET runs.
+   */
+  const adoptVerifiedDownloadTarget = async (attachment: Attachment, targetPath: string): Promise<boolean> => {
+    const expected = attachment.fileHash?.trim().toLowerCase();
+    if (!isSha256Hex(expected) || !targetPath) return false;
+    if (await files.getLocalAttachmentPresence(targetPath).catch(() => 'unreadable' as const) !== 'present') return false;
+    let actual: string | undefined;
+    try {
+      actual = (await installer.hashAttachmentFileGeneration(targetPath)).sha256?.trim().toLowerCase();
+    } catch {
+      return false;
+    }
+    if (actual !== expected) return false;
+    attachment.uri = targetPath;
+    attachment.localStatus = 'available';
+    files.logAttachmentInfo('Attachment download reused a verified local file', {
+      attachmentId: attachment.id,
+      kind: 'adopted',
+      releaseCheck: 'v1.3.7/attachment-download-reuse',
+    });
+    return true;
+  };
   const maxWebdavBufferedUploadBytes = host.maxWebdavBufferedUploadBytes;
   const maxCloudBufferedUploadBytes = host.maxCloudBufferedUploadBytes;
   if (maxWebdavBufferedUploadBytes !== undefined
@@ -246,6 +282,8 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
       material?: SyncKeyMaterial | null;
       assertRemoteMutationFenceHeld?: (minRemainingMs?: number) => Promise<void>;
       onTransferBatchDeferred?: () => void;
+      /** The sync cycle's transfer admission, shared by its attachment phases (design D9b W7). */
+      transferAdmission?: AttachmentTransferAdmission;
     } = {}
   ): Promise<AppData | false> => {
     assertAttachmentSyncNotAborted(signal);
@@ -471,6 +509,10 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
       attachmentsById,
       getLocalFilePresence: files.getLocalAttachmentPresence,
       deferUploads: options.phase === 'prepare',
+      admission: options.activationProbe ? undefined : options.transferAdmission,
+      adoptExistingDownload: options.activationProbe || !attachmentsDir ? undefined : (attachment) => (
+        adoptVerifiedDownloadTarget(attachment, `${attachmentsDir}${webdavDownloadFilename(attachment)}`)
+      ),
       getLocalFileStat: (path) => files.statAttachmentFile(path),
       computeLocalFileHash: (path) => files.computeAttachmentFileHash(path),
       contentChangePhase: options.phase,
@@ -726,10 +768,9 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
           cloudKey,
         );
         await validateAttachmentHash(attachment, bytes);
-        const filename = cloudKey.split('/').pop() || `${attachment.id}${extractExtension(attachment.title)}`;
         const targetUri = resolveAttachmentDownloadTargetPath(
           attachment,
-          `${attachmentsDir}${filename}`,
+          `${attachmentsDir}${webdavDownloadFilename(attachment)}`,
           expectation,
         );
         const installed = await common.installAttachmentDownloadBytes(
@@ -1042,6 +1083,10 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
         && mayUploadLocalFile
       ) {
         if (!files.shouldAttemptAttachmentUpload(attachment)) continue;
+        if (!options.activationProbe && options.transferAdmission) {
+          if (options.transferAdmission.has(attachment, 'upload')) continue;
+          options.transferAdmission.record(attachment, 'upload');
+        }
         let shouldPropagateError = false;
         let snapshot: Awaited<ReturnType<typeof common.createMobileAttachmentUploadSnapshot>> = null;
         try {
@@ -1354,6 +1399,7 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
         && (!attachment.cloudKey || attachment.pendingContentUpload === true)
         && mayUploadLocalFile
       ) {
+        if (!options.activationProbe && options.transferAdmission?.has(attachment, 'upload')) continue;
         if (!options.activationProbe && uploadCount >= DROPBOX_ATTACHMENT_MAX_UPLOADS_PER_SYNC) {
           if (!uploadLimitLogged) {
             uploadLimitLogged = true;
@@ -1364,6 +1410,7 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
           continue;
         }
         uploadCount += 1;
+        if (!options.activationProbe) options.transferAdmission?.record(attachment, 'upload');
         let snapshot: Awaited<ReturnType<typeof common.createMobileAttachmentUploadSnapshot>> = null;
         try {
           assertDropboxNotAborted(options.signal);
@@ -1486,6 +1533,17 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
       if (attachment.kind !== 'file') continue;
       if (attachment.deletedAt) continue;
       if (!attachment.cloudKey) continue;
+      if (
+        !options.activationProbe
+        && expectation.kind === 'absent'
+        && !recoverPendingUpload
+        && await adoptVerifiedDownloadTarget(attachment, `${attachmentsDir}${webdavDownloadFilename(attachment)}`)
+      ) {
+        await common.refreshBespokeAttachmentDownloadedContentStat(attachment, attachment.uri!);
+        recordPatch(attachment);
+        continue;
+      }
+      if (!options.activationProbe && options.transferAdmission?.has(attachment, 'download')) continue;
       if (!options.activationProbe && downloadCount >= DROPBOX_ATTACHMENT_MAX_DOWNLOADS_PER_SYNC) {
         files.logAttachmentInfo('Dropbox attachment download limit reached', {
           limit: String(DROPBOX_ATTACHMENT_MAX_DOWNLOADS_PER_SYNC),
@@ -1493,6 +1551,7 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
         break;
       }
       downloadCount += 1;
+      if (!options.activationProbe) options.transferAdmission?.record(attachment, 'download');
 
       const cloudKey = attachment.cloudKey;
       try {
@@ -1517,10 +1576,9 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
           cloudKey,
         );
         await validateAttachmentHash(attachment, bytes);
-        const filename = cloudKey.split('/').pop() || `${attachment.id}${extractExtension(attachment.title)}`;
         const targetUri = resolveAttachmentDownloadTargetPath(
           attachment,
-          `${attachmentsDir}${filename}`,
+          `${attachmentsDir}${webdavDownloadFilename(attachment)}`,
           expectation,
         );
         assertDropboxNotAborted(options.signal);
@@ -1598,6 +1656,8 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
       phase?: 'prepare' | 'post-merge';
       /** #1056: seal bytes before they land in the sync folder. Null = encryption off. */
       material?: SyncKeyMaterial | null;
+      /** The sync cycle's transfer admission, shared by its attachment phases (design D9b W7). */
+      transferAdmission?: AttachmentTransferAdmission;
     } = {}
   ): Promise<AppData | false> => {
     class FileSyncGenerationIntegrityError extends Error {
@@ -1726,6 +1786,7 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
       attachmentsById,
       getLocalFilePresence: files.getLocalAttachmentPresence,
       deferUploads: options.phase === 'prepare',
+      admission: options.activationProbe ? undefined : options.transferAdmission,
       getLocalFileStat: (path) => files.statAttachmentFile(path),
       computeLocalFileHash: (path) => computeManagedAttachmentFileHash(path),
       maxBufferedUploadBytes: core.maxFileSyncBufferedPlaintextBytes(),

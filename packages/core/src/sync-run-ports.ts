@@ -7,6 +7,7 @@ import type { buildMergeSummaryLog } from './sync-log-utils';
 import type { SyncRemoteMutationFenceLease } from './sync-remote-fence';
 import type { SyncCryptoKdfParams, SyncKeyMaterial } from './sync-crypto';
 import type { SyncEncryptionRemoteReadLogInput } from './sync-encryption-diagnostics';
+import type { AttachmentTransferAdmission } from './attachment-transfer';
 
 /**
  * ADR 0014 — shared sync orchestration ports.
@@ -321,6 +322,11 @@ export type SyncRunAttachmentHelpers = {
      * simply leaves check-on-touch detection off, same as before this field existed.
      */
     phase?: SyncRunAttachmentPhase;
+    /**
+     * The cycle's transfer admission (design D9b W7): one object for every attachment phase of one sync cycle, so a
+     * transfer one phase started is not repeated by a later phase of that cycle. Absent on activation probes.
+     */
+    transferAdmission?: AttachmentTransferAdmission;
 };
 
 export type SyncRunAttachmentCleanupContext = {

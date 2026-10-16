@@ -228,7 +228,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'inputX', 'inputY', 'inputWidth', 'inputHeight', 'inputBottom',
     // sqlite-adapter-lock reuses operation above; waitMs is how long the caller waited for the lock.
     'waitMs',
-    // attachment-remote-winner-pending: the attachment's own id, no title or path.
+    // attachment-remote-winner-pending and attachment-download-reuse (which reuses kind above): the attachment's own id, no title or path.
     'attachmentId',
 ];
 
