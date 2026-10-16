@@ -284,6 +284,10 @@ try {
     const stacked = rows.every((row, index) => box(row)[3] - box(row)[1] === box(rows[0])[3] - box(rows[0])[1]
         && (index === 0 || box(row)[1] === box(rows[index - 1])[3]));
     check(rows.length >= 3 && stacked, `(4) the all-day card stacks ${rows.length} rows, each node its own row's box (${rows.map((row) => row.bounds).join(' ')})`);
+    // Core's order (calendar-day-items.ts: same start, then title by localeCompare): Holiday, Offsite, Retreat.
+    const expected = [EVENTS.allDay, ...EVENTS.moreAllDay].sort((a, b) => a.localeCompare(b));
+    const shown = rows.map((row) => row['content-desc']).filter((label) => expected.includes(label));
+    check(JSON.stringify(shown) === JSON.stringify(expected), `(4) the feed's all-day rows show in core's order (${shown.join(', ')})`);
     for (const title of EVENTS.moreAllDay) {
         const row = eventBlock(nodes, title) ?? fail(`no "${title}" on screen`);
         const sheet = await tapExpecting(row, (current) => Boolean(tagged(current, 'calendar-sheet')), `${title}'s sheet`);
