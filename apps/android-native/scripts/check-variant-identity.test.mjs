@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
-import { buildShortcuts, buildShortcutsManifest } from './build-shortcuts.mjs';
+import { buildLinkSchemeXml, buildShortcuts, buildShortcutsManifest } from './build-shortcuts.mjs';
 import { buildManifest as buildWidgetManifest } from './build-widgets.mjs';
 import { identityProblems } from './check-variant-identity.mjs';
 
@@ -44,11 +44,12 @@ async function variant(type, { pkg, scheme, label, rn } = TYPES[type]) {
     return {
         manifest: new Builder().buildObject({ manifest: root }),
         shortcuts: buildShortcuts(scheme, pkg).xml,
+        linkScheme: buildLinkSchemeXml(scheme),
         buildConfig: `  public static final boolean RN_STORAGE = ${rn};\n  public static final String URL_SCHEME = "${scheme}";\n`
             + `  public static final String ANALYTICS_HEARTBEAT_URL = "${type === 'release' ? HEARTBEAT : ''}";\n`,
     };
 }
-const problems = (type, files) => identityProblems(type, files.manifest, files.shortcuts, files.buildConfig);
+const problems = (type, files) => identityProblems(type, files.manifest, files.shortcuts, files.buildConfig, files.linkScheme);
 
 test('every build type\'s identity passes', async () => {
     for (const type of Object.keys(TYPES)) assert.deepEqual([type, await problems(type, await variant(type))], [type, []]);
@@ -89,6 +90,12 @@ test('widget providers that are not exported, or lack their filter or provider X
         const copy = structuredClone(root);
         breakIt(copy.application[0].receiver.find((receiver) => receiver.$['android:name'] === providers[0].$['android:name']));
         assert.notDeepEqual(await problems('release', { ...files, manifest: new Builder().buildObject({ manifest: copy }) }), []);
+    }
+});
+
+test('a detailed capture link of RN\'s scheme in a build with its own is caught', async () => {
+    for (const type of ['debug', 'upgradetest', 'benchmark']) {
+        assert.notDeepEqual(await problems(type, { ...await variant(type), linkScheme: buildLinkSchemeXml('mindwtr') }), [], type);
     }
 });
 

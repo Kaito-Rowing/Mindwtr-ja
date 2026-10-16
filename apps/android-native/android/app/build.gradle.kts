@@ -183,18 +183,20 @@ androidComponents {
         variant.applicationId.set(rnPackage)
         variant.outputs.forEach { it.versionCode.set(rnVersionCode.toInt()); it.versionName.set(rnVersion) }
     }
-    // checkVariantIdentity: each variant's identity as its merged manifest, shortcuts and BuildConfig have it (scripts/check-variant-identity.mjs).
+    // checkVariantIdentity: each variant's identity as its merged manifest, shortcuts, BuildConfig and link scheme have it
+    // (scripts/check-variant-identity.mjs).
     val identityScript = rootProject.projectDir.resolve("../scripts/check-variant-identity.mjs").path
     onVariants { variant ->
         val manifest = variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)
         val shortcuts = layout.buildDirectory.file("generated/shortcuts/${variant.buildType}/res/xml/mindwtr_shortcuts.xml")
+        val linkScheme = layout.buildDirectory.file("generated/shortcuts/${variant.buildType}/res/values/mindwtr_link_scheme.xml")
         val name = variant.name.replaceFirstChar(Char::uppercase)
         val buildConfig = layout.buildDirectory.file("generated/source/buildConfig/${variant.flavorName}/${variant.buildType}/tech/dongdongbh/mindwtr/pilot/BuildConfig.java")
         val check = tasks.register<Exec>("check${name}Identity") {
             dependsOn("buildShortcuts", "generate${name}BuildConfig")
             inputs.file(manifest)
             commandLine("node", identityScript, variant.buildType!!)
-            argumentProviders.add(CommandLineArgumentProvider { listOf(manifest, shortcuts, buildConfig).map { it.get().asFile.path } })
+            argumentProviders.add(CommandLineArgumentProvider { listOf(manifest, shortcuts, buildConfig, linkScheme).map { it.get().asFile.path } })
         }
         tasks.named("checkVariantIdentity") { dependsOn(check) }
     }

@@ -263,6 +263,11 @@ describe('native host contract: resolveNativeEntryPoint', () => {
         // RN's DetailedCaptureActivity sends this link; the widget's own quick capture link keeps the capture screen.
         expect(link('mindwtr:///capture-quick?mode=text&entry=details')).toEqual({ ...none, route: '/inbox', capture: { text: '', options: fresh() } });
         expect(link('mindwtr:///capture-quick?mode=text')).toEqual({ ...none, captureModal: { params: { origin: 'system' } } });
+        // Each native build's DetailedCaptureActivity link is of that build's scheme (mindwtr_link_scheme, build-shortcuts.mjs).
+        for (const scheme of ['mindwtr-native-dev', 'mindwtr-upgradetest', 'mindwtr', 'mindwtr-native-bench']) {
+            expect(value(host.resolveNativeEntryPoint({ kind: 'link', url: `${scheme}:///capture-quick?mode=text&entry=details`, scheme })))
+                .toEqual({ ...none, route: '/inbox', capture: { text: '', options: fresh() } });
+        }
     });
 
     it('opens nothing for another scheme, and refuses malformed input', () => {

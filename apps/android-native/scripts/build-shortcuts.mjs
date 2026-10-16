@@ -2,7 +2,8 @@
 // apps/mobile/plugins/android-app-shortcuts.js (its own builder, so the ids, capabilities, labels and Add task's target, RN's quick
 // capture dialog QuickCaptureActivity in the build's package, stay RN's), with one change: RN's mindwtr:/// links use the build's
 // scheme (the development build's mindwtr-native-dev, so RN's app on the same phone keeps mindwtr://). Each build type also gets
-// the manifest entry RN's plugin adds for a shortcut's own target, its detailed capture activity (#1333), as one more manifest.
+// the manifest entry RN's plugin adds for a shortcut's own target, its detailed capture activity (#1333), as one more manifest, and
+// the build's scheme as RN's widget module's mindwtr_link_scheme, so that activity's link is one this build opens.
 // Usage: node build-shortcuts.mjs <out dir> <build type>=<scheme>@<applicationId> ...
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -36,6 +37,13 @@ export function buildShortcutsManifest() {
     return new Builder({ renderOpts: { pretty: true, indent: '    ' }, xmldec: { version: '1.0', encoding: 'utf-8' } }).buildObject(manifest);
 }
 
+/** The build's [scheme] as the widget module's mindwtr_link_scheme (an app resource overrides the module's RN default). */
+export const buildLinkSchemeXml = (scheme) => `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mindwtr_link_scheme" translatable="false">${scheme}</string>
+</resources>
+`;
+
 const [out, ...variants] = process.argv.slice(2);
 if (import.meta.url === pathToFileURL(process.argv[1]).href && (!out || variants.length === 0)) {
     throw new Error('usage: build-shortcuts.mjs <out dir> <build type>=<scheme>@<applicationId> ...');
@@ -50,4 +58,5 @@ for (const variant of import.meta.url === pathToFileURL(process.argv[1]).href ? 
     writeFileSync(resolve(res, 'xml', 'mindwtr_shortcuts.xml'), xml);
     writeFileSync(resolve(res, 'values', 'mindwtr_shortcuts_strings.xml'), strings);
     writeFileSync(resolve(out, type, 'AndroidManifest.xml'), buildShortcutsManifest());
+    writeFileSync(resolve(res, 'values', 'mindwtr_link_scheme.xml'), buildLinkSchemeXml(scheme));
 }

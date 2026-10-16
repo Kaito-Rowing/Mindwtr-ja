@@ -6,14 +6,15 @@
 // shortcut target; and the heartbeat endpoint, RN's (app.config.ts's rule and default) in a release and none in any other build.
 // Every build type has its own package and link scheme, so only a release can replace RN's app or answer RN's links. The launcher
 // alias opens a declared activity, the widget providers are exported with their filter and provider XML, and the shortcuts are
-// RN's (build-shortcuts.mjs's output for the build). Gradle's checkVariantIdentity runs it for each variant (app/build.gradle.kts);
+// RN's (build-shortcuts.mjs's output for the build), with the build's scheme as RN's widget module's mindwtr_link_scheme. Gradle's checkVariantIdentity runs it for each variant (app/build.gradle.kts);
 // it prints every problem and fails on any; check-variant-identity.test.mjs proves what it catches.
 // Usage: node check-variant-identity.mjs <build type> <merged AndroidManifest.xml> <mindwtr_shortcuts.xml> <BuildConfig.java>
+//     <mindwtr_link_scheme.xml>
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { buildShortcuts } from './build-shortcuts.mjs';
+import { buildLinkSchemeXml, buildShortcuts } from './build-shortcuts.mjs';
 
 const require = createRequire(import.meta.url);
 const { parseStringPromise } = require('xml2js');
@@ -49,8 +50,8 @@ const field = (buildConfig, name) => {
     return match ? (match[1].startsWith('"') ? JSON.parse(match[1]) : match[1]) : undefined;
 };
 
-/** Every problem with one variant's identity: [type] its build type; [manifest], [shortcuts] and [buildConfig] the files' text. */
-export async function identityProblems(type, manifest, shortcuts, buildConfig) {
+/** Every problem with one variant's identity: [type] its build type; the rest, its files' text. */
+export async function identityProblems(type, manifest, shortcuts, buildConfig, linkScheme) {
     const problems = [];
     const expect = (what, actual, wanted) => { if (actual !== wanted) problems.push(`${what} is ${actual}, not ${wanted}`); };
     const root = (await parseStringPromise(manifest)).manifest;
@@ -103,6 +104,8 @@ export async function identityProblems(type, manifest, shortcuts, buildConfig) {
     expect('supportsRtl', attr(application, 'supportsRtl'), 'true');
     // RN's shortcuts for this build (their ids, labels, targets and links), each target a component the build declares.
     if (shortcuts !== buildShortcuts(identity.scheme, identity.pkg).xml) problems.push('the shortcuts are not RN\'s for this build');
+    // The detailed capture activity's link (RN's DetailedCaptureActivity) is of the build's own scheme, which core opens.
+    if (linkScheme !== buildLinkSchemeXml(identity.scheme)) problems.push(`mindwtr_link_scheme is not ${identity.scheme}`);
     const components = [...(application.activity ?? []), ...(application['activity-alias'] ?? [])].map((node) => attr(node, 'name'));
     for (const [, target] of shortcuts.matchAll(/android:targetClass="([^"]*)"/g)) {
         if (!components.includes(target)) problems.push(`the shortcut target ${target} is not declared`);
@@ -112,7 +115,7 @@ export async function identityProblems(type, manifest, shortcuts, buildConfig) {
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     const [type, ...paths] = process.argv.slice(2);
-    if (paths.length !== 3) throw new Error('usage: check-variant-identity.mjs <build type> <merged manifest> <shortcuts xml> <BuildConfig.java>');
+    if (paths.length !== 4) throw new Error('usage: check-variant-identity.mjs <build type> <merged manifest> <shortcuts xml> <BuildConfig.java> <link scheme xml>');
     const [manifestPath] = paths;
     const problems = await identityProblems(type, ...paths.map((path) => readFileSync(path, 'utf8')));
     for (const problem of problems) console.error(`${type}: ${problem}`);
