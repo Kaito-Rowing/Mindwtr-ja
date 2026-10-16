@@ -3753,8 +3753,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const { buildManifest, buildTileSource, TILE_PACKAGE } = await import('./build-widgets.mjs');
     // The debug build's entries: one more manifest of each variant, so the debug build type's own manifest stays.
     const overlay = buildManifest('tech.dongdongbh.mindwtr.nativeclient.dev', 'Mindwtr Native Dev');
-    assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /onVariants \{ variant ->\s+variant\.sources\.manifests\?\.addStaticManifestFile\(layout\.buildDirectory\.file\("generated\/widgets\/\$\{variant\.buildType\}\/AndroidManifest\.xml"\)/);
-    const merged = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + overlay;
+    // RN's widget components (buildWidgets) and its shortcuts' target activity (buildShortcuts), both registered for every variant.
+    assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /onVariants \{ variant ->\s+listOf\("widgets", "shortcuts"\)\.forEach \{ set ->\s+variant\.sources\.manifests\?\.addStaticManifestFile\(layout\.buildDirectory\.file\("generated\/\$set\/\$\{variant\.buildType\}\/AndroidManifest\.xml"\)/);
+    const { buildShortcutsManifest } = await import('./build-shortcuts.mjs');
+    const merged = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + overlay + buildShortcutsManifest();
     const exportedNames = (text) => [...text.matchAll(/<(?:activity-alias|activity|receiver|service|provider)\s[^>]*?android:name="([^"]+)"[^>]*?android:exported="true"/g)].map((m) => m[1]).sort();
     assert.deepEqual(exportedNames(merged), ['${applicationId}.MainActivity', '.ReminderRescheduleReceiver', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
         'tech.dongdongbh.mindwtr.androidwidget.CompactWidgetProvider', 'tech.dongdongbh.mindwtr.androidwidget.QuickCaptureWidgetProvider',
