@@ -589,9 +589,8 @@ private fun WeekView(model: InboxViewModel, view: JSONObject, content: JSONObjec
             // RN's first place: the selected day (else today) at the left, as far as the week allows.
             val start = days.indexOfFirst { it.getBoolean("selected") }.takeIf { it >= 0 } ?: days.indexOfFirst { it.getBoolean("isToday") }.coerceAtLeast(0)
             val availablePx = with(density) { (maxWidth - GUTTER).toPx() }
-            LaunchedEffect(days.firstOrNull()?.getString("key"), visible, columnPx) {
-                across.settleTo(weekStartScroll(start, days.size, columnPx, availablePx))
-            }
+            val keys = weekScrollKeys(days.firstOrNull()?.getString("key"), visible, start, days.size, columnPx, availablePx)
+            LaunchedEffect(*keys.toTypedArray()) { across.settleTo(keys.last() as Int) }
             val pin = Modifier.offset { IntOffset(across.value, 0) }.zIndex(5f).background(c.bg)
             Row(Modifier.fillMaxHeight().horizontalScroll(across, flingBehavior = snap)) {
                 Column(Modifier.width(GUTTER + column * days.size).fillMaxHeight()) {
@@ -655,7 +654,6 @@ private fun WeekAllDay(model: InboxViewModel, items: List<JSONObject>, width: Dp
     }
 }
 
-/** A scroll to [target] once the content is laid out (its extent known). */
 /**
  * RN's getCalendarWeekInitialScrollX: day [start] at the left, as far as the week allows. Deadline weeks widen the columns past
  * the density, so the bound is the week's overflow of the viewport, not the density's day count (which opened on Tuesday).
@@ -663,6 +661,14 @@ private fun WeekAllDay(model: InboxViewModel, items: List<JSONObject>, width: Dp
 internal fun weekStartScroll(start: Int, dayCount: Int, columnPx: Float, availablePx: Float): Int =
     minOf(start * columnPx, (dayCount * columnPx - availablePx).coerceAtLeast(0f)).roundToInt()
 
+/**
+ * When the week scrolls itself to its first place (RN's getCalendarWeekAutoScrollKey): a new week, density, or start offset. The
+ * offset carries the selected day (Today in the same week) and the viewport (a resize under deadline-wide columns).
+ */
+internal fun weekScrollKeys(firstDay: String?, visible: Int, start: Int, dayCount: Int, columnPx: Float, availablePx: Float): List<Any?> =
+    listOf(firstDay, visible, weekStartScroll(start, dayCount, columnPx, availablePx))
+
+/** A scroll to [target] once the content is laid out (its extent known). */
 private suspend fun androidx.compose.foundation.ScrollState.settleTo(target: Int) {
     if (target <= 0) { scrollTo(0); return }
     snapshotFlow { maxValue }.first { it > 0 }
