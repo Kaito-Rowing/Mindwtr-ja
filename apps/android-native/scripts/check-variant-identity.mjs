@@ -4,12 +4,16 @@
 // its BuildConfig opens (RN's files in a release and the upgrade harness build, the dev database elsewhere); and RN's backup rules,
 // which back up and transfer nothing; RN's microphone permission and right-to-left layout; and a declared component behind every
 // shortcut target; and the heartbeat endpoint, RN's (app.config.ts's rule and default) in a release and none in any other build.
-// Gradle's checkVariantIdentity runs it for each variant (app/build.gradle.kts); it prints every problem and fails on any.
+// Every build type has its own package and link scheme, so only a release can replace RN's app or answer RN's links. The launcher
+// alias opens a declared activity, the widget providers are exported with their filter and provider XML, and the shortcuts are
+// RN's (build-shortcuts.mjs's output for the build). Gradle's checkVariantIdentity runs it for each variant (app/build.gradle.kts);
+// it prints every problem and fails on any; check-variant-identity.test.mjs proves what it catches.
 // Usage: node check-variant-identity.mjs <build type> <merged AndroidManifest.xml> <mindwtr_shortcuts.xml> <BuildConfig.java>
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { buildShortcuts } from './build-shortcuts.mjs';
 
 const require = createRequire(import.meta.url);
 const { parseStringPromise } = require('xml2js');
@@ -24,6 +28,17 @@ const rnHeartbeatUrl = () => {
     return (process.env.ANALYTICS_HEARTBEAT_URL ?? '').trim() || fallback;
 };
 const resXml = (name) => readFileSync(resolve(import.meta.dirname, `../android/app/src/main/res/xml/${name}.xml`), 'utf8');
+
+// Each build type's package and link scheme (app/build.gradle.kts's packages and urlSchemes; upgradetest's and release's ids are set
+// in its androidComponents).
+const BENCHMARK = { pkg: 'tech.dongdongbh.mindwtr.nativeclient.dev.benchmark', scheme: 'mindwtr-native-bench' };
+const IDENTITIES = {
+    debug: { pkg: 'tech.dongdongbh.mindwtr.nativeclient.dev', scheme: 'mindwtr-native-dev' },
+    upgradetest: { pkg: 'tech.dongdongbh.mindwtr.upgradetest', scheme: 'mindwtr-upgradetest' },
+    release: { pkg: app.android.package, scheme: 'mindwtr' },
+    benchmark: BENCHMARK, benchmarkSeed: BENCHMARK, benchmarkTrace: BENCHMARK,
+};
+const WIDGET_PROVIDERS = ['TasksWidgetProvider', 'CompactWidgetProvider', 'QuickCaptureWidgetProvider'].map((name) => `tech.dongdongbh.mindwtr.androidwidget.${name}`);
 
 const attr = (node, name) => node?.$?.[`android:${name}`];
 const named = (nodes, name) => (nodes ?? []).find((node) => attr(node, 'name') === name);
@@ -41,8 +56,11 @@ export async function identityProblems(type, manifest, shortcuts, buildConfig) {
     const root = (await parseStringPromise(manifest)).manifest;
     const application = root.application[0];
     const pkg = root.$.package;
+    const identity = IDENTITIES[type];
+    if (!identity) return [`unknown build type ${type}`];
+    expect('the package', pkg, identity.pkg);
+    expect('URL_SCHEME', field(buildConfig, 'URL_SCHEME'), identity.scheme);
     if (type === 'release') {
-        expect('the package', pkg, app.android.package);
         expect('the versionCode', attr(root, 'versionCode'), String(app.android.versionCode));
         expect('the versionName', attr(root, 'versionName'), app.version);
         expect('the app label', attr(application, 'label'), app.name);
@@ -58,27 +76,33 @@ export async function identityProblems(type, manifest, shortcuts, buildConfig) {
     if (!alias) problems.push(`no ${pkg}.MainActivity`);
     else {
         expect('the MainActivity alias exported', attr(alias, 'exported'), 'true');
+        if (!named(application.activity, attr(alias, 'targetActivity'))) problems.push(`the alias opens ${attr(alias, 'targetActivity')}, which is not declared`);
+        const schemes = (alias['intent-filter'] ?? []).filter((filter) => named(filter.action, 'android.intent.action.VIEW'))
+            .flatMap((filter) => (filter.data ?? []).map((data) => attr(data, 'scheme')));
+        expect('the alias link schemes', JSON.stringify(schemes), JSON.stringify([identity.scheme]));
         if (type === 'release') expect('the MainActivity alias label', attr(alias, 'label'), app.name);
         if (!(alias['intent-filter'] ?? []).some((filter) => named(filter.action, 'android.intent.action.MAIN') && named(filter.category, 'android.intent.category.LAUNCHER'))) {
             problems.push(`${pkg}.MainActivity is not the launcher entry`);
         }
     }
-    const receivers = [
-        'tech.dongdongbh.mindwtr.androidwidget.TasksWidgetProvider',
-        'tech.dongdongbh.mindwtr.androidwidget.CompactWidgetProvider',
-        'tech.dongdongbh.mindwtr.androidwidget.QuickCaptureWidgetProvider',
-        `${pkg}.widget.TasksWidget`,
-        'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
-        'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver',
-    ];
-    for (const name of receivers) if (!named(application.receiver, name)) problems.push(`no receiver ${name}`);
+    // A placed widget's provider: exported, updated by the widget host, with its provider XML.
+    for (const name of [...WIDGET_PROVIDERS, `${pkg}.widget.TasksWidget`]) {
+        const provider = named(application.receiver, name);
+        if (!provider) { problems.push(`no widget provider ${name}`); continue; }
+        expect(`${name} exported`, attr(provider, 'exported'), 'true');
+        if (!(provider['intent-filter'] ?? []).some((filter) => named(filter.action, 'android.appwidget.action.APPWIDGET_UPDATE'))) problems.push(`${name} takes no widget updates`);
+        if (!attr(named(provider['meta-data'], 'android.appwidget.provider'), 'resource')) problems.push(`${name} has no provider XML`);
+    }
+    for (const name of ['tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver', 'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver']) {
+        if (!named(application.receiver, name)) problems.push(`no receiver ${name}`);
+    }
     if (!named(application.service, 'tech.dongdongbh.mindwtr.quicksettings.CaptureTileService')) problems.push('no Quick Settings tile service');
     expect('RN_STORAGE', field(buildConfig, 'RN_STORAGE'), String(type === 'release' || type === 'upgradetest'));
     expect('ANALYTICS_HEARTBEAT_URL', field(buildConfig, 'ANALYTICS_HEARTBEAT_URL'), type === 'release' ? rnHeartbeatUrl() : '');
     if (!named(root['uses-permission'], 'android.permission.RECORD_AUDIO')) problems.push('RECORD_AUDIO is not declared');
     expect('supportsRtl', attr(application, 'supportsRtl'), 'true');
-    // A shortcut's explicit intent opens this app's own component.
-    for (const [, target] of shortcuts.matchAll(/android:targetPackage="([^"]*)"/g)) expect('a shortcut targetPackage', target, pkg);
+    // RN's shortcuts for this build (their ids, labels, targets and links), each target a component the build declares.
+    if (shortcuts !== buildShortcuts(identity.scheme, identity.pkg).xml) problems.push('the shortcuts are not RN\'s for this build');
     const components = [...(application.activity ?? []), ...(application['activity-alias'] ?? [])].map((node) => attr(node, 'name'));
     for (const [, target] of shortcuts.matchAll(/android:targetClass="([^"]*)"/g)) {
         if (!components.includes(target)) problems.push(`the shortcut target ${target} is not declared`);

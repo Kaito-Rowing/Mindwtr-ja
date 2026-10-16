@@ -186,7 +186,6 @@ androidComponents {
     // checkVariantIdentity: each variant's identity as its merged manifest, shortcuts and BuildConfig have it (scripts/check-variant-identity.mjs).
     val identityScript = rootProject.projectDir.resolve("../scripts/check-variant-identity.mjs").path
     onVariants { variant ->
-        if (variant.buildType !in setOf("debug", "release", "upgradetest", "benchmark")) return@onVariants
         val manifest = variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)
         val shortcuts = layout.buildDirectory.file("generated/shortcuts/${variant.buildType}/res/xml/mindwtr_shortcuts.xml")
         val name = variant.name.replaceFirstChar(Char::uppercase)
