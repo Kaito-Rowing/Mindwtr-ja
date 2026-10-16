@@ -81,6 +81,11 @@ if (execFileSync(aapt2, ['dump', 'packagename', apk], { encoding: 'utf8' }).trim
     process.exit(2);
 }
 const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
+/**
+ * The native test builds other device checks and measurements leave in front: every id under this prefix (build.gradle.kts:
+ * the dev build `.nativeclient.dev` and its benchmark builds `.nativeclient.dev.benchmark`). Never dd's own apps.
+ */
+const NATIVE_TEST_PREFIX = 'tech.dongdongbh.mindwtr.nativeclient';
 const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/data/local/tmp/mindwtr-d1-ui.xml';
 // A short folder name: an Android property value holds at most 91 characters, and the picker's starting URI names it.
@@ -922,6 +927,15 @@ const cleanup = cleanupOnExit([
 try {
     console.log(`device: ${sh('getprop ro.product.model')} / Android ${sh('getprop ro.build.version.release')} (API ${sh('getprop ro.build.version.sdk')})`);
     console.log(`apk: ${apk}\nrun: ${run}`);
+    // A native test build another check left in front (step 0 runs outside the batch runner, which would press Home first):
+    // it goes the way the checks stop an app (device.stopApp), and the phone shows Home. Any other app in front still stops
+    // the check; dd's own apps are never touched.
+    const leftInFront = /(tech\.dongdongbh\.mindwtr\.nativeclient[\w.]*)\//.exec(front())?.[1];
+    if (leftInFront?.startsWith(NATIVE_TEST_PREFIX)) {
+        await connect({ serial, pkg: leftInFront, uiFile: UI_FILE }).stopApp();
+        sh('input keyevent KEYCODE_HOME');
+        await sleep(1000);
+    }
     const beforeInstall = front();
     if (!beforeInstall.includes(`${PKG}/`) && !beforeInstall.includes(`${home}/`)) throw new Stopped(`another app is in front: ${beforeInstall.trim()}`);
     for (const name of PROPS) setProp(name, '');
