@@ -77,6 +77,7 @@ import {
   getCalendarNavigationSwipeDirection,
   getCalendarWeekColumnWidth,
   getCalendarWeekContentClampX,
+  getCalendarWeekAutoScrollKey,
   getCalendarWeekInitialScrollX,
   getCalendarWeekMaxScrollX,
 } from './calendar/calendar-view-mode';
@@ -531,9 +532,13 @@ export function CalendarView() {
       return;
     }
 
-    const weekStartTime = weekDays[0]?.getTime() ?? 0;
-    const selectedTime = selectedDate?.getTime() ?? 0;
-    const autoScrollKey = `${weekStartTime}:${selectedTime}:${calendarWeekVisibleDays}:${weekColumnWidth}`;
+    const autoScrollKey = getCalendarWeekAutoScrollKey({
+      availableWidth: weekAvailableColumnWidth,
+      columnWidth: weekColumnWidth,
+      selectedDate,
+      visibleDays: calendarWeekVisibleDays,
+      weekDays,
+    });
     if (lastWeekAutoScrollKeyRef.current === autoScrollKey) return;
     lastWeekAutoScrollKeyRef.current = autoScrollKey;
 

@@ -128,6 +128,24 @@ export const getCalendarWeekInitialScrollX = ({
 };
 
 /**
+ * When the week scrolls itself to its first place: a new week, selected day, density or column width, and a new viewport,
+ * since a resize under deadline-wide columns moves the furthest start (the selected day could sit past the right edge).
+ */
+export const getCalendarWeekAutoScrollKey = ({
+  availableWidth,
+  columnWidth,
+  selectedDate,
+  visibleDays,
+  weekDays,
+}: {
+  availableWidth: number;
+  columnWidth: number;
+  selectedDate: Date | null;
+  visibleDays: number;
+  weekDays: Date[];
+}): string => `${weekDays[0]?.getTime() ?? 0}:${selectedDate?.getTime() ?? 0}:${visibleDays}:${columnWidth}:${availableWidth}`;
+
+/**
  * The furthest x the week canvas can scroll to: canvas width (pinned gutter +
  * one column per day) minus the viewport. Density changes resize the columns,
  * and a scroll offset taken under a wider canvas strands the view past the
