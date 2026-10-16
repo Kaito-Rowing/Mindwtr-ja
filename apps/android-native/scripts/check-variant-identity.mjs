@@ -6,7 +6,8 @@
 // shortcut target; and the heartbeat endpoint, RN's (app.config.ts's rule and default) in a release and none in any other build.
 // Every build type has its own package and link scheme, so only a release can replace RN's app or answer RN's links. The launcher
 // alias opens a declared activity, the widget providers are exported with their filter and provider XML, and the shortcuts are
-// RN's (build-shortcuts.mjs's output for the build), with the build's scheme as RN's widget module's mindwtr_link_scheme. Gradle's checkVariantIdentity runs it for each variant (app/build.gradle.kts);
+// RN's (build-shortcuts.mjs's output for the build), with the build's scheme as RN's widget module's mindwtr_link_scheme. The
+// permissions are RN's, so an upgrade keeps every grant. Gradle's checkVariantIdentity runs it for each variant (app/build.gradle.kts);
 // it prints every problem and fails on any; check-variant-identity.test.mjs proves what it catches.
 // Usage: node check-variant-identity.mjs <build type> <merged AndroidManifest.xml> <mindwtr_shortcuts.xml> <BuildConfig.java>
 //     <mindwtr_link_scheme.xml>
@@ -39,6 +40,12 @@ const IDENTITIES = {
     release: { pkg: app.android.package, scheme: 'mindwtr' },
     benchmark: BENCHMARK, benchmarkSeed: BENCHMARK, benchmarkTrace: BENCHMARK,
 };
+// The v1.3.6 RN APK's permissions (Play and FOSS alike), but its package's own DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION. Play's
+// install referrer permission is the one addition the native Play build keeps: PlayServices.kt reads the referrer.
+const RN_PERMISSIONS = ['ACCESS_NETWORK_STATE', 'ACCESS_WIFI_STATE', 'FOREGROUND_SERVICE', 'INTERNET', 'MODIFY_AUDIO_SETTINGS',
+    'POST_NOTIFICATIONS', 'READ_CALENDAR', 'RECEIVE_BOOT_COMPLETED', 'RECORD_AUDIO', 'SCHEDULE_EXACT_ALARM', 'USE_BIOMETRIC',
+    'USE_FINGERPRINT', 'VIBRATE', 'WAKE_LOCK', 'WRITE_CALENDAR'].map((name) => `android.permission.${name}`);
+const PLAY_REFERRER = 'com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE';
 const WIDGET_PROVIDERS = ['TasksWidgetProvider', 'CompactWidgetProvider', 'QuickCaptureWidgetProvider'].map((name) => `tech.dongdongbh.mindwtr.androidwidget.${name}`);
 
 const attr = (node, name) => node?.$?.[`android:${name}`];
@@ -100,7 +107,9 @@ export async function identityProblems(type, manifest, shortcuts, buildConfig, l
     if (!named(application.service, 'tech.dongdongbh.mindwtr.quicksettings.CaptureTileService')) problems.push('no Quick Settings tile service');
     expect('RN_STORAGE', field(buildConfig, 'RN_STORAGE'), String(type === 'release' || type === 'upgradetest'));
     expect('ANALYTICS_HEARTBEAT_URL', field(buildConfig, 'ANALYTICS_HEARTBEAT_URL'), type === 'release' ? rnHeartbeatUrl() : '');
-    if (!named(root['uses-permission'], 'android.permission.RECORD_AUDIO')) problems.push('RECORD_AUDIO is not declared');
+    const permissions = (root['uses-permission'] ?? []).map((node) => attr(node, 'name'))
+        .filter((name) => name !== `${pkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` && name !== PLAY_REFERRER).sort();
+    expect('the permissions', JSON.stringify(permissions), JSON.stringify(RN_PERMISSIONS));
     expect('supportsRtl', attr(application, 'supportsRtl'), 'true');
     // RN's shortcuts for this build (their ids, labels, targets and links), each target a component the build declares.
     if (shortcuts !== buildShortcuts(identity.scheme, identity.pkg).xml) problems.push('the shortcuts are not RN\'s for this build');

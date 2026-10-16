@@ -152,6 +152,11 @@
     <!-- RN's microphone (app.json's permissions): kept declared so an upgrade keeps the user's grant; RN's quick capture dialog
          (QuickCaptureActivity, compiled in :widget) records with it. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- The rest of RN's permissions (its libraries' normal ones), so the upgrade keeps RN's permission set: Wi-Fi state, audio
+         settings for recording, vibration. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- RN's notifications (app.json's permissions): reminders and the context automation notification (CoreNotifications.kt). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- RN's alarm library's (plugins/patch-alarm-notification-gradle.js): reminders come back after a reboot, and are exact where

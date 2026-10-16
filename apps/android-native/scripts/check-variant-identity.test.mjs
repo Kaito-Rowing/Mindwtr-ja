@@ -33,7 +33,10 @@ async function variant(type, { pkg, scheme, label, rn } = TYPES[type]) {
         const extra = (await parseStringPromise(overlay)).manifest.application[0];
         for (const [kind, nodes] of Object.entries(extra)) if (kind !== '$') application[kind] = [...(application[kind] ?? []), ...nodes];
     }
-    // The merger's work: the package, the version, and names relative to the namespace made whole.
+    // The merger's work: the libraries' permissions (WorkManager's, biometric's, AndroidX core's), the package, the version, and
+    // names relative to the namespace made whole.
+    root['uses-permission'].push(...['android.permission.FOREGROUND_SERVICE', 'android.permission.WAKE_LOCK',
+        'android.permission.USE_FINGERPRINT', `${pkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`].map((name) => ({ $: { 'android:name': name } })));
     Object.assign(root.$, { package: pkg, 'android:versionCode': type === 'release' ? String(app.android.versionCode) : '1',
         'android:versionName': type === 'release' ? app.version : 'native-dev' });
     for (const nodes of Object.values(application)) {
@@ -97,6 +100,13 @@ test('a detailed capture link of RN\'s scheme in a build with its own is caught'
     for (const type of ['debug', 'upgradetest', 'benchmark']) {
         assert.notDeepEqual(await problems(type, { ...await variant(type), linkScheme: buildLinkSchemeXml('mindwtr') }), [], type);
     }
+});
+
+test('a permission RN declares and the build drops is caught', async () => {
+    const files = await variant('release');
+    const dropped = files.manifest.replace(/<uses-permission android:name="android\.permission\.RECORD_AUDIO"\/>/, '');
+    assert.notEqual(dropped, files.manifest);
+    assert.notDeepEqual(await problems('release', { ...files, manifest: dropped }), []);
 });
 
 test('missing or changed shortcuts are caught', async () => {
