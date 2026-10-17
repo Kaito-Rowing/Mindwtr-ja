@@ -1532,6 +1532,8 @@ export const csOverrides: Record<string, string> = {
         'agenda.reviewDue': 'Revize na řadě',
         'agenda.reviewDueProjects': 'Projekty k revizi',
         'agenda.upcoming': 'Nadcházející',
+        'widget.upcomingStarts': 'Začíná',
+        'widget.upcomingReturns': 'Vrací se',
         'agenda.allClear': 'Vše čisté!',
         'agenda.noTasks': 'Teď není na co se soustředit. Označte úkol hvězdičkou nebo mu nastavte termín a objeví se tady.',
         'agenda.emptyStart': 'Zatím žádné úkoly. Přidejte vše, co máte v hlavě, do Schránky a roztřiďte to později.',

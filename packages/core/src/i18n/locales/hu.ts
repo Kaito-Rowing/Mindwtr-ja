@@ -1815,6 +1815,8 @@ export const huOverrides: Record<string, string> = {
     'agenda.reviewDue': 'Áttekintés esedékes',
     'agenda.reviewDueProjects': 'Áttekintendő projektek',
     'agenda.upcoming': 'Közelgő',
+    'widget.upcomingStarts': 'Kezdés',
+    'widget.upcomingReturns': 'Visszatérés',
     'agenda.laterToday': 'Ma később',
     'agenda.allClear': 'Minden tiszta!',
     'agenda.noTasks': 'Jelenleg nincs mire fókuszálni. Csillagozzon meg egy feladatot, vagy adjon neki határidőt, és megjelenik itt.',

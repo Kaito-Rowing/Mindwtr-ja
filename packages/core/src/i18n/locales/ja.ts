@@ -1878,6 +1878,8 @@ export const jaOverrides: Record<string, string> = {
         'agenda.reviewDue': 'レビュー予定',
         'agenda.reviewDueProjects': 'レビューするプロジェクト',
         'agenda.upcoming': 'これから',
+        'widget.upcomingStarts': '開始',
+        'widget.upcomingReturns': '再表示',
         'agenda.laterToday': '今日このあと',
         'agenda.allClear': 'すべて片付きました！',
         'agenda.noTasks': '今フォーカスするものはありません。タスクにスターを付けるか期限を設定すると、ここに表示されます。',

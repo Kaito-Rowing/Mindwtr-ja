@@ -87,10 +87,6 @@ class WidgetConfigureActivity : AppCompatActivity() {
     palette?.let { applyPalette(it, textColor) }
   }
 
-  private fun fixedOptions(titles: Map<String, String>): List<Pair<String, String>> =
-    listOf("focus" to "Focus", "inbox" to "Inbox", "next" to "Next Actions", "waiting" to "Waiting For", "someday" to "Someday/Maybe")
-      .map { (id, fallback) -> id to (titles[id] ?: fallback) }
-
   private fun save(group: RadioGroup) {
     val checked = group.findViewById<RadioButton>(group.checkedRadioButtonId) ?: return
     val listId = checked.tag as? String ?: WidgetListStore.DEFAULT_LIST
@@ -115,5 +111,9 @@ class WidgetConfigureActivity : AppCompatActivity() {
 
   companion object {
     const val EXTRA_DROPDOWN = "tech.dongdongbh.mindwtr.androidwidget.dropdown"
+
+    internal fun fixedOptions(titles: Map<String, String>): List<Pair<String, String>> =
+      listOf("focus" to "Focus", "inbox" to "Inbox", "next" to "Next Actions", "upcoming" to "Upcoming", "waiting" to "Waiting For", "someday" to "Someday/Maybe")
+        .map { (id, fallback) -> id to (titles[id] ?: fallback) }
   }
 }

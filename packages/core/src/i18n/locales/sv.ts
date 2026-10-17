@@ -1839,6 +1839,8 @@ export const svOverrides: Record<string, string> = {
         'agenda.reviewDue': 'Granskning förfaller',
         'agenda.reviewDueProjects': 'Projekt att granska',
         'agenda.upcoming': 'Kommande',
+        'widget.upcomingStarts': 'Börjar',
+        'widget.upcomingReturns': 'Återkommer',
         'agenda.laterToday': 'Senare idag',
         'agenda.allClear': 'Allt klart!',
         'agenda.noTasks': 'Inget att fokusera på just nu. Stjärnmärk en uppgift eller ge den ett förfallodatum så visas den här.',

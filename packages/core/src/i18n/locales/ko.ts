@@ -1704,6 +1704,8 @@ export const koOverrides: Record<string, string> = {
         'agenda.reviewDue': '검토 기한',
         'agenda.reviewDueProjects': '검토할 프로젝트',
         'agenda.upcoming': '예정',
+        'widget.upcomingStarts': '시작',
+        'widget.upcomingReturns': '다시 표시',
         'agenda.allClear': '모두 완료!',
         'agenda.noTasks': '지금은 집중할 항목이 없습니다. 할 일에 별표를 하거나 마감일을 지정하면 여기에 표시됩니다.',
         'agenda.emptyStart': '아직 할 일이 없습니다. 떠오르는 일을 수집함에 추가하고 나중에 정리하세요.',

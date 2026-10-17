@@ -4,7 +4,7 @@ Native Android home-screen widgets, the floating quick-capture dialog, and the
 opt-in automation capture receiver.
 Every widget string comes from the payload `apps/mobile/lib/widget-service.ts`
 publishes (`AndroidTasksWidgetPayload`) into SharedPreferences
-`mindwtr_widget` / `payload`; Kotlin only lays it out.
+`mindwtr_widget` / `payload`; Kotlin lays it out and refreshes Upcoming dates.
 
 ## Kinds
 
@@ -24,7 +24,7 @@ intent.
 
 The Tasks widget reads optional payload sections and supports a list chooser.
 Its default Focus projection combines Today's Focus and Today. A user's
-explicit choice of Focus, Inbox, Next Actions, Waiting, Someday, or a saved
+explicit choice of Focus, Inbox, Next Actions, Upcoming, Waiting, Someday, or a saved
 filter remains selected across payload updates. The title opens the displayed
 list in the app; blank background, space below the visible rows, section
 headers, and the empty message open Focus regardless of the selected list. A
@@ -77,9 +77,21 @@ the separate chooser chevron follows the muted-text token for contrast instead
 of retaining a fixed or semi-transparent accent tint.
 
 Every Android snapshot includes bounded Focus, Inbox, Next Actions, Waiting,
-and Someday lists, even before a Tasks widget is placed. After the app has
+Upcoming, and Someday lists, even before a Tasks widget is placed. After the app has
 published once, a newly placed widget can select those cached lists without
 another app opening. Saved-filter lists remain published on demand.
+
+Upcoming is a preview of the shared Focus seven-day list. Its rows have no
+completion ring and open their task directly. Each row supplies `upcomingDate`
+(a calendar date, floating local datetime or canonical UTC instant) and `upcomingLabel` (localized Starts
+or Returns). Every render excludes dates outside tomorrow through local day
+seven, and formats absolute dates in the current Android locale and time zone.
+Empty Upcoming stays selected. Tasks and legacy Tasks providers listen for
+date, clock, and timezone changes and request Android's inexact 30-minute widget
+updates; Compact and Quick Capture keep their existing cadence. Launcher and
+power-management delays can postpone redraws. Native refresh only filters the
+cached rows: newly eligible tasks and data/filter changes require the app's
+next payload publication.
 
 ## Picker previews
 

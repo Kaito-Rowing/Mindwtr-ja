@@ -1262,6 +1262,8 @@ export const arOverrides: Record<string, string> = {
         'agenda.reviewDue': 'مراجعة مستحقة',
         'agenda.reviewDueProjects': 'مشاريع للمراجعة',
         'agenda.upcoming': 'القادمة',
+        'widget.upcomingStarts': 'تبدأ',
+        'widget.upcomingReturns': 'تعود',
         'agenda.allClear': 'كل شيء واضح!',
         'agenda.noTasks': 'لا شيء للتركيز عليه الآن. ضع نجمة على مهمة أو حدّد لها موعدًا نهائيًا لتظهر هنا.',
         'agenda.emptyStart': 'لا توجد مهام بعد. أضف ما يدور في ذهنك إلى البريد الوارد ورتّبه لاحقًا.',

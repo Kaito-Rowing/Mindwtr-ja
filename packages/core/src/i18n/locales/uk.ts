@@ -1816,6 +1816,8 @@ export const ukOverrides: Record<string, string> = {
     "agenda.reviewDue": "Перевірити термін",
     "agenda.reviewDueProjects": "Проекти для перегляду",
     "agenda.upcoming": "Майбутні",
+    'widget.upcomingStarts': 'Починається',
+    'widget.upcomingReturns': 'Повертається',
     "agenda.laterToday": "Пізніше сьогодні",
     "agenda.allClear": "Все ясно!",
     "agenda.noTasks": "Зараз немає на чому зосередитися. Позначте завдання зірочкою або вкажіть термін виконання, і воно з’явиться тут.",

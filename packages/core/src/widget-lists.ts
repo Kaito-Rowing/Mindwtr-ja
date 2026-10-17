@@ -8,7 +8,7 @@ import type { AppData, SavedFilter, Task, TaskSortBy } from './types';
 // each in the order its screen uses, plus any saved filter. `focus` is the
 // sectioned Focus layout widget-payload.ts already builds; the others are defined
 // here, once. A single project is covered by a saved filter scoped to it.
-export const WIDGET_FIXED_LIST_IDS = ['focus', 'inbox', 'next', 'waiting', 'someday'] as const;
+export const WIDGET_FIXED_LIST_IDS = ['focus', 'inbox', 'next', 'waiting', 'someday', 'upcoming'] as const;
 export type WidgetFixedListId = (typeof WIDGET_FIXED_LIST_IDS)[number];
 export const WIDGET_SAVED_FILTER_LIST_PREFIX = 'filter:';
 export const WIDGET_SAVED_FILTER_OPTION_CAP = 50;
@@ -19,6 +19,7 @@ const LIST_TITLE_KEYS: Record<WidgetFixedListId, [string, string]> = {
     next: ['nav.next', 'Next Actions'],
     waiting: ['nav.waiting', 'Waiting For'],
     someday: ['nav.someday', 'Someday/Maybe'],
+    upcoming: ['agenda.upcoming', 'Upcoming'],
 };
 
 // The fixed list titles plus the group label the picker puts above its
@@ -95,6 +96,8 @@ export function buildWidgetTaskList(listId: string, context: WidgetListContext):
             // The app's Next Actions list is the Focus screen's Next section
             // (sequential-project rules included).
             return { title: titles.next, tasks: focusLists.nextActions };
+        case 'upcoming':
+            return { title: titles.upcoming, tasks: focusLists.upcoming };
         case 'waiting':
             return { title: titles.waiting, tasks: activeTasks.filter((task) => task.status === 'waiting').sort(compareWaitingTasks) };
         case 'someday':

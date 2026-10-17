@@ -1921,6 +1921,8 @@ export const daOverrides: Record<string, string> = {
     'agenda.reviewDue': 'Gennemgang forfalder',
     'agenda.reviewDueProjects': 'Projekter til gennemgang',
     'agenda.upcoming': 'Kommende',
+    'widget.upcomingStarts': 'Starter',
+    'widget.upcomingReturns': 'Vender tilbage',
     'agenda.laterToday': 'Senere i dag',
     'agenda.allClear': 'Alt klart!',
     'agenda.noTasks':

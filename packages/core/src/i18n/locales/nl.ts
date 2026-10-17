@@ -1,5 +1,7 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const nlOverrides: Record<string, string> = {
+    'widget.upcomingStarts': 'Begint',
+    'widget.upcomingReturns': 'Keert terug',
     "projects.convertBlocked.destination-section-sequence": "Kies een doelproject met Sequentieel → Binnen secties. De nieuwe sectie behoudt de taakvolgorde; andere secties kunnen onafhankelijk doorgaan.",
     'timeline.moveTaskDates': "Taakdatums verplaatsen",
     'timeline.moveProjectDates': "Projectdatums verplaatsen",

@@ -8,6 +8,7 @@ import { TASK_LIST_WINDOWING_PROPS } from '@/components/task-list-windowing';
 import { useLanguage } from '@/contexts/language-context';
 import { useTheme } from '@/contexts/theme-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
+import { useLocalDayKey } from '@/hooks/use-local-day-key';
 import { resolveWidgetListDestination } from '@/lib/widget-list-destination';
 import { logInfo } from '@/lib/app-log';
 import { openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigation';
@@ -27,7 +28,8 @@ export default function WidgetListScreen() {
   const { language, t } = useLanguage();
   const { isDark } = useTheme();
   const tc = useThemeColors();
-  const list = useMemo(() => resolveWidgetListDestination(data, language, id), [data, id, language]);
+  const dayKey = useLocalDayKey(id === 'upcoming');
+  const list = useMemo(() => resolveWidgetListDestination(data, language, id), [data, id, language, dayKey]);
   const title = list?.title ?? t('search.noResults');
   const available = Boolean(list);
   useEffect(() => {

@@ -1742,6 +1742,8 @@ export const viOverrides: Record<string, string> = {
         'agenda.reviewDue': 'Xem lại đến hạn',
         'agenda.reviewDueProjects': 'Dự án cần xem lại',
         'agenda.upcoming': 'Sắp tới',
+        'widget.upcomingStarts': 'Bắt đầu',
+        'widget.upcomingReturns': 'Trở lại',
         'agenda.allClear': 'Tất cả ổn!',
         'agenda.noTasks': 'Hiện chưa có gì để tập trung. Gắn sao hoặc đặt hạn cho một nhiệm vụ để nó hiển thị ở đây.',
         'agenda.emptyStart': 'Chưa có nhiệm vụ nào. Thêm những gì bạn đang nghĩ vào Hộp thư đến rồi sắp xếp sau.',

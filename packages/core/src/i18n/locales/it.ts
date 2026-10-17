@@ -1369,6 +1369,8 @@ export const itOverrides: Record<string, string> = {
         'agenda.reviewDue': 'Revisione in scadenza',
         'agenda.reviewDueProjects': 'Progetti da rivedere',
         'agenda.upcoming': 'In arrivo',
+        'widget.upcomingStarts': 'Inizia',
+        'widget.upcomingReturns': 'Ritorna',
         'agenda.allClear': 'Tutto a posto!',
         'agenda.noTasks': 'Niente su cui concentrarsi al momento. Aggiungi una stella o una scadenza a un’attività e apparirà qui.',
         'agenda.emptyStart': 'Ancora nessuna attività. Aggiungi quello che hai in mente in Entrata e sistemalo più tardi.',

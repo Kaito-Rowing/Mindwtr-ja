@@ -1211,6 +1211,8 @@ export const hiOverrides: Record<string, string> = {
         'agenda.reviewDue': 'समीक्षा देय',
         'agenda.reviewDueProjects': 'समीक्षा हेतु परियोजनाएं',
         'agenda.upcoming': 'आगामी',
+        'widget.upcomingStarts': 'शुरू',
+        'widget.upcomingReturns': 'वापसी',
         'agenda.allClear': 'सब साफ!',
         'agenda.noTasks': 'अभी फ़ोकस करने के लिए कुछ नहीं है. किसी कार्य पर स्टार लगाएँ या नियत तारीख दें, वह यहाँ दिखेगा.',
         'agenda.emptyStart': 'अभी कोई कार्य नहीं है. जो भी मन में है उसे इनबॉक्स में जोड़ें और बाद में व्यवस्थित करें.',

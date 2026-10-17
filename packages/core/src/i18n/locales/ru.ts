@@ -1207,6 +1207,8 @@ export const ruOverrides: Record<string, string> = {
         'agenda.reviewDue': 'Срок рассмотрения',
         'agenda.reviewDueProjects': 'Проекты для рассмотрения',
         'agenda.upcoming': 'Предстоящие',
+        'widget.upcomingStarts': 'Начало',
+        'widget.upcomingReturns': 'Возвращается',
         'agenda.allClear': 'Все ясно!',
         'agenda.noTasks': 'Сейчас не на чем сфокусироваться. Отметьте задачу звёздочкой или задайте срок — и она появится здесь.',
         'agenda.emptyStart': 'Задач пока нет. Добавьте всё, что держите в голове, во Входящие и разберите позже.',

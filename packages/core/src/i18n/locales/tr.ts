@@ -1224,6 +1224,8 @@ export const trOverrides: Record<string, string> = {
         'agenda.reviewDue': 'Son İnceleme Tarihi',
         'agenda.reviewDueProjects': 'İncelenecek projeler',
         'agenda.upcoming': 'Yaklaşan',
+        'widget.upcomingStarts': 'Başlar',
+        'widget.upcomingReturns': 'Geri döner',
         'agenda.allClear': 'Hepsi Açık!',
         'agenda.noTasks': 'Şu anda odaklanacak bir şey yok. Bir göreve yıldız ekleyin veya son tarih verin; burada görünecek.',
         'agenda.emptyStart': 'Henüz görev yok. Aklınızdakileri Gelen kutusuna ekleyin, sonra düzenlersiniz.',
