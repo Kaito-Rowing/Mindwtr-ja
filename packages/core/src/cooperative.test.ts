@@ -19,33 +19,7 @@ import type { AppData, Task } from './types';
 // D9: every pass a sync cycle runs in slices must return exactly what the same work returns at once. The slicer here yields
 // after every step, the most interleaved run there can be.
 
-const AT = '2026-07-01T00:00:00.000Z';
-const LATER = '2026-07-02T00:00:00.000Z';
-const task = (i: number, extra: Partial<Task> = {}): Task => ({
-    id: `t-${String(i).padStart(4, '0')}`, title: `Task ${i} ✓`, status: (['inbox', 'next', 'waiting', 'someday', 'done'] as const)[i % 5],
-    tags: [`#t${i % 7}`], contexts: [`@c${i % 4}`], createdAt: AT, updatedAt: AT, rev: 1, revBy: 'local',
-    ...(i % 9 === 0 ? { checklist: [{ id: `c-${i}`, title: 'step', isCompleted: i % 2 === 0 }] } : {}),
-    ...(i % 11 === 0 ? { attachments: [{ id: `a-${i}`, kind: 'link', title: 'x', uri: 'https://example.com', createdAt: AT, updatedAt: AT }] } : {}),
-    ...(i % 13 === 0 ? { projectId: 'p-1' } : {}),
-    ...extra,
-} as Task);
-const library = (tasks: Task[]): AppData => ({
-    tasks,
-    projects: [{ id: 'p-1', title: 'Project', status: 'active', color: '#94a3b8', createdAt: AT, updatedAt: AT, rev: 1, revBy: 'local' }],
-    sections: [], areas: [{ id: 'a-1', name: 'Area', order: 0, createdAt: AT, updatedAt: AT, rev: 1, revBy: 'local' }], people: [],
-    settings: { language: 'en' },
-} as AppData);
-const local = library(Array.from({ length: 400 }, (_, i) => task(i)));
-// The other device: a third edited, some deleted, some only there; the first ones missing there.
-const incoming = library([
-    ...Array.from({ length: 380 }, (_, j) => {
-        const i = j + 20;
-        if (i % 3 === 0) return task(i, { title: `Task ${i} (remote)`, rev: 2, revBy: 'remote', updatedAt: LATER });
-        if (i % 17 === 0) return task(i, { deletedAt: LATER, rev: 2, revBy: 'remote', updatedAt: LATER });
-        return task(i);
-    }),
-    ...Array.from({ length: 30 }, (_, j) => task(1000 + j, { revBy: 'remote' })),
-]);
+import { brokenMerge, incoming, local, MERGE_AT } from './__fixtures__/cooperative-library';
 
 const everyStep = () => {
     let yields = 0;
@@ -58,34 +32,58 @@ const sliced = async <T>(pass: CooperativePass<T>) => {
     return { value, yields: yields() };
 };
 
+// The same work computed on origin/main 04696d554, before the passes existed (scratch golden.ts over this fixture). Each pass,
+// run at once and in slices, must still give these: a pass that drops an item at a slice boundary changes them.
+const GOLDEN = {
+    merge: 'stable-v2:129664:cbf134c08e697d71',
+    changeFingerprint: 'change-v1:16920:16a930ded3a5d43d',
+    remoteDocument: 'stable-v2:85953:3ce35ba1d83ccb85',
+    validation: [
+            'tasks[63].updatedAt must be a valid ISO timestamp',
+            'tasks[127].updatedAt must be a valid ISO timestamp',
+            'tasks[191].updatedAt must be a valid ISO timestamp',
+            'tasks[255].updatedAt must be a valid ISO timestamp',
+            'tasks[319].updatedAt must be a valid ISO timestamp',
+            'tasks[383].updatedAt must be a valid ISO timestamp',
+            'tasks[63].projectId must reference an existing project',
+            'tasks[127].projectId must reference an existing project',
+            'tasks[191].projectId must reference an existing project',
+            'tasks[255].projectId must reference an existing project',
+            'tasks[319].projectId must reference an existing project',
+            'tasks[383].projectId must reference an existing project',
+    ],
+};
+
 describe('cooperative passes give the result of the same work done at once', () => {
     it('merge', async () => {
-        const at = { nowIso: '2026-07-03T00:00:00.000Z' };
-        const { value, yields } = await sliced(mergeAppDataWithStatsPass(local, incoming, at));
+        const { value, yields } = await sliced(mergeAppDataWithStatsPass(local, incoming, MERGE_AT));
         expect(yields).toBeGreaterThan(10);
-        expect(value).toEqual(mergeAppDataWithStats(local, incoming, at));
-        expect(runToEnd(mergeAppDataWithStatsPass(local, incoming, at))).toEqual(value);
+        expect(value.data.tasks).toHaveLength(430);
+        expect(computeStableValueFingerprint({ data: value.data, stats: value.stats })).toBe(GOLDEN.merge);
+        expect(mergeAppDataWithStats(local, incoming, MERGE_AT)).toEqual(value);
     });
 
     it('validation, a valid and an invalid document', async () => {
-        const merged = mergeAppDataWithStats(local, incoming).data;
-        const broken = { ...merged, tasks: merged.tasks.map((row, i) => (i % 50 === 0 ? { ...row, projectId: 'missing', updatedAt: 'x' } : row)) };
-        for (const data of [merged, broken]) {
-            const { value, yields } = await sliced(validateMergedSyncDataPass(data));
-            expect(yields).toBeGreaterThan(1);
-            expect(value).toEqual(validateMergedSyncData(data));
-        }
-        expect(validateMergedSyncData(broken).length).toBeGreaterThan(0);
+        const merged = mergeAppDataWithStats(local, incoming, MERGE_AT).data;
+        const broken = brokenMerge(merged);
+        expect((await sliced(validateMergedSyncDataPass(merged))).value).toEqual([]);
+        const { value, yields } = await sliced(validateMergedSyncDataPass(broken));
+        expect(yields).toBeGreaterThan(1);
+        expect(value).toEqual(GOLDEN.validation);
+        expect(validateMergedSyncData(broken)).toEqual(GOLDEN.validation);
     });
 
     it('remote document, stable JSON and fingerprints', async () => {
         const doc = toRemoteSyncDocument(local);
-        expect((await sliced(sanitizeAppDataForRemotePass(local))).value).toEqual(sanitizeAppDataForRemote(local));
+        const sanitized = (await sliced(sanitizeAppDataForRemotePass(local))).value;
+        expect(computeStableValueFingerprint(sanitized)).toBe(GOLDEN.remoteDocument);
+        expect(sanitized).toEqual(sanitizeAppDataForRemote(local));
         expect((await sliced(toStableSyncJsonPass(doc))).value).toBe(toStableSyncJson(doc));
         expect((await sliced(remoteSyncDocumentStableJsonPass(local))).value).toBe(toStableSyncJson(doc));
         const json = toStableSyncJson(doc);
-        expect((await sliced(fingerprintStableSyncJsonPass(json))).value).toBe(computeStableValueFingerprint(doc));
-        expect((await sliced(computeSyncChangeFingerprintPass(local))).value).toBe(computeSyncChangeFingerprint(local));
+        expect((await sliced(fingerprintStableSyncJsonPass(json))).value).toBe(GOLDEN.remoteDocument);
+        expect((await sliced(computeSyncChangeFingerprintPass(local))).value).toBe(GOLDEN.changeFingerprint);
+        expect(computeSyncChangeFingerprint(local)).toBe(GOLDEN.changeFingerprint);
     });
 
     it('a copy of the library', async () => {

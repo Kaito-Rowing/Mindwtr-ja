@@ -2671,15 +2671,18 @@ describe('runSharedSyncCycle', () => {
     });
 
     it('gives the same documents in slices on a host that binds sliceYield, and never yields on one that does not (D9b change 3)', async () => {
-        const many = (prefix: string, title: string) => Array.from({ length: 300 }, (_, index) => createTask(`${prefix}-${index}`, `${title} ${index}`));
-        const cycle = async (bindSlices: boolean) => {
+        const many = (prefix: string, title: string, count: number) => Array.from({ length: count }, (_, index) => createTask(`${prefix}-${index}`, `${title} ${index}`));
+        const cycle = async (bindSlices: boolean, count = 300) => {
             const bundle = createHarness({
-                local: createData([...many('shared', 'Local'), ...many('local', 'Only local')]),
-                remote: createData([...many('shared', 'Remote'), ...many('remote', 'Only remote')]),
+                local: createData([...many('shared', 'Local', count), ...many('local', 'Only local', count)]),
+                remote: createData([...many('shared', 'Remote', count), ...many('remote', 'Only remote', count)]),
             });
             let yields = 0;
             const sliceYield = vi.fn(async () => { yields += 1; });
             if (bindSlices) bundle.notifier.sliceYield = sliceYield;
+            // Desktop's renderer yield is not a slice port: it must not slice a cycle (D9 O1/C4).
+            const yieldToUi = vi.fn(async () => undefined);
+            if (!bindSlices) bundle.notifier.yieldToUi = yieldToUi;
             // Every slice is due at once: the most interleaved run there can be.
             let clock = 0;
             const now = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 10));
@@ -2688,11 +2691,13 @@ describe('runSharedSyncCycle', () => {
             } finally {
                 now.mockRestore();
             }
-            return { persisted: bundle.harness.persisted, remote: bundle.harness.remote, yields };
+            return { persisted: bundle.harness.persisted, remote: bundle.harness.remote, yields, uiYields: yieldToUi.mock.calls.length };
         };
         const atOnce = await cycle(false);
         const sliced = await cycle(true);
         expect(atOnce.yields).toBe(0);
+        // The renderer yields once per step, however large the library: never once per slice.
+        expect(atOnce.uiYields).toBe((await cycle(false, 3)).uiYields);
         expect(sliced.yields).toBeGreaterThan(10);
         expect(sliced.persisted).toEqual(atOnce.persisted);
         expect(sliced.remote).toEqual(atOnce.remote);
