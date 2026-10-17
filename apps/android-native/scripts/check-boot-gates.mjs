@@ -888,8 +888,9 @@ assert.equal(code(editorUi).match(/toggle = true/g).length, 2, 'only the quick t
 assert.match(editorUi, /if \(status == "waiting" && !active\) openWaitingPrompt\(\) else editFields\(mapOf\("status" to status\)\)/);
 assert.match(model, /keepEditor\(current\.assignWaiting\(person\)\)\s+editFields\(mapOf\("status" to "waiting", "assignedTo" to person\)\)/);
 // One host per process: the Activity and ViewModel never close it, and only the owner constructs it.
-// The ViewModel's only onCleared stops its sync event listener (ProcessCoreHost keeps the listeners); it closes nothing.
-const listenerOnly = /\n    override fun onCleared\(\) \{\n        ProcessCoreHost\.unlistenSync\(syncListener\)\n        super\.onCleared\(\)\n    \}\n/;
+// The ViewModel's only onCleared stops its sync event listener (ProcessCoreHost keeps the listeners) and the entry router's
+// file-share staging thread (EntryRouter.close); it closes no host.
+const listenerOnly = /\n    override fun onCleared\(\) \{\n        ProcessCoreHost\.unlistenSync\(syncListener\)\n        entries\.close\(\)\n        super\.onCleared\(\)\n    \}\n/;
 assert.match(model, listenerOnly);
 for (const file of [activity, model.replace(listenerOnly, '\n'), editorUi, focusUi, projectsUi, labelsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, captureModalUi, captureModalModel, menuModel, ...Object.values(menuScreens)]) {
     assert.doesNotMatch(file, /close\(|onDestroy|onCleared|CoreHost\(/);
@@ -3799,7 +3800,9 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver', 'tech.dongdongbh.mindwtr.nativeclient.dev.widget.TasksWidget',
         'tech.dongdongbh.mindwtr.quicksettings.CaptureTileService'], 'only RN\'s exported components');
     const debugManifest = readFileSync(resolve(app, 'android/app/src/debug/AndroidManifest.xml'), 'utf8');
-    assert.deepEqual(exportedNames(debugManifest), ['${applicationId}.DebugQuickCapture', 'tech.dongdongbh.mindwtr.pilot.WidgetHostActivity'], 'the debug build adds only the check\'s two entries');
+    assert.deepEqual(exportedNames(debugManifest), ['${applicationId}.DebugQuickCapture', 'tech.dongdongbh.mindwtr.pilot.ShareTestProvider',
+        'tech.dongdongbh.mindwtr.pilot.ShareTestSender', 'tech.dongdongbh.mindwtr.pilot.WidgetHostActivity'],
+        'the debug build adds only the checks\' entries: the widget host and quick capture alias, and the file share provider and sender');
     assert(!existsSync(resolve(app, 'android/app/src/release')) && !existsSync(resolve(app, 'android/app/src/upgradetest')), 'no other build type adds an entry');
     assert.doesNotMatch(overlay, /android:process=/);
     for (const info of ['mindwtr_tasks_widget_info', 'mindwtr_compact_widget_info', 'mindwtr_quick_capture_widget_info', 'mindwtr_legacy_tasks_widget_info']) {
