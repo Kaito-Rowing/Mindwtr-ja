@@ -256,7 +256,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** The open project's Details (ProjectDetails.kt): its pickers and core's prepared commits. */
     val projectDetails = ProjectDetailsModel(this)
     /** A link, share or assistant note waiting to open (EntryPoints.kt). */
-    val entries = EntryRouter(this, File(app.noBackupFilesDir, "entries"))
+    // A file share's files are staged in the cache, where core's file port reads them (HostFiles), as RN's share module copies them.
+    val entries = EntryRouter(this, File(app.noBackupFilesDir, "entries"), SharedFileStager(File(app.cacheDir, "shared-entries"), ContentSharedFileSource(app)))
     /** A system capture's screen closed: MainActivity puts the app behind the previous one, as RN's returnToPreviousApp (#1169). */
     var leaveApp by mutableStateOf(false); internal set
     @Volatile private var host: CoreHost? = null

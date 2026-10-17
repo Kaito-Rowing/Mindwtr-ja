@@ -63,7 +63,7 @@
 
         <!-- RN's component name, <applicationId>.MainActivity: home-screen icons, pinned shortcuts and widgets launch it
              (inventory section 6). It carries RN's entry points (plugins/android-app-shortcuts.js, app.json's share intent):
-             the launcher, links of the build's scheme, text shares (files come with the attachments pass), Google Assistant's
+             the launcher, links of the build's scheme, text and file shares, Google Assistant's
              notes, and the app shortcuts. Every input is untrusted: core reads it (resolveNativeEntryPoint). -->
         <activity-alias
             android:name="${applicationId}.MainActivity"
@@ -80,10 +80,24 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="${urlScheme}" />
             </intent-filter>
+            <!-- RN's share filters (app.json's expo-share-intent androidIntentFilters and androidMultiIntentFilters): text, and
+                 files of these types, one or several. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="application/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="application/*" />
             </intent-filter>
             <intent-filter>
                 <action android:name="com.google.android.gms.actions.CREATE_NOTE" />

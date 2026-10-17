@@ -10,15 +10,20 @@ import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.content.IntentCompat
+import org.json.JSONArray
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import java.io.File
+import java.io.InputStream
+import java.util.concurrent.Executors
 
 /*
  * RN's system entry points (app/+native-intent.ts and hooks/root-layout/use-root-layout-external-capture.ts, with the share
  * and assistant intents of app.json and plugins/android-app-shortcuts.js): a link of the app's scheme, a text share, an
- * assistant note, and a tap on one of the app's notifications (RN's use-root-layout-notification-open-handler.ts). Kotlin reads only the intent's data and text extras; core's resolveNativeEntryPoint
- * (native-host-contract-entry-points.ts) says where the entry goes, and this opens what core names.
+ * assistant note, a file share, and a tap on one of the app's notifications (RN's use-root-layout-notification-open-handler.ts). Kotlin reads only the intent's data, text extras and shared
+ * file URIs; core's resolveNativeEntryPoint, or prepareSharedFiles for a file share (native-host-contract-entry-points.ts), says
+ * where the entry goes, and this opens what core names.
  */
 
 /** Google Assistant's note action and its extras, as RN's MainActivity reads them (plugins/android-startup-trace.js). */
@@ -35,8 +40,9 @@ private val TILE_ROUTES = setOf("review", "calendar", "contexts", "board", "tras
 /**
  * The intent as core's entry point input, or null for any other launch (the launcher's). Only strings are read, as
  * expo-share-intent reads a text share (EXTRA_TEXT as a string; EXTRA_TITLE's text, and EXTRA_SUBJECT, which core uses
- * when the title is missing), and a share of any other type is no share. An extra another app broke reads as no entry;
- * the input is untrusted, and core checks it again.
+ * when the title is missing). A share of any other type, and every SEND_MULTIPLE, is a file share (`files`): its EXTRA_STREAM
+ * URIs, at most RN's six (a later one is never read), with EXTRA_TEXT and EXTRA_SUBJECT. An extra another app broke reads as
+ * no entry; the input is untrusted, and core checks it again.
  */
 fun Intent.entryInput(): JSONObject? = runCatching {
     fun JSONObject.extra(name: String, value: String?) = put(name, value ?: JSONObject.NULL)
@@ -45,14 +51,36 @@ fun Intent.entryInput(): JSONObject? = runCatching {
     getStringExtra(CoreNotifications.EXTRA_OPEN)?.let { data -> return@runCatching JSONObject().put("kind", "notification").put("data", JSONObject(data)) }
     when (action) {
         Intent.ACTION_VIEW -> dataString?.let { JSONObject().put("kind", "link").put("url", it).put("scheme", BuildConfig.URL_SCHEME) }
-        Intent.ACTION_SEND -> if (type?.startsWith("text/plain") != true) null else JSONObject().put("kind", "share")
-            .extra("text", getStringExtra(Intent.EXTRA_TEXT)).extra("title", getCharSequenceExtra(Intent.EXTRA_TITLE)?.toString())
-            .extra("subject", getStringExtra(Intent.EXTRA_SUBJECT))
+        Intent.ACTION_SEND -> when {
+            type == null -> null
+            type!!.startsWith("text/plain") -> JSONObject().put("kind", "share")
+                .extra("text", getStringExtra(Intent.EXTRA_TEXT)).extra("title", getCharSequenceExtra(Intent.EXTRA_TITLE)?.toString())
+                .extra("subject", getStringExtra(Intent.EXTRA_SUBJECT))
+            else -> fileShare(listOfNotNull(IntentCompat.getParcelableExtra(this, Intent.EXTRA_STREAM, Uri::class.java)))
+        }
+        Intent.ACTION_SEND_MULTIPLE -> fileShare(IntentCompat.getParcelableArrayListExtra(this, Intent.EXTRA_STREAM, Uri::class.java).orEmpty())
         CREATE_NOTE -> JSONObject().put("kind", "createNote").extra("name", getStringExtra(NOTE_NAME))
             .extra("text", getStringExtra(NOTE_TEXT)).extra("extraText", getStringExtra(Intent.EXTRA_TEXT))
         else -> null
     }
 }.getOrNull()
+
+private fun Intent.fileShare(uris: List<Uri>): JSONObject = JSONObject().put("kind", "files")
+    .put("uris", JSONArray(uris.take(SharedFileStager.MAX_FILES).map { it.toString() }))
+    .put("text", getStringExtra(Intent.EXTRA_TEXT) ?: JSONObject.NULL).put("subject", getStringExtra(Intent.EXTRA_SUBJECT) ?: JSONObject.NULL)
+
+/** A file share's provider, as RN's share module reads it: OpenableColumns' name and size, and the resolver's type. */
+class ContentSharedFileSource(private val context: Context) : SharedFileStager.Source {
+    override fun open(uri: String): InputStream? = context.contentResolver.openInputStream(Uri.parse(uri))
+    override fun name(uri: String): String? = column(uri, android.provider.OpenableColumns.DISPLAY_NAME)
+    override fun size(uri: String): Long? = column(uri, android.provider.OpenableColumns.SIZE)?.toLongOrNull()
+    override fun mimeType(uri: String): String? = context.contentResolver.getType(Uri.parse(uri))
+    /** One column of the provider's first row, or null (no row, no column: RN's empty-cursor fallback, #1117). */
+    private fun column(uri: String, name: String): String? = context.contentResolver.query(Uri.parse(uri), arrayOf(name), null, null, null)?.use { cursor ->
+        val index = cursor.getColumnIndex(name)
+        if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) cursor.getString(index) else null
+    }
+}
 
 /**
  * The picked file's text for core's Import .txt, as UTF-8 (expo-file-system's default), or null when it cannot be read or
@@ -79,19 +107,40 @@ fun Context.readPickedText(uri: Uri): String? = runCatching {
  * when it ends. An entry leaves the queue only after its screen or popup opened;
  * a failed read keeps it for another try (after [EntryLifecycle]'s wait), unless core refused the input itself.
  */
-class EntryRouter(private val shell: InboxViewModel, dir: File) {
+class EntryRouter(private val shell: InboxViewModel, dir: File, private val stager: SharedFileStager) {
     private val queue = EntryQueue(dir)
+    /** File shares being staged (one at a time, off the main thread); a staged one is read like any entry. */
+    private val staging = mutableSetOf<String>()
+    private val stagingThread = Executors.newSingleThreadExecutor().also { thread ->
+        // Staged files of an entry that left while the process was gone.
+        thread.execute { runCatching { stager.keepOnly(queue.all().map { it.id }.toSet()) } }
+    }
     /** Which entry core reads, when a failed read tries again, and when an entry leaves (EntryLifecycle.kt, JVM-tested). */
     private val lifecycle = EntryLifecycle(queue) { SystemClock.uptimeMillis() }
     private val main = Handler(Looper.getMainLooper())
     /** The oldest waiting entry's id: MainActivity pumps again when it changes. */
     var head by mutableStateOf(lifecycle.head); private set
 
-    /** A new intent's entry (a launch without saved state, or onNewIntent), last in the queue. */
+    /**
+     * A new intent's entry (a launch without saved state, or onNewIntent), last in the queue. A file share is queued first, then
+     * its files are staged at once, while the share's read grant holds; an entry that left while the process was gone leaves
+     * no staged files behind.
+     */
     fun receive(intent: Intent) {
         val input = intent.entryInput() ?: return
         if (!queue.add(input.toString())) Log.w(CoreHost.TAG, "Native Android entry point dropped: the queue is full")
+        else if (input.optString("kind") == "files") queue.all().lastOrNull()?.let { stage(it) }
         head = lifecycle.head
+    }
+
+    /** Stages [entry]'s files off the main thread, then reads the queue again. */
+    private fun stage(entry: EntryQueue.Entry) {
+        if (!staging.add(entry.id)) return
+        val uris = JSONObject(entry.input).optJSONArray("uris")?.let { list -> List(list.length()) { list.optString(it) } }.orEmpty()
+        stagingThread.execute {
+            runCatching { stager.stage(entry.id, uris) }.onFailure { Log.w(CoreHost.TAG, "Native Android file share staging failed ${it.javaClass.simpleName}") }
+            main.post { staging.remove(entry.id); pump() }
+        }
     }
 
     /** Something keeps the entry from opening now: the app is not ready, a command runs or is owed, or the user's work is open. */
@@ -109,9 +158,19 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
     /** Reads the oldest entry once the app is free, then opens it once no action runs; MainActivity calls it whenever that may change. */
     fun pump(): Unit = with(shell) {
         val entry = lifecycle.next(blocked) ?: return
+        val input = JSONObject(entry.input)
+        // A file share opens once its files are staged (a process death mid-copy stages it again; a grant gone by then reads as
+        // unreadable files, and core says so).
+        val staged = if (input.optString("kind") == "files") stager.staged(entry.id) ?: run {
+            lifecycle.deferred(entry)
+            stage(entry)
+            return
+        } else null
         perform { runtime ->
             val (reply, view) = try {
-                val reply = runtime.menuRead("entryPoint", entry.input)
+                val reply = if (staged == null) runtime.menuRead("entryPoint", entry.input) else runtime.attachmentRequest("prepareSharedFiles",
+                    JSONObject().put("requestId", entry.id).put("files", staged).put("text", input.opt("text") ?: JSONObject.NULL)
+                        .put("subject", input.opt("subject") ?: JSONObject.NULL).toString())
                 check(reply.getInt("version") == 1) { "Unsupported core contract" }
                 // A capture opens RN's popup: core rebuilds its known tokens (openQuickCapture), then reads the entry's draft.
                 // RN's capture screen opens on the route params core answered: its first draft and view.
@@ -141,6 +200,7 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
             is EntryLifecycle.Failure.Refused -> {
                 shell.showToast(null, outcome.notice, "warning")
                 lifecycle.dismissed(entry)
+                stager.discard(entry.id)
             }
         }
         head = lifecycle.head
@@ -154,6 +214,8 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
         }
         open(reply, view)
         lifecycle.opened(entry)
+        // Core copied what it took into the managed attachments folder; the staged files are done.
+        stager.discard(entry.id)
         head = lifecycle.head
     }
 

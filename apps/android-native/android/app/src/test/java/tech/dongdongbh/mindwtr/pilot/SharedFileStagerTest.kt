@@ -1,0 +1,93 @@
+package tech.dongdongbh.mindwtr.pilot
+
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+
+/** RN's share module's fallbacks (#1117) and the stager's own bounds: six files, a streamed copy capped at core's 50 MiB. */
+class SharedFileStagerTest {
+    @get:Rule val folder = TemporaryFolder()
+    private val entry = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
+    /** A provider: each URI's bytes, name, size and type, null where the provider leaves them out; [opened] counts reads. */
+    private class Provider(val files: Map<String, Triple<ByteArray?, String?, String?>>, val declared: Map<String, Long> = emptyMap()) : SharedFileStager.Source {
+        val opened = mutableListOf<String>()
+        override fun open(uri: String): InputStream? { opened += uri; return files[uri]?.first?.let { ByteArrayInputStream(it) } }
+        override fun name(uri: String) = files[uri]?.second
+        override fun size(uri: String) = declared[uri] ?: files[uri]?.first?.size?.toLong()
+        override fun mimeType(uri: String) = files[uri]?.third
+    }
+
+    private fun stager(provider: Provider) = SharedFileStager(folder.root, provider)
+    private fun JSONObject.text(name: String): String? = if (isNull(name)) null else getString(name)
+
+    @Test
+    fun stagesEachFileUnderItsIndexWithTheProvidersNameAndType() {
+        val provider = Provider(mapOf("content://p/1" to Triple("pdf".toByteArray(), "Report.pdf", "application/pdf")))
+        val staged = stager(provider).stage(entry, listOf("content://p/1"))
+        val file = staged.getJSONObject(0)
+        assertEquals("Report.pdf", file.text("name"))
+        assertEquals("application/pdf", file.text("mimeType"))
+        assertEquals(3L, file.getLong("size"))
+        assertEquals(java.io.File(folder.root, "$entry/0").absolutePath, file.text("path"))
+        assertEquals("pdf", java.io.File(file.getString("path")).readText())
+        assertEquals(staged.toString(), stager(provider).staged(entry).toString())
+    }
+
+    @Test
+    fun anEmptyCursorAndNoTypeFallBackToTheUrisNameAndOctetStream() {
+        val provider = Provider(mapOf("content://p/docs/scan.jpg" to Triple("x".toByteArray(), null, null)))
+        val file = stager(provider).stage(entry, listOf("content://p/docs/scan.jpg")).getJSONObject(0)
+        assertEquals("scan.jpg", file.text("name"))
+        assertEquals("application/octet-stream", file.text("mimeType"))
+    }
+
+    @Test
+    fun anUnreadableFileHasNoPath() {
+        val file = stager(Provider(emptyMap())).stage(entry, listOf("content://p/gone")).getJSONObject(0)
+        assertNull(file.text("path"))
+    }
+
+    @Test
+    fun neverOpensASeventhFile() {
+        val uris = (1..8).map { "content://p/$it" }
+        val provider = Provider(uris.associateWith { Triple("b".toByteArray(), "$it", "text/csv") })
+        assertEquals(6, stager(provider).stage(entry, uris).length())
+        assertEquals(uris.take(6), provider.opened)
+    }
+
+    @Test
+    fun aFileOverTheCapIsStoppedThereAndReportedTooLarge() {
+        // Declared too large: never read.
+        val big = Provider(mapOf("content://p/big" to Triple(ByteArray(1), "big.mov", "video/mp4")), declared = mapOf("content://p/big" to 60L * 1024 * 1024))
+        val declared = stager(big).stage(entry, listOf("content://p/big")).getJSONObject(0)
+        assertTrue(declared.getLong("size") > SharedFileStager.MAX_BYTES)
+        assertTrue(big.opened.isEmpty())
+        // Sizeless and endless: the copy stops one byte past the cap.
+        val endless = object : InputStream() { override fun read() = 7; override fun read(b: ByteArray, off: Int, len: Int) = len.also { b.fill(7, off, off + len) } }
+        val out = ByteArrayOutputStream()
+        assertEquals(SharedFileStager.MAX_BYTES + 1, SharedFileStager.copyCapped(endless, out))
+        assertEquals(SharedFileStager.MAX_BYTES + 1, out.size().toLong())
+    }
+
+    @Test
+    fun discardAndKeepOnlyDeleteStagedFolders() {
+        val provider = Provider(mapOf("content://p/1" to Triple("a".toByteArray(), "a.txt", "text/plain")))
+        val other = "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
+        stager(provider).stage(entry, listOf("content://p/1"))
+        stager(provider).stage(other, listOf("content://p/1"))
+        stager(provider).keepOnly(setOf(other))
+        assertFalse(java.io.File(folder.root, entry).exists())
+        stager(provider).discard(other)
+        assertFalse(java.io.File(folder.root, other).exists())
+        assertNull(stager(provider).staged(other))
+    }
+}

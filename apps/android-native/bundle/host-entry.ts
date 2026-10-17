@@ -1246,6 +1246,9 @@ const ATTACHMENT_REQUESTS: Record<string, (input: never) => Promise<Reply>> = {
     downloadAttachment: (input) => contract.downloadAttachment(input),
     openAttachment: (input) => contract.openAttachment(input),
     settleTaskDraftAttachments: (input) => contract.settleTaskDraftAttachments(input),
+    // A file share's entry (EntryPoints.kt): its staged files copied into the attachments folder, and where it opens. Writes no
+    // command (the capture screen's Save does), so it is never journaled; a replay names the same copies.
+    prepareSharedFiles: (input) => contract.prepareSharedFiles(input),
 };
 const LOCAL_ATTACHMENT_REQUESTS = new Set(['draftAddFile', 'draftRemove', 'openAttachment', 'settleTaskDraftAttachments']);
 /**

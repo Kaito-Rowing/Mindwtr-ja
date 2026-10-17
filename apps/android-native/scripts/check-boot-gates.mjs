@@ -1315,8 +1315,8 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // A task draft's Add file, link Save and Remove write nothing (they answer the draft's next list), so they are never journaled
     // (a replay would copy a file no draft owns): they go here too, each refused for any owner but a task.
     const draftCommands = ['addAttachmentFile', 'submitAttachmentLinks', 'removeAttachment'];
-    assert.deepEqual(called(table('ATTACHMENT_REQUESTS')).sort(), ['addAttachmentFile', 'downloadAttachment', 'openAttachment', 'removeAttachment',
-        'settleTaskDraftAttachments', 'submitAttachmentLinks'], 'ATTACHMENT_REQUESTS are core\'s attachment downloads, opens, draft settlement and task draft commands');
+    assert.deepEqual(called(table('ATTACHMENT_REQUESTS')).sort(), ['addAttachmentFile', 'downloadAttachment', 'openAttachment', 'prepareSharedFiles', 'removeAttachment',
+        'settleTaskDraftAttachments', 'submitAttachmentLinks'], 'ATTACHMENT_REQUESTS are core\'s attachment downloads, opens, draft settlement, task draft commands and a file share\'s copies');
     assert.deepEqual(called(table('ATTACHMENT_REQUESTS')).filter((name) => !draftCommands.includes(name) && (coreWrites.includes(name) || unwiredWrites.includes(name))), [],
         'no attachment request calls a core write but a task draft\'s');
     for (const name of draftCommands) {
@@ -3117,8 +3117,13 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const filter = (action) => filters.find((entry) => entry.includes(`android:name="${action}"`));
     assert.match(filter('android.intent.action.MAIN'), /android\.intent\.category\.LAUNCHER/);
     assert.match(filter('android.intent.action.VIEW'), /category\.DEFAULT[\s\S]*category\.BROWSABLE[\s\S]*<data android:scheme="\$\{urlScheme\}" \/>/);
-    assert.match(filter('android.intent.action.SEND'), /category\.DEFAULT[\s\S]*<data android:mimeType="text\/plain" \/>/);
-    assert.doesNotMatch(filter('android.intent.action.SEND'), /image|audio|video|application|SEND_MULTIPLE/, 'files wait for the attachments pass');
+    // RN's share filters, as app.json's expo-share-intent config lists them: SEND for text and files, SEND_MULTIPLE for files.
+    const shareConfig = JSON.parse(readFileSync(resolve(app, '../mobile/app.json'), 'utf8')).expo.plugins.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-share-intent')[1];
+    const mimeTypes = (entry) => [...entry.matchAll(/<data android:mimeType="([^"]+)" \/>/g)].map((m) => m[1]);
+    assert.match(filter('android.intent.action.SEND'), /category\.DEFAULT/);
+    assert.deepEqual(mimeTypes(filter('android.intent.action.SEND')), shareConfig.androidIntentFilters, 'SEND takes RN\'s types');
+    assert.match(filter('android.intent.action.SEND_MULTIPLE'), /category\.DEFAULT/);
+    assert.deepEqual(mimeTypes(filter('android.intent.action.SEND_MULTIPLE')), shareConfig.androidMultiIntentFilters, 'SEND_MULTIPLE takes RN\'s types');
     assert.match(filter('com.google.android.gms.actions.CREATE_NOTE'), /category\.DEFAULT[\s\S]*category\.VOICE[\s\S]*mimeType="text\/plain"[\s\S]*mimeType="\*\/\*"/);
     assert.match(alias[0], /android:name="android\.app\.shortcuts"\s+android:resource="@xml\/mindwtr_shortcuts"/);
     assert.equal(manifest.match(/category\.LAUNCHER/g).length, 1, 'one launcher entry: the alias');
@@ -3240,17 +3245,22 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const intentRead = code(entryKt.slice(entryKt.indexOf('fun Intent.entryInput()'), entryKt.indexOf('fun Context.readPickedText')));
     assert.match(intentRead, /= runCatching \{/);
     assert.match(intentRead, /Intent\.ACTION_VIEW -> dataString\?\.let \{ JSONObject\(\)\.put\("kind", "link"\)\.put\("url", it\)\.put\("scheme", BuildConfig\.URL_SCHEME\) \}/);
-    assert.match(intentRead, /Intent\.ACTION_SEND -> if \(type\?\.startsWith\("text\/plain"\) != true\) null else/);
+    assert.match(intentRead, /Intent\.ACTION_SEND -> when \{\s+type == null -> null\s+type!!\.startsWith\("text\/plain"\) -> JSONObject\(\)\.put\("kind", "share"\)/);
     assert.match(intentRead, /\.extra\("text", getStringExtra\(Intent\.EXTRA_TEXT\)\)\.extra\("title", getCharSequenceExtra\(Intent\.EXTRA_TITLE\)\?\.toString\(\)\)\s+\.extra\("subject", getStringExtra\(Intent\.EXTRA_SUBJECT\)\)/);
     assert.match(intentRead, /\.extra\("text", getStringExtra\(NOTE_TEXT\)\)\.extra\("extraText", getStringExtra\(Intent\.EXTRA_TEXT\)\)/);
     assert.match(entryKt, /private const val NOTE_NAME = "com\.google\.android\.gms\.actions\.extra\.NAME"\s+private const val NOTE_TEXT = "com\.google\.android\.gms\.actions\.extra\.TEXT"/);
-    assert.doesNotMatch(code(entryKt), /EXTRA_STREAM|getParcelable|getSerializable|getBundleExtra/);
+    // A file share reads only EXTRA_STREAM's URIs, typed (IntentCompat), at most RN's six; never another parcel.
+    assert.match(intentRead, /else -> fileShare\(listOfNotNull\(IntentCompat\.getParcelableExtra\(this, Intent\.EXTRA_STREAM, Uri::class\.java\)\)\)/);
+    assert.match(intentRead, /Intent\.ACTION_SEND_MULTIPLE -> fileShare\(IntentCompat\.getParcelableArrayListExtra\(this, Intent\.EXTRA_STREAM, Uri::class\.java\)\.orEmpty\(\)\)/);
+    assert.match(code(entryKt), /\.put\("uris", JSONArray\(uris\.take\(SharedFileStager\.MAX_FILES\)\.map \{ it\.toString\(\) \}\)\)/);
+    assert.equal(code(entryKt).match(/getParcelable/g).length, 2, 'only the two EXTRA_STREAM reads');
+    assert.doesNotMatch(code(entryKt), /getSerializable|getBundleExtra/);
     // Entries wait in the persisted FIFO queue (EntryQueue.kt, JVM-tested) from the intent's arrival; the oldest opens only while
     // the app is free, is read in one perform (a capture's popup view too), and opens once the action ends; the editor opens
     // through whenIdle, as it refuses while busy.
     const queueKt = source('EntryQueue.kt');
     assert.match(entryKt, /private val queue = EntryQueue\(dir\)/);
-    assert.match(model, /val entries = EntryRouter\(this, File\(app\.noBackupFilesDir, "entries"\)\)/);
+    assert.match(model, /val entries = EntryRouter\(this, File\(app\.noBackupFilesDir, "entries"\), SharedFileStager\(File\(app\.cacheDir, "shared-entries"\), ContentSharedFileSource\(app\)\)\)/);
     assert.doesNotMatch(code(entryKt), /saved\[|SavedStateHandle/, 'the queue lives on disk, not in the saved state');
     assert.match(entryKt, /if \(!queue\.add\(input\.toString\(\)\)\)/);
     // Any open unsaved work holds the entry back (the capture popup and its draft included): a share never replaces it.
@@ -3259,7 +3269,14 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // Settings field before its commit (a GTD text field, a Someday section's inline rename).
     assert.match(entryKt, /\|\| \(menu\.screen == MenuScreen\.Settings && menu\.settings\.uncommitted\)\s+\|\| \(projectDraft\.isNotBlank\(\) && openProjectId == null && \(menu\.screen == MenuScreen\.Projects\s+\|\| \(menu\.screen == null && screen == Screen\.Projects && menu\.quickView == "projects"\)\)\)/);
     assert.match(source('SettingsModel.kt'), /val uncommitted: Boolean get\(\) = local\.has\("renaming"\) \|\| local\.keys\(\)\.asSequence\(\)\.any \{ it\.startsWith\("typed:"\) \}/);
-    assert.match(entryKt, /val reply = runtime\.menuRead\("entryPoint", entry\.input\)/);
+    assert.match(entryKt, /val reply = if \(staged == null\) runtime\.menuRead\("entryPoint", entry\.input\) else runtime\.attachmentRequest\("prepareSharedFiles",/);
+    // A file share is queued before any copy, staged off the main thread while its grant holds, read once staged (prepareSharedFiles
+    // with the entry's id as its request UUID), and its staged files go once the entry opened or was refused.
+    assert.match(entryKt, /if \(!queue\.add\(input\.toString\(\)\)\) [^\n]*\s+else if \(input\.optString\("kind"\) == "files"\) queue\.all\(\)\.lastOrNull\(\)\?\.let \{ stage\(it\) \}/);
+    assert.match(entryKt, /stagingThread\.execute \{\s+runCatching \{ stager\.stage\(entry\.id, uris\) \}/);
+    assert.match(entryKt, /JSONObject\(\)\.put\("requestId", entry\.id\)\.put\("files", staged\)/);
+    assert.match(entryKt, /lifecycle\.dismissed\(entry\)\s+stager\.discard\(entry\.id\)/);
+    assert.match(entryKt, /lifecycle\.opened\(entry\)\s+\/\/[^\n]*\s+stager\.discard\(entry\.id\)/);
     assert.match(entryKt, /runtime\.openQuickCapture\(\)\s+runtime\.quickCaptureView\(JSONObject\(\)\.put\("text", open\.getString\("text"\)\)\.put\("options", open\.getJSONObject\("options"\)\)\.toString\(\)\)/);
     // An entry leaves the queue only after it opened, or when core refused its input; a failed read keeps it for a later try.
     assert.match(entryKt, /private val lifecycle = EntryLifecycle\(queue\) \{ SystemClock\.uptimeMillis\(\) \}/);
