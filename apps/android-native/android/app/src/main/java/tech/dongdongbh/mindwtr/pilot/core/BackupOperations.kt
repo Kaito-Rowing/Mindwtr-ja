@@ -15,8 +15,9 @@ data class BackupBudget(val baseMs: Long, val msPerMiB: Long) {
 
     companion object {
         private const val MIB = 1024L * 1024
-        // Provisional: three times D1a measure2's slowest rate (16 over 16 MiB in 69 s, about 2.2 s per MiB); step 0 sets it.
-        val DEFAULT = BackupBudget(baseMs = 120_000, msPerMiB = 7_000)
+        // Three times step 0's slowest rate, rounded up (run 4, S23): a 53 MiB file restored over an empty library in 92 s, and a
+        // 17.7 MiB file merged over a 22.8 MiB library in 97 s, each under 1 s per MiB of file, library and plan.
+        val DEFAULT = BackupBudget(baseMs = 120_000, msPerMiB = 3_000)
         /** The longest operation a start admits (15 min); a journaled one is never refused for it. */
         const val MAX_MS = 15 * 60 * 1000L
     }

@@ -46,6 +46,12 @@ object DataTransferLimits {
     const val MAX_BACKUP_SOURCE_BYTES = 128L * 1024 * 1024
     /** Core's DEFAULT_IMPORT_SOURCE_LIMITS.maxInputBytes: an import's picked file alone. */
     const val MAX_IMPORT_SOURCE_BYTES = 16L * 1024 * 1024
+    // ponytail: a fixed cap; build the ZIP in slices if TaskNotes users outgrow it.
+    /**
+     * A TaskNotes export's library: the bound it had before D1c. Step 0 run 4 (S23): a ZIP of about 10k tasks did not finish in
+     * 15 min, because core builds it in one synchronous call in QuickJS, so no deadline runs meanwhile (host: 0.7 s).
+     */
+    const val MAX_TASKNOTES_EXPORT_BYTES = 12L * 1024 * 1024
 
     /** The limit; debug builds only: `debug.mindwtr.native.transfer_limit_mb` raises it for the measurement run. */
     val MAX_DATA_TRANSFER_BYTES: Long get() = debugProperty("transfer_limit_mb").toLongOrNull()?.takeIf { it > 0 }?.let { it * 1024 * 1024 } ?: LIMIT_BYTES
@@ -122,11 +128,12 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         action = running
         shell.anyTime({ runtime ->
             // The early check; core's own, in its document lane, decides (pass D1c §3.5).
-            if (runtime.databaseBytes() > DataTransferLimits.MAX_DATA_TRANSFER_BYTES) throw TransferTooLarge()
+            val limit = exportLimit(format)
+            if (runtime.databaseBytes() > limit) throw TransferTooLarge()
             val dir = File(app.cacheDir, "exports").apply { mkdirs() }
             dir.listFiles().orEmpty().forEach { it.delete() }
             val pending = File(dir, "export-${UUID.randomUUID()}.pending")
-            val made = try { runtime.dataExport(format, pending, DataTransferLimits.MAX_DATA_TRANSFER_BYTES) } catch (failure: Throwable) { pending.delete(); throw failure }
+            val made = try { runtime.dataExport(format, pending, limit) } catch (failure: Throwable) { pending.delete(); throw failure }
             val file = File(dir, made.getString("fileName"))
             if (!pending.renameTo(file)) { pending.delete(); throw IOException("Cannot save the export file") }
             shell.ui {
@@ -624,6 +631,10 @@ internal fun cleanupExportRecord(record: File, delete: (String) -> Boolean, exis
 internal fun admitTransfer(sourceBytes: Long, libraryBytes: Long) {
     if (sourceBytes + libraryBytes > DataTransferLimits.MAX_DATA_TRANSFER_BYTES) throw TransferTooLarge()
 }
+
+/** An export's library bound: the transfer limit, and for a TaskNotes ZIP its own bound. */
+internal fun exportLimit(format: String, transferLimit: Long = DataTransferLimits.MAX_DATA_TRANSFER_BYTES): Long =
+    if (format == "tasknotes") minOf(transferLimit, DataTransferLimits.MAX_TASKNOTES_EXPORT_BYTES) else transferLimit
 
 /**
  * The staged copy's own bound: the transfer limit, and core's source limit: 128 MiB for a JSON backup, 16 MiB for an [import]'s

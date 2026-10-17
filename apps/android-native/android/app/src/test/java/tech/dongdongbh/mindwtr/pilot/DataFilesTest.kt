@@ -48,6 +48,16 @@ class DataFilesTest {
         assertTrue(refused.exceptionOrNull() is TransferTooLarge)
     }
 
+    // Step 0 run 4: a TaskNotes ZIP of 10k tasks did not finish in 15 min on the S23 (one synchronous zip in QuickJS, so no
+    // deadline runs), so the TaskNotes export keeps the 12 MiB library bound it had before D1c, whatever the transfer limit.
+    @Test fun aTaskNotesExportKeepsTheTwelveMiBBoundWhateverTheTransferLimit() {
+        val mib = 1024L * 1024
+        assertEquals(12 * mib, exportLimit("tasknotes", transferLimit = 128 * mib))
+        assertEquals(8 * mib, exportLimit("tasknotes", transferLimit = 8 * mib))
+        assertEquals(128 * mib, exportLimit("json", transferLimit = 128 * mib))
+        assertEquals(128 * mib, exportLimit("csv", transferLimit = 128 * mib))
+    }
+
     private val library = 4L * 1024 * 1024
     private fun stagedCopy(bytes: ByteArray) = StagedCopies.create(File(folder.root, "backup-import")).apply { writeBytes(bytes) }
 
