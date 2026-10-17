@@ -140,3 +140,78 @@ describe('a remote attachment version merged but not installed yet', () => {
         expect(prepared).toMatchObject({ fileHash: EDIT, pendingContentUpload: true, contentMtimeMs: 2000 });
     });
 });
+
+describe('the mark across merges (stale-review2)', () => {
+    const Y = 'e'.repeat(64);
+    const T3 = '2026-01-03T00:00:00.000Z';
+    const docAt = (attachment: Attachment, updatedAt: string): AppData => {
+        const data = docWith(attachment);
+        (data.tasks[0] as { updatedAt: string }).updatedAt = updatedAt;
+        return data;
+    };
+    // What another device publishes: stripped of every device-local field.
+    const remote = (attachment: Attachment, updatedAt = LATER): AppData => sanitizeAppDataForRemote(docAt(attachment, updatedAt));
+    const merge = (localRow: Attachment, incoming: AppData): Attachment => attachmentOf(mergeAppData(docWith(localRow), incoming));
+
+    it('two remote winners in a row keep the first mark while the disk still holds the old bytes (N4)', async () => {
+        const local = base({ fileHash: OLD, contentRev: 1, contentMtimeMs: 1000, contentSize: 10 });
+        const first = merge(local, remote(base({ fileHash: NEW, contentRev: 2 })));
+        const disk: Disk = { hash: OLD, stat: { mtimeMs: 1000, size: 10 } };
+        const skipped = (await pass(first, 'prepare', disk)).patches.get('att-1') ?? first;
+        const second = merge(skipped, remote(base({ fileHash: Y, contentRev: 3 }), T3));
+        expect(second).toMatchObject({ fileHash: Y, contentRev: 3, staleContentHash: OLD });
+        const prepared = (await pass(second, 'prepare', disk)).patches.get('att-1') ?? second;
+        expect(prepared.pendingContentUpload).toBeUndefined();
+        expect(prepared.contentRev).toBe(3);
+    });
+
+    it('a same-device merge whose result carries a recorded stat sets no mark, so a later winner never uploads the installed bytes (N1)', async () => {
+        // Reconcile of this device's own two copies (#964): the newer one already installed NEW and recorded its stat.
+        const sqlite = base({ fileHash: OLD, contentRev: 1, contentMtimeMs: 1000, contentSize: 10 });
+        const reconciled = merge(sqlite, docAt(base({ fileHash: NEW, contentRev: 2, contentMtimeMs: 5000, contentSize: 50 }), LATER));
+        expect(reconciled).toMatchObject({ fileHash: NEW, contentMtimeMs: 5000 });
+        expect(reconciled.staleContentHash).toBeUndefined();
+        const next = merge(reconciled, remote(base({ fileHash: Y, contentRev: 3 }), T3));
+        expect(next.staleContentHash).toBe(NEW);
+        const disk: Disk = { hash: NEW, stat: { mtimeMs: 5000, size: 50 } };
+        const prepared = (await pass(next, 'prepare', disk)).patches.get('att-1') ?? next;
+        expect(prepared.pendingContentUpload).toBeUndefined();
+        expect(prepared.contentRev).toBe(3);
+    });
+
+    it('a successful install clears the mark even when its stat is not recorded (N2)', async () => {
+        const winner = base({ fileHash: NEW, contentRev: 2, staleContentHash: OLD });
+        const disk: { hash: string; stat: { mtimeMs: number; size: number } } = { hash: OLD, stat: { mtimeMs: 1000, size: 10 } };
+        // The installed file's stat is not readable right after the install.
+        let statReadable = true;
+        const installed = (await runAttachmentTransferLifecycle({
+            attachmentsById: new Map([[winner.id, winner]]),
+            getLocalFilePresence: async () => 'present',
+            onUpload: vi.fn(async () => true),
+            onUploadError: vi.fn(),
+            onDownload: vi.fn(async () => { disk.hash = NEW; statReadable = false; return true; }),
+            onDownloadError: vi.fn(),
+            contentChangePhase: 'post-merge',
+            getLocalFileStat: async () => (statReadable ? { ...disk.stat } : null),
+            computeLocalFileHash: async () => disk.hash,
+        })).patches.get('att-1') ?? winner;
+        expect(installed.contentMtimeMs).toBeUndefined();
+        expect(installed.staleContentHash).toBeUndefined();
+        // A merge before the next prepare marks the installed bytes, so prepare leaves them for the next download.
+        const next = merge(installed, remote(base({ fileHash: Y, contentRev: 3 }), T3));
+        expect(next.staleContentHash).toBe(NEW);
+        disk.stat = { mtimeMs: 5000, size: 50 };
+        const prepared = (await pass(next, 'prepare', disk)).patches.get('att-1') ?? next;
+        expect(prepared.pendingContentUpload).toBeUndefined();
+    });
+
+    it('a merge with no recorded stat still marks the local identity, which only matches exactly those bytes (N3)', async () => {
+        const local = base({ fileHash: OLD, contentRev: 1 });
+        const merged = merge(local, remote(base({ fileHash: NEW, contentRev: 2 })));
+        expect(merged.staleContentHash).toBe(OLD);
+        const prepared = (await pass(merged, 'prepare', { hash: OLD, stat: { mtimeMs: 1000, size: 10 } })).patches.get('att-1') ?? merged;
+        expect(prepared.pendingContentUpload).toBeUndefined();
+        const edited = (await pass(merged, 'prepare', { hash: EDIT, stat: { mtimeMs: 3000, size: 30 } })).patches.get('att-1') ?? merged;
+        expect(edited).toMatchObject({ fileHash: EDIT, contentRev: 3, pendingContentUpload: true });
+    });
+});

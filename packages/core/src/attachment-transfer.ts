@@ -758,6 +758,8 @@ export async function runAttachmentTransferLifecycle(
                 try {
                     if (await options.onDownload(attachment, { kind: 'absent' })) {
                         itemMutated = true;
+                        // Installed: the disk no longer holds an older marked copy, whether or not its stat is recorded below.
+                        attachment.staleContentHash = undefined;
                         // Loop safety (#1057): stat the file we just wrote and record it
                         // immediately, using the (possibly just-updated) uri — otherwise
                         // every subsequent cycle re-detects this download as a "change".
@@ -870,6 +872,7 @@ export async function runAttachmentTransferLifecycle(
                                 sha256: check.hash,
                             })) {
                                 itemMutated = true;
+                                attachment.staleContentHash = undefined;
                                 const freshPath = attachment.uri ? resolveLocalPath(attachment.uri) : localPath;
                                 if (freshPath) await refreshContentStat(attachment, freshPath, true);
                             }

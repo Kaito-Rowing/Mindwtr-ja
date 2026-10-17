@@ -1047,15 +1047,19 @@ export function* mergeAppDataWithStatsPass(local: AppData, incoming: AppData, op
             const statSource = localIdentitySurvived ? localAttachment : contentSource;
             // Device-local, like the stat: when another device's version replaces this device's identity, remember the hash of
             // the bytes this device holds, so the next prepare pass leaves exactly those bytes for the download instead of
-            // uploading them as an edit. Only a recorded stat proves what is on disk; an older mark still names the disk's
-            // bytes (nothing installed or recorded since).
+            // uploading them as an edit. A recorded stat on the result proves the disk already holds the result (a same-device
+            // merge): no mark. Else the disk holds what the local row's stat proves, or, without one, the bytes an older
+            // mark names (nothing installed since), or the local identity. A mark that does not match the disk does nothing:
+            // prepare compares the disk's hash with it, so a wrong guess never hides an edit.
+            const hasStat = (attachment: Attachment) => attachment.contentMtimeMs !== undefined && attachment.contentSize !== undefined;
             const normalizedLocalStaleHash = localAttachment.staleContentHash?.trim().toLowerCase();
-            const staleContentHash = localIdentitySurvived
-                ? localAttachment.staleContentHash
-                : normalizedLocalStaleHash
-                    || (localAttachment.contentMtimeMs !== undefined && localAttachment.contentSize !== undefined
+            const staleContentHash = hasStat(statSource)
+                ? undefined
+                : localIdentitySurvived
+                    ? localAttachment.staleContentHash
+                    : hasStat(localAttachment)
                         ? normalizedLocalFileHash
-                        : undefined);
+                        : normalizedLocalStaleHash || normalizedLocalFileHash;
             return {
                 fileHash,
                 contentRev,

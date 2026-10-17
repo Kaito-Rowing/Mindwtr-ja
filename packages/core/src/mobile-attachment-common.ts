@@ -854,6 +854,8 @@ export const createMobileAttachmentCommon = (host: MobileAttachmentCommonHost) =
     attachment: Attachment,
     localPath: string,
   ): Promise<boolean> => {
+    // Called right after an install: the disk no longer holds an older marked copy, whether or not a stat is recorded below.
+    attachment.staleContentHash = undefined;
     const expectedRemoteHash = attachment.fileHash?.trim().toLowerCase();
     if (!isSha256Hex(expectedRemoteHash)) return false;
     const stat = await files.statAttachmentFile(localPath);

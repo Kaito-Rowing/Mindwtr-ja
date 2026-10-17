@@ -3825,6 +3825,8 @@ fn duplicate_attachment_value(value: Option<&Value>, timestamp: &str) -> Option<
             attachment.remove("contentRev");
             attachment.remove("contentMtimeMs");
             attachment.remove("contentSize");
+            attachment.remove("pendingContentUpload");
+            attachment.remove("staleContentHash");
             Some(Value::Object(attachment))
         })
         .collect::<Vec<_>>();
@@ -5262,7 +5264,9 @@ fn valid_attachments(value: &Value) -> bool {
                 "kind" => value
                     .as_str()
                     .is_some_and(|kind| matches!(kind, "file" | "link")),
-                "mimeType" | "deletedAt" | "fileHash" => value.is_string(),
+                "mimeType" | "deletedAt" | "fileHash" | "staleContentHash" => value.is_string(),
+                // Device-local sync state a GET returns, so a GET-edit-PATCH round trip carries it back unchanged.
+                "pendingContentUpload" => value.is_boolean(),
                 "cloudKey" => value.as_str().is_some_and(valid_attachment_cloud_key),
                 "size" | "contentRev" | "contentMtimeMs" | "contentSize" => {
                     value.as_u64().is_some()
@@ -7511,8 +7515,21 @@ mod tests {
             "contentRev": 3,
             "contentMtimeMs": 1750000000000_u64,
             "contentSize": 4096,
+            "pendingContentUpload": true,
+            "staleContentHash": "b".repeat(64),
         }]);
         assert!(valid_attachments(&round_trip));
+        for (field, bad_value) in [
+            ("pendingContentUpload", json!("yes")),
+            ("staleContentHash", json!(7)),
+        ] {
+            let mut attachment = round_trip[0].clone();
+            attachment[field] = bad_value.clone();
+            assert!(
+                !valid_attachments(&json!([attachment])),
+                "{field} should reject {bad_value:?}"
+            );
+        }
 
         for field in ["contentRev", "contentMtimeMs", "contentSize"] {
             for bad_value in [json!("not-a-number"), json!(null), json!(-1)] {
@@ -7599,6 +7616,8 @@ mod tests {
             "contentRev": 3,
             "contentMtimeMs": 1750000000000_u64,
             "contentSize": 4096,
+            "pendingContentUpload": true,
+            "staleContentHash": "b".repeat(64),
         }]);
         let duplicated = duplicate_attachment_value(Some(&original), "2026-01-02T00:00:00.000Z")
             .expect("duplicated attachments");
@@ -7610,6 +7629,8 @@ mod tests {
         assert!(!copy.contains_key("contentRev"));
         assert!(!copy.contains_key("contentMtimeMs"));
         assert!(!copy.contains_key("contentSize"));
+        assert!(!copy.contains_key("pendingContentUpload"));
+        assert!(!copy.contains_key("staleContentHash"));
     }
 
     #[test]
