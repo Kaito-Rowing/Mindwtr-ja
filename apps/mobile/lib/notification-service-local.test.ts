@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getTranslations } from '@mindwtr/core';
 
 const POMODORO_ALARM_STORAGE_KEY = 'mindwtr:local:pomodoro-alarm:v1';
+const backgroundStore = vi.hoisted(() => ({ sandbox: false, transition: false, available: true }));
+const noopStorage = vi.hoisted(() => ({}));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -42,6 +45,7 @@ const {
   mockAsyncStorageSetItem: vi.fn(),
   mockStoreSubscribe: vi.fn(() => () => undefined),
   mockStoreState: {
+    error: null as string | null,
     settings: {} as Record<string, unknown>,
     tasks: [] as Array<{
       id: string;
@@ -143,6 +147,10 @@ vi.mock('@mindwtr/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@mindwtr/core')>();
   return {
     ...actual,
+    isSandboxMode: () => backgroundStore.sandbox,
+    isWorkspaceTransitionActive: () => backgroundStore.transition,
+    noopStorage,
+    getStorageAdapter: () => backgroundStore.available ? {} : noopStorage,
     getSystemDefaultLanguage: vi.fn(() => 'en'),
     getTranslations: vi.fn(async () => ({
       'digest.morningTitle': 'Morning',
@@ -176,6 +184,7 @@ import {
   __localNotificationTestUtils,
   cancelLocalPomodoroCompletionNotification,
   rescheduleLocalAlarmsAsExact,
+  reconcileLocalMobileNotificationsInBackground,
   scheduleLocalPomodoroCompletionNotification,
   sendLocalMobileNotification,
   setLocalNotificationOpenHandler,
@@ -194,6 +203,7 @@ describe('notification-service-local', () => {
     mockStoreState.settings = {};
     mockStoreState.tasks = [];
     mockStoreState.projects = [];
+    mockStoreState.error = null;
     mockAlarmDeleteAlarm.mockReset();
     mockAlarmDeleteRepeatingAlarm.mockReset();
     mockAlarmRemoveAllFiredNotifications.mockReset();
@@ -219,10 +229,108 @@ describe('notification-service-local', () => {
     mockPlatform.OS = 'android';
     mockPlatform.Version = 34;
     __localNotificationTestUtils.resetForTests();
+    backgroundStore.sandbox = false;
+    backgroundStore.transition = false;
+    backgroundStore.available = true;
   });
 
   afterEach(() => {
     __localNotificationTestUtils.resetForTests();
+    vi.useRealTimers();
+  });
+
+  it.each([false, true])('reconciles a background capture with paused timers (service started=%s)', async (warm) => {
+    vi.useFakeTimers();
+    if (warm) await startLocalMobileNotifications();
+    mockStoreState.tasks = [{ id: 'captured', title: 'Captured', dueDate: new Date(Date.now() + 3600000).toISOString() }];
+    await reconcileLocalMobileNotificationsInBackground('capture');
+    expect(mockAlarmScheduleAlarm).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ taskId: 'captured' }),
+    }));
+    expect(mockPermissionsAndroidRequest).not.toHaveBeenCalled();
+    expect(mockAlarmRequestPermissions).not.toHaveBeenCalled();
+    if (!warm) expect(mockStoreSubscribe).not.toHaveBeenCalled();
+    const scheduled = mockAlarmScheduleAlarm.mock.calls.length;
+    await startLocalMobileNotifications();
+    expect(mockAlarmScheduleAlarm).toHaveBeenCalledTimes(scheduled);
+  });
+
+  it('never prompts for background permission', async () => {
+    mockPermissionsAndroidCheck.mockResolvedValue(false);
+    await reconcileLocalMobileNotificationsInBackground('capture');
+    expect(mockAlarmScheduleAlarm).not.toHaveBeenCalled();
+    expect(mockPermissionsAndroidRequest).not.toHaveBeenCalled();
+    expect(mockAlarmRequestPermissions).not.toHaveBeenCalled();
+  });
+
+  it('does not schedule from a store whose canonical load failed', async () => {
+    mockStoreState.error = 'load failed';
+    await reconcileLocalMobileNotificationsInBackground('capture');
+    expect(mockAlarmScheduleAlarm).not.toHaveBeenCalled();
+    expect(mockPermissionsAndroidCheck).not.toHaveBeenCalled();
+  });
+
+  it('contains reconciliation failures and records a bounded failure receipt', async () => {
+    vi.mocked(getTranslations).mockRejectedValueOnce(new Error('translation failure'));
+    await expect(reconcileLocalMobileNotificationsInBackground('capture')).resolves.toBeUndefined();
+    expect(mockLogInfo).toHaveBeenCalledWith('Background reminder reconciliation', expect.objectContaining({ extra: {
+      releaseCheck: 'v1.3.7/background-capture-reminders', reason: 'capture', outcome: 'failed',
+    } }));
+  });
+
+  it('awaits the terminal diagnostic receipt before the headless task can finish', async () => {
+    const receipt = deferred<undefined>();
+    backgroundStore.available = false;
+    mockLogInfo.mockImplementationOnce(() => receipt.promise);
+    let done = false;
+    const run = reconcileLocalMobileNotificationsInBackground('capture').then(() => { done = true; });
+    await vi.waitFor(() => expect(mockLogInfo).toHaveBeenCalledWith('Background reminder reconciliation', expect.objectContaining({ extra: expect.objectContaining({ outcome: 'skipped-store-unavailable' }) })));
+    expect(done).toBe(false);
+    receipt.resolve(undefined);
+    await run;
+  });
+
+  it.each(['sandbox', 'transition', 'available'] as const)('does not reconcile an unavailable store (%s)', async (field) => {
+    backgroundStore[field] = field !== 'available';
+    await reconcileLocalMobileNotificationsInBackground('capture');
+    expect(mockAlarmScheduleAlarm).not.toHaveBeenCalled();
+    expect(mockPermissionsAndroidCheck).not.toHaveBeenCalled();
+  });
+
+  it('rechecks workspace ownership after asynchronous permission checks', async () => {
+    mockStoreState.tasks = [{ id: 'task', title: 'Task', dueDate: new Date(Date.now() + 3600000).toISOString() }];
+    mockPermissionsAndroidCheck.mockImplementationOnce(async () => { backgroundStore.transition = true; return true; });
+    await reconcileLocalMobileNotificationsInBackground('capture');
+    expect(mockAlarmScheduleAlarm).not.toHaveBeenCalled();
+  });
+
+  it('rechecks workspace ownership when the serialized cycle reaches execution', async () => {
+    const schedule = deferred<{ id: number }>();
+    mockStoreState.tasks = [{ id: 'task', title: 'Task', dueDate: new Date(Date.now() + 3600000).toISOString() }];
+    mockAlarmScheduleAlarm.mockReturnValueOnce(schedule.promise);
+    const first = startLocalMobileNotifications();
+    await vi.waitFor(() => expect(mockAlarmScheduleAlarm).toHaveBeenCalled());
+    const background = reconcileLocalMobileNotificationsInBackground('capture');
+    await vi.waitFor(() => expect(mockLogInfo).toHaveBeenCalledWith('Background reminder reconciliation', expect.objectContaining({ extra: expect.objectContaining({ outcome: 'requested' }) })));
+    backgroundStore.sandbox = true;
+    schedule.resolve({ id: 99 });
+    await Promise.all([first, background]);
+    expect(mockLogInfo).toHaveBeenCalledWith('Background reminder reconciliation', expect.objectContaining({ extra: expect.objectContaining({ outcome: 'skipped-store-unavailable' }) }));
+    expect(mockLogInfo).not.toHaveBeenCalledWith('Background reminder reconciliation', expect.objectContaining({ extra: expect.objectContaining({ outcome: 'cycle-completed' }) }));
+  });
+
+  it.each(['disabled', 'suppressed', 'date-only'])('keeps background reminders gated (%s)', async (mode) => {
+    mockStoreState.settings = { dailyDigestMorningEnabled: false, dailyDigestEveningEnabled: false, weeklyReviewEnabled: false, ...(mode === 'disabled' ? { notificationsEnabled: false } : {}) };
+    mockStoreState.tasks = [{ id: 'task', title: 'Task', dueDate: mode === 'date-only' ? '2099-01-01' : new Date(Date.now() + 3600000).toISOString(), ...(mode === 'suppressed' ? { suppressMindwtrReminders: true } : {}) }];
+    await reconcileLocalMobileNotificationsInBackground('capture');
+    expect(mockAlarmScheduleAlarm).not.toHaveBeenCalled();
+  });
+
+  it('reports completion without claiming per-alarm scheduling succeeded', async () => {
+    mockStoreState.tasks = [{ id: 'task', title: 'Task', dueDate: new Date(Date.now() + 3600000).toISOString() }];
+    mockAlarmScheduleAlarm.mockRejectedValueOnce(new Error('native refusal'));
+    await expect(reconcileLocalMobileNotificationsInBackground('capture')).resolves.toBeUndefined();
+    expect(mockLogInfo).toHaveBeenCalledWith('Background reminder reconciliation', expect.objectContaining({ extra: expect.objectContaining({ outcome: 'cycle-completed' }) }));
   });
 
   it('retries loading the alarm map after a failed storage read', async () => {

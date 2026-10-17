@@ -5,6 +5,10 @@ import {
   getSystemDefaultLanguage,
   getTranslations,
   hasActiveMobileNotificationFeature,
+  getStorageAdapter,
+  isSandboxMode,
+  isWorkspaceTransitionActive,
+  noopStorage,
   isWeeklyReviewReminderEnabled,
   loadStoredLanguage,
   nameNotifyListener,
@@ -732,9 +736,10 @@ async function loadReminderTranslations(activeFeature: boolean): Promise<Record<
   return getTranslations(language);
 }
 
-async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteStale?: boolean } = {}): Promise<void> {
+async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteStale?: boolean } = {}, canRun?: () => boolean): Promise<boolean> {
   const cycleStartedAtMs = Date.now();
   await loadAlarmMapIfNeeded();
+  if (canRun && !canRun()) return false;
 
   const { settings, tasks, projects } = useTaskStore.getState();
   const taskRemindersEnabled = areTaskRemindersEnabled(settings);
@@ -760,6 +765,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
   const port = toReminderAlarmPort(api);
   const delivered = activeFeature ? await readDeliveredCandidates(Date.now()) : [];
   const translations = await loadReminderTranslations(activeFeature);
+  if (canRun && !canRun()) return false;
   const now = new Date();
 
   // Derivation and the diff live in core (`planReminderAlarms` over `buildReminderSchedule`):
@@ -788,7 +794,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
       scheduledOneShotReminderCount: 0,
       durationMs: Date.now() - cycleStartedAtMs,
     });
-    return;
+    return true;
   }
 
   const { diagnostics, recurring: recurringRequests, oneShot: oneShotRequests } = plan;
@@ -875,6 +881,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
     suppressedTaskReminderCount: diagnostics.suppressedTaskReminderCount,
     durationMs: Date.now() - cycleStartedAtMs,
   });
+  return true;
 }
 
 // Every reschedule cycle must run through this one queue. Two cycles in flight
@@ -883,12 +890,43 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
 // On Android that overlap is routine: coming back to the foreground fires the
 // overdue one-shot top-up timer and the AppState start request together.
 // The returned promise rejects with the cycle's error; the queue itself never does.
-function queueRescheduleCycle(api: AlarmNotificationsApi, options: { deleteStale?: boolean } = {}): Promise<void> {
+function queueRescheduleCycle(api: AlarmNotificationsApi, options: { deleteStale?: boolean } = {}, canRun?: () => boolean): Promise<boolean> {
   const cycle = rescheduleQueue
     .catch(() => undefined)
-    .then(() => runRescheduleCycle(api, options));
-  rescheduleQueue = cycle.catch(() => undefined);
+    .then(async () => {
+      if (canRun && !canRun()) return false;
+      return runRescheduleCycle(api, options, canRun);
+    });
+  rescheduleQueue = cycle.then(() => undefined, () => undefined);
   return cycle;
+}
+
+/** Headless captures and sync cannot wait for the foreground store debounce timer. */
+export async function reconcileLocalMobileNotificationsInBackground(reason: 'capture' | 'sync'): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  const canRun = () => !isSandboxMode() && !isWorkspaceTransitionActive()
+    && getStorageAdapter() !== noopStorage && !useTaskStore.getState().error;
+  const receipt = (outcome: string) => {
+    return logInfo('Background reminder reconciliation', {
+      scope: 'notifications', force: true,
+      extra: { releaseCheck: 'v1.3.7/background-capture-reminders', reason, outcome },
+    });
+  };
+  try {
+    if (!canRun()) { await receipt('skipped-store-unavailable'); return; }
+    const permission = await getAndroidNotificationPermissionStatus();
+    if (!permission.granted) { await receipt('skipped-permission'); return; }
+    const api = await loadAlarmApi();
+    if (!api) { await receipt('skipped-api-unavailable'); return; }
+    if (!canRun()) { await receipt('skipped-store-unavailable'); return; }
+    await ensureLocalReminderNotificationChannel();
+    void receipt('requested');
+    const ran = await queueRescheduleCycle(api, {}, canRun);
+    // Completion means the cycle ran; its normal diagnostics report per-alarm refusals.
+    await receipt(ran ? 'cycle-completed' : 'skipped-store-unavailable');
+  } catch {
+    await receipt('failed');
+  }
 }
 
 function enqueueReschedule(api: AlarmNotificationsApi): void {
