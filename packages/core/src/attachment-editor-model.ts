@@ -421,7 +421,7 @@ export const getAttachmentRowState = (attachment: Attachment): AttachmentRowStat
 // The fields that describe an attachment's bytes. The editor changes them only by a download
 // (or its terminal "unrecoverable" mark), which belongs to the content it started on.
 const CONTENT_FIELDS = new Set<string>(['uri', 'cloudKey', 'fileHash', 'contentRev', 'contentMtimeMs', 'contentSize',
-    'size', 'mimeType', 'pendingContentUpload', 'localStatus']);
+    'size', 'mimeType', 'pendingContentUpload', 'staleContentHash', 'localStatus']);
 
 const sameAttachmentContent = (left: Attachment, right: Attachment): boolean => (
     left.cloudKey === right.cloudKey && left.fileHash === right.fileHash && (left.contentRev ?? 0) === (right.contentRev ?? 0)

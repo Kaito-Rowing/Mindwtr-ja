@@ -196,6 +196,13 @@ export interface Attachment {
      */
     pendingContentUpload?: boolean;
     /**
+     * Local-only: the hash of the file this device holds while a newer version another device made, which the merge chose,
+     * waits to be downloaded. A prepare pass that finds exactly these bytes leaves them for that download instead of
+     * uploading them as this device's edit. Recording the file's stat (an install, or a confirmed edit) clears it. It is
+     * stripped from remote sync documents, like the recorded stat.
+     */
+    staleContentHash?: string;
+    /**
      * Local availability/transfer status. Persisted locally, but not synced to remote.
      * - available: File exists at `uri`
      * - missing: Metadata exists, file not found at `uri`

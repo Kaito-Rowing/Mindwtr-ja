@@ -11,7 +11,7 @@
 // generation-bound installer; once that installer starts, the scratch file is never deleted
 // here, since a conflict can name it as the only preserved copy of a generation.
 import type { Attachment } from './types';
-import { applyAttachmentContentStat, bumpAttachmentContentRevision, checkAttachmentContentChange, isUninstalledRemoteWinner, logUninstalledRemoteWinner } from './attachment-change-detection';
+import { applyAttachmentContentStat, bumpAttachmentContentRevision, checkAttachmentContentChange, isStaleCopyOfRemoteWinner, logUninstalledRemoteWinner } from './attachment-change-detection';
 import { computeSha256Hex, isSha256Hex } from './attachment-hash';
 import { isAttachmentPresenceRepairCandidate, repairMissingRemoteAttachments } from './attachment-presence-repair';
 import {
@@ -745,8 +745,8 @@ export const createMobileAttachmentCommon = (host: MobileAttachmentCommonHost) =
       return true;
     }
     if (!check.hash) return false;
-    if (isUninstalledRemoteWinner(attachment)) {
-      // The old file of a remote winner the last cycle merged but did not download: never this device's own edit (it would
+    if (isStaleCopyOfRemoteWinner(attachment, check.hash)) {
+      // Exactly the old file of a remote version the merge chose but did not download: never this device's own edit (it would
       // outrank the winner and upload the old bytes over it). The post-merge remote-winner check installs the winner.
       logUninstalledRemoteWinner(attachment);
       return false;

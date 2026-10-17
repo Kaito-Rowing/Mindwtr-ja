@@ -458,6 +458,8 @@ const prepareRestoredAttachmentsForSync = <T extends { attachments?: Attachment[
                 )),
             } : {}),
             ...(shouldPublishRestoredBytes ? { pendingContentUpload: true } : {}),
+            // Device-local state of another install: the restored bytes are this device's own content now.
+            staleContentHash: undefined,
             ...(attachment.deletedAt ? { deletedAt: restoredAt } : {}),
             updatedAt: restoredAt,
         };

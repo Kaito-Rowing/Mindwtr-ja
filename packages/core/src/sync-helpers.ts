@@ -295,6 +295,7 @@ export function* sanitizeAppDataForRemotePass(data: AppData): CooperativePass<Ap
                         contentMtimeMs: undefined,
                         contentSize: undefined,
                         pendingContentUpload: undefined,
+                        staleContentHash: undefined,
                     };
                 }
             }
@@ -311,6 +312,7 @@ export function* sanitizeAppDataForRemotePass(data: AppData): CooperativePass<Ap
                 contentMtimeMs: undefined,
                 contentSize: undefined,
                 pendingContentUpload: undefined,
+                staleContentHash: undefined,
             };
         });
     };

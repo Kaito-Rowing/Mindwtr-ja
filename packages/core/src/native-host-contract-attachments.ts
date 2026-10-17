@@ -163,7 +163,7 @@ const TEXT_LIMIT = 100_000;
 const ID_LIMIT = 500;
 const STAMP = (value: unknown) => isText(value, 100) && Boolean(value);
 const ATTACHMENT_KEYS = new Set(['id', 'kind', 'title', 'uri', 'mimeType', 'size', 'createdAt', 'updatedAt',
-    'deletedAt', 'cloudKey', 'fileHash', 'contentRev', 'contentMtimeMs', 'contentSize', 'pendingContentUpload', 'localStatus']);
+    'deletedAt', 'cloudKey', 'fileHash', 'contentRev', 'contentMtimeMs', 'contentSize', 'pendingContentUpload', 'staleContentHash', 'localStatus']);
 const LOCAL_STATUSES = new Set(['available', 'missing', 'uploading', 'downloading']);
 
 const isAttachment = (value: unknown): value is Attachment => isObjectRecord(value)
@@ -174,6 +174,7 @@ const isAttachment = (value: unknown): value is Attachment => isObjectRecord(val
     && ['size', 'contentRev', 'contentMtimeMs', 'contentSize'].every((key) => value[key] === undefined
         || (typeof value[key] === 'number' && Number.isFinite(value[key])))
     && (value.pendingContentUpload === undefined || typeof value.pendingContentUpload === 'boolean')
+    && (value.staleContentHash === undefined || typeof value.staleContentHash === 'string')
     && (value.localStatus === undefined || LOCAL_STATUSES.has(String(value.localStatus)));
 
 /** A bounded list of attachment records, as the store keeps them; null when it is not one. */

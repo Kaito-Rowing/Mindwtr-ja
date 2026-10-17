@@ -1843,13 +1843,14 @@ describe('normalizePendingRemoteDeletes', () => {
 });
 
 describe('a remote winner the merge took but this device has not installed yet', () => {
-    // The merge took another device's newer content (its fileHash and contentRev; no recorded stat, which never travels).
+    // The merge took another device's newer content (its fileHash and contentRev; no recorded stat, which never travels)
+    // and marked the bytes this device holds (staleContentHash).
     // The download that would install it did not run this cycle, so the disk still holds this device's OLD bytes.
     const OLD = 'a'.repeat(64);
     const NEW = 'b'.repeat(64);
     const winner = (): Attachment => ({
         id: 'att-1', kind: 'file', title: 'f.txt', uri: '/managed/att-1.txt', cloudKey: 'attachments/att-1.txt',
-        fileHash: NEW, contentRev: 2, localStatus: 'available',
+        fileHash: NEW, contentRev: 2, localStatus: 'available', staleContentHash: OLD,
         createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
     } as Attachment);
     const pass = (attachment: Attachment, phase: 'prepare' | 'post-merge', onDownload = vi.fn(async () => true)) => runAttachmentTransferLifecycle({

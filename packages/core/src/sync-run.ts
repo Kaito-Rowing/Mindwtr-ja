@@ -293,6 +293,7 @@ const buildExactLocalActivationFallback = (
         contentSize: local.contentSize,
         localStatus: 'available',
         pendingContentUpload: true,
+        staleContentHash: undefined,
         deletedAt: undefined,
     };
 };

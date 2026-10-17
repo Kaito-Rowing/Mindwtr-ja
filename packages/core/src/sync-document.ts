@@ -248,13 +248,15 @@ const stripRemoteAttachmentDeviceState = (data: AppData): AppData => {
                     || Object.prototype.hasOwnProperty.call(attachment, 'localStatus')
                     || Object.prototype.hasOwnProperty.call(attachment, 'contentMtimeMs')
                     || Object.prototype.hasOwnProperty.call(attachment, 'contentSize')
-                    || Object.prototype.hasOwnProperty.call(attachment, 'pendingContentUpload');
+                    || Object.prototype.hasOwnProperty.call(attachment, 'pendingContentUpload')
+                    || Object.prototype.hasOwnProperty.call(attachment, 'staleContentHash');
                 if (!hasDeviceState) return attachment;
                 const {
                     localStatus: _localStatus,
                     contentMtimeMs: _contentMtimeMs,
                     contentSize: _contentSize,
                     pendingContentUpload: _pendingContentUpload,
+                    staleContentHash: _staleContentHash,
                     ...syncedAttachment
                 } = attachment;
                 attachmentsChanged = true;

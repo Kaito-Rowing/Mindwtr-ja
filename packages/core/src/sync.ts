@@ -990,7 +990,7 @@ export function* mergeAppDataWithStatsPass(local: AppData, incoming: AppData, op
             winner: Attachment,
             localAttachment: Attachment,
             incomingAttachment: Attachment,
-        ): Pick<Attachment, 'fileHash' | 'contentRev' | 'contentMtimeMs' | 'contentSize' | 'pendingContentUpload'> => {
+        ): Pick<Attachment, 'fileHash' | 'contentRev' | 'contentMtimeMs' | 'contentSize' | 'pendingContentUpload' | 'staleContentHash'> => {
             if (winner.deletedAt) {
                 return {
                     fileHash: winner.fileHash,
@@ -998,6 +998,7 @@ export function* mergeAppDataWithStatsPass(local: AppData, incoming: AppData, op
                     contentMtimeMs: winner.contentMtimeMs,
                     contentSize: winner.contentSize,
                     pendingContentUpload: undefined,
+                    staleContentHash: undefined,
                 };
             }
             const localRev = localAttachment.contentRev ?? 0;
@@ -1044,12 +1045,24 @@ export function* mergeAppDataWithStatsPass(local: AppData, incoming: AppData, op
             // Design point 4 is untouched: newer remote content arrives with a higher
             // contentRev or a different fileHash and still lands with an absent stat.
             const statSource = localIdentitySurvived ? localAttachment : contentSource;
+            // Device-local, like the stat: when another device's version replaces this device's identity, remember the hash of
+            // the bytes this device holds, so the next prepare pass leaves exactly those bytes for the download instead of
+            // uploading them as an edit. Only a recorded stat proves what is on disk; an older mark still names the disk's
+            // bytes (nothing installed or recorded since).
+            const normalizedLocalStaleHash = localAttachment.staleContentHash?.trim().toLowerCase();
+            const staleContentHash = localIdentitySurvived
+                ? localAttachment.staleContentHash
+                : normalizedLocalStaleHash
+                    || (localAttachment.contentMtimeMs !== undefined && localAttachment.contentSize !== undefined
+                        ? normalizedLocalFileHash
+                        : undefined);
             return {
                 fileHash,
                 contentRev,
                 contentMtimeMs: statSource.contentMtimeMs,
                 contentSize: statSource.contentSize,
                 pendingContentUpload: localPendingIdentitySurvived ? true : undefined,
+                staleContentHash: staleContentHash || undefined,
             };
         };
 
