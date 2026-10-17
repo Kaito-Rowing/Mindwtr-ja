@@ -730,7 +730,7 @@ export function TaskQuickActionMenu({
         icon?: ReactNode;
         label: string;
         active?: boolean;
-        onClick: () => void;
+        onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
         showChevron?: boolean;
         disabled?: boolean;
         title?: string;
@@ -844,8 +844,10 @@ export function TaskQuickActionMenu({
                 {renderMenuAction({
                     icon: <Copy className="h-4 w-4" />,
                     label: tFallback(t, 'task.copyTitle', 'Copy Title'),
-                    onClick: () => {
-                        void copyTaskTitles([task], t, false, 'menu');
+                    onClick: (event) => {
+                        void copyTaskTitles([task], t, false, 'menu', {
+                            isTrusted: event.nativeEvent.isTrusted, detail: event.nativeEvent.detail,
+                        });
                         onClose();
                     },
                 })}
@@ -855,8 +857,10 @@ export function TaskQuickActionMenu({
                     label: kind === 'link'
                         ? tFallback(t, 'task.copyTaskLink', 'Copy task link')
                         : tFallback(t, 'task.copyTaskId', 'Copy task ID'),
-                    onClick: () => {
-                        void copyTaskReference(task.id, kind, t);
+                    onClick: (event) => {
+                        void copyTaskReference(task.id, kind, t, {
+                            isTrusted: event.nativeEvent.isTrusted, detail: event.nativeEvent.detail,
+                        });
                         onClose();
                     },
                 }))}

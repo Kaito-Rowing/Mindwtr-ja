@@ -47,6 +47,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // task-link-open reuses releaseCheck and outcome below.
     // task-copy-diagnostics reuses releaseCheck and outcome below; source is the menu/shortcut category.
     'source', 'documentFocused', 'activationSupported', 'activationActive', 'clipboardAvailable', 'errorKind',
+    // task-copy-input: click trust and coarse pointer/keyboard-or-assistive classification only.
+    'inputTrusted', 'inputKind',
     // ios-search-publication reuses releaseCheck, operation, outcome, enabled, and count below.
     // ios-search-snapshot reuses releaseCheck and count below.
     // ios-entity-link reuses releaseCheck, kind, and outcome below.

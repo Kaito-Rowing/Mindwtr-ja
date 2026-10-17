@@ -6,10 +6,15 @@ import { flushSync } from 'react-dom';
 import type { Task } from '@mindwtr/core';
 import { useUiStore } from '../../store/ui-store';
 import { reportError } from '../../lib/report-error';
+import { logInfo } from '../../lib/app-log';
 import { TaskQuickActionMenu } from './TaskQuickActionMenu';
 
 vi.mock('../../lib/report-error', () => ({
     reportError: vi.fn(),
+}));
+vi.mock('../../lib/app-log', () => ({
+    logInfo: vi.fn().mockResolvedValue(undefined),
+    logWarn: vi.fn().mockResolvedValue(undefined),
 }));
 
 const now = '2026-02-01T00:00:00.000Z';
@@ -131,6 +136,32 @@ const openDestinationPanel = () => {
 };
 
 describe('TaskQuickActionMenu', () => {
+    it.each([
+        ['Copy Title', 1, 'pointer'],
+        ['Copy Title', 0, 'keyboard-or-assistive'],
+        ['Copy task link', 1, 'pointer'],
+        ['Copy task link', 0, 'keyboard-or-assistive'],
+        ['Copy task ID', 1, 'pointer'],
+        ['Copy task ID', 0, 'keyboard-or-assistive'],
+    ])('records the native click metadata for %s (detail=%s)', async (label, detail, inputKind) => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+        vi.mocked(logInfo).mockClear();
+        try {
+            const props = renderMenu();
+            fireEvent.click(screen.getByRole('menuitem', { name: label }), { detail });
+            expect(writeText).toHaveBeenCalledOnce();
+            expect(props.onClose).toHaveBeenCalledOnce();
+            await waitFor(() => expect(logInfo).toHaveBeenCalledExactlyOnceWith('Task clipboard write completed', {
+                scope: 'clipboard', extra: expect.objectContaining({
+                    releaseCheck: 'v1.3.7/task-copy-input', source: 'menu', inputKind,
+                    // DOM events dispatched by this test are untrusted.
+                    inputTrusted: false,
+                }),
+            }));
+        } finally { vi.unstubAllGlobals(); }
+    });
+
     it('surfaces clipboard failure from Copy Title without a success toast', async () => {
         const writeText = vi.fn().mockRejectedValue(new Error('Clipboard unavailable'));
         const showToast = vi.fn();
