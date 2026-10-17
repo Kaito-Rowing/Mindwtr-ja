@@ -88,6 +88,14 @@ describe('native host contract: prepareSharedFiles', () => {
         expect(textOnly.notice).toMatchObject({ title: 'Notice' });
     });
 
+    it('counts a staged file the system cleared before the entry opened as skipped: a notice, never a silent empty capture', async () => {
+        // The cache copy is gone, so the host's copy into the attachments folder fails.
+        const host = await open(fileHost({}, ['cleared.pdf']).host);
+        const answer = value(await host.prepareSharedFiles({ requestId: requestId(), files: [staged('cleared.pdf')], text: null, subject: null }));
+        expect(answer.captureModal).toBeNull();
+        expect(answer.notice).toEqual({ tone: 'warning', title: 'Notice', message: '1 shared file(s) could not be attached (too large, blocked file type, or unreadable).' });
+    });
+
     it('takes no files without the host\'s attachment IO, and refuses malformed input', async () => {
         const host = await open(null);
         expect(host.prepareSharedFiles({ requestId: requestId(), files: [staged('a.pdf')], text: null, subject: null })).resolves.toMatchObject({ ok: false });

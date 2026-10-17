@@ -79,6 +79,17 @@ class SharedFileStagerTest {
     }
 
     @Test
+    fun aClearedCacheLeavesTheEntryToStageAgain() {
+        // The system cleared the cache before the entry opened: no list, so the router stages again (a gone grant then reads as
+        // unreadable files, and core says so); a cleared copy under a kept list fails core's copy, which core counts skipped.
+        val provider = Provider(mapOf("content://p/1" to Triple("a".toByteArray(), "a.txt", "text/plain")))
+        stager(provider).stage(entry, listOf("content://p/1"))
+        java.io.File(folder.root, entry).deleteRecursively()
+        assertNull(stager(provider).staged(entry))
+        assertEquals(1, stager(provider).stage(entry, listOf("content://p/1")).length())
+    }
+
+    @Test
     fun discardAndKeepOnlyDeleteStagedFolders() {
         val provider = Provider(mapOf("content://p/1" to Triple("a".toByteArray(), "a.txt", "text/plain")))
         val other = "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
