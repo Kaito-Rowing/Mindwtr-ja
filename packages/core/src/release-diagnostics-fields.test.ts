@@ -13,6 +13,8 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // windowless-sync: existing periodic timer timing and lifecycle gates only.
+    'delayMs', 'latenessMs', 'runtimeActive', 'editorPause', 'minIntervalMs', 'success',
     // sync-field-merge reuses entity below; fields is a comma list of task/project field names, never values.
     'fields',
     // timeline-shared-order reuses releaseCheck, kind, and outcome below; no content or IDs.
@@ -229,6 +231,13 @@ const RELEASE_CHECK_FIELD_NAMES = [
 ];
 
 describe('release diagnostics field names', () => {
+    it('preserves the content-free windowless sync timer receipt', () => {
+        const receipt = {
+            releaseCheck: 'v1.3.7/windowless-sync', documentVisibility: 'hidden', delayMs: '900000',
+            latenessMs: '25000', runtimeActive: 'true', editorPause: 'false', outcome: 'requested',
+        };
+        expect(sanitizeLogContext(receipt)).toEqual(receipt);
+    });
     it('preserves the bounded WebDAV setup probe receipt', () => {
         const receipt = {
             releaseCheck: 'v1.3.5/webdav-setup-probe', phase: 'compatibility', outcome: 'failed',
