@@ -96,6 +96,7 @@ type TaskActions = Pick<
     | 'commitPreparedTrashItemsPurge'
     | 'commitPreparedReferenceTasksMove'
     | 'commitPreparedInboxTasksMove'
+    | 'commitPreparedInboxTasksAddTag'
     | 'commitPreparedReferenceTasksAddTag'
     | 'commitPreparedReferenceTasksRemoveTag'
     | 'commitPreparedArchivedTasksMutation'
@@ -2132,6 +2133,9 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
 
     commitPreparedInboxTasksMove: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> =>
         commitPreparedRawReferenceBatch(input, authority, referenceBatchModules.inboxMove, 'Inbox Move conflicts with saved data'),
+
+    commitPreparedInboxTasksAddTag: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> =>
+        commitPreparedRawReferenceBatch(input, authority, referenceBatchModules.inboxAddTag, 'Inbox Add tag conflicts with saved data'),
 
     commitPreparedReferenceTasksAddTag: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> =>
         commitPreparedRawReferenceBatch(input, authority, referenceBatchModules.addTag, 'Reference Add tag conflicts with saved data'),

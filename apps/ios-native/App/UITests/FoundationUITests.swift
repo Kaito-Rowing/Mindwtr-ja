@@ -30613,3 +30613,76 @@ extension FoundationUITests {
         }
     }
 }
+
+// Task741: root supplies fresh production-hydrated libraries; no screenshots or fault hooks.
+extension FoundationUITests {
+    func testInboxBulkTag741NormalCancelNoopMixedAndColdRead() throws { try task741InboxTag("NORMAL") }
+    func testInboxBulkTag741LargestCancelNoopMixedAndColdRead() throws { try task741InboxTag("LARGEST", largest: true) }
+
+    private func task741OpenTag(_ app: XCUIApplication) {
+        let open = task192Reveal(app, "inbox-bulk-tag-open", buttons: true, scrollID: "inbox-bulk-actions-scroll", horizontal: true, scans: 16)
+        task740InboxStatusReady(open); open.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["inbox-bulk-tag-dialog"].waitForExistence(timeout: 15))
+        boardEnabled(app.textFields["inbox-bulk-tag-input"])
+    }
+
+    private func task741TypeTag(_ app: XCUIApplication, _ text: String) {
+        let input = app.textFields["inbox-bulk-tag-input"], scroll = app.scrollViews["inbox-bulk-tag-scroll"]
+        if scroll.exists { revealPagedElement(app, input, in: scroll, ready: app.buttons["inbox-bulk-tag-cancel"]) }
+        task740InboxStatusReady(input); input.tap(); input.typeText(text)
+        XCTAssertTrue((input.value as? String ?? "").utf8.elementsEqual(text.utf8))
+    }
+
+    private func task741InboxTag(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_INBOX_TAG_UI_" + role + "_LIBRARY"],
+              let uuid = UUID(uuidString: library), uuid.uuidString.lowercased() == library else {
+            throw XCTSkip("An externally staged fresh canonical Task741 Inbox tag library is required")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US", "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); defer { app.terminate() }
+        task736OpenInbox(app); task737ChooseGroup(app, "none")
+        task738OpenFilters(app); task740SetSearch(app, "Task741 tag batch")
+        boardTap(app, "inbox-filters-close"); boardEnabled(app.buttons["inbox-filters-open"])
+        let first = task192Reveal(app, "task-title-task741-tag-01", buttons: true, scrollID: "inbox-scroll", scans: 120)
+        task740InboxStatusReady(first); first.press(forDuration: 0.8); task739Count(app, 1)
+        let second = task192Reveal(app, "inbox-select-none-task741-tag-02", buttons: true, scrollID: "inbox-scroll", scans: 120)
+        task740InboxStatusReady(second); second.tap(); task739Count(app, 2)
+        task741OpenTag(app); XCTAssertFalse(app.buttons["inbox-bulk-tag-save"].isEnabled)
+        task741TypeTag(app, "   "); XCTAssertFalse(app.buttons["inbox-bulk-tag-save"].isEnabled)
+        boardTap(app, "inbox-bulk-tag-cancel"); task739Count(app, 2)
+        task741OpenTag(app)
+        let cleared = app.textFields["inbox-bulk-tag-input"]
+        XCTAssertTrue((cleared.value as? String ?? "").isEmpty || cleared.value as? String == cleared.placeholderValue)
+        task741TypeTag(app, "###"); boardEnabled(app.buttons["inbox-bulk-tag-save"])
+        boardTap(app, "inbox-bulk-tag-save")
+        XCTAssertTrue(app.textFields["inbox-bulk-tag-input"].waitForNonExistence(timeout: 20)); task739Count(app, 2)
+        XCTAssertFalse(app.staticTexts["task-inboxBulkTag-notice"].exists)
+        task741OpenTag(app); task741TypeTag(app, "  ###Task741  ")
+        boardEnabled(app.buttons["inbox-bulk-tag-save"]); boardTap(app, "inbox-bulk-tag-save")
+        XCTAssertTrue(app.staticTexts["inbox-bulk-count"].waitForNonExistence(timeout: 30))
+        let notice = app.staticTexts["task-inboxBulkTag-notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15)); XCTAssertEqual(notice.label, "Done: 1 task")
+        XCTAssertFalse(app.buttons["task-inboxBulkTag-undo"].exists); XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        app.terminate(); app.launch(); task736OpenInbox(app)
+        XCTAssertFalse(app.staticTexts["inbox-bulk-count"].exists); XCTAssertFalse(app.textFields["inbox-bulk-tag-input"].exists)
+        for index in 1...3 {
+            let id = String(format: "task741-tag-%02d", index)
+            boardTap(app, "search-open"); let search = app.textFields["search-input"]; boardEnabled(search)
+            search.tap(); let prior = search.value as? String ?? ""
+            search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: prior.count) + "id:" + id + "\n")
+            let result = app.buttons["search-task-" + id]; task740InboxStatusReady(result); result.tap()
+            boardTap(app, "task-mode-edit")
+            let tags = app.textFields["task-editor-tags"]
+            if !tags.exists { boardTap(app, "task-editor-section-organization") }
+            revealPagedElement(app, tags, in: app.scrollViews["task-editor-scroll"])
+            let values = Set((tags.value as? String ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
+            XCTAssertEqual(values, index < 3 ? Set(["#alpha", "#Task741"]) : Set(["#beta"]))
+            boardTap(app, "task-view-close"); XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+            boardTap(app, "search-close"); boardEnabled(app.buttons["inbox-filters-open"])
+        }
+    }
+}

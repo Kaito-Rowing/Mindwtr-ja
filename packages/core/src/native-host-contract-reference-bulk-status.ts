@@ -487,7 +487,8 @@ export function createReferenceTasksMoveMethods(deps: Parameters<typeof createTa
 
 /** Additive reuse for Reference batch families; Move V1 bodies/bytes stay unchanged. */
 export { detach as detachReferenceBatchJson, jsonSafe as detachReferenceBatchValue,
-    readRequest as readReferenceBatchSelectionRequest, rawScope as rawReferenceBatchScope,
+    readRequest as readReferenceBatchSelectionRequest, readMoveRequest as readStatusBatchSelectionRequest,
+    selectedSourcesMatch as statusBatchSourcesMatch, moveSettings as statusBatchSettings, rawScope as rawReferenceBatchScope,
     loadedProject as loadedReferenceBatchProject, settingsReadable as referenceBatchSettingsReadable,
     requiredDates as requiredReferenceBatchDates, referenceSourcesMatch as referenceBatchSourcesMatch,
     validTask as validReferenceBatchTask, validContextProject as validReferenceBatchProject,

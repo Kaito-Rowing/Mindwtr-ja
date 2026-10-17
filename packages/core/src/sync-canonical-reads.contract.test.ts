@@ -40,7 +40,7 @@ import { normalizeTaskForSyncMerge, validateMergedSyncData } from './sync-normal
 import { getMergeComparableSignature, normalizeTaskForContentComparison } from './sync-signatures';
 import { createNextRecurringTask } from './recurrence';
 import { toStableSyncJson } from './sync-helpers';
-import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import { flushPendingSave, getStorageAdapter, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createNativeHostContract } from './native-host-contract';
 import { createCalendarSubscriptionSettingsMethods } from './native-host-contract-calendar-subscription-settings';
 import { createCalendarSubscriptionAddMethods } from './native-host-contract-calendar-subscription-add';
@@ -50,12 +50,13 @@ import { readAreaDurableData } from './native-host-contract-area-durable';
 import { projectAvailabilityWritePlan, projectFileAvailabilityWritePlan } from './store-projects/project-actions';
 import { rawReadProjectSnapshot, rawReadRow } from './sqlite-raw-snapshot';
 import { loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts, taskRevisionOf } from './native-request-receipts';
-import { openScratchSqlite } from './screen-parity.replay';
+import { openScratchSqlite, openSqliteHost } from './screen-parity.replay';
 import { createTaskDraft } from './task-draft';
 import { prepareProjectToSection } from './project-to-section';
 import { DEFAULT_FOCUS_CONTROL_STATE } from './focus-controls';
 import { TASK_SQLITE_COLUMNS, TASK_SYNC_FIELD_SCHEMA, TASK_SYNC_SCHEMA_FIXTURE, taskToSqliteRow } from './task-sync-schema';
 import { mapSqliteTaskRow, rawReadTaskSnapshot, SqliteAdapter } from './sqlite-adapter';
+import { buildSaveSnapshot } from './store-helpers';
 import { buildBulkTaskTokenUpdates } from './bulk-task-tokens';
 import { PROJECT_SQLITE_COLUMNS, projectFromSqliteRow, projectToSqliteRow } from './project-sync-schema';
 import { SECTION_SQLITE_COLUMNS, sectionFromSqliteRow, sectionToSqliteRow } from './section-sync-schema';
@@ -831,6 +832,32 @@ describe('canonical local reads contract', () => {
         'retryPreparedCalendarSubscriptionSettingSnapshot',
     ]);
 
+    it('leaves canonical persisted and read-back documents after Inbox Add tag', async () => {
+        const nativeValue = <T>(result: { ok: true; value: T } | { ok: false; error: { message: string } }): T => {
+            if (!result.ok) throw new Error(result.error.message); return result.value;
+        };
+        const fixture = convergeThroughStorage(buildLargeDocument(150));
+        const sqlite = await openSqliteHost(fixture, undefined, undefined, { rejectConcurrentWrites: true });
+        try {
+            await getStorageAdapter().saveData(buildSaveSnapshot(useTaskStore.getState()));
+            const taskIds = ['task-5', 'task-10'];
+            const sources = taskIds.map(id => useTaskStore.getState()._tasksById.get(id)!);
+            expect(sources.every(row => row.status === 'inbox')).toBe(true);
+            const request = { requestId: 'c79d9455-74a4-4cb6-a543-4b5f7a717742', source: 'inbox' as const,
+                taskIds, taskRevisions: Object.fromEntries(sources.map(row => [row.id, taskRevisionOf(row)])), tag: ' ###task741 ', params: {} };
+            const planned = nativeValue(await sqlite.host.prepareInboxTasksAddTag(request));
+            if (planned.kind !== 'prepared') throw new Error('Expected changed Inbox tag');
+            const durable = nativeValue(await readAreaDurableData(false, true));
+            expect(await useTaskStore.getState().commitPreparedInboxTasksAddTag(planned.prepared, durable.authority))
+                .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+            await flushPendingSave();
+            const written = nativeValue(await readAreaDurableData(false, true)).authority.snapshot;
+            expect(remoteBytes(runNormalizePass(written))).toBe(remoteBytes(written));
+            const readBack = throughLocalStorage(written);
+            expect(remoteBytes(runNormalizePass(readBack))).toBe(remoteBytes(readBack));
+        } finally { await sqlite.close(); }
+    });
+
     it('leaves a canonical document after every store write action', async () => {
         report('');
         report('### Store write actions on a settled document');
@@ -882,7 +909,7 @@ describe('canonical local reads contract', () => {
                     }
                 }
                 setStorageAdapter(new TrackedReceiptAdapter(sqlite.client, {
-                    rejectConcurrentWrites: label === 'commitPreparedInboxTasksMove' || label === 'commitPreparedReferenceTasksMove'
+                    rejectConcurrentWrites: label === 'commitPreparedInboxTasksAddTag' || label === 'commitPreparedInboxTasksMove' || label === 'commitPreparedReferenceTasksMove'
                         || label === 'commitPreparedReferenceTasksAddTag' || label === 'commitPreparedReferenceTasksRemoveTag',
                 }));
                 await loadNativeRequestReceipts(sqlite.client);
@@ -1406,6 +1433,50 @@ describe('canonical local reads contract', () => {
                 });
                 control.resetBaseline();
                 expect(await useTaskStore.getState().commitPreparedReferenceTasksMove(planned.prepared, durable.authority))
+                    .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+            },
+            commitPreparedInboxTasksAddTag: async (control) => {
+                const host = await nativeHost(control);
+                const taskIds = ['task-5', 'task-10'];
+                const sources = taskIds.map((id) => {
+                    const source = useTaskStore.getState()._tasksById.get(id);
+                    if (!source || source.status !== 'inbox') throw new Error(`Inbox Add-tag fixture missing: ${id}`);
+                    return source;
+                });
+                const request = { requestId: 'c79d9455-74a4-4cb6-a543-4b5f7a717741', source: 'inbox' as const, taskIds,
+                    taskRevisions: Object.fromEntries(sources.map((source) => [source.id, taskRevisionOf(source)])),
+                    tag: ' ###task741 ', params: {} };
+                const planned = nativeValue(await host.prepareInboxTasksAddTag(request));
+                if (planned.kind !== 'prepared') throw new Error('Inbox Add-tag fixture unexpectedly produced a no-op');
+                expect(nativeValue(host.validatePreparedInboxTasksAddTag({ request, prepared: planned.prepared })))
+                    .toEqual({ count: 2, changed: true });
+                const durable = nativeValue(await readAreaDurableData(false, true));
+                const before = durable.authority.snapshot;
+                const rawSources = taskIds.map((id) => {
+                    const row = before.tasks.find((task) => task.id === id);
+                    const raw = row && rawReadTaskSnapshot(row);
+                    if (!raw) throw new Error(`Inbox Add-tag raw fixture missing: ${id}`);
+                    return raw;
+                });
+                const expectedUpdates = buildBulkTaskTokenUpdates(taskIds,
+                    new Map(rawSources.map((row) => [row.id, row])), 'tags', request.tag.trim(), 'add');
+                expect(expectedUpdates.map((update) => update.id)).toEqual(taskIds);
+                const tagged = new Map(planned.prepared.effect.tasks.map((pair) => [pair.after.id, pair.after]));
+                expect([...tagged.keys()]).toEqual(taskIds);
+                expect(tagged.get('task-10')).toMatchObject({ status: 'inbox',
+                    tags: expectedUpdates[1].updates.tags, rev: (sources[1].rev ?? 0) + 1 });
+                expect(planned.prepared.effect.projects).toEqual([]);
+                expect(planned.prepared.effect.sections).toEqual([]);
+                control.expectPersisted((written) => {
+                    expect(written.tasks).toEqual(before.tasks.map((row) => tagged.get(row.id) ?? row));
+                    expect(written.projects).toEqual(before.projects);
+                    expect(written.sections).toEqual(before.sections);
+                    expect(written.areas).toEqual(before.areas);
+                    expect(written.people).toEqual(before.people);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                control.resetBaseline();
+                expect(await useTaskStore.getState().commitPreparedInboxTasksAddTag(planned.prepared, durable.authority))
                     .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
             },
             commitPreparedReferenceTasksAddTag: async (control) => {
@@ -2479,7 +2550,7 @@ describe('canonical local reads contract', () => {
         for (const action of Object.keys(WRITE_ACTIONS).sort()) {
             const outcome = await runMutation(action, WRITE_ACTIONS[action], settled,
                 action === 'commitPreparedCalendarSubscriptionSetting' || action === 'commitPreparedCalendarSubscriptionAdd'
-                    || action === 'commitPreparedInboxTasksMove' || action === 'commitPreparedReferenceTasksMove'
+                    || action === 'commitPreparedInboxTasksAddTag' || action === 'commitPreparedInboxTasksMove' || action === 'commitPreparedReferenceTasksMove'
                     || action === 'commitPreparedReferenceTasksAddTag' || action === 'commitPreparedReferenceTasksRemoveTag');
             if (outcome.storeFields.length > 0 || outcome.readFields.length > 0) {
                 notCanonical.push({ action, ...outcome });

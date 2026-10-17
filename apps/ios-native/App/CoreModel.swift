@@ -316,6 +316,18 @@ final class CoreModel: ObservableObject {
     private var inboxBulkDeleteOwner: (host: CoreHost, request: String)?
     private var inboxBulkUndoOwner: (host: CoreHost, request: String)?
     private var inboxTasksMoveOwner: (host: CoreHost, request: String)?
+    private var inboxTasksAddTagOwner: (host: CoreHost, request: String)?
+    @Published private(set) var inboxBulkTagPresented = false
+    @Published private(set) var inboxBulkTagText = ""
+    @Published private(set) var inboxBulkTagOptions: CoreObject = [:]
+    @Published private(set) var inboxBulkTagCanSave = false
+    @Published private(set) var inboxBulkTagReadError: String?
+    @Published private(set) var inboxBulkTagWriteError = false
+    private var inboxBulkTagReadTask: Task<Void, Never>?
+    private var inboxBulkTagReadGeneration = 0
+    private var inboxBulkTagContext: InboxBulkConfirmation?
+    private var inboxBulkTagIDs: [String] = []
+    private var inboxBulkTagRevisions: CoreObject = [:]
     private var inboxBulkNoticeHost: CoreHost?
     private var inboxCollapsedGroups: CoreObject = [:]
     private var initialInboxCollapsedGroupsRaw: String?
@@ -5573,7 +5585,7 @@ final class CoreModel: ObservableObject {
                     referenceProjectNextActionEditID = result.text("id")
                 }
             }
-            if recovery.text("method") == "inboxTasksMoveCommit", recovery.text("source") == "inbox" {
+            if ["inboxTasksMoveCommit", "inboxTasksAddTagCommit"].contains(recovery.text("method")), recovery.text("source") == "inbox" {
                 selectedSurface = .inbox
                 clearInboxTaskSelection()
                 taskActionNotice = [:]; inboxBulkNoticeHost = nil
@@ -20851,13 +20863,13 @@ final class CoreModel: ObservableObject {
 
     // MARK: Task739 Inbox selection, using the list's complete core-owned scope
     private var inboxBulkMutationPending: Bool {
-        inboxBulkDeleteOwner != nil || inboxBulkUndoOwner != nil || inboxTasksMoveOwner != nil
+        inboxBulkDeleteOwner != nil || inboxBulkUndoOwner != nil || inboxTasksMoveOwner != nil || inboxTasksAddTagOwner != nil
     }
     private var inboxBulkMutationHost: CoreHost? {
-        inboxTasksMoveOwner?.host ?? inboxBulkDeleteOwner?.host ?? inboxBulkUndoOwner?.host
+        inboxTasksAddTagOwner?.host ?? inboxTasksMoveOwner?.host ?? inboxBulkDeleteOwner?.host ?? inboxBulkUndoOwner?.host
     }
     private var inboxBulkCompositionBlocked: Bool {
-        inboxBulkMutationPending || inboxBulkConfirmation != nil
+        inboxBulkMutationPending || inboxBulkConfirmation != nil || inboxBulkTagPresented
     }
     var inboxBulkRetryError: String? {
         guard let owner = inboxBulkMutationHost, host === owner, ready, !busy, !appLock.concealed,
@@ -20865,7 +20877,7 @@ final class CoreModel: ObservableObject {
               !taskPresented, !capturePresented, !areaPickerPresented, !morePresented,
               !inboxGroupPresented, !inboxSortPresented, !inboxFiltersPresented, !taskStatusMenuPresented,
               !mindSweepPresented, !processInboxPresented, !calendarComposerPresented, !calendarItemPresented else { return nil }
-        if inboxTasksMoveOwner != nil { return label("task.doneStatusOutcomeUnknown") }
+        if inboxTasksMoveOwner != nil || inboxTasksAddTagOwner != nil { return label("task.doneStatusOutcomeUnknown") }
         return label(inboxBulkUndoOwner == nil ? "task.archiveDeleteOutcomeUnknown" : "task.trashOutcomeUnknown")
     }
     private var inboxBulkSelectionEnabled: Bool {
@@ -20921,6 +20933,7 @@ final class CoreModel: ObservableObject {
         if changed {
             inboxSelectionGeneration += 1
             if inboxBulkConfirmation != nil { cancelArchiveBulkDeleteConfirmation() }
+            closeInboxBulkTag(clearInput: inboxTasksAddTagOwner == nil)
         }
         inboxSelectedIDs = ids
         inboxSelectedRevisions = revisions
@@ -20930,6 +20943,7 @@ final class CoreModel: ObservableObject {
     }
 
     private func clearInboxTaskSelection() {
+        closeInboxBulkTag(clearInput: inboxTasksAddTagOwner == nil)
         inboxSelectionGeneration += 1
         if inboxBulkConfirmation != nil { cancelArchiveBulkDeleteConfirmation() }
         inboxSelectionMode = false
@@ -21199,8 +21213,200 @@ final class CoreModel: ObservableObject {
         await publishInboxTasksMove(result, on: owner, foreground: foreground)
     }
 
+    // Task741: preserve one frozen tag request on its original Host through ambiguous retry.
+    private func inboxBulkTagContextCurrent(_ context: InboxBulkConfirmation) -> Bool {
+        inboxBulkConfirmationCurrent(context)
+            && inboxTasksMoveWarm(on: context.host, generation: context.selectionGeneration, foreground: context.foregroundGeneration)
+    }
+
+    var inboxBulkTagEnabled: Bool {
+        inboxBulkSelectionEnabled && inboxBulk.object("bar").object("addTag").flag("enabled")
+    }
+
+    var inboxBulkTagSaveEnabled: Bool {
+        inboxBulkTagPresented && inboxBulkTagCanSave && inboxBulkTagReadError == nil
+            && !busy && !retryNeeded && inboxTasksAddTagOwner == nil
+            && inboxBulkTagContext.map { inboxBulkTagContextCurrent($0) } == true
+    }
+
+    func openInboxBulkTag() {
+        guard inboxBulkTagEnabled, let owner = host else { return }
+        do {
+            inboxBulkTagContext = InboxBulkConfirmation(host: owner, params: try json(inboxParams),
+                revision: inbox.text("revision"), selectionGeneration: inboxSelectionGeneration,
+                filterSequence: inboxFilterSequence, foregroundGeneration: foregroundSyncGeneration)
+        } catch { inboxReadError = label("task.updateFailed"); return }
+        inboxBulkTagIDs = inboxSelectedIDs
+        inboxBulkTagRevisions = inboxSelectedRevisions
+        inboxBulkTagOptions = inboxBulk.object("addTag")
+        inboxBulkTagPresented = true
+        inboxBulkTagWriteError = false
+        setInboxBulkTagText(inboxBulkTagText)
+    }
+
+    func closeInboxBulkTag(clearInput: Bool = true) {
+        inboxBulkTagPresented = false
+        inboxBulkTagReadGeneration += 1
+        inboxBulkTagReadTask?.cancel()
+        inboxBulkTagReadTask = nil
+        inboxBulkTagCanSave = false
+        inboxBulkTagReadError = nil
+        inboxBulkTagContext = nil
+        inboxBulkTagIDs = []
+        inboxBulkTagRevisions = [:]
+        if clearInput { inboxBulkTagText = "" }
+    }
+
+    func setInboxBulkTagText(_ text: String) {
+        guard inboxBulkTagPresented, !busy, !retryNeeded, let context = inboxBulkTagContext,
+              inboxBulkTagContextCurrent(context) else { return }
+        inboxBulkTagText = text
+        inboxBulkTagCanSave = false
+        inboxBulkTagReadError = nil
+        inboxBulkTagReadGeneration += 1
+        let generation = inboxBulkTagReadGeneration
+        inboxBulkTagReadTask?.cancel()
+        func current() -> Bool {
+            inboxBulkTagPresented && generation == inboxBulkTagReadGeneration
+                && inboxBulkTagText.utf8.elementsEqual(text.utf8) && !retryNeeded
+                && inboxBulkTagContextCurrent(context)
+        }
+        inboxBulkTagReadTask = Task {
+            do {
+                let input = try await query("inboxBulkTagInput", [text, 0], beforeDispatch: current)
+                guard current() else { return }
+                guard Set(input.keys) == Set(["canSave", "notice"]), input["notice"] is NSNull,
+                      let canSave = input["canSave"] as? NSNumber, CFGetTypeID(canSave) == CFBooleanGetTypeID() else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                inboxBulkTagCanSave = canSave.boolValue
+            } catch {
+                guard current() else { return }
+                inboxBulkTagReadError = label("task.updateFailed")
+            }
+        }
+    }
+
+    private func inboxTasksAddTagOwned(on owner: CoreHost, request: String) -> Bool {
+        inboxTasksAddTagOwner?.host === owner && inboxTasksAddTagOwner?.request.utf8.elementsEqual(request.utf8) == true
+    }
+
+    func saveInboxBulkTag() async {
+        guard inboxBulkTagSaveEnabled, let context = inboxBulkTagContext else { return }
+        let owner = context.host, ids = inboxBulkTagIDs, revisions = inboxBulkTagRevisions
+        let tag = inboxBulkTagText
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString.lowercased(), "source": "inbox", "taskIds": ids,
+                "taskRevisions": revisions, "tag": tag, "params": try decode(context.params)])
+        } catch { inboxReadError = label("task.updateFailed"); return }
+        func current() -> Bool {
+            inboxBulkTagContextCurrent(context)
+                && inboxExactJSON(inboxSelectedIDs, ids) && inboxExactJSON(inboxSelectedRevisions, revisions)
+                && inboxBulkTagText.utf8.elementsEqual(tag.utf8)
+        }
+        guard current() else { return }
+        closeInboxBulkTag(clearInput: false)
+        busy = true
+        inboxReadError = nil
+        inboxTasksAddTagOwner = (owner, request)
+        var dispatched = false
+        defer { if host === owner { finishOperation() } }
+        do {
+            let result = try await query("inboxTasksAddTagWrite", [request], beforeDispatch: {
+                let admitted = current() && self.inboxTasksAddTagOwned(on: owner, request: request)
+                if admitted { dispatched = true }
+                return admitted
+            })
+            guard inboxTasksAddTagOwned(on: owner, request: request) else { return }
+            let warm = current()
+            try acknowledgeInboxTasksAddTag(result, on: owner, request: request, warm: warm, allowNoop: true)
+            guard warm else { return }
+            await publishInboxTasksAddTag(result, on: owner, foreground: context.foregroundGeneration)
+        } catch {
+            guard inboxTasksAddTagOwned(on: owner, request: request) else { return }
+            if !dispatched { inboxTasksAddTagOwner = nil; return }
+            handleInboxTasksAddTagError(error, on: owner, request: request, warm: current())
+        }
+    }
+
+    private func acknowledgeInboxTasksAddTag(_ result: CoreObject, on owner: CoreHost, request: String,
+                                              warm: Bool, allowNoop: Bool = false) throws {
+        guard inboxTasksAddTagOwned(on: owner, request: request) else { throw CocoaError(.coderReadCorrupt) }
+        let frozen = try decode(request)
+        guard frozen.text("source") == "inbox", let ids = frozen["taskIds"] as? [String],
+              Set(result.keys) == Set(["count", "changed"]),
+              let changed = result["changed"] as? NSNumber, CFGetTypeID(changed) == CFBooleanGetTypeID(),
+              let count = result["count"] as? NSNumber, CFGetTypeID(count) != CFBooleanGetTypeID(),
+              count.doubleValue.rounded() == count.doubleValue,
+              changed.boolValue ? (count.doubleValue > 0 && count.doubleValue <= Double(ids.count)) : (allowNoop && count.doubleValue == 0) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        inboxTasksAddTagOwner = nil // Durable ACK retires debt before any refresh/notice read.
+        guard warm else { return }
+        retryNeeded = false; inboxReadError = nil; error = nil; inboxBulkTagWriteError = false
+        closeInboxBulkTag()
+        if changed.boolValue { clearInboxTaskSelection() }
+    }
+
+    private func publishInboxTasksAddTag(_ result: CoreObject, on owner: CoreHost, foreground: Int) async {
+        guard result.flag("changed") else { return }
+        let generation = inboxSelectionGeneration
+        let current = { self.inboxTasksMoveWarm(on: owner, generation: generation, foreground: foreground) }
+        guard current() else { return }
+        try? await readInbox(ownedGuard: current)
+        guard current(), let input = try? await query("inboxBulkTagInput", ["", result.number("count")], beforeDispatch: current),
+              current(), let notice = input["notice"] as? CoreObject, Set(notice.keys) == Set(["title", "message"]),
+              !notice.text("title").isEmpty, !notice.text("message").isEmpty else { return }
+        showTaskActionNotice(["operation": "inboxBulkTag", "source": "inbox", "undoEnabled": false,
+            "message": notice.text("title") + ": " + notice.text("message")])
+    }
+
+    private func handleInboxTasksAddTagError(_ failure: Error, on owner: CoreHost, request: String, warm: Bool) {
+        guard inboxTasksAddTagOwned(on: owner, request: request) else { return }
+        if isDefiniteRejection(failure) { inboxTasksAddTagOwner = nil }
+        guard warm else { return }
+        retryNeeded = inboxTasksAddTagOwner != nil
+        inboxBulkTagWriteError = true
+        error = retryNeeded ? failure.localizedDescription : nil
+        inboxReadError = failure.localizedDescription
+    }
+
+    private func retryInboxTasksAddTag(on owner: CoreHost, acknowledgment: String?, selectionGeneration: Int,
+                                      foreground: Int, surface: Surface) async throws {
+        guard let pending = inboxTasksAddTagOwner, pending.host === owner else { throw CocoaError(.coderReadCorrupt) }
+        let request = pending.request
+        let currentDebt = { self.inboxTasksAddTagOwned(on: owner, request: request) }
+        let outcome: CoreObject
+        if host === owner {
+            outcome = try await query("inboxTasksAddTagRetryOutcome", [request], beforeDispatch: { self.host === owner && currentDebt() })
+        } else {
+            outcome = try decode(await owner.call("inboxTasksAddTagRetryOutcome", argumentsJSON: json([request])))
+        }
+        guard currentDebt() else { throw CancellationError() }
+        let warm = surface == .inbox && inboxTasksMoveWarm(on: owner, generation: selectionGeneration, foreground: foreground)
+        if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+            if warm {
+                let unknown = label("task.doneStatusOutcomeUnknown")
+                retryNeeded = true; inboxReadError = unknown; error = unknown
+            }
+            return
+        }
+        guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else { throw CocoaError(.coderReadCorrupt) }
+        let result = outcome.object("result")
+        if let acknowledgment, !inboxExactJSON(result, try decode(acknowledgment)) { throw CocoaError(.coderReadCorrupt) }
+        try acknowledgeInboxTasksAddTag(result, on: owner, request: request, warm: warm)
+        guard warm else { return }
+        await publishInboxTasksAddTag(result, on: owner, foreground: foreground)
+    }
+
     private func retryInboxBulk(on owner: CoreHost, acknowledgment: String?, selectionGeneration: Int,
                                 foreground: Int, surface: Surface) async throws {
+        if inboxTasksAddTagOwner?.host === owner {
+            try await retryInboxTasksAddTag(on: owner, acknowledgment: acknowledgment,
+                selectionGeneration: selectionGeneration, foreground: foreground, surface: surface)
+            return
+        }
         if inboxTasksMoveOwner?.host === owner {
             try await retryInboxTasksMove(on: owner, acknowledgment: acknowledgment,
                 selectionGeneration: selectionGeneration, foreground: foreground, surface: surface)
@@ -32782,7 +32988,10 @@ final class CoreModel: ObservableObject {
             if !calendarPreferencePending { calendarComposerNavigation = nil }
         } catch {
             if let inboxRetryHost {
-                if let pending = inboxTasksMoveOwner, pending.host === inboxRetryHost {
+                if let pending = inboxTasksAddTagOwner, pending.host === inboxRetryHost {
+                    handleInboxTasksAddTagError(error, on: pending.host, request: pending.request,
+                        warm: inboxTasksMoveWarm(on: pending.host, generation: inboxRetrySelection, foreground: inboxRetryForeground))
+                } else if let pending = inboxTasksMoveOwner, pending.host === inboxRetryHost {
                     handleInboxTasksMoveError(error, on: pending.host, request: pending.request,
                         warm: inboxTasksMoveWarm(on: pending.host, generation: inboxRetrySelection, foreground: inboxRetryForeground))
                 } else if let pending = inboxBulkDeleteOwner, pending.host === inboxRetryHost,

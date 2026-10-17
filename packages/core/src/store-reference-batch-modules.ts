@@ -13,6 +13,7 @@ export type ReferenceBatchValidator = { validateEnvelope: () => boolean; authori
  */
 export const referenceBatchModules: {
     shared?: { historyRowLoadProjection: typeof historyRowLoadProjection; NativeReceiptSqliteAdapter: typeof NativeReceiptSqliteAdapter };
+    inboxAddTag?: (input: unknown) => ReferenceBatchValidator;
     inboxMove?: (input: unknown) => ReferenceBatchValidator;
     move?: (input: unknown) => ReferenceBatchValidator;
     addTag?: (input: unknown) => ReferenceBatchValidator;

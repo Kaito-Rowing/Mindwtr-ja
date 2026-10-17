@@ -389,3 +389,6 @@ export type { ChecklistProjectConversion } from './checklist-project-conversion'
 
 export type { NativeInboxTasksMoveRequest, NativeInboxTasksMovePrepared, NativeInboxTasksMoveEnvelope,
     NativeInboxTasksMoveResult, NativeInboxTasksMovePreparation, NativeInboxTasksMoveParams } from './native-host-contract-inbox-bulk-status';
+
+export type { NativeInboxTasksAddTagRequest, NativeInboxTasksAddTagPrepared, NativeInboxTasksAddTagEnvelope,
+    NativeInboxTasksAddTagResult, NativeInboxTasksAddTagPreparation } from './native-host-contract-inbox-bulk-tag';

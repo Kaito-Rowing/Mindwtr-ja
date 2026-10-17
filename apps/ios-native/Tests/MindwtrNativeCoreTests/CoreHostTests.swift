@@ -37200,3 +37200,271 @@ extension CoreHostTests {
         await core.close()
     }
 }
+
+// Task741 exercises the real JSC/SQLite journal carrier. Independent actual RN
+// builder+batchUpdate parity is owned by the shared-core Task741 suite.
+extension CoreHostTests {
+    private var inboxTag741Input: String { "  ###café 🧭  " }
+
+    private func seedInboxTag741() async throws -> [String] {
+        let ids = try await seedInboxMove740()
+        let sql = try SQLiteBridge(url: database); defer { sql.close() }
+        _ = try sql.execute("UPDATE tasks SET tags=? WHERE id=?", parametersJSON: json([json(["#Task192 A", "#Task192 B", "#café 🧭"]), ids[1]]))
+        return ids
+    }
+
+    private func inboxTag741Request(_ core: CoreHost, ids: [String], tag: String? = nil) async throws -> [String: Any] {
+        var request = try await inboxMove740Request(core, ids: ids, status: "next")
+        request.removeValue(forKey: "status")
+        request["tag"] = tag ?? inboxTag741Input
+        return request
+    }
+
+    private func inboxTag741Control(_ request: [String: Any]) async throws -> ([String], String) {
+        let sql = try SQLiteBridge(url: database), copy = directory.appendingPathComponent("inbox741-control-\(UUID().uuidString).sqlite")
+        try sql.prepareRecovery(at: copy); sql.close()
+        let control = CoreHost(databaseURL: copy, bundleURL: try dateBundle(at: archive180Clock))
+        addTeardownBlock { await control.close() }
+        _ = try await control.start()
+        let result = try object(await control.call("inboxTasksAddTagWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(result), try json(["count": 2, "changed": true]))
+        await control.close()
+        let saved = try SQLiteBridge(url: copy); defer { saved.close() }
+        return (try nineTableSnapshot(saved), try doneTask176Receipts(saved))
+    }
+
+    func testInboxBulkTag741InputParityAndPartialChangedCountExactSQLite() async throws {
+        let ids = try await seedInboxTag741(), faults = HostIOFaults()
+        var confirmations = 0, coreAcknowledgedCounts: [Int] = []
+        var receiptVisibleAtCoreAcknowledgment = false
+        faults.commandDiagnostic = { event in
+            if event == "inboxTasksAddTag" { confirmations += 1 }
+            if event.hasPrefix("inboxTasksAddTagCoreAck:"), let count = Int(event.dropFirst("inboxTasksAddTagCoreAck:".count)) {
+                coreAcknowledgedCounts.append(count)
+                if let db = try? SQLiteBridge(url: self.database) {
+                    defer { db.close() }
+                    receiptVisibleAtCoreAcknowledgment = (try? self.archive181ReceiptRows(db))?.contains {
+                        ($0["method"] as? String)?.hasPrefix("inboxTasksAddTag:") == true
+                    } == true
+                }
+            }
+        }
+        let core = host(faults, bundleURL: try dateBundle(at: archive180Clock, suffix: """
+            for (const count of [true, '2', 0, -1, 1.5, 10001]) {
+                console.info('Ignored malformed Inbox tag diagnostic', {scope:'native-host',context:JSON.stringify({releaseCheck:'v1.3.5/ios-inbox-bulk-tag',outcome:'added',count})});
+            }
+            console.info('Ignored wrong outcome', {scope:'native-host',context:JSON.stringify({releaseCheck:'v1.3.5/ios-inbox-bulk-tag',outcome:'failed',count:2})});
+            console.info('Ignored wrong scope', {scope:'other',context:JSON.stringify({releaseCheck:'v1.3.5/ios-inbox-bulk-tag',outcome:'added',count:2})});
+            """)); _ = try await core.start()
+        XCTAssertTrue(coreAcknowledgedCounts.isEmpty, "Malformed or unrelated console payloads cannot claim a bulk acknowledgment")
+        for input in ["", " \n\t", "###", inboxTag741Input, String(repeating: "x", count: 2_000)] {
+            let args = try json([input, 0])
+            let reference = try object(await core.call("inboxBulkTagInput", argumentsJSON: args))
+            let done = try object(await core.call("doneBulkTagInput", argumentsJSON: args))
+            XCTAssertEqual(try json(reference), try json(done))
+        }
+        let invalid: [[Any]] = [["x", true], ["x", 0.5], ["x", -1], [String(repeating: "x", count: 2_001), 0]]
+        for input in invalid {
+            await expectFailure { _ = try await core.call("inboxBulkTagInput", argumentsJSON: json(input)) }
+        }
+        try referenceBulk192RawFixture(ids)
+        let request = try await inboxTag741Request(core, ids: Array(ids.reversed()))
+        let expected = try await inboxTag741Control(request)
+        let carrier = try json(storedTask(ids[1])), protected = try json(storedTask(ids[0] + "-protected")), count = try taskCount()
+        let result = try object(await core.call("inboxTasksAddTagWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(result), try json(["count": 2, "changed": true])); XCTAssertEqual(confirmations, 1)
+        XCTAssertEqual(coreAcknowledgedCounts, [2], "The actual core receipt acknowledgment must reach the native aggregate diagnostic")
+        XCTAssertTrue(receiptVisibleAtCoreAcknowledgment, "A committed Add-tag receipt must already be visible when the core diagnostic is forwarded")
+        XCTAssertEqual(try json(storedTask(ids[1])), carrier); XCTAssertEqual(try json(storedTask(ids[0] + "-protected")), protected)
+        XCTAssertEqual(try taskCount(), count, "Tag editing must not create recurrence children")
+        let saved = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(saved), expected.0); XCTAssertEqual(try doneTask176Receipts(saved), expected.1)
+        let receipts = try archive181ReceiptRows(saved)
+        XCTAssertEqual(receipts.count, 1); XCTAssertTrue((receipts.first?["method"] as? String)?.hasPrefix("inboxTasksAddTag:") == true)
+        saved.close(); XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let outcome = try object(await core.call("inboxTasksAddTagRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed"); XCTAssertEqual(try json(XCTUnwrap(outcome["result"])), try json(result))
+        var wrong = request; wrong["tag"] = "#different195"
+        let wrongOutcome = try object(await core.call("inboxTasksAddTagRetryOutcome", argumentsJSON: json([json(wrong)])))
+        XCTAssertEqual(wrongOutcome["kind"] as? String, "unproven")
+        await expectFailure { _ = try await core.call("inboxTasksAddTagWrite", argumentsJSON: json([json(wrong)])) }
+        var move = request; move.removeValue(forKey: "tag"); move["status"] = "waiting"
+        await expectFailure { _ = try await core.call("referenceTasksMoveWrite", argumentsJSON: json([json(move)])) }
+        let refused = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(refused), expected.0); XCTAssertEqual(try doneTask176Receipts(refused), expected.1)
+        XCTAssertEqual(coreAcknowledgedCounts, [2], "Saved outcome reads and refused requests cannot emit another mutation acknowledgment")
+        refused.close(); await core.close()
+    }
+
+    func testInboxBulkTag741NoopNeverJournalsWritesOrAdoptsDevice() async throws {
+        let ids = try await seedInboxTag741(), faults = HostIOFaults()
+        let core = host(faults, bundleURL: try dateBundle(at: archive180Clock)); _ = try await core.start()
+        let request = try await inboxTag741Request(core, ids: ids)
+        let sql = try SQLiteBridge(url: database)
+        let rows = try referenceMove193SQLRows(sql.execute("SELECT data FROM settings WHERE id=1"))
+        let row = try XCTUnwrap(rows.firstObject as? [String: Any])
+        var settings = try object(XCTUnwrap(row["data"] as? String)); settings.removeValue(forKey: "deviceId")
+        _ = try sql.execute("UPDATE settings SET data=? WHERE id=1", parametersJSON: json([json(settings)]))
+        let baseline = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql)
+        var writes = 0, journals = 0, confirmations = 0
+        faults.beforeSQL = { if self.archive180IsDomainWrite($0) { writes += 1 } }
+        faults.journalWrite = { journals += 1 }; faults.commandDiagnostic = { _ in confirmations += 1 }
+        for tag in ["#Task192 A", "###", " \n\t", ""] {
+            var noop = request; noop["requestId"] = UUID().uuidString.lowercased(); noop["tag"] = tag
+            let result = try object(await core.call("inboxTasksAddTagWrite", argumentsJSON: json([json(noop)])))
+            XCTAssertEqual(try json(result), try json(["count": 0, "changed": false]))
+            let outcome = try object(await core.call("inboxTasksAddTagRetryOutcome", argumentsJSON: json([json(noop)])))
+            XCTAssertEqual(outcome["kind"] as? String, "unproven")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            XCTAssertEqual(try nineTableSnapshot(sql), baseline); XCTAssertEqual(try doneTask176Receipts(sql), receipts)
+        }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0); XCTAssertEqual(confirmations, 0)
+        let pending = try await core.retryPending(); XCTAssertNil(pending)
+        sql.close(); await core.close()
+    }
+
+    func testInboxBulkTag741RepeatedSaveFailureColdExactOriginalEnvelope() async throws {
+        let ids = try await seedInboxTag741(), faults = HostIOFaults()
+        var coreAcknowledgedCounts: [Int] = []
+        faults.commandDiagnostic = { event in
+            if event.hasPrefix("inboxTasksAddTagCoreAck:"), let count = Int(event.dropFirst("inboxTasksAddTagCoreAck:".count)) { coreAcknowledgedCounts.append(count) }
+        }
+        let writer = host(faults, bundleURL: try dateBundle(at: archive180Clock)); _ = try await writer.start()
+        try referenceBulk192RawFixture(ids)
+        let request = try await inboxTag741Request(writer, ids: ids), expected = try await inboxTag741Control(request)
+        let sql = try SQLiteBridge(url: database), baseline = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql); sql.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Task741 COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("inboxTasksAddTagWrite", argumentsJSON: json([json(request)])) }
+        let bytes = try Data(contentsOf: journal), envelope = try doneTask176Journal("inboxTasksAddTag")
+        XCTAssertEqual(try json(XCTUnwrap(envelope["request"])), try json(request))
+        for _ in 0..<2 { await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }; try assertJournalContentUnchanged(bytes) }
+        await expectFailure("exact retry") { _ = try await writer.call("captureOpen") }
+        let failed = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failed), baseline); XCTAssertEqual(try doneTask176Receipts(failed), receipts); failed.close()
+        XCTAssertTrue(coreAcknowledgedCounts.isEmpty, "Initial failed Save and both exact retries cannot publish a durable acknowledgment")
+        await writer.close()
+        let coldFaults = HostIOFaults()
+        coldFaults.commandDiagnostic = faults.commandDiagnostic
+        let cold = host(coldFaults, bundleURL: try dateBundle(at: archive180Clock, suffix: """
+            MindwtrHost.inboxTasksAddTagPrepare=function(){throw new Error('Task741 cold replay must not prepare');};
+            globalThis.crypto.randomUUID=function(){throw new Error('Task741 tag replay must not allocate');};
+            """))
+        let startup = try object(await cold.start()), recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "inboxTasksAddTagCommit"); XCTAssertEqual(recovery["source"] as? String, "inbox")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["count": 2, "changed": true]))
+        XCTAssertEqual(coreAcknowledgedCounts, [2], "Only the successful original-journal recovery emits the core acknowledgment")
+        let saved = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(saved), expected.0); XCTAssertEqual(try doneTask176Receipts(saved), expected.1); saved.close()
+        let outcome = try object(await cold.call("inboxTasksAddTagRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed")
+        XCTAssertEqual(coreAcknowledgedCounts, [2], "An outcome read cannot duplicate the recovered acknowledgment")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); await cold.close()
+        let secondFaults = HostIOFaults(); secondFaults.commandDiagnostic = faults.commandDiagnostic
+        let second = host(secondFaults, bundleURL: try dateBundle(at: archive180Clock))
+        let secondStartup = try object(await second.start())
+        XCTAssertNil(secondStartup["recovery"])
+        XCTAssertEqual(coreAcknowledgedCounts, [2], "An ordinary second startup cannot duplicate the recovered acknowledgment")
+        await second.close()
+    }
+
+    func testInboxBulkTag741StaleReadonlyScopeAndUTF8TransportRefuseBeforeJournal() async throws {
+        for mutation in ["stale", "archived", "filtered", "missing", "utf8", "oversized"] {
+            try archive181ResetFixture()
+            let ids = try await seedInboxTag741(), faults = HostIOFaults()
+            let core = host(faults, bundleURL: try dateBundle(at: archive180Clock)); _ = try await core.start()
+            var request = try await inboxTag741Request(core, ids: ids)
+            let sql = try SQLiteBridge(url: database)
+            switch mutation {
+            case "stale":
+                var revisions = try XCTUnwrap(request["taskRevisions"] as? [String: String]); revisions[ids[0]] = "not-current"
+                request["taskRevisions"] = revisions
+            case "archived":
+                _ = try sql.execute("UPDATE projects SET status='archived',rev=rev+1 WHERE id=(SELECT projectId FROM tasks WHERE id=?)", parametersJSON: json([ids[0]]))
+            case "filtered": request["params"] = ["groupBy": "none", "filters": ["searchQuery": "no Task741 match"]]
+            case "missing":
+                var revisions = try XCTUnwrap(request["taskRevisions"] as? [String: String])
+                let revision = try XCTUnwrap(revisions.removeValue(forKey: ids[0])); revisions["missing195"] = revision
+                request["taskIds"] = ["missing195"] + Array(ids.dropFirst()); request["taskRevisions"] = revisions
+            case "oversized": request["tag"] = String(repeating: "x", count: 2_001)
+            default: break
+            }
+            let baseline = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql); sql.close()
+            var writes = 0, journals = 0
+            faults.beforeSQL = { if self.archive180IsDomainWrite($0) { writes += 1 } }; faults.journalWrite = { journals += 1 }
+            var coreAcknowledgments = 0
+            faults.commandDiagnostic = { if $0.hasPrefix("inboxTasksAddTagCoreAck:") { coreAcknowledgments += 1 } }
+            var encoded = try json(request)
+            if mutation == "utf8" {
+                let params = try json(XCTUnwrap(request["params"]))
+                encoded = encoded.replacingOccurrences(of: "\"params\":" + params,
+                    with: "\"params\":{\"caf\\u00e9\":1,\"cafe\\u0301\":2}")
+            }
+            await expectFailure { _ = try await core.call("inboxTasksAddTagWrite", argumentsJSON: json([encoded])) }
+            XCTAssertEqual(writes, 0, mutation); XCTAssertEqual(journals, 0, mutation)
+            XCTAssertEqual(coreAcknowledgments, 0, mutation)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            let unchanged = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(unchanged), baseline); XCTAssertEqual(try doneTask176Receipts(unchanged), receipts)
+            unchanged.close(); await core.close()
+        }
+    }
+
+    func testInboxBulkTag741ExactNFDTaskLeavesNFCReadonlyTwin() async throws {
+        var ids = try await seedInboxTag741()
+        let nfd = "task195-cafe\u{301}", nfc = "task195-café", sql = try SQLiteBridge(url: database)
+        _ = try sql.execute("UPDATE tasks SET id=? WHERE id=?", parametersJSON: json([nfd, ids[2]]))
+        _ = try sql.execute("UPDATE tasks SET id=? WHERE id=?", parametersJSON: json([nfc, ids[0] + "-protected"]))
+        sql.close(); ids[2] = nfd
+        let core = host(bundleURL: try dateBundle(at: archive180Clock)); _ = try await core.start()
+        let request = try await inboxTag741Request(core, ids: ids), protected = try json(storedTask(nfc))
+        let result = try object(await core.call("inboxTasksAddTagWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(result), try json(["count": 2, "changed": true]))
+        XCTAssertEqual(try json(storedTask(nfc)), protected)
+        XCTAssertTrue(try XCTUnwrap(storedTask(nfd)["id"] as? String).utf8.elementsEqual(nfd.utf8))
+        XCTAssertEqual(try storedTask(nfd)["status"] as? String, "inbox")
+        await core.close()
+    }
+
+    func testInboxBulkTag741OwnSavedACKWinsLaterEditsButMissingReceiptRefuses() async throws {
+        for receipt in [true, false] {
+            for terminal in [false, true] {
+                try archive181ResetFixture()
+                let ids = try await seedInboxTag741(), faults = HostIOFaults()
+                var coreAcknowledgedCounts: [Int] = []
+                faults.commandDiagnostic = { event in
+                    if event.hasPrefix("inboxTasksAddTagCoreAck:"), let count = Int(event.dropFirst("inboxTasksAddTagCoreAck:".count)) { coreAcknowledgedCounts.append(count) }
+                }
+                let writer = host(faults, bundleURL: try dateBundle(at: archive180Clock)); _ = try await writer.start()
+                let request = try await inboxTag741Request(writer, ids: ids)
+                if terminal { faults.journalRemove = { throw HostFailure("Injected Task741 lost reply") } }
+                else { var saves = 0; faults.journalWrite = { saves += 1; if saves == 2 { throw HostFailure("Injected Task741 lost reply") } } }
+                await expectFailure("lost reply") { _ = try await writer.call("inboxTasksAddTagWrite", argumentsJSON: json([json(request)])) }
+                XCTAssertEqual(coreAcknowledgedCounts, [2], "A lost host reply still follows one actually committed core acknowledgment")
+                let bytes = try Data(contentsOf: journal); await writer.close()
+                let sql = try SQLiteBridge(url: database)
+                _ = try sql.execute("UPDATE tasks SET title='Later independent Task741 edit',tags='[\"#later195\"]',rev=rev+1 WHERE id=?", parametersJSON: json([ids[0]]))
+                _ = try sql.execute("UPDATE projects SET title='Later Task741 parent',rev=rev+1 WHERE id='destination-project-b'")
+                if !receipt { _ = try sql.execute("DELETE FROM native_request_receipts WHERE request_id=?", parametersJSON: json([XCTUnwrap(request["requestId"])])) }
+                let baseline = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql); sql.close()
+                let coldFaults = HostIOFaults(); coldFaults.commandDiagnostic = faults.commandDiagnostic
+                let cold = host(coldFaults, bundleURL: try dateBundle(at: "2026-10-04T13:00:00.000Z", suffix: "MindwtrHost.inboxTasksAddTagPrepare=function(){throw new Error('Task741 must not reprepare');};"))
+                if receipt {
+                    let startup = try object(await cold.start()), recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+                    XCTAssertEqual(recovery["source"] as? String, "inbox")
+                    let outcome = try object(await cold.call("inboxTasksAddTagRetryOutcome", argumentsJSON: json([json(request)])))
+                    XCTAssertEqual(outcome["kind"] as? String, "confirmed")
+                    var wrong = request; wrong["tag"] = "#later195"
+                    let wrongOutcome = try object(await cold.call("inboxTasksAddTagRetryOutcome", argumentsJSON: json([json(wrong)])))
+                    XCTAssertEqual(wrongOutcome["kind"] as? String, "unproven")
+                } else {
+                    await expectFailure("STALE_REVISION") { _ = try await cold.start() }
+                    try assertJournalContentUnchanged(bytes)
+                }
+                let check = try SQLiteBridge(url: database)
+                XCTAssertEqual(try nineTableSnapshot(check), baseline); XCTAssertEqual(try doneTask176Receipts(check), receipts)
+                XCTAssertEqual(coreAcknowledgedCounts, [2], "Saved-receipt cold ACK, outcome reads, and missing-receipt refusal cannot duplicate a mutation acknowledgment")
+                check.close(); await cold.close()
+            }
+        }
+    }
+}

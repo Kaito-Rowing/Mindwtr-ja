@@ -580,7 +580,7 @@ assert.match(hostEntry, /createNativeSync\(nativeSyncBindings\)/);
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'inboxTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'inboxTasksMove', 'inboxTasksAddTag', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -3968,6 +3968,22 @@ export function createNativeHostContract(bindings = {}) {
         globalThis.backupReadinessChecks++;
         globalThis.onReadiness?.();
         return globalThis.backupReadinessResult;
+    },
+    async prepareInboxTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTagPrepare', input]));
+      return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
+    },
+    validatePreparedInboxTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTagValidate', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async commitPreparedInboxTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTagCommit', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async inboxTasksAddTagOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTagOutcome', input]));
+      return { ok: true, value: input.prepared.result };
     },
     async prepareReferenceTasksAddTag(input) {
       globalThis.menuInputs.push(JSON.stringify(['referenceTagPrepare', input]));
@@ -7893,6 +7909,29 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
         assert.equal((await poll(tag195, tag195.MindwtrHost[method]('x'.repeat(2000001)))).ok, false);
     }
 }
+// Task741: real shared tag-input policy, bounded wrappers and exact raw payload
+// transport. Store/receipt/CAS behavior runs in core and real Swift/JSC tests.
+{
+    const tag741 = makeState('auto');
+    assert.equal((await poll(tag741, tag741.MindwtrHost.boot())).ok, true);
+    for (const [text, count] of [['', 0], [' \n\t', 0], ['###', 0], ['  ###café 🧭  ', 3], ['x'.repeat(2000), 0]]) {
+        assert.deepEqual(await poll(tag741, tag741.MindwtrHost.inboxBulkTagInput(text, count)),
+            await poll(tag741, tag741.MindwtrHost.doneBulkTagInput(text, count)));
+    }
+    for (const [text, count] of [['x'.repeat(2001), 0], ['x', -1], ['x', 0.5], ['x', true], ['x', 10001]]) {
+        assert.equal((await poll(tag741, tag741.MindwtrHost.inboxBulkTagInput(text, count))).ok, false);
+    }
+    const request = { requestId: '74100000-0000-4000-8000-000000000001', taskIds: ['task-cafe\u0301'],
+        taskRevisions: { ['task-cafe\u0301']: 'revision195' }, tag: '  ###café 🧭  ', source: 'inbox', params: { groupBy: 'none' } };
+    const envelope = { request, prepared: { version: 1, request, result: { count: 1, changed: true } } };
+    assert.deepEqual(await poll(tag741, tag741.MindwtrHost.inboxTasksAddTagPrepare(JSON.stringify(request))),
+        { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } });
+    for (const [method, phase] of [['inboxTasksAddTagValidate', 'Validate'], ['inboxTasksAddTagCommit', 'Commit'], ['inboxTasksAddTagOutcome', 'Outcome']]) {
+        assert.deepEqual(await poll(tag741, tag741.MindwtrHost[method](JSON.stringify(envelope))), { ok: true, value: envelope.prepared.result });
+        assert.deepEqual(JSON.parse(tag741.menuInputs.at(-1)), ['inboxTag' + phase, envelope]);
+        assert.equal((await poll(tag741, tag741.MindwtrHost[method]('x'.repeat(2000001)))).ok, false);
+    }
+}
 // Task196: Remove tag uses its own exact envelope family and whole-payload bound.
 {
     const remove196 = makeState('auto');
@@ -7954,7 +7993,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'inboxTasksMove', 'inboxTasksAddTag', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);

@@ -692,6 +692,9 @@ export interface TaskStore {
     /** Inbox-only shared raw batch; the registered family validates its closed source and complete effect. */
     commitPreparedInboxTasksMove: (input: import('./native-host-contract-inbox-bulk-status').NativeInboxTasksMovePrepared,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Inbox Add tag's full source-aware guarded raw batch. */
+    commitPreparedInboxTasksAddTag: (input: import('./native-host-contract-inbox-bulk-tag').NativeInboxTasksAddTagPrepared,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Reference Add tag's shared guarded raw batch; contract validates all selected members. */
     commitPreparedReferenceTasksAddTag: (input: import('./native-host-contract-reference-bulk-tag').NativeReferenceTasksAddTagPrepared,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;

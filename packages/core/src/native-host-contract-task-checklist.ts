@@ -27,7 +27,7 @@ import { canSkipRecurringTaskOccurrence, matchesAdvanceOneCalendarProjection,
     projectNextRecurringTask, type RecurrenceProjection } from './recurrence';
 import { generateUUID } from './uuid';
 import { getTranslator, resolveI18nText } from './i18n';
-import { isTaskActionable, isTaskCancelled, normalizeTaskForLoad } from './task-status';
+import { isTaskActionable, isTaskCancelled, normalizeTaskForLoad, type TaskLoadTemporalContext } from './task-status';
 import { normalizeProjectLifecycleFields } from './project-status';
 import { mapSqliteTaskRow, rawReadTaskSnapshot, TASK_SQLITE_COLUMNS, taskToSqliteRow } from './sqlite-adapter';
 import { rememberRawReadRow } from './sqlite-raw-snapshot';
@@ -882,10 +882,10 @@ const readPrepared = (input: unknown, validateField: (field: TaskDraftField, val
     readChecklistPrepared(input, validateField, undefined, boardCompletion) as NativePreparedChecklistWrite | null;
 
 /** The actual SQLite display codec followed by the normal load projection. */
-export const historyRowLoadProjection = (task: Task, preparedAt: string): Task => {
+export const historyRowLoadProjection = (task: Task, preparedAt: string, temporal?: TaskLoadTemporalContext): Task => {
     const values = taskToSqliteRow(task);
     const row = Object.fromEntries(TASK_SQLITE_COLUMNS.map((column, index) => [column, values[index]]));
-    return normalizeTaskForLoad(mapSqliteTaskRow(row), preparedAt);
+    return normalizeTaskForLoad(mapSqliteTaskRow(row), preparedAt, temporal);
 };
 const validReferenceRawTask = (task: unknown, id: string): task is Task => isRecord(task)
     && validRawTask({ ...task, tags: task.tags ?? [], contexts: task.contexts ?? [] }, id);
