@@ -293,6 +293,7 @@ export * from './capture-deeplink';
 export * from './dropbox-auth-callback';
 export * from './entry-points';
 export * from './capture-modal-model';
+export * from './share-capture-files';
 export * from './session-restore';
 export * from './whisper-models';
 export * from './import-apply';
