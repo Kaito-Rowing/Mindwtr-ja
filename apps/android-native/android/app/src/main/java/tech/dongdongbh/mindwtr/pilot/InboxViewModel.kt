@@ -328,6 +328,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
 
     override fun onCleared() {
         ProcessCoreHost.unlistenSync(syncListener)
+        entries.close()
         super.onCleared()
     }
 

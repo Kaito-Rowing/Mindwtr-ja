@@ -14,6 +14,8 @@ import java.io.InputStream
  * - At most [MAX_FILES] (RN's six): a later file is never opened.
  * - Each copy streams with a byte counter and stops past [MAX_BYTES] (core's attachment cap), so a huge share neither fills the
  *   disk nor waits for a copy core refuses; such a file is staged empty with a size over the cap, so core counts it skipped.
+ * - Only another app's `content://` file: any other scheme (a `file://` URI opens inside this process) and this app's own
+ *   providers are unreadable, never opened, so a share cannot make the app attach its own private files.
  * - The provider's name, else the URI's last segment, and its MIME type, else `application/octet-stream` (RN's #1117 fallbacks
  *   for an empty cursor and a missing type). A file that cannot be opened is staged with no path: core counts it unreadable.
  * - `staged.json` is written last (temporary file, then rename), so a process death mid-copy leaves the entry to stage again.
@@ -28,6 +30,8 @@ class SharedFileStager(private val root: File, private val source: Source) {
         fun name(uri: String): String?
         fun size(uri: String): Long?
         fun mimeType(uri: String): String?
+        /** Whether [authority] is one of this app's own providers. */
+        fun ownProvider(authority: String): Boolean
     }
 
     /** The entry's staged files (core's NativeSharedFile list), or null until they are all staged. */
@@ -46,6 +50,10 @@ class SharedFileStager(private val root: File, private val source: Source) {
     }
 
     private fun stageOne(uri: String, target: File): JSONObject {
+        val authority = CONTENT.find(uri)?.groupValues?.get(1)
+        if (authority == null || runCatching { source.ownProvider(authority) }.getOrDefault(true)) {
+            return JSONObject().put("path", JSONObject.NULL).put("name", JSONObject.NULL).put("mimeType", JSONObject.NULL).put("size", JSONObject.NULL)
+        }
         val name = runCatching { source.name(uri) }.getOrNull()?.takeIf { it.isNotBlank() }
             ?: runCatching { android.net.Uri.parse(uri).lastPathSegment }.getOrNull() ?: uri.substringAfterLast('/').ifEmpty { null }
         val mimeType = runCatching { source.mimeType(uri) }.getOrNull()?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
@@ -53,8 +61,7 @@ class SharedFileStager(private val root: File, private val source: Source) {
         val file = JSONObject().put("name", name ?: JSONObject.NULL).put("mimeType", mimeType)
         if (declared != null && declared > MAX_BYTES) {
             // Too large before a byte is read: an empty stand-in carries the provider's size, which core refuses.
-            target.writeBytes(ByteArray(0))
-            return file.put("path", target.absolutePath).put("size", declared)
+            return standIn(file, target, declared)
         }
         val copied = try {
             (source.open(uri) ?: return file.put("path", JSONObject.NULL).put("size", declared ?: JSONObject.NULL)).use { input ->
@@ -64,11 +71,16 @@ class SharedFileStager(private val root: File, private val source: Source) {
             target.delete()
             return file.put("path", JSONObject.NULL).put("size", declared ?: JSONObject.NULL)
         }
-        if (copied > MAX_BYTES) {
-            target.writeBytes(ByteArray(0))
-            return file.put("path", target.absolutePath).put("size", copied)
-        }
+        if (copied > MAX_BYTES) return standIn(file, target, copied)
         return file.put("path", target.absolutePath).put("size", copied)
+    }
+
+    /** An empty file in place of one over the cap, with its [size], so core counts it skipped; unreadable when it cannot be written. */
+    private fun standIn(file: JSONObject, target: File, size: Long): JSONObject = try {
+        target.writeBytes(ByteArray(0))
+        file.put("path", target.absolutePath).put("size", size)
+    } catch (_: Exception) {
+        file.put("path", JSONObject.NULL).put("size", size)
     }
 
     /** Deletes [entryId]'s staged files (its entry left the queue). */
@@ -93,6 +105,8 @@ class SharedFileStager(private val root: File, private val source: Source) {
         const val MAX_BYTES = 50L * 1024 * 1024
         private const val STAGED = "staged.json"
         private val ENTRY_ID = Regex("^[0-9a-f-]{36}$")
+        /** A `content://` URI's authority. */
+        private val CONTENT = Regex("^content://([^/?#]+)")
 
         /** Copies [input] to [out], at most [MAX_BYTES] + 1 bytes; answers the bytes copied (over the cap: stopped there). */
         fun copyCapped(input: InputStream, out: java.io.OutputStream): Long {

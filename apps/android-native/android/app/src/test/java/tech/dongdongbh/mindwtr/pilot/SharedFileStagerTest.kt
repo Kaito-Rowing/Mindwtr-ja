@@ -24,6 +24,7 @@ class SharedFileStagerTest {
         override fun name(uri: String) = files[uri]?.second
         override fun size(uri: String) = declared[uri] ?: files[uri]?.first?.size?.toLong()
         override fun mimeType(uri: String) = files[uri]?.third
+        override fun ownProvider(authority: String) = authority == "own.app"
     }
 
     private fun stager(provider: Provider) = SharedFileStager(folder.root, provider)
@@ -76,6 +77,40 @@ class SharedFileStagerTest {
         val out = ByteArrayOutputStream()
         assertEquals(SharedFileStager.MAX_BYTES + 1, SharedFileStager.copyCapped(endless, out))
         assertEquals(SharedFileStager.MAX_BYTES + 1, out.size().toLong())
+    }
+
+    @Test
+    fun anotherSchemeOrThisAppsOwnProviderIsNeverOpened() {
+        // A hostile share naming this app's own files: file:// (opened in this process) or this app's own provider.
+        val uris = listOf("file:///data/user/0/tech.dongdongbh.mindwtr/files/mindwtr.db", "content://own.app/logs/mindwtr.log", "android.resource://x/1", "content://p/1")
+        val provider = Provider(uris.associateWith { Triple("secret".toByteArray(), "mindwtr.db", "application/octet-stream") })
+        val staged = stager(provider).stage(entry, uris)
+        assertEquals(listOf(true, true, true, false), (0 until 4).map { staged.getJSONObject(it).isNull("path") })
+        assertEquals(listOf("content://p/1"), provider.opened)
+    }
+
+    @Test
+    fun aSizelessFileOverTheCapAndOneLargerThanDeclaredAreReportedTooLarge() {
+        val big = ByteArray((SharedFileStager.MAX_BYTES + 10).toInt())
+        val provider = Provider(mapOf("content://p/sizeless" to Triple(big, "a.bin", "application/octet-stream"), "content://p/liar" to Triple(big, "b.bin", "application/octet-stream")),
+            declared = mapOf("content://p/liar" to 10L))
+        val staged = SharedFileStager(folder.root, object : SharedFileStager.Source by provider { override fun size(uri: String): Long? = if (uri.endsWith("sizeless")) null else provider.size(uri) })
+            .stage(entry, listOf("content://p/sizeless", "content://p/liar"))
+        for (index in 0..1) {
+            val file = staged.getJSONObject(index)
+            assertEquals(SharedFileStager.MAX_BYTES + 1, file.getLong("size"))
+            assertEquals(0L, java.io.File(file.getString("path")).length())
+        }
+    }
+
+    @Test
+    fun aStandInThatCannotBeWrittenIsUnreadableNotAFailedStaging() {
+        // A file declared over the cap gets an empty stand-in; where that write fails, the file reads as unreadable.
+        val provider = Provider(mapOf("content://p/big" to Triple(ByteArray(1), "big.mov", "video/mp4")), declared = mapOf("content://p/big" to 60L * 1024 * 1024))
+        val dir = java.io.File(folder.root, entry).apply { mkdirs() }
+        java.io.File(dir, "0").mkdirs() // the stand-in's name is taken by a folder
+        val file = stager(provider).stage(entry, listOf("content://p/big")).getJSONObject(0)
+        assertNull(file.text("path"))
     }
 
     @Test

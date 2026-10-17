@@ -75,6 +75,9 @@ class ContentSharedFileSource(private val context: Context) : SharedFileStager.S
     override fun name(uri: String): String? = column(uri, android.provider.OpenableColumns.DISPLAY_NAME)
     override fun size(uri: String): Long? = column(uri, android.provider.OpenableColumns.SIZE)?.toLongOrNull()
     override fun mimeType(uri: String): String? = context.contentResolver.getType(Uri.parse(uri))
+    /** This app's providers (a hostile share naming this app's own files); the debug build's share test provider plays another app. */
+    override fun ownProvider(authority: String): Boolean = context.packageManager.resolveContentProvider(authority, 0)?.packageName == context.packageName
+        && !(BuildConfig.DEBUG && authority == "${context.packageName}.sharetest")
     /** One column of the provider's first row, or null (no row, no column: RN's empty-cursor fallback, #1117). */
     private fun column(uri: String, name: String): String? = context.contentResolver.query(Uri.parse(uri), arrayOf(name), null, null, null)?.use { cursor ->
         val index = cursor.getColumnIndex(name)
@@ -138,9 +141,19 @@ class EntryRouter(private val shell: InboxViewModel, dir: File, private val stag
         if (!staging.add(entry.id)) return
         val uris = JSONObject(entry.input).optJSONArray("uris")?.let { list -> List(list.length()) { list.optString(it) } }.orEmpty()
         stagingThread.execute {
-            runCatching { stager.stage(entry.id, uris) }.onFailure { Log.w(CoreHost.TAG, "Native Android file share staging failed ${it.javaClass.simpleName}") }
-            main.post { staging.remove(entry.id); pump() }
+            val failure = runCatching { stager.stage(entry.id, uris) }.exceptionOrNull()
+            if (failure != null) Log.w(CoreHost.TAG, "Native Android file share staging failed ${failure.javaClass.simpleName}")
+            main.post {
+                staging.remove(entry.id)
+                // A staging that failed (the disk full) waits as a failed read does, then stages again; never a loop.
+                if (failure != null) failed(entry, "Staging failed") else pump()
+            }
         }
+    }
+
+    /** The ViewModel is gone: no more staging (a relaunched router stages what is left). */
+    fun close() {
+        stagingThread.shutdownNow()
     }
 
     /** Something keeps the entry from opening now: the app is not ready, a command runs or is owed, or the user's work is open. */
