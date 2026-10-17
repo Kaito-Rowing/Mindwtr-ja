@@ -703,6 +703,39 @@ const captureLines = async (titles) => {
     await tap(button(nodes, en['quickAdd.bulkConfirmCreate']) ?? fail('no Create tasks'));
 };
 const bytesOf = (file) => statSync(resolve(work, file.name)).size;
+/**
+ * The Undo of the last restore or import, from Sync › Recovery snapshots (its newest row): the same snapshot restore its toast's
+ * Undo starts, without depending on a toast that a measurement's library reads outlast (step 0 run 3: "Undo this change?"
+ * never came, the toast had gone).
+ */
+const restoreNewestSnapshot = async () => {
+    let nodes = await openRow(en['settings.sync'], onSync, 'Sync');
+    for (let step = 0; step < 10 && !shown(nodes, 'recovery-snapshots-disclosure'); step += 1) nodes = await device.swipe(nodes, 'down');
+    const rows = (current) => current.filter((node) => (node['resource-id'] ?? '').includes('recovery-snapshot-data.'));
+    if (!rows(nodes).length) nodes = await tapExpecting(tagged(nodes, 'recovery-snapshots-disclosure') ?? fail('no Recovery snapshots card'), (current) => rows(current).length > 0, 'the snapshot rows');
+    const newest = [...snapshots()].sort().at(-1) ?? fail('no recovery snapshot on disk');
+    for (let step = 0; step < 6 && !rows(nodes).some((row) => row['resource-id'].endsWith(newest)); step += 1) nodes = await device.swipe(nodes, 'down');
+    await tap(rows(nodes).find((row) => row['resource-id'].endsWith(newest)) ?? fail(`no row for the newest snapshot ${newest}`));
+    await confirmQuestion(en['settings.backupMobile.restoreRecoverySnapshot']);
+};
+/** An export's folder picker: it opens once the file is written, which takes minutes for a large library (step 0 run 3). */
+const exportToFolder = async (tag) => {
+    await openData();
+    await tap(tagged(await screen(), tag) ?? fail(`no ${tag} row`));
+    let failed = false;
+    await until('the folder picker or the export\'s failure', async () => {
+        if (otherAppFront()) return true;
+        failed = hasText(await screen().catch(() => []), en['settings.backupMobile.failedToExportBackup']);
+        return failed;
+    }, 900_000, 1000);
+    if (failed) fail('the export failed');
+    await useTestFolder();
+};
+/** A new process on the Inbox, where the capture popup opens (the measurement's other steps end on Settings › Data). */
+const toInbox = async () => {
+    await device.stopApp();
+    await launch();
+};
 
 /**
  * The recovery boot (code review 2): [stopped] starts an operation that dies with its commit journaled and never sent. Only
@@ -768,25 +801,18 @@ const boundarySequence = async (shape, limitMiB, imports) => {
     const filled = measureFixture(`d1-mb-${shape}-filled-${run}.json`, fresh.row.sourceMiB, shape, 'd1mf');
     push(filled);
     // The Undo of that restore, stopped before its send: the start reads the full library, then replays the Undo.
-    if (undoButton(fresh.toast)) {
-        await measureRecoveryBoot(shape, limitMiB, async () => {
-            await tap(undoButton(fresh.toast));
-            await confirmQuestion(en['settings.undoImportConfirmTitle']);
-        }, options);
-    } else measured.push({ shape, workload: 'recovery-boot', sizeMiB: limitMiB, boundary: true, outcome: 'no Undo offered', pass: false });
+    await measureRecoveryBoot(shape, limitMiB, restoreNewestSnapshot, options);
     await restoreFile(filled);
     await toastWith(en['settings.backupMobile.restoreComplete'], 900_000);
     setProp('export_tree', TREE);
     for (const [workload, tag, suffix] of [['export-json', 'data-transfer-export', '.json'], ['export-csv', 'data-transfer-export-csv', '.csv'], ['export-tasknotes', 'data-transfer-export-tasknotes', '.zip']]) {
         const before = exportsOnPhone();
-        await measureRun(shape, workload, limitMiB, async () => {
-            await openData();
-            await tap(tagged(await screen(), tag) ?? fail(`no ${tag} row`));
-            await useTestFolder();
-        }, () => exportsOnPhone().some((name) => !before.includes(name) && name.endsWith(suffix)), options);
+        await measureRun(shape, workload, limitMiB, () => exportToFolder(tag),
+            () => exportsOnPhone().some((name) => !before.includes(name) && name.endsWith(suffix)), options);
         sh(`rm -f ${PHONE_DIR}/mindwtr-backup*`);
     }
     setProp('export_tree', '');
+    await toInbox();
     await measureRun(shape, 'capture', limitMiB, () => captureLines([`d1mbcap1${run}`, `d1mbcap2${run}`]), () => rowsLike('mb-capture', 'd1mbcap1') === 1, options);
     await measureRun(shape, 'cold-start', limitMiB, async () => { await device.stopApp(); device.launch(ACTIVITY); }, (nodes) => onInbox(nodes), options);
 
@@ -806,12 +832,10 @@ const boundarySequence = async (shape, limitMiB, imports) => {
         }, (nodes) => hasText(nodes, en['settings.mergeBackup']) && !confirmButton(nodes), { ...options, sourceBytes: bytesOf(file) });
     });
     const over = await atAdmittedBoundary(room(), restoreAt('restore-over', 'd1mo'));
-    if (over && undoButton(over.toast)) {
-        await measureRun(shape, 'undo', limitMiB, async () => {
-            await tap(undoButton(over.toast));
-            await confirmQuestion(en['settings.undoImportConfirmTitle']);
-        }, (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']) && !confirmButton(nodes), options);
-    } else measured.push({ shape, workload: 'undo', sizeMiB: limitMiB, boundary: true, outcome: 'no Undo offered', pass: false });
+    if (over) {
+        await measureRun(shape, 'undo', limitMiB, restoreNewestSnapshot,
+            (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']) && !confirmButton(nodes), options);
+    } else measured.push({ shape, workload: 'undo', sizeMiB: limitMiB, boundary: true, outcome: 'its restore was not admitted', pass: false });
 
     // Each import over the largest base library it is admitted on: the refused attempt above it would have left its base
     // plus this import's growth.
@@ -852,24 +876,20 @@ const runSequence = async (shape, mib, { imports }) => {
     }, (nodes) => hasText(nodes, en['settings.mergeBackup']) && !confirmButton(nodes), { sourceBytes: bytesOf(b), boundary });
     const a2 = a;
     const over = await measureRun(shape, 'restore-over', mib, () => restoreFile(a2), (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']), { sourceBytes: bytesOf(a2), boundary });
-    if (over.row.outcome === 'done' && undoButton(over.toast)) {
-        await measureRun(shape, 'undo', mib, async () => {
-            await tap(undoButton(over.toast));
-            await confirmQuestion(en['settings.undoImportConfirmTitle']);
-        }, (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']) && !confirmButton(nodes), { boundary });
-    } else measured.push({ shape, workload: 'undo', sizeMiB: mib, boundary, outcome: 'no Undo offered', pass: false });
+    if (over.row.outcome === 'done') {
+        await measureRun(shape, 'undo', mib, restoreNewestSnapshot,
+            (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']) && !confirmButton(nodes), { boundary });
+    } else measured.push({ shape, workload: 'undo', sizeMiB: mib, boundary, outcome: 'its restore did not land', pass: false });
     setProp('export_tree', TREE);
     for (const [workload, tag, suffix] of [['export-json', 'data-transfer-export', '.json'], ['export-csv', 'data-transfer-export-csv', '.csv'], ['export-tasknotes', 'data-transfer-export-tasknotes', '.zip']]) {
         const before = exportsOnPhone();
-        await measureRun(shape, workload, mib, async () => {
-            await openData();
-            await tap(tagged(await screen(), tag) ?? fail(`no ${tag} row`));
-            await useTestFolder();
-        }, () => exportsOnPhone().some((name) => !before.includes(name) && name.endsWith(suffix)), { boundary });
+        await measureRun(shape, workload, mib, () => exportToFolder(tag),
+            () => exportsOnPhone().some((name) => !before.includes(name) && name.endsWith(suffix)), { boundary });
         sh(`rm -f ${PHONE_DIR}/mindwtr-backup*`);
     }
     setProp('export_tree', '');
     const lines = [`d1mcap1${mib}${run}`, `d1mcap2${mib}${run}`];
+    await toInbox();
     await measureRun(shape, 'capture', mib, () => captureLines(lines), () => rowsLike(`m-capture-${mib}`, `d1mcap1${mib}`) === 1, { boundary });
     await device.stopApp();
     await launch();
@@ -877,9 +897,8 @@ const runSequence = async (shape, mib, { imports }) => {
         const imported = await measureRun(shape, item.workload, mib, () => importFile(item.key, item.file),
             (nodes) => hasText(nodes, en['settings.backupMobile.importComplete']) && !confirmButton(nodes), { sourceBytes: item.bytes, expandedBytes: item.expandedBytes, boundary });
         // Undone, so the next importer meets the same library (not measured).
-        if (imported.row.outcome === 'done' && undoButton(imported.toast)) {
-            await tap(undoButton(imported.toast));
-            await confirmQuestion(en['settings.undoImportConfirmTitle']);
+        if (imported.row.outcome === 'done') {
+            await restoreNewestSnapshot();
             await toastWith(en['settings.backupMobile.restoreComplete'], 900_000).catch(() => undefined);
         }
         if (!pid()) await launch();

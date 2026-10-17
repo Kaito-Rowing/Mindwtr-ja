@@ -4,7 +4,7 @@
 // First: wait for the phone (one run per serial; see device-lock.mjs).
 import './device-lock.mjs';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -589,7 +589,12 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         return waitFor(description, done, 20_000);
     };
     /** Exact bytes of one app-private file (run-as, so the app must be debuggable). */
-    const pull = (remote, local) => writeFileSync(local, adbRaw('exec-out', 'run-as', pkg, 'cat', remote));
+    // Streamed into the file: a large library's database or write-ahead log passes any output buffer (D1c step 0: ENOBUFS).
+    const pull = (remote, local) => {
+        const out = openSync(local, 'w');
+        try { execFileSync(adb, ['-s', serial, 'exec-out', 'run-as', pkg, 'cat', remote], { stdio: ['ignore', out, 'pipe'] }); }
+        finally { closeSync(out); }
+    };
     /** A screenshot saved to [file], and its #RRGGBB at each [x, y]. */
     const colors = (file, points) => {
         writeFileSync(file, adbRaw('exec-out', 'screencap', '-p'));
