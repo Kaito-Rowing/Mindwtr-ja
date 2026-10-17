@@ -40,7 +40,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // native-large-transfer: Settings › Data's operation sizes and memory peaks in whole MiB, and its seconds (pass D1c).
     'sourceMiB', 'libraryMiB', 'seconds', 'nativePeakMiB', 'javaPeakMiB',
     // native-share-files reuses skipped below; counts only.
-    'candidates', 'attached',
+    'candidates', 'attached', 'unreadable',
     // reminder-boot-recovery: native scheduling acknowledgments, not a DB-row inventory count.
     'requested', 'rearmed', 'skipped', 'failed', 'bootEnabled', 'exactAllowed',
     // renderer-navigation: fixed route categories, a runtime token, and coarse library sizes.

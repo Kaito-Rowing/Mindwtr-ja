@@ -96,9 +96,21 @@ describe('native host contract: prepareSharedFiles', () => {
         expect(answer.notice).toEqual({ tone: 'warning', title: 'Notice', message: '1 shared file(s) could not be attached (too large, blocked file type, or unreadable).' });
     });
 
+    it('counts a file that could not be read beside attached ones as skipped, and says the share could not be read when none was attached', async () => {
+        const host = await open(fileHost().host);
+        const mixed = value(await host.prepareSharedFiles({ requestId: requestId(), files: [staged('a.png'), { path: null, name: 'b.png', mimeType: 'image/png', size: null }, staged('c.png')], text: null, subject: null }));
+        expect(props(mixed.captureModal!.params).attachments).toHaveLength(2);
+        expect(mixed.notice).toMatchObject({ title: 'Notice', message: '1 shared file(s) could not be attached (too large, blocked file type, or unreadable).' });
+        const none = value(await host.prepareSharedFiles({ requestId: requestId(), files: [{ path: null, name: 'b.png', mimeType: null, size: null }, staged('run.exe', { mimeType: 'application/x-msdownload' })], text: null, subject: null }));
+        expect(none.captureModal).toBeNull();
+        expect(none.notice).toMatchObject({ title: 'Share unavailable' });
+    });
+
     it('takes no files without the host\'s attachment IO, and refuses malformed input', async () => {
         const host = await open(null);
-        expect(host.prepareSharedFiles({ requestId: requestId(), files: [staged('a.pdf')], text: null, subject: null })).resolves.toMatchObject({ ok: false });
+        // Without it, the share cannot be read: RN's notice, so the entry leaves instead of holding the queue.
+        const unbound = value(await host.prepareSharedFiles({ requestId: requestId(), files: [staged('a.pdf')], text: null, subject: null }));
+        expect(unbound).toMatchObject({ captureModal: null, notice: { title: 'Share unavailable' } });
         const bound = await open(fileHost().host);
         const refused = await Promise.all([
             bound.prepareSharedFiles({ requestId: 'nope', files: [], text: null, subject: null }),
