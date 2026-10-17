@@ -2670,6 +2670,34 @@ describe('runSharedSyncCycle', () => {
         expect(lines[0].extra).toMatchObject({ step: 'write-local', releaseCheck: 'v1.3.7/sync-write-gate' });
     });
 
+    it('gives the same documents in slices on a host that binds sliceYield, and never yields on one that does not (D9b change 3)', async () => {
+        const many = (prefix: string, title: string) => Array.from({ length: 300 }, (_, index) => createTask(`${prefix}-${index}`, `${title} ${index}`));
+        const cycle = async (bindSlices: boolean) => {
+            const bundle = createHarness({
+                local: createData([...many('shared', 'Local'), ...many('local', 'Only local')]),
+                remote: createData([...many('shared', 'Remote'), ...many('remote', 'Only remote')]),
+            });
+            let yields = 0;
+            const sliceYield = vi.fn(async () => { yields += 1; });
+            if (bindSlices) bundle.notifier.sliceYield = sliceYield;
+            // Every slice is due at once: the most interleaved run there can be.
+            let clock = 0;
+            const now = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 10));
+            try {
+                expect((await bundle.run()).success).toBe(true);
+            } finally {
+                now.mockRestore();
+            }
+            return { persisted: bundle.harness.persisted, remote: bundle.harness.remote, yields };
+        };
+        const atOnce = await cycle(false);
+        const sliced = await cycle(true);
+        expect(atOnce.yields).toBe(0);
+        expect(sliced.yields).toBeGreaterThan(10);
+        expect(sliced.persisted).toEqual(atOnce.persisted);
+        expect(sliced.remote).toEqual(atOnce.remote);
+    });
+
     it('accepts a covered snapshot instead of aborting when the platform hook approves it', async () => {
         const { harness, hooks, io, run } = createHarness({
             remote: createData([createTask('t-remote', 'Remote task')]),

@@ -244,6 +244,12 @@ export interface SyncRunNotifier {
     onDiagnostic?(event: SyncRunDiagnosticEvent): void;
     /** Cooperative yield so long phases don't starve the renderer (desktop). */
     yieldToUi?(): Promise<void>;
+    /**
+     * D9b, native Android only: give the engine back between slices of the cycle's long passes (cooperative.ts). A host that
+     * binds it gets those passes in slices; every other host (desktop's yieldToUi included) runs them at once. No host binds
+     * it yet (design D9b change 5).
+     */
+    sliceYield?(): Promise<void>;
 }
 
 /** In-memory store access. Both apps share the core Zustand store; this is a
@@ -252,6 +258,8 @@ export interface SyncRunNotifier {
 export interface SyncRunStoreBridge {
     getLastDataChangeAt(): number;
     getInMemorySnapshot(): AppData;
+    /** The store's lists in one read, not copied (sync-client-helpers.ts); a sliced cycle copies them a few records at a time. */
+    captureInMemorySnapshot?(): AppData;
     flushPendingSave(): Promise<void>;
     setUiError(message: string | null): void;
     getSettings(): AppSettings | undefined;

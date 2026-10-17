@@ -1,4 +1,5 @@
 import { normalizeTaskReminderPolicy } from './task-reminder-policy';
+import { runToEnd, SLICE_ITEMS, type CooperativePass } from './cooperative';
 import type { AppData, Area, Attachment, Person, Project, Section, Task } from './types';
 import { isSha256Hex } from './attachment-hash';
 import { normalizePersonName, normalizePersonNote, normalizePersonReferenceLink } from './people';
@@ -589,12 +590,13 @@ const validateRevisionFields = (
     }
 };
 
-const validateEntityShape = (
+function* validateEntityShape(
     items: unknown[],
     label: 'tasks' | 'projects' | 'sections',
     errors: string[]
-) => {
+): CooperativePass<void> {
     for (let index = 0; index < items.length; index += 1) {
+        if ((index + 1) % SLICE_ITEMS === 0) yield;
         const item = items[index];
         if (!isObjectRecord(item)) {
             errors.push(`${label}[${index}] must be an object`);
@@ -622,9 +624,12 @@ const validateEntityShape = (
         }
         validateRevisionFields(item, label, index, errors);
     }
-};
+}
 
-export const validateMergedSyncData = (data: AppData): string[] => {
+export const validateMergedSyncData = (data: AppData): string[] => runToEnd(validateMergedSyncDataPass(data));
+
+/** {@link validateMergedSyncData} as a cooperative pass (cooperative.ts): it only reads [data]. */
+export function* validateMergedSyncDataPass(data: AppData): CooperativePass<string[]> {
     const errors: string[] = [];
     if (!Array.isArray(data.tasks)) errors.push('tasks must be an array');
     if (!Array.isArray(data.projects)) errors.push('projects must be an array');
@@ -633,9 +638,9 @@ export const validateMergedSyncData = (data: AppData): string[] => {
     if (data.people !== undefined && !Array.isArray(data.people)) errors.push('people must be an array');
     if (!isObjectRecord(data.settings)) errors.push('settings must be an object');
 
-    if (Array.isArray(data.tasks)) validateEntityShape(data.tasks as unknown[], 'tasks', errors);
-    if (Array.isArray(data.projects)) validateEntityShape(data.projects as unknown[], 'projects', errors);
-    if (Array.isArray(data.sections)) validateEntityShape(data.sections as unknown[], 'sections', errors);
+    if (Array.isArray(data.tasks)) yield* validateEntityShape(data.tasks as unknown[], 'tasks', errors);
+    if (Array.isArray(data.projects)) yield* validateEntityShape(data.projects as unknown[], 'projects', errors);
+    if (Array.isArray(data.sections)) yield* validateEntityShape(data.sections as unknown[], 'sections', errors);
     if (Array.isArray(data.areas)) {
         for (let index = 0; index < data.areas.length; index += 1) {
             const area = data.areas[index] as unknown;
@@ -802,7 +807,7 @@ export const validateMergedSyncData = (data: AppData): string[] => {
     }
 
     if (Array.isArray(data.tasks)) {
-        data.tasks.forEach((task, index) => {
+        const checkTask = (task: (typeof data.tasks)[number], index: number) => {
             if (!isObjectRecord(task)) return;
             const taskProjectExists = !isNonEmptyString(task.projectId) || allProjectIds.has(task.projectId);
             const taskAreaExists = !isNonEmptyString(task.areaId) || allAreaIds.has(task.areaId);
@@ -849,11 +854,15 @@ export const validateMergedSyncData = (data: AppData): string[] => {
                     errors.push(`tasks[${index}].sectionId must belong to the same projectId`);
                 }
             }
-        });
+        };
+        for (let index = 0; index < data.tasks.length; index += 1) {
+            checkTask(data.tasks[index], index);
+            if ((index + 1) % SLICE_ITEMS === 0) yield;
+        }
     }
 
     return errors;
-};
+}
 
 export const validateSyncPayloadShape = (data: unknown, source: 'local' | 'remote'): string[] => {
     const errors: string[] = [];

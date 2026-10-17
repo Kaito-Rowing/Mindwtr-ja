@@ -11,7 +11,10 @@ import {
     areSyncPayloadsEqual,
     computeStableValueFingerprint,
     sanitizeAppDataForRemote,
+    sanitizeAppDataForRemotePass,
+    toStableSyncJsonPass,
 } from './sync-helpers';
+import type { CooperativePass } from './cooperative';
 import { generateDeterministicUUID } from './uuid';
 
 export type SyncDocumentSource = 'local' | 'remote';
@@ -305,6 +308,14 @@ export type RemoteSyncDocument = AppData & {
 
 export const toRemoteSyncDocument = (data: AppData): RemoteSyncDocument =>
     sanitizeAppDataForRemote(data) as RemoteSyncDocument;
+
+/**
+ * A snapshot's remote document as stable sync JSON, the form both {@link computeRemoteSyncDocumentFingerprint} and
+ * {@link areRemoteSyncDocumentsEqual} serialize, as a cooperative pass (cooperative.ts).
+ */
+export function* remoteSyncDocumentStableJsonPass(data: AppData): CooperativePass<string> {
+    return yield* toStableSyncJsonPass(yield* sanitizeAppDataForRemotePass(data));
+}
 
 export const areRemoteSyncDocumentsEqual = (
     left: RemoteSyncDocument,

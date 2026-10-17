@@ -1,3 +1,4 @@
+import type { Slicer } from './cooperative';
 import type { AppData } from './types';
 
 export interface EntityMergeStats {
@@ -143,6 +144,8 @@ export type SyncCycleIO = {
     now?: () => string;
     onStep?: (step: SyncStep) => void;
     yieldToUi?: () => Promise<void>;
+    /** The run's slice clock (cooperative.ts) on a host that binds sliceYield; without it every pass runs at once. */
+    slicer?: Slicer;
 };
 
 export type SyncCycleWriteResult = {

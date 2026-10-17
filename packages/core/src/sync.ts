@@ -24,10 +24,11 @@ import {
     normalizeRevisionMetadata,
     normalizeSectionForSyncMerge,
     normalizeTaskForSyncMerge,
-    validateMergedSyncData,
+    validateMergedSyncDataPass,
 } from './sync-normalization';
 import { parseSyncDocument } from './sync-document';
 import { traceSection } from './perf-trace';
+import { mapPass, runSliced, runToEnd, SLICE_ITEMS, type CooperativePass } from './cooperative';
 import { mergeSettingsForSync } from './sync-merge-settings';
 import {
     chooseDeterministicWinner,
@@ -368,6 +369,18 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
     entityType: string = 'entity',
     nowIso?: string,
 ): { merged: T[]; stats: EntityMergeStats } {
+    return runToEnd(mergeEntitiesPass(local, incoming, mergeConflict, normalizeForComparison, entityType, nowIso));
+}
+
+/** {@link mergeEntitiesWithStats} as a cooperative pass (cooperative.ts): a yield point every few entities. */
+function* mergeEntitiesPass<T extends MergeableEntity>(
+    local: T[],
+    incoming: T[],
+    mergeConflict?: (localItem: T, incomingItem: T, winner: T) => T,
+    normalizeForComparison?: ComparisonNormalizer<T>,
+    entityType: string = 'entity',
+    nowIso?: string,
+): CooperativePass<{ merged: T[]; stats: EntityMergeStats }> {
     const localMap = new Map<string, T>(local.map((item) => [item.id, item]));
     const incomingMap = new Map<string, T>(incoming.map((item) => [item.id, item]));
     const allIds = new Set<string>([...localMap.keys(), ...incomingMap.keys()]);
@@ -421,7 +434,10 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
         return { ...item, createdAt: normalizedCreatedAt };
     };
 
+    let visited = 0;
     for (const id of allIds) {
+        visited += 1;
+        if (visited % SLICE_ITEMS === 0) yield;
         const localItem = localMap.get(id);
         const incomingItem = incomingMap.get(id);
 
@@ -864,6 +880,14 @@ const getClockSkewWarning = (stats: MergeResult['stats']): ClockSkewWarning | un
 };
 
 export function mergeAppDataWithStats(local: AppData, incoming: AppData, options: MergeAppDataOptions = {}): MergeResult {
+    return runToEnd(mergeAppDataWithStatsPass(local, incoming, options));
+}
+
+/**
+ * {@link mergeAppDataWithStats} as a cooperative pass (cooperative.ts): the same merge, with yield points between entities.
+ * It reads only its two snapshots and returns new objects, so a yield never lets anything change what it merges.
+ */
+export function* mergeAppDataWithStatsPass(local: AppData, incoming: AppData, options: MergeAppDataOptions = {}): CooperativePass<MergeResult> {
     const nowIso = isValidTimestamp(options.nowIso) ? options.nowIso : new Date().toISOString();
     // Compaction repairs must converge to zero after one cycle; a steady nonzero
     // count here is a rev-bump loop that rewrites every purged tombstone each
@@ -883,7 +907,7 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData, options
     });
     const localNormalized = {
         ...local,
-        tasks: (local.tasks || []).map((task) => normalizeRevisionMetadata(countRepair(task, normalizeTaskForSyncMerge(task, nowIso, true)))),
+        tasks: yield* mapPass(local.tasks || [], (task) => normalizeRevisionMetadata(countRepair(task, normalizeTaskForSyncMerge(task, nowIso, true)))),
         projects: (local.projects || []).map((project) => normalizeRevisionMetadata(countRepair(project, normalizeProjectForSyncMerge(project, true)))),
         sections: localSections.map((section) => normalizeRevisionMetadata(normalizeSectionForSyncMerge(section))),
         areas: (local.areas || []).map((area) => normalizeRevisionMetadata(normalizeAreaForSyncMerge(area, nowIso))),
@@ -891,7 +915,7 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData, options
     };
     const incomingNormalized = {
         ...incoming,
-        tasks: (incoming.tasks || []).map((task) => normalizeRevisionMetadata(countRepair(task, normalizeTaskForSyncMerge(task, nowIso)))),
+        tasks: yield* mapPass(incoming.tasks || [], (task) => normalizeRevisionMetadata(countRepair(task, normalizeTaskForSyncMerge(task, nowIso)))),
         projects: (incoming.projects || []).map((project) => normalizeRevisionMetadata(countRepair(project, normalizeProjectForSyncMerge(project)))),
         sections: incomingSections.map((section) => normalizeRevisionMetadata(normalizeSectionForSyncMerge(section))),
         areas: (incoming.areas || []).map((area) => normalizeRevisionMetadata(normalizeAreaForSyncMerge(area, nowIso))),
@@ -1120,7 +1144,7 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData, options
         }
         return { ...winner, attachments };
     };
-    const tasksResult = mergeEntitiesWithStats(
+    const tasksResult = yield* mergeEntitiesPass(
         localNormalized.tasks,
         incomingNormalized.tasks,
         (localTask: Task, incomingTask: Task, winner: Task) => {
@@ -1149,7 +1173,7 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData, options
         nowIso
     );
 
-    const projectsResult = mergeEntitiesWithStats(
+    const projectsResult = yield* mergeEntitiesPass(
         localNormalized.projects,
         incomingNormalized.projects,
         (localProject: Project, incomingProject: Project, winner: Project) => {
@@ -1201,14 +1225,15 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData, options
         tombstoneRepairs,
     };
 
-    const data = repairMergedSyncReferences({
+    yield;
+    const data = traceSection('sync:mergeRepair', () => repairMergedSyncReferences({
         tasks: tasksResult.merged,
         projects: projectsResult.merged,
         sections: sectionsResult.merged,
         areas: areasResult.merged,
         people: peopleResult.merged as Person[],
         settings: mergeSettingsForSync(localNormalized.settings, incomingNormalized.settings),
-    }, nowIso);
+    }, nowIso));
     data.sections = compactSectionsForPurgedProjects(data.sections, data.projects);
     if (unchangedAttachmentCopiesSkipped > 0) {
         logInfo('Sync merge skipped unchanged attachment copies', {
@@ -1322,6 +1347,8 @@ const withPendingRemoteWriteRetry = (data: AppData, nowIso: string, error?: unkn
 
 async function performSyncCycleUnlocked(io: SyncCycleIO): Promise<SyncCycleResult> {
     const nowIso = io.now ? io.now() : new Date().toISOString();
+    // A run that slices (cooperative.ts: a host that binds sliceYield) gets the merge and the validation in slices; others at once.
+    const slicer = io.slicer;
     const yieldToUi = async () => {
         if (typeof io.yieldToUi === 'function') {
             await io.yieldToUi();
@@ -1401,10 +1428,10 @@ async function performSyncCycleUnlocked(io: SyncCycleIO): Promise<SyncCycleResul
     const mergeStartedAt = performance.now();
     const mergeResult: MergeResult = skipMerge
         ? { data: localData, stats: createLocalOnlyMergeStats(localData) }
-        : traceSection('sync:merge', () => mergeAppDataWithStats(localData, remoteData, {
+        : await runSliced('sync:merge', mergeAppDataWithStatsPass(localData, remoteData, {
             nowIso,
             preferIncomingAttachmentCloudKeys: io.preferIncomingAttachmentCloudKeys,
-        }));
+        }), slicer);
     if (!skipMerge) {
         logInfo('Full sync merge completed', {
             scope: 'sync',
@@ -1502,7 +1529,7 @@ async function performSyncCycleUnlocked(io: SyncCycleIO): Promise<SyncCycleResul
         });
     }
     let finalData = pruned.data;
-    const validationErrors = traceSection('sync:validate', () => validateMergedSyncData(finalData));
+    const validationErrors = await runSliced('sync:validate', validateMergedSyncDataPass(finalData), slicer);
     if (validationErrors.length > 0) {
         const sample = validationErrors.slice(0, 3).join('; ');
         logWarn('Sync merge validation failed', {
@@ -1522,7 +1549,7 @@ async function performSyncCycleUnlocked(io: SyncCycleIO): Promise<SyncCycleResul
         if (preparedData && !unchanged) finalData = preparedData;
         const preparedValidationErrors = unchanged
             ? []
-            : traceSection('sync:validate', () => validateMergedSyncData(finalData));
+            : await runSliced('sync:validate', validateMergedSyncDataPass(finalData), slicer);
         if (preparedValidationErrors.length > 0) {
             const sample = preparedValidationErrors.slice(0, 3).join('; ');
             logWarn('Sync remote-write preparation validation failed', {

@@ -23,7 +23,7 @@ import type {
     SyncRunStoreBridge,
 } from './sync-run-ports';
 import { SyncRemoteWriteConflict, type SyncFollowUpReason } from './sync-run-ports';
-import { LocalSyncAbort, ensureFreshLocalSyncSnapshot, getInMemoryAppDataSnapshot, shouldRunAttachmentCleanup } from './sync-client-helpers';
+import { LocalSyncAbort, captureInMemoryAppDataSnapshot, ensureFreshLocalSyncSnapshot, getInMemoryAppDataSnapshot, shouldRunAttachmentCleanup } from './sync-client-helpers';
 import { hasFreshAttachmentCleanupWork } from './attachment-cleanup';
 import { NativeAttachmentCleanupUnconfirmedError } from './native-attachment-cleanup';
 import { isAttachmentUploadTooLargeError, isCloudHostUploadLimitError, isWebdavHostUploadLimitError } from './attachment-transfer';
@@ -35,14 +35,16 @@ import {
     assertNoPendingAttachmentContentReplacements,
     assertNoPendingAttachmentUploads,
     computeSyncChangeFingerprint,
+    computeSyncChangeFingerprintPass,
     findPendingAttachmentUploads,
     hasPendingSyncSideEffects,
     isLocalPersistEquivalent,
-    fingerprintStableSyncJson,
+    fingerprintStableSyncJsonPass,
     toStableSyncJson,
 } from './sync-helpers';
 import {
     parseSyncDocument,
+    remoteSyncDocumentStableJsonPass,
     toRemoteSyncDocument,
 } from './sync-document';
 import { buildHttpRemoteFileFingerprint } from './webdav';
@@ -51,7 +53,8 @@ import type { CloudJsonWriteResult } from './cloud';
 import { normalizeAppData } from './sync-normalization';
 import { isWebdavInvalidJsonError } from './retry-utils';
 import { isRemoteSyncBackend } from './sync-service-utils';
-import { cloneAppData } from './sync-runtime-utils';
+import { cloneAppData, cloneAppDataPass } from './sync-runtime-utils';
+import { createSlicer, runSliced, type Slicer } from './cooperative';
 import { traceSection, traceSectionAsync } from './perf-trace';
 import { runSyncStoreSave } from './store-write-gate';
 import { buildMergeSummaryLog, buildPendingAttachmentUploadLogExtra } from './sync-log-utils';
@@ -586,6 +589,8 @@ class SharedSyncRunMachine {
     private io: SyncBackendIO | null = null;
     private remoteMutationFence: SyncRemoteMutationFenceLease | null = null;
     private carriedIdleSnapshot = takeIdleCycleSnapshot();
+    /** A host that binds sliceYield (cooperative.ts) gets this run's long passes in slices; every other host at once. */
+    private readonly slicer: Slicer | undefined;
     private readonly state: SharedSyncRunState = {
         backend: 'off',
         cloudProvider: 'selfhosted',
@@ -621,6 +626,8 @@ class SharedSyncRunMachine {
         this.nowFn = ports.now ?? (() => new Date());
         this.cleanupIntervalMs = ports.attachmentCleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS;
         this.performSyncCycleImpl = ports.performSyncCycle ?? performSyncCycle;
+        const sliceYield = ports.notifier.sliceYield?.bind(ports.notifier);
+        this.slicer = sliceYield ? createSlicer(sliceYield) : undefined;
     }
 
     async run(): Promise<SyncRunResult> {
@@ -926,7 +933,11 @@ class SharedSyncRunMachine {
             });
             return carried.data;
         }
-        const inMemorySnapshot = traceSection('sync:storeSnapshot', () => this.store.getInMemorySnapshot());
+        // Sliced (a host that binds sliceYield): the store's lists are taken in this turn, with the stamp read above, then
+        // copied a few records at a time.
+        const inMemorySnapshot = this.slicer && this.store.captureInMemorySnapshot
+            ? await runSliced('sync:storeSnapshot', cloneAppDataPass(this.store.captureInMemorySnapshot()), this.slicer)
+            : traceSection('sync:storeSnapshot', () => this.store.getInMemorySnapshot());
         // The persisted-vs-in-memory reconcile is a full-library merge — the
         // single most expensive step of an idle cycle at whale scale — and after
         // the flush at cycle start the two sides are almost always identical.
@@ -968,7 +979,11 @@ class SharedSyncRunMachine {
         } else {
             const persisted = await traceSectionAsync('sync:readPersisted', () => this.storage.readPersistedLocal());
             const reconcileStart = Date.now();
-            const aligned = traceSection('sync:reconcileCheck', () => computeSyncChangeFingerprint(persisted) === computeSyncChangeFingerprint(inMemorySnapshot));
+            const slicer = this.slicer;
+            const aligned = slicer
+                ? await runSliced('sync:reconcileCheck', computeSyncChangeFingerprintPass(persisted), slicer)
+                    === await runSliced('sync:reconcileCheck', computeSyncChangeFingerprintPass(inMemorySnapshot), slicer)
+                : traceSection('sync:reconcileCheck', () => computeSyncChangeFingerprint(persisted) === computeSyncChangeFingerprint(inMemorySnapshot));
             const reconciled = aligned ? persisted : traceSection('sync:reconcileMerge', () => mergeAppData(persisted, inMemorySnapshot));
             baseData = restoreDeviceLocalAiSettings(reconciled, inMemorySnapshot);
             // A restored endpoint means this snapshot holds content the disk copy
@@ -1190,7 +1205,7 @@ class SharedSyncRunMachine {
             && !state.remoteLegacyAttachmentsChanged
             && this.requireIo().requiresRemoteRepair?.() !== true
             // areRemoteSyncDocumentsEqual over the two remote documents, through the memoized stable JSON.
-            && traceSection('sync:remoteCompare', () => this.stableDocument(previousRemoteData).json === this.stableDocument(data).json)) {
+            && (await this.stableDocument(previousRemoteData)).json === (await this.stableDocument(data)).json) {
             if (this.backend !== 'cloudkit') {
                 this.notifier.tracePayload?.('remote-write-skipped-unchanged', remoteDocument, { backend: this.backend });
             }
@@ -1279,7 +1294,7 @@ class SharedSyncRunMachine {
         this.ensureLocalSnapshotFresh();
         if (this.hasPendingCycleSideEffects(localData)) return null;
 
-        const localFingerprint = this.localDocumentFingerprint(localData);
+        const localFingerprint = await this.localDocumentFingerprint(localData);
         const cached = await this.readFastSyncState(scope);
         if (!cached || cached.localFingerprint !== localFingerprint) return null;
 
@@ -1383,7 +1398,7 @@ class SharedSyncRunMachine {
         if (!cached) return false;
         // Nothing changed locally either — that is the fast check's business,
         // and it has already had its turn.
-        if (cached.localFingerprint === this.localDocumentFingerprint(localData)) return false;
+        if (cached.localFingerprint === await this.localDocumentFingerprint(localData)) return false;
 
         let remoteFingerprint: string | null = null;
         try {
@@ -1431,8 +1446,8 @@ class SharedSyncRunMachine {
         // the fast check above already compares, and the same one the remote
         // write records. Comparing documents here serialized both sides in
         // full to reach the identical verdict.
-        const localFingerprint = this.localDocumentFingerprint(localData);
-        const remoteFingerprint = this.documentFingerprint(remoteData);
+        const localFingerprint = await this.localDocumentFingerprint(localData);
+        const remoteFingerprint = await this.documentFingerprint(remoteData);
         if (localFingerprint !== remoteFingerprint) return null;
 
         await this.recordFastSyncState(localData, { allowRemoteFingerprintRead: false });
@@ -1469,7 +1484,7 @@ class SharedSyncRunMachine {
         if (!remoteFingerprint) return;
         await this.writeFastSyncState({
             scope,
-            localFingerprint: this.localDocumentFingerprint(data),
+            localFingerprint: await this.localDocumentFingerprint(data),
             remoteFingerprint,
             checkedAt: this.nowIso(),
         });
@@ -1493,10 +1508,10 @@ class SharedSyncRunMachine {
     /** Sanitized-document fingerprint of a local snapshot, memoized on the
      *  snapshot's identity: the fast check, the read check and the fast-sync
      *  bookkeeping all ask for the same one within a cycle. */
-    private localDocumentFingerprint(data: AppData): string {
+    private async localDocumentFingerprint(data: AppData): Promise<string> {
         const cached = this.state.localDocumentFingerprint;
         if (cached && cached.data === data) return cached.fingerprint;
-        const fingerprint = this.documentFingerprint(data);
+        const fingerprint = await this.documentFingerprint(data);
         this.state.localDocumentFingerprint = { data, fingerprint };
         return fingerprint;
     }
@@ -1513,18 +1528,19 @@ class SharedSyncRunMachine {
      */
     private readonly stableDocuments = new WeakMap<AppData, { json: string; fingerprint?: string }>();
 
-    private stableDocument(data: AppData): { json: string; fingerprint?: string } {
-        let entry = this.stableDocuments.get(data);
-        if (!entry) {
-            entry = { json: traceSection('sync:stableJson', () => toStableSyncJson(toRemoteSyncDocument(data))) };
-            this.stableDocuments.set(data, entry);
-        }
+    private async stableDocument(data: AppData): Promise<{ json: string; fingerprint?: string }> {
+        const known = this.stableDocuments.get(data);
+        if (known) return known;
+        const json = await runSliced('sync:stableJson', remoteSyncDocumentStableJsonPass(data), this.slicer);
+        // Another step may have made it while this one yielded: the same document, so the same JSON.
+        const entry = this.stableDocuments.get(data) ?? { json };
+        this.stableDocuments.set(data, entry);
         return entry;
     }
 
-    private documentFingerprint(data: AppData): string {
-        const entry = this.stableDocument(data);
-        entry.fingerprint ??= traceSection('sync:fingerprint', () => fingerprintStableSyncJson(entry.json));
+    private async documentFingerprint(data: AppData): Promise<string> {
+        const entry = await this.stableDocument(data);
+        entry.fingerprint ??= await runSliced('sync:fingerprint', fingerprintStableSyncJsonPass(entry.json), this.slicer);
         return entry.fingerprint;
     }
 
@@ -1928,6 +1944,7 @@ class SharedSyncRunMachine {
             skipEmptyRemoteMerge: () => this.state.localOnlyUploadFingerprint !== null,
             onStep: (next) => this.setStep(next),
             yieldToUi: this.notifier.yieldToUi ? () => this.notifier.yieldToUi!() : undefined,
+            slicer: this.slicer,
             historyContext: {
                 backend: this.backend,
                 type: 'merge',
@@ -2210,6 +2227,7 @@ export const runSharedSyncCycle = async (ports: SyncRunPorts): Promise<SyncRunRe
 export const createDefaultSyncRunStoreBridge = (): SyncRunStoreBridge => ({
     getLastDataChangeAt: () => useTaskStore.getState().lastDataChangeAt,
     getInMemorySnapshot: () => getInMemoryAppDataSnapshot(),
+    captureInMemorySnapshot: () => captureInMemoryAppDataSnapshot(),
     flushPendingSave: () => flushPendingSave(),
     setUiError: (message) => useTaskStore.getState().setError(message),
     getSettings: () => useTaskStore.getState().settings,

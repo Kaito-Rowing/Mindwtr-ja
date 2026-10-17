@@ -66,6 +66,23 @@ export const getInMemoryAppDataSnapshot = (): AppData => {
 };
 
 /**
+ * The store's collections and settings in one read, not copied: each list is a new array holding the store's records, which
+ * the store replaces and never changes in place. A sliced sync cycle copies them later, a few at a time (cloneAppDataPass),
+ * and still holds one consistent state.
+ */
+export const captureInMemoryAppDataSnapshot = (): AppData => {
+    const state = useTaskStore.getState();
+    return {
+        tasks: [...(state._allTasks ?? state.tasks ?? [])],
+        projects: [...(state._allProjects ?? state.projects ?? [])],
+        sections: [...(state._allSections ?? state.sections ?? [])],
+        areas: [...(state._allAreas ?? state.areas ?? [])],
+        people: [...(state._allPeople ?? state.people ?? [])],
+        settings: state.settings ?? {},
+    };
+};
+
+/**
  * Publish a document a sync save just wrote, inside the same store write gate hold
  * (store-write-gate.ts), so the next command acts on what disk holds. Rows whose
  * revision identity did not change keep their objects, as a load does (#766).
