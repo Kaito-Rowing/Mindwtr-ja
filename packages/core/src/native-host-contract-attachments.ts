@@ -86,6 +86,7 @@ import { createNativeRequestReceipts, requestRowId, runStoreWrite, settleWrite, 
 import { useTaskStore } from './store';
 import { runOutsideStoreGate } from './store-write-gate';
 import type { Attachment, Project, Task } from './types';
+import type { PersistAttachmentOutcome } from './mobile-attachment-files';
 import { taskEditValuesEqual } from './json-value-equality';
 import { isStatusListTaskReadOnly } from './menu-views-model';
 
@@ -100,6 +101,13 @@ export type NativeAttachmentsHost = {
      * another file. Call `keep` after every await, immediately before the delete; true keeps it.
      */
     deleteManagedAttachmentFile(attachment: Attachment, options?: { keep?: () => boolean }): Promise<unknown>;
+    /**
+     * A file share's IO (prepareSharedFiles, the capture screen); a host without them takes no shared files.
+     * createMobileAttachmentFiles(...).persistAttachmentLocallyDetailed: copies a staged shared file into files/attachments/.
+     */
+    persistAttachmentLocallyDetailed?(attachment: Attachment): Promise<PersistAttachmentOutcome>;
+    /** createMobileAttachmentFiles(...).canUploadAttachmentFrom: whether a uri is a managed copy (flat, no traversal). */
+    canUploadAttachmentFrom?(uri: string): boolean;
 };
 
 /** Whose attachments: the task editor's draft list, or a project's stored list. */

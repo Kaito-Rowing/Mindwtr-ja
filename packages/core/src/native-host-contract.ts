@@ -1720,7 +1720,7 @@ export function createNativeHostContract(options: {
             requestIdPattern: CAPTURE_ID_PATTERN,
         }),
         // Links, shares, assistant notes and Import .txt: native-host-contract-entry-points.ts.
-        ...createEntryPointMethods({ readiness, t: () => translate }),
+        ...createEntryPointMethods({ readiness, t: () => translate, requestIdPattern: CAPTURE_ID_PATTERN, attachments: () => options.attachments ?? null }),
         // The Inbox tab's list, toolbar and screen parts: native-host-contract-inbox-view.ts.
         ...inboxViewMethods,
         // Selection mode on those lists: native-host-contract-bulk-actions.ts.
@@ -1859,6 +1859,7 @@ export function createNativeHostContract(options: {
             revision: (now) => `${revision()}:${displayRevision(now)}`,
             requestIdPattern: CAPTURE_ID_PATTERN,
             aiBound: () => Boolean(options.ai),
+            attachments: () => options.attachments ?? null,
         }),
         // A saved search's screen: native-host-contract-saved-search.ts.
         ...createSavedSearchMethods({
