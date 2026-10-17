@@ -2,6 +2,8 @@ import {
     applyAttachmentContentStat,
     bumpAttachmentContentRevision,
     checkAttachmentContentChange,
+    isUninstalledRemoteWinner,
+    logUninstalledRemoteWinner,
     type LocalFileStat,
 } from './attachment-change-detection';
 import { computeSha256Hex, isSha256Hex } from './attachment-hash';
@@ -774,6 +776,7 @@ export async function runAttachmentTransferLifecycle(
         // loop. Only runs when the caller wired both stat/hash callbacks; otherwise
         // this is a no-op and behaviour is unchanged from before this feature.
         if (hasCloudCopy(attachment) && mayReadForSync && options.getLocalFileStat && options.contentChangePhase) {
+            const uninstalledWinner = isUninstalledRemoteWinner(attachment);
             const stat = await options.getLocalFileStat(localPath, attachment).catch(() => null);
             // Opt-in host admission can keep an unchanged cloud generation without
             // reading it. Preserve older buffered backends' eager stat-cap policy.
@@ -812,6 +815,10 @@ export async function runAttachmentTransferLifecycle(
                     // survives the remote merge.
                     applyAttachmentContentStat(attachment, check.stat, check.hash);
                     itemMutated = true;
+                } else if (options.contentChangePhase === 'prepare' && uninstalledWinner) {
+                    // The old file of a remote winner the last cycle merged but did not download (a failed or deferred
+                    // GET, or a cycle that ended first): not this device's edit. The post-merge pass installs the winner.
+                    logUninstalledRemoteWinner(attachment);
                 } else if (options.contentChangePhase === 'prepare') {
                     // This device's own edit, detected before this cycle's remote pull.
                     // Normal sync records the content identity as a durable pending candidate

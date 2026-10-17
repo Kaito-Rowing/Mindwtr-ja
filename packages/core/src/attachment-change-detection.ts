@@ -1,4 +1,5 @@
 import type { Attachment } from './types';
+import { logInfo } from './logger';
 
 /** Local file stat, in a shape every platform's fs API can produce (mtime normalized
  *  to ms since epoch, regardless of the native API's own unit). */
@@ -50,6 +51,31 @@ export async function checkAttachmentContentChange(
     }
     return { changed: true, stat, hash };
 }
+
+/**
+ * A content identity this device has not installed yet: the merge took another device's newer content (its synced fileHash
+ * and contentRev), while the recorded stat, which describes this device's own file and never travels, stayed empty. A
+ * hash-confirmed mismatch on such an attachment is the old file waiting for that download, never this device's own edit:
+ * recording it as one would raise contentRev past the winner and upload the old bytes over the other device's newer file.
+ */
+export const isUninstalledRemoteWinner = (attachment: Pick<Attachment, 'contentMtimeMs' | 'contentSize' | 'fileHash'>): boolean => (
+    attachment.contentMtimeMs === undefined
+    && attachment.contentSize === undefined
+    && /^[0-9a-f]{64}$/i.test(attachment.fileHash?.trim() ?? '')
+);
+
+// Once per attachment per process: a prepare pass meets the same old file every cycle until the winner is installed.
+const uninstalledWinnersLogged = new Set<string>();
+
+/** Called where a prepare pass skips such a file: the tester's proof that the old bytes stayed local. */
+export const logUninstalledRemoteWinner = (attachment: Pick<Attachment, 'id'>): void => {
+    if (uninstalledWinnersLogged.has(attachment.id)) return;
+    uninstalledWinnersLogged.add(attachment.id);
+    logInfo('Attachment kept for its newer remote version, not uploaded as a local edit', {
+        scope: 'attachment',
+        context: { attachmentId: attachment.id, releaseCheck: 'v1.3.7/attachment-remote-winner-pending' },
+    });
+};
 
 /** Next content revision after a confirmed change. Missing (old client / never
  *  bumped) is equivalent to 0. */
