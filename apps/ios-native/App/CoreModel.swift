@@ -229,6 +229,7 @@ final class CoreModel: ObservableObject {
         didSet {
             if selectedSurface != .inbox { foregroundSyncIntent = nil }
             if oldValue != selectedSurface && (oldValue == .inbox || selectedSurface == .inbox) {
+                clearInboxTaskSelection()
                 inboxGeneration += 1
                 inboxCurrent = false
                 inboxGroupPresented = false
@@ -294,6 +295,28 @@ final class CoreModel: ObservableObject {
     private var inboxFilterPickerDepth = 100
     private var inboxFilterPickerNeedsRead = false
     private var inboxGeneration = 0
+    @Published private(set) var inboxSelectionMode = false
+    @Published private(set) var inboxSelectedIDs: [String] = []
+    @Published private(set) var inboxBulk: CoreObject = [:]
+    private var inboxSelectedRevisions: CoreObject = [:]
+    private var inboxAnchorID: String?
+    private var inboxRangeSelectMode = false
+    private var inboxSelectionGeneration = 0
+    private var inboxSelectionReading = false
+    private var inboxSelectionReadOwner: UUID?
+    private struct InboxBulkConfirmation {
+        let host: CoreHost
+        let params: String
+        let revision: String
+        let selectionGeneration: Int
+        let filterSequence: UInt64
+        let foregroundGeneration: Int
+    }
+    private var inboxBulkConfirmation: InboxBulkConfirmation?
+    private var inboxBulkDeleteOwner: (host: CoreHost, request: String)?
+    private var inboxBulkUndoOwner: (host: CoreHost, request: String)?
+    private var inboxTasksMoveOwner: (host: CoreHost, request: String)?
+    private var inboxBulkNoticeHost: CoreHost?
     private var inboxCollapsedGroups: CoreObject = [:]
     private var initialInboxCollapsedGroupsRaw: String?
     private var inboxPreferencesLoaded = false
@@ -1767,8 +1790,13 @@ final class CoreModel: ObservableObject {
                 #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
                 settingsAIProofTask?.cancel(); settingsAIProofState = ""; settingsAIProofReadAttempts = 0
                 #endif
-                // Warm list ownership never crosses a Host replacement; durable recovery still opens Reference.
+                // Warm list ownership never crosses a Host replacement; durable recovery routes by source.
                 retireTaskListSortHost()
+                clearInboxTaskSelection()
+                inboxSelectionReadOwner = nil; inboxSelectionReading = false
+                if taskActionNotice.text("source") == "inbox", taskActionUndoRequest == nil {
+                    taskActionNotice = [:]; inboxBulkNoticeHost = nil
+                }
                 inboxGeneration += 1
                 inboxParams = ["groupBy": "none", "collapsedGroupIds": [String](), "filters": CoreObject()]
                 retireInboxFilterPresentation()
@@ -5511,7 +5539,8 @@ final class CoreModel: ObservableObject {
             }
             if ["taskDeleteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "trashItemsRestoreCommit", "trashItemsPurgeCommit"].contains(recovery.text("method")) { selectedSurface = .trash }
             if ["archivedTaskRestoreCommit", "archivedTasksRestoreCommit", "archivedTasksDeleteCommit", "archivedTasksDeleteUndoCommit", "archiveTaskCompletedAtCommit"].contains(recovery.text("method")) {
-                if recovery.text("source") == "reference" { selectedSurface = .reference }
+                if recovery.text("source") == "inbox" { selectedSurface = .inbox }
+                else if recovery.text("source") == "reference" { selectedSurface = .reference }
                 else {
                     selectedSurface = .history
                     historyTabs = ["tab": recovery.text("source") == "done" ? "done" : "archived"]
@@ -5543,6 +5572,11 @@ final class CoreModel: ObservableObject {
                 if result.text("action") == "add", result.flag("openAfterSave") {
                     referenceProjectNextActionEditID = result.text("id")
                 }
+            }
+            if recovery.text("method") == "inboxTasksMoveCommit", recovery.text("source") == "inbox" {
+                selectedSurface = .inbox
+                clearInboxTaskSelection()
+                taskActionNotice = [:]; inboxBulkNoticeHost = nil
             }
             if ["referenceTasksMoveCommit", "referenceTasksAddTagCommit", "referenceTasksRemoveTagCommit"].contains(recovery.text("method")), recovery.text("source") == "reference" {
                 selectedSurface = .reference
@@ -5790,6 +5824,7 @@ final class CoreModel: ObservableObject {
     private var operationContextClean: Bool {
         !capturePresented && !capturePending && draft.isEmpty && noteDraft.isEmpty
             && !inboxGroupPresented && !inboxFiltersPresented && !inboxFilterWorkPending
+            && !inboxSelectionMode && !inboxBulkCompositionBlocked
             && calendarEventOpenPresentation == nil
             && !processInboxPresented && processInboxRequest == nil && !processInboxTransitioning
             && !mindSweepPresented && mindSweepRequest == nil && mindSweepDraft.isEmpty
@@ -7214,7 +7249,7 @@ final class CoreModel: ObservableObject {
         foregroundSyncSceneActive = active && UIApplication.shared.applicationState == .active
         if foregroundSyncSceneActive { pomodoroNeedsRead = true; admitPomodoroRuntime() }
         else { pomodoroWake?.cancel(); pomodoroWake = nil }
-        guard foregroundSyncSceneActive else { cancelForegroundSync(); return }
+        guard foregroundSyncSceneActive else { clearInboxTaskSelection(); cancelForegroundSync(); return }
         if !wasActive && !appLock.concealed, let currentHost = host {
             let generation = foregroundSyncGeneration
             Task { [weak self, weak currentHost] in
@@ -7379,6 +7414,7 @@ final class CoreModel: ObservableObject {
     }
 
     func selectSurface(_ surface: Surface) async {
+        guard !inboxBulkCompositionBlocked else { return }
         guard !settingsSyncPresented, !settingsSyncRestartRequired else { return }
         guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
@@ -7403,6 +7439,7 @@ final class CoreModel: ObservableObject {
     }
 
     func toggleMore() async {
+        guard !inboxBulkCompositionBlocked else { return }
         guard !settingsSyncPresented, !settingsSyncRestartRequired else { return }
         guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
         guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
@@ -9474,6 +9511,7 @@ final class CoreModel: ObservableObject {
         guard diagnosticsLockObserver == nil else { return }
         diagnosticsLockObserver = appLock.$enabled.combineLatest(appLock.$locked).sink { [weak self] enabled, locked in
             if enabled == nil || locked {
+                self?.clearInboxTaskSelection()
                 self?.inboxGeneration += 1
                 self?.inboxCurrent = false
                 self?.retireInboxFilterPresentation()
@@ -20269,6 +20307,7 @@ final class CoreModel: ObservableObject {
 
     private func canOpenTaskListSort(_ caller: TaskListSortCaller) -> Bool {
         guard ready, host != nil, !busy, !retryNeeded, !appLock.concealed,
+              !inboxBulkCompositionBlocked,
               !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending, !taskStatusMenuPresented,
               !capturePresented, !areaPickerPresented, !taskPresented, !morePresented,
               !mindSweepPresented, !processInboxPresented, !calendarComposerPresented,
@@ -20441,10 +20480,12 @@ final class CoreModel: ObservableObject {
         ready && selectedSurface == .inbox && inboxCurrent && !busy && !retryNeeded && !appLock.concealed
             && !taskPresented && !capturePresented && !areaPickerPresented && !morePresented
             && !inboxGroupPresented && !inboxSortPresented && !inboxFiltersPresented && !inboxFilterWorkPending
+            && !inboxBulkCompositionBlocked
     }
     var inboxGroupActionsEnabled: Bool {
         inboxGroupPresented && ready && selectedSurface == .inbox && inboxCurrent && !busy && !retryNeeded
             && !appLock.concealed && !taskPresented && !capturePresented && !areaPickerPresented
+            && !inboxBulkCompositionBlocked
     }
 
     func inboxItemIdentity(_ item: CoreObject) -> [String] {
@@ -20527,6 +20568,7 @@ final class CoreModel: ObservableObject {
 
     func retryInboxGrouping() async {
         guard ready, let owner = host, selectedSurface == .inbox, !busy, !retryNeeded,
+              !inboxBulkCompositionBlocked,
               !taskPresented, !capturePresented, !areaPickerPresented, !inboxSortPresented, !inboxFiltersPresented else { return }
         busy = true
         error = nil
@@ -20544,6 +20586,7 @@ final class CoreModel: ObservableObject {
         inboxFiltersPresented && ready && selectedSurface == .inbox && inboxCurrent
             && !busy && !retryNeeded && !appLock.concealed && !inboxFilterWorkPending
             && !taskPresented && !capturePresented && !areaPickerPresented && !inboxSortPresented
+            && !inboxBulkCompositionBlocked
     }
     var inboxFilterPickerActionsEnabled: Bool {
         inboxFilterControlsEnabled && inboxFilterPickerCurrent && inboxFilterPickerName == "tokens"
@@ -20619,6 +20662,7 @@ final class CoreModel: ObservableObject {
 
     func setInboxFilterText(_ text: String, location: Bool = false) {
         guard inboxFiltersPresented, ready, selectedSurface == .inbox, !appLock.concealed,
+              !inboxBulkCompositionBlocked,
               !retryNeeded, !taskPresented, !capturePresented, !areaPickerPresented,
               text.utf16.count <= (location ? 500 : 2000),
               text != (location ? inboxLocationText : inboxSearchText) else { return }
@@ -20636,6 +20680,7 @@ final class CoreModel: ObservableObject {
 
     func retryInboxFilters() {
         guard ready, selectedSurface == .inbox, !busy, !retryNeeded, !appLock.concealed,
+              !inboxBulkCompositionBlocked,
               !taskPresented, !capturePresented, !areaPickerPresented, !inboxSortPresented else { return }
         inboxFilterNeedsRead = true
         inboxReadError = nil
@@ -20644,6 +20689,7 @@ final class CoreModel: ObservableObject {
 
     private func scheduleInboxFilterRead(delay: UInt64 = 200_000_000) {
         guard ready, selectedSurface == .inbox, !busy, !retryNeeded, !appLock.concealed,
+              !inboxBulkCompositionBlocked,
               !taskPresented, !capturePresented, !areaPickerPresented, !inboxGroupPresented, !inboxSortPresented,
               inboxFilterNeedsRead || inboxFilterPickerNeedsRead, let owner = host else { return }
         inboxFilterReadTask?.cancel()
@@ -20652,7 +20698,7 @@ final class CoreModel: ObservableObject {
         inboxFilterReadTask = Task {
             do { try await Task.sleep(nanoseconds: delay) } catch { return }
             guard inboxFilterReadID == id, host === owner, selectedSurface == .inbox, ready,
-                  !busy, !retryNeeded, !appLock.concealed, !Task.isCancelled,
+                  !busy, !retryNeeded, !appLock.concealed, !Task.isCancelled, !inboxBulkCompositionBlocked,
                   !taskPresented, !capturePresented, !areaPickerPresented, !inboxGroupPresented, !inboxSortPresented else { return }
             busy = true
             defer {
@@ -20802,6 +20848,418 @@ final class CoreModel: ObservableObject {
         return page
     }
     // MARK: End Task738 Inbox session filters
+
+    // MARK: Task739 Inbox selection, using the list's complete core-owned scope
+    private var inboxBulkMutationPending: Bool {
+        inboxBulkDeleteOwner != nil || inboxBulkUndoOwner != nil || inboxTasksMoveOwner != nil
+    }
+    private var inboxBulkMutationHost: CoreHost? {
+        inboxTasksMoveOwner?.host ?? inboxBulkDeleteOwner?.host ?? inboxBulkUndoOwner?.host
+    }
+    private var inboxBulkCompositionBlocked: Bool {
+        inboxBulkMutationPending || inboxBulkConfirmation != nil
+    }
+    var inboxBulkRetryError: String? {
+        guard let owner = inboxBulkMutationHost, host === owner, ready, !busy, !appLock.concealed,
+              UIApplication.shared.applicationState == .active,
+              !taskPresented, !capturePresented, !areaPickerPresented, !morePresented,
+              !inboxGroupPresented, !inboxSortPresented, !inboxFiltersPresented, !taskStatusMenuPresented,
+              !mindSweepPresented, !processInboxPresented, !calendarComposerPresented, !calendarItemPresented else { return nil }
+        if inboxTasksMoveOwner != nil { return label("task.doneStatusOutcomeUnknown") }
+        return label(inboxBulkUndoOwner == nil ? "task.archiveDeleteOutcomeUnknown" : "task.trashOutcomeUnknown")
+    }
+    private var inboxBulkSelectionEnabled: Bool {
+        inboxActionsEnabled && inboxSelectionMode && !taskStatusMenuPresented
+            && UIApplication.shared.applicationState == .active
+            && !mindSweepPresented && !processInboxPresented && !calendarComposerPresented && !calendarItemPresented
+            && !inboxSelectedIDs.isEmpty && inboxSelectedRevisions.count == inboxSelectedIDs.count
+    }
+    var inboxBulkDeleteEnabled: Bool {
+        inboxActionsEnabled && inboxSelectionMode && !taskStatusMenuPresented
+            && UIApplication.shared.applicationState == .active
+            && !inboxSelectedIDs.isEmpty && inboxSelectedRevisions.count == inboxSelectedIDs.count
+            && inboxBulk.object("bar").object("delete").flag("enabled")
+    }
+    func inboxBulkStatusEnabled(_ status: String) -> Bool {
+        inboxBulkSelectionEnabled && inboxBulk.object("bar").objects("statuses").contains {
+            $0.text("status").utf8.elementsEqual(status.utf8) && $0.flag("enabled")
+        }
+    }
+    var inboxSelectionExitEnabled: Bool {
+        ready && selectedSurface == .inbox && !retryNeeded && !appLock.concealed
+            && !inboxBulkCompositionBlocked && (!busy || inboxSelectionReading)
+    }
+
+    private func inboxTaskBulkInput(params: CoreObject) -> CoreObject {
+        ["list": "inbox", "params": params, "taskIds": inboxSelectedIDs,
+         "anchorId": inboxAnchorID as Any? ?? NSNull(), "rangeSelectMode": inboxRangeSelectMode, "busy": false]
+    }
+
+    private func validateInboxTaskBulk(_ bulk: CoreObject, snapshot: CoreObject,
+                                       subsetOf selected: [String]? = nil) throws {
+        guard bulk.number("version") == 1, bulk.text("list") == "inbox", bulk["selectAll"] is NSNull,
+              bulk.text("revision").utf8.elementsEqual(snapshot.text("revision").utf8),
+              let ids = bulk["selectedIds"] as? [String],
+              let count = bulk["selectedCount"] as? NSNumber, CFGetTypeID(count) != CFBooleanGetTypeID(),
+              count.doubleValue == Double(ids.count), try json(bulk).utf8.count <= 2_000_000,
+              bulk["anchorId"] is NSNull || (bulk["anchorId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let revisions = try archiveTaskSelectionRevisions(bulk, ids: ids)
+        guard Set(revisions.keys.map { Data($0.utf8) }) == Set(ids.map { Data($0.utf8) }),
+              selected.map({ previous in ids.allSatisfy { id in previous.contains { $0.utf8.elementsEqual(id.utf8) } } }) != false else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    private func acceptInboxTaskBulk(_ bulk: CoreObject, range: Bool) throws {
+        guard let ids = bulk["selectedIds"] as? [String] else { throw CocoaError(.coderReadCorrupt) }
+        let revisions = bulk.object("taskRevisions"), anchor = bulk["anchorId"] as? String
+        let changed = try !json(ids).utf8.elementsEqual(json(inboxSelectedIDs).utf8)
+            || !json(revisions).utf8.elementsEqual(json(inboxSelectedRevisions).utf8)
+            || anchor.map({ Data($0.utf8) }) != inboxAnchorID.map({ Data($0.utf8) }) || range != inboxRangeSelectMode
+        if changed {
+            inboxSelectionGeneration += 1
+            if inboxBulkConfirmation != nil { cancelArchiveBulkDeleteConfirmation() }
+        }
+        inboxSelectedIDs = ids
+        inboxSelectedRevisions = revisions
+        inboxAnchorID = anchor
+        inboxRangeSelectMode = range
+        inboxBulk = bulk
+    }
+
+    private func clearInboxTaskSelection() {
+        inboxSelectionGeneration += 1
+        if inboxBulkConfirmation != nil { cancelArchiveBulkDeleteConfirmation() }
+        inboxSelectionMode = false
+        inboxSelectedIDs = []
+        inboxSelectedRevisions = [:]
+        inboxAnchorID = nil
+        inboxRangeSelectMode = false
+        inboxBulk = [:]
+    }
+
+    func leaveInboxTaskSelection() {
+        guard inboxSelectionExitEnabled else { return }
+        clearInboxTaskSelection()
+    }
+
+    func inboxSelectionOwnerChanged(active: Bool) {
+        if !active || selectedSurface != .inbox || appLock.concealed { clearInboxTaskSelection() }
+    }
+
+    func selectInboxTask(_ displayed: CoreObject) async {
+        guard inboxActionsEnabled, !taskStatusMenuPresented, !displayed.flag("readOnly"),
+              UIApplication.shared.applicationState == .active, let owner = host else { return }
+        let params = inboxParams, selected = inboxSelectedIDs, revisions = inboxSelectedRevisions
+        let anchor = inboxAnchorID, range = inboxRangeSelectMode, mode = inboxSelectionMode
+        let selectionGeneration = inboxSelectionGeneration, sequence = inboxFilterSequence
+        let foreground = foregroundSyncGeneration
+        func current(projection: Bool = true) -> Bool {
+            guard self.host === owner, ready, selectedSurface == .inbox, !appLock.concealed,
+                  UIApplication.shared.applicationState == .active, foregroundSyncGeneration == foreground,
+                  !Task.isCancelled, !retryNeeded, !taskPresented, !capturePresented, !areaPickerPresented,
+                  !morePresented, !inboxSortPresented, !inboxGroupPresented, !inboxFiltersPresented,
+                  !taskStatusMenuPresented, !inboxBulkCompositionBlocked, !inboxFilterWorkPending,
+                  inboxSelectionGeneration == selectionGeneration, inboxFilterSequence == sequence,
+                  inboxSelectionMode == mode, inboxRangeSelectMode == range,
+                  !projection || inboxCurrent else { return false }
+            return inboxExactJSON(inboxParams, params) && inboxExactJSON(inboxSelectedIDs, selected)
+                && inboxExactJSON(inboxSelectedRevisions, revisions)
+                && inboxAnchorID.map({ Data($0.utf8) }) == anchor.map({ Data($0.utf8) })
+        }
+        busy = true
+        let readOwner = UUID()
+        inboxSelectionReadOwner = readOwner
+        inboxSelectionReading = true
+        inboxReadError = nil
+        defer {
+            if inboxSelectionReadOwner == readOwner {
+                inboxSelectionReadOwner = nil
+                inboxSelectionReading = false
+                if host === owner { finishOperation() }
+            }
+        }
+        do {
+            for attempt in 0..<2 {
+                guard current() else { return }
+                guard items.contains(where: { item in
+                    let row = item.object("row")
+                    return item.text("type") == "task" && !row.flag("readOnly") && row.text("status") == "inbox"
+                        && row.text("id").utf8.elementsEqual(displayed.text("id").utf8)
+                        && row.text("taskRevision").utf8.elementsEqual(displayed.text("taskRevision").utf8)
+                }) else { inboxReadError = label("task.updateFailed"); return }
+                let snapshot = inbox, generation = inboxGeneration
+                var input = inboxTaskBulkInput(params: params)
+                input["selectionEdit"] = ["taskId": displayed.text("id"), "range": range]
+                input["rangeSelectMode"] = false
+                let bulk: CoreObject
+                do {
+                    bulk = try await query("menuRead", ["bulk", try json(input)], beforeDispatch: {
+                        current() && self.inboxGeneration == generation
+                    })
+                } catch {
+                    guard attempt == 0, error.localizedDescription.hasPrefix("STALE_REVISION:"), current() else { throw error }
+                    try await readInbox(ownedGuard: { current(projection: false) })
+                    continue
+                }
+                guard current(), inboxGeneration == generation else { return }
+                if !bulk.text("revision").utf8.elementsEqual(snapshot.text("revision").utf8) {
+                    guard attempt == 0 else { inboxReadError = label("task.updateFailed"); return }
+                    try await readInbox(ownedGuard: { current(projection: false) })
+                    continue
+                }
+                try validateInboxTaskBulk(bulk, snapshot: snapshot)
+                try acceptInboxTaskBulk(bulk, range: false)
+                inboxSelectionMode = true
+                return
+            }
+        } catch {
+            if host === owner, inboxSelectionGeneration == selectionGeneration { inboxReadError = error.localizedDescription }
+        }
+    }
+
+    func toggleInboxTaskRange() async {
+        guard inboxBulkDeleteEnabled, let owner = host else { return }
+        inboxRangeSelectMode.toggle()
+        inboxSelectionGeneration += 1
+        let generation = inboxSelectionGeneration
+        busy = true
+        let readOwner = UUID()
+        inboxSelectionReadOwner = readOwner
+        inboxSelectionReading = true
+        defer {
+            if inboxSelectionReadOwner == readOwner {
+                inboxSelectionReadOwner = nil
+                inboxSelectionReading = false
+                if host === owner { finishOperation() }
+            }
+        }
+        do {
+            try await readInbox(ownedGuard: { self.host === owner && self.inboxSelectionGeneration == generation })
+        } catch { if host === owner { inboxReadError = error.localizedDescription } }
+    }
+
+    func requestDeleteSelectedInboxTasks() {
+        guard inboxBulkDeleteEnabled, let owner = host else { return }
+        let copy = inboxBulk.object("deleteConfirmation")
+        guard !copy.text("title").isEmpty, !copy.text("message").isEmpty,
+              !copy.text("cancelLabel").isEmpty, !copy.text("confirmLabel").isEmpty else {
+            inboxReadError = label("task.updateFailed"); return
+        }
+        do {
+            archiveBulkDeleteConfirmationRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                "taskIds": inboxSelectedIDs, "taskRevisions": inboxSelectedRevisions, "source": "inbox"])
+            inboxBulkConfirmation = InboxBulkConfirmation(host: owner, params: try json(inboxParams),
+                revision: inbox.text("revision"), selectionGeneration: inboxSelectionGeneration,
+                filterSequence: inboxFilterSequence, foregroundGeneration: foregroundSyncGeneration)
+            archiveBulkDeleteConfirmation = copy
+        } catch { inboxReadError = error.localizedDescription }
+    }
+
+    private func inboxBulkConfirmationCurrent(_ context: InboxBulkConfirmation) -> Bool {
+        host === context.host && ready && selectedSurface == .inbox && inboxCurrent && inboxSelectionMode
+            && !appLock.concealed && UIApplication.shared.applicationState == .active
+            && foregroundSyncGeneration == context.foregroundGeneration && !Task.isCancelled
+            && !taskPresented && !capturePresented && !areaPickerPresented && !morePresented
+            && !inboxGroupPresented && !inboxSortPresented && !inboxFiltersPresented && !taskStatusMenuPresented
+            && !inboxFilterWorkPending && inboxFilterSequence == context.filterSequence
+            && inboxSelectionGeneration == context.selectionGeneration
+            && inbox.text("revision").utf8.elementsEqual(context.revision.utf8)
+            && (try? json(inboxParams)).map { $0.utf8.elementsEqual(context.params.utf8) } == true
+    }
+
+    private func inboxExactJSON(_ first: Any, _ second: Any) -> Bool {
+        guard let first = try? json(first), let second = try? json(second) else { return false }
+        return first.utf8.elementsEqual(second.utf8)
+    }
+
+    // Task740: one original Host/request debt; no reprepare or status Undo.
+    private func inboxTasksMoveOwned(on owner: CoreHost, request: String) -> Bool {
+        inboxTasksMoveOwner?.host === owner && inboxTasksMoveOwner?.request.utf8.elementsEqual(request.utf8) == true
+    }
+
+    private func inboxTasksMoveWarm(on owner: CoreHost, generation: Int, foreground: Int) -> Bool {
+        host === owner && ready && selectedSurface == .inbox && inboxSelectionGeneration == generation
+            && foregroundSyncGeneration == foreground && !Task.isCancelled && !appLock.concealed
+            && UIApplication.shared.applicationState == .active
+            && !taskPresented && !capturePresented && !areaPickerPresented && !morePresented
+            && !inboxGroupPresented && !inboxSortPresented && !inboxFiltersPresented && !taskStatusMenuPresented
+            && !mindSweepPresented && !processInboxPresented && !calendarComposerPresented && !calendarItemPresented
+    }
+
+    func moveSelectedInboxTasks(status: String) async {
+        guard inboxBulkStatusEnabled(status), let owner = host else { return }
+        let ids = inboxSelectedIDs, revisions = inboxSelectedRevisions, options = inboxBulk.object("bar").objects("statuses")
+        let params = inboxParams
+        let context: InboxBulkConfirmation
+        let request: String
+        do {
+            context = InboxBulkConfirmation(host: owner, params: try json(params), revision: inbox.text("revision"),
+                selectionGeneration: inboxSelectionGeneration, filterSequence: inboxFilterSequence,
+                foregroundGeneration: foregroundSyncGeneration)
+            request = try json(["requestId": UUID().uuidString.lowercased(), "source": "inbox", "taskIds": ids,
+                                "taskRevisions": revisions, "status": status, "params": params])
+        } catch { inboxReadError = error.localizedDescription; return }
+        func current() -> Bool {
+            inboxBulkConfirmationCurrent(context)
+                && inboxTasksMoveWarm(on: owner, generation: context.selectionGeneration, foreground: context.foregroundGeneration)
+                && inboxExactJSON(inboxSelectedIDs, ids) && inboxExactJSON(inboxSelectedRevisions, revisions)
+                && inboxExactJSON(inboxBulk.object("bar").objects("statuses"), options)
+        }
+        guard current() else { return }
+        busy = true
+        inboxReadError = nil
+        inboxTasksMoveOwner = (owner, request)
+        var dispatched = false
+        defer { if host === owner { finishOperation() } }
+        do {
+            let result = try await query("inboxTasksMoveWrite", [request], beforeDispatch: {
+                let admitted = current() && self.inboxTasksMoveOwned(on: owner, request: request)
+                if admitted { dispatched = true }
+                return admitted
+            })
+            guard inboxTasksMoveOwned(on: owner, request: request) else { return }
+            let warm = current()
+            try acknowledgeInboxTasksMove(result, on: owner, request: request, warm: warm)
+            guard warm else { return }
+            await publishInboxTasksMove(result, on: owner, foreground: context.foregroundGeneration)
+        } catch {
+            guard inboxTasksMoveOwned(on: owner, request: request) else { return }
+            if !dispatched {
+                // query refused before Host.call; only this undispatched debt can retire.
+                inboxTasksMoveOwner = nil
+                return
+            }
+            handleInboxTasksMoveError(error, on: owner, request: request, warm: current())
+        }
+    }
+
+    private func acknowledgeInboxTasksMove(_ result: CoreObject, on owner: CoreHost, request: String, warm: Bool) throws {
+        guard inboxTasksMoveOwned(on: owner, request: request) else { throw CocoaError(.coderReadCorrupt) }
+        let frozen = try decode(request)
+        guard frozen.text("source") == "inbox", let ids = frozen["taskIds"] as? [String],
+              Set(result.keys) == Set(["count", "status"]),
+              result.text("status").utf8.elementsEqual(frozen.text("status").utf8),
+              let count = result["count"] as? NSNumber, CFGetTypeID(count) != CFBooleanGetTypeID(),
+              count.doubleValue == Double(ids.count) else { throw CocoaError(.coderReadCorrupt) }
+        inboxTasksMoveOwner = nil
+        guard warm else { return }
+        retryNeeded = false; inboxReadError = nil; error = nil
+        clearInboxTaskSelection()
+    }
+
+    private func publishInboxTasksMove(_ result: CoreObject, on owner: CoreHost, foreground: Int) async {
+        let generation = inboxSelectionGeneration
+        let current = { self.inboxTasksMoveWarm(on: owner, generation: generation, foreground: foreground) }
+        guard current() else { return }
+        try? await readInbox(ownedGuard: current)
+        guard current(), let encoded = try? json(result),
+              let notice = try? await query("inboxTasksMoveNotice", [encoded], beforeDispatch: current), current(),
+              Set(notice.keys) == Set(["message"]), !notice.text("message").isEmpty else { return }
+        showTaskActionNotice(["operation": "inboxBulkMove", "source": "inbox", "undoEnabled": false,
+                              "message": notice.text("message")])
+    }
+
+    private func handleInboxTasksMoveError(_ failure: Error, on owner: CoreHost, request: String, warm: Bool) {
+        guard inboxTasksMoveOwned(on: owner, request: request) else { return }
+        if isDefiniteRejection(failure) { inboxTasksMoveOwner = nil }
+        guard warm else { return }
+        retryNeeded = inboxTasksMoveOwner != nil
+        error = retryNeeded ? failure.localizedDescription : nil
+        inboxReadError = failure.localizedDescription
+    }
+
+    private func retryInboxTasksMove(on owner: CoreHost, acknowledgment: String?, selectionGeneration: Int,
+                                    foreground: Int, surface: Surface) async throws {
+        guard let pending = inboxTasksMoveOwner, pending.host === owner else { throw CocoaError(.coderReadCorrupt) }
+        let request = pending.request
+        let currentDebt = { self.inboxTasksMoveOwned(on: owner, request: request) }
+        let outcome: CoreObject
+        if host === owner {
+            outcome = try await query("inboxTasksMoveRetryOutcome", [request], beforeDispatch: { self.host === owner && currentDebt() })
+        } else {
+            outcome = try decode(await owner.call("inboxTasksMoveRetryOutcome", argumentsJSON: json([request])))
+        }
+        guard currentDebt() else { throw CancellationError() }
+        let warm = surface == .inbox && inboxTasksMoveWarm(on: owner, generation: selectionGeneration, foreground: foreground)
+        if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+            if warm {
+                let unknown = label("task.doneStatusOutcomeUnknown")
+                retryNeeded = true; inboxReadError = unknown; error = unknown
+            }
+            return
+        }
+        guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else { throw CocoaError(.coderReadCorrupt) }
+        let result = outcome.object("result")
+        if let acknowledgment, !inboxExactJSON(result, try decode(acknowledgment)) { throw CocoaError(.coderReadCorrupt) }
+        try acknowledgeInboxTasksMove(result, on: owner, request: request, warm: warm)
+        guard warm else { return }
+        await publishInboxTasksMove(result, on: owner, foreground: foreground)
+    }
+
+    private func retryInboxBulk(on owner: CoreHost, acknowledgment: String?, selectionGeneration: Int,
+                                foreground: Int, surface: Surface) async throws {
+        if inboxTasksMoveOwner?.host === owner {
+            try await retryInboxTasksMove(on: owner, acknowledgment: acknowledgment,
+                selectionGeneration: selectionGeneration, foreground: foreground, surface: surface)
+            return
+        }
+        let deleting = inboxBulkDeleteOwner?.host === owner
+        let pending = deleting ? inboxBulkDeleteOwner : inboxBulkUndoOwner
+        guard let pending, pending.host === owner,
+              deleting || (taskActionNotice.text("source") == "inbox" && taskActionNotice.text("operation") == "inboxBulkDelete") else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let request = pending.request
+        let currentDebt = {
+            let pending = deleting ? self.inboxBulkDeleteOwner : self.inboxBulkUndoOwner
+            let owed = deleting ? self.archivedTasksDeleteRequest : self.taskActionUndoRequest
+            return pending?.host === owner && pending?.request.utf8.elementsEqual(request.utf8) == true
+                && owed?.utf8.elementsEqual(request.utf8) == true
+        }
+        guard currentDebt() else { throw CancellationError() }
+        let method = deleting ? "archivedTasksDeleteRetryOutcome" : "archivedTasksDeleteUndoRetryOutcome"
+        let outcome: CoreObject
+        if host === owner {
+            outcome = try await query(method, [request], beforeDispatch: { self.host === owner && currentDebt() })
+        } else {
+            // A replacement Host never receives these bytes. The captured Host
+            // can only prove its own receipt; no write or warm UI crosses over.
+            outcome = try decode(await owner.call(method, argumentsJSON: json([request])))
+        }
+        guard currentDebt() else { throw CancellationError() }
+        let warm = host === owner && selectedSurface == surface && inboxSelectionGeneration == selectionGeneration
+            && foregroundSyncGeneration == foreground && !Task.isCancelled && !appLock.concealed
+            && UIApplication.shared.applicationState == .active
+        if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+            let unknown = label(deleting ? "task.archiveDeleteOutcomeUnknown" : "task.trashOutcomeUnknown")
+            if warm { retryNeeded = true; inboxReadError = unknown; error = unknown }
+            return
+        }
+        guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let result = outcome.object("result")
+        if let acknowledgment, !inboxExactJSON(result, try decode(acknowledgment)) { throw CocoaError(.coderReadCorrupt) }
+        if deleting {
+            let notice = try acknowledgeArchivedTasksDelete(result, inboxWarm: warm)
+            guard warm, surface == .inbox else { return }
+            let noticeGeneration = inboxSelectionGeneration
+            inboxBulkNoticeHost = owner
+            try? await readInbox()
+            guard host === owner, selectedSurface == .inbox, inboxSelectionGeneration == noticeGeneration,
+                  foregroundSyncGeneration == foreground, !Task.isCancelled, !appLock.concealed,
+                  UIApplication.shared.applicationState == .active else { return }
+            showTaskActionNotice(notice)
+        } else {
+            try acknowledgeTaskActionUndo(result, inboxWarm: warm)
+            guard warm else { return }
+            do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+        }
+    }
+    // MARK: End Task739 Inbox selection
 
     private func validReferenceGroup(_ value: String) -> Bool {
         ["none", "context", "area", "project", "tag"].contains(value)
@@ -23155,17 +23613,25 @@ final class CoreModel: ObservableObject {
     func cancelArchiveBulkDeleteConfirmation() {
         archiveBulkDeleteConfirmationRequest = nil
         referenceBulkDeleteConfirmationContext = nil
+        inboxBulkConfirmation = nil
         archiveBulkDeleteConfirmation = [:]
     }
 
     func confirmDeleteSelectedArchiveTasks() async {
         guard let request = archiveBulkDeleteConfirmationRequest else { return }
         let referenceContext = referenceBulkDeleteConfirmationContext
+        let inboxContext = inboxBulkConfirmation
         cancelArchiveBulkDeleteConfirmation()
         do {
             let frozen = try decode(request)
             let done = frozen.text("source") == "done"
-            if frozen.text("source") == "reference" {
+            if frozen.text("source") == "inbox" {
+                guard let inboxContext, inboxBulkDeleteEnabled, inboxBulkConfirmationCurrent(inboxContext),
+                      inboxExactJSON(frozen["taskIds"] ?? NSNull(), inboxSelectedIDs),
+                      inboxExactJSON(frozen.object("taskRevisions"), inboxSelectedRevisions) else {
+                    inboxReadError = label("task.updateFailed"); return
+                }
+            } else if frozen.text("source") == "reference" {
                 guard referenceBulkDeleteEnabled,
                       referenceContext?.utf8.elementsEqual((try json(referenceParams)).utf8) == true,
                       (try json(frozen["taskIds"] ?? NSNull())).utf8.elementsEqual((try json(referenceSelectedIDs)).utf8),
@@ -23181,22 +23647,63 @@ final class CoreModel: ObservableObject {
                 }
             }
         } catch {
-            if referenceContext != nil { referenceError = error.localizedDescription } else { historyError = error.localizedDescription }
+            if inboxContext != nil { inboxReadError = error.localizedDescription }
+            else if referenceContext != nil { referenceError = error.localizedDescription } else { historyError = error.localizedDescription }
             return
         }
         busy = true
-        if referenceContext != nil { referenceError = nil } else { historyError = nil }
-        defer { finishOperation() }
+        if inboxContext != nil { inboxReadError = nil }
+        else if referenceContext != nil { referenceError = nil } else { historyError = nil }
+        defer { if inboxContext == nil || host === inboxContext?.host { finishOperation() } }
+        var inboxDispatched = false
         do {
             archivedTasksDeleteRequest = request
-            let result = try await query("archivedTasksDeleteWrite", [request])
-            let notice = try acknowledgeArchivedTasksDelete(result)
-            if notice.text("source") == "reference" { _ = await readReference() } else { _ = await readHistory() }
+            if let inboxContext { inboxBulkDeleteOwner = (inboxContext.host, request) }
+            let result = try await query("archivedTasksDeleteWrite", [request], beforeDispatch: {
+                guard let inboxContext else { return true }
+                let admitted = self.inboxBulkConfirmationCurrent(inboxContext)
+                    && self.inboxBulkDeleteOwner?.host === inboxContext.host
+                    && self.inboxBulkDeleteOwner?.request.utf8.elementsEqual(request.utf8) == true
+                if admitted { inboxDispatched = true }
+                return admitted
+            })
+            if let inboxContext {
+                guard inboxBulkDeleteOwner?.host === inboxContext.host,
+                      archivedTasksDeleteRequest?.utf8.elementsEqual(request.utf8) == true else { return }
+            }
+            let warmInbox = inboxContext.map { inboxBulkConfirmationCurrent($0) } == true
+            let notice = try acknowledgeArchivedTasksDelete(result, inboxWarm: warmInbox)
+            if let inboxContext {
+                guard warmInbox else { return }
+                let noticeGeneration = inboxSelectionGeneration
+                inboxBulkNoticeHost = inboxContext.host
+                try? await readInbox()
+                guard host === inboxContext.host, selectedSurface == .inbox,
+                      inboxSelectionGeneration == noticeGeneration,
+                      foregroundSyncGeneration == inboxContext.foregroundGeneration, !Task.isCancelled, !appLock.concealed,
+                      UIApplication.shared.applicationState == .active else { return }
+            } else if notice.text("source") == "reference" { _ = await readReference() } else { _ = await readHistory() }
             showTaskActionNotice(notice)
-        } catch { await handleArchivedTasksDeleteError(error) }
+        } catch {
+            if let inboxContext, !inboxDispatched,
+               inboxBulkDeleteOwner?.host === inboxContext.host,
+               inboxBulkDeleteOwner?.request.utf8.elementsEqual(request.utf8) == true,
+               archivedTasksDeleteRequest?.utf8.elementsEqual(request.utf8) == true {
+                // This attempt never reached host.call; retain no unprovable debt.
+                let warm = inboxBulkConfirmationCurrent(inboxContext)
+                archivedTasksDeleteRequest = nil; inboxBulkDeleteOwner = nil
+                if warm { retryNeeded = false }
+                return
+            }
+            if let inboxContext {
+                guard inboxBulkDeleteOwner?.host === inboxContext.host,
+                      archivedTasksDeleteRequest?.utf8.elementsEqual(request.utf8) == true else { return }
+                await handleArchivedTasksDeleteError(error, inboxWarm: inboxBulkConfirmationCurrent(inboxContext))
+            } else { await handleArchivedTasksDeleteError(error) }
+        }
     }
 
-    private func acknowledgeArchivedTasksDelete(_ result: CoreObject) throws -> CoreObject {
+    private func acknowledgeArchivedTasksDelete(_ result: CoreObject, inboxWarm: Bool = true) throws -> CoreObject {
         guard let request = archivedTasksDeleteRequest,
               let ids = (try decode(request))["taskIds"] as? [String],
               Set(result.keys) == Set(["count", "deletion"]),
@@ -23209,31 +23716,45 @@ final class CoreModel: ObservableObject {
               let enabled = notice["undoEnabled"] as? NSNumber,
               CFGetTypeID(enabled) == CFBooleanGetTypeID(), enabled.boolValue else { throw CocoaError(.coderReadCorrupt) }
         let source = (try decode(request)).text("source")
-        let done = source == "done", referenceSource = source == "reference"
+        let done = source == "done", referenceSource = source == "reference", inboxSource = source == "inbox"
+        let inboxOwner = inboxBulkDeleteOwner
+        if inboxSource {
+            guard inboxOwner?.request.utf8.elementsEqual(request.utf8) == true else { throw CocoaError(.coderReadCorrupt) }
+        }
         let presentation: CoreObject = ["requestId": (try decode(request)).text("requestId"), "count": ids.count,
-            "operation": referenceSource ? "referenceBulkDelete" : done ? "doneBulkDelete" : "archiveBulkDelete",
-            "source": referenceSource ? "reference" : done ? "done" : "archive"]
+            "operation": inboxSource ? "inboxBulkDelete" : referenceSource ? "referenceBulkDelete" : done ? "doneBulkDelete" : "archiveBulkDelete",
+            "source": inboxSource ? "inbox" : referenceSource ? "reference" : done ? "done" : "archive"]
         archivedTasksDeleteRequest = nil
-        retryNeeded = false
-        error = nil
-        historyError = nil
-        if referenceSource { clearReferenceTaskSelection(); referenceCurrent = false; referenceError = nil }
+        if !inboxSource || (inboxWarm && host === inboxOwner?.host) {
+            retryNeeded = false; error = nil
+            if !inboxSource { historyError = nil }
+        }
+        if inboxSource {
+            inboxBulkDeleteOwner = nil
+            if inboxWarm, host === inboxOwner?.host { clearInboxTaskSelection(); inboxCurrent = false; inboxReadError = nil }
+        } else if referenceSource { clearReferenceTaskSelection(); referenceCurrent = false; referenceError = nil }
         else { if done { clearDoneTaskSelection() } else { clearArchiveTaskSelection() }; historyCurrent = false }
         return notice.merging(presentation) { _, new in new }
     }
 
-    private func handleArchivedTasksDeleteError(_ failure: Error) async {
+    private func handleArchivedTasksDeleteError(_ failure: Error, inboxWarm: Bool = true) async {
         let referenceSource = archivedTasksDeleteRequest.flatMap { try? decode($0).text("source") } == "reference"
+        let inboxSource = archivedTasksDeleteRequest.flatMap { try? decode($0).text("source") } == "inbox"
+        let inboxOwner = inboxBulkDeleteOwner?.host
         if isDefiniteRejection(failure) {
             archivedTasksDeleteRequest = nil
-            retryNeeded = false
-            error = nil
-            if referenceSource { _ = await readReference() } else { _ = await readHistory() }
+            if inboxSource { inboxBulkDeleteOwner = nil }
+            if !inboxSource || inboxWarm { retryNeeded = false; error = nil }
+            if inboxSource { if inboxWarm, host === inboxOwner, selectedSurface == .inbox { try? await readInbox() } }
+            else if referenceSource { _ = await readReference() } else { _ = await readHistory() }
         } else {
-            retryNeeded = archivedTasksDeleteRequest != nil
-            error = failure.localizedDescription
+            if !inboxSource || inboxWarm {
+                retryNeeded = archivedTasksDeleteRequest != nil
+                error = failure.localizedDescription
+            }
         }
-        if referenceSource { referenceError = failure.localizedDescription } else { historyError = failure.localizedDescription }
+        if inboxSource { if inboxWarm { inboxReadError = failure.localizedDescription } }
+        else if referenceSource { referenceError = failure.localizedDescription } else { historyError = failure.localizedDescription }
     }
 
     private func acknowledgeArchivedTasksRestore(_ result: CoreObject, allowNoop: Bool = false) throws {
@@ -27111,6 +27632,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openSearch() {
+        guard !inboxBulkCompositionBlocked else { return }
         guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
         guard !savedSearchWritePresented, ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, selectedSurface != .search else { return }
@@ -27237,6 +27759,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openAreaPicker() async {
+        guard !inboxBulkCompositionBlocked else { return }
         guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !taskPresented,
               !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending,
               !projectRenameEditing,
@@ -27281,6 +27804,7 @@ final class CoreModel: ObservableObject {
               items.count < inbox.number("total") else { return }
         let snapshot = inbox, offset = items.count
         let params = inboxParams, generation = inboxGeneration
+        let selectionGeneration = inboxSelectionGeneration, selected = inboxSelectedIDs
         if let automaticRow {
             guard let index = items.firstIndex(where: { inboxItemIdentity($0) == automaticRow }),
                   index >= max(0, offset - 5),
@@ -27292,6 +27816,7 @@ final class CoreModel: ObservableObject {
         let current = {
             self.inboxReadCurrent(owner, generation: generation, params: params) && self.ready && !self.retryNeeded
                 && self.inbox.text("revision") == snapshot.text("revision") && self.items.count == offset
+                && self.inboxSelectionGeneration == selectionGeneration
         }
         busy = true
         defer { if host === owner { finishOperation() } }
@@ -27330,6 +27855,16 @@ final class CoreModel: ObservableObject {
                 }
                 guard current() else { return }
                 staged["items"] = rows
+                var nextBulk: CoreObject?
+                if inboxSelectionMode {
+                    let bulk = try await query("menuRead", ["bulk", try json(inboxTaskBulkInput(params: freshParams))], beforeDispatch: current)
+                    guard current() else { return }
+                    try validateInboxTaskBulk(bulk, snapshot: staged, subsetOf: selected)
+                    nextBulk = bulk
+                }
+                guard current() else { return }
+                if let nextBulk { try acceptInboxTaskBulk(nextBulk, range: inboxRangeSelectMode) }
+                if inboxBulkConfirmation != nil { cancelArchiveBulkDeleteConfirmation() }
                 inboxParams = freshParams
                 inbox = staged
                 syncInboxFilterText()
@@ -27394,6 +27929,8 @@ final class CoreModel: ObservableObject {
     }
 
     func openTask(_ id: String, descriptionSourceID: String? = nil) async {
+        guard !inboxBulkCompositionBlocked else { return }
+        guard selectedSurface != .inbox || !inboxSelectionMode else { return }
         guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
         if selectedSurface == .inbox { guard inboxActionsEnabled else { return } }
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
@@ -28385,7 +28922,7 @@ final class CoreModel: ObservableObject {
     private var taskActionUndoMethod: String {
         switch taskActionNotice.text("operation") {
         case "archiveBulkDelete": return "archivedTasksDeleteUndoWrite"
-        case "doneBulkDelete", "referenceBulkDelete": return "archivedTasksDeleteUndoWrite"
+        case "doneBulkDelete", "referenceBulkDelete", "inboxBulkDelete": return "archivedTasksDeleteUndoWrite"
         case "delete": return "taskDeleteUndo"
         case "completion": return "taskCompletionUndo"
         default: return "taskCancellationUndo"
@@ -28419,42 +28956,100 @@ final class CoreModel: ObservableObject {
         guard !busy, !retryNeeded, !taskPresented, !capturePresented,
               archiveBulkDeleteConfirmation.isEmpty,
               !referenceProjectNextActionPending, taskActionNotice.flag("undoEnabled"), taskActionUndoRequest == nil else { return }
+        let inboxUndo = taskActionNotice.text("source") == "inbox"
+        let inboxOwner = inboxBulkNoticeHost
+        let inboxSelection = inboxSelectionGeneration, inboxForeground = foregroundSyncGeneration, inboxSurface = selectedSurface
+        if inboxUndo {
+            guard let inboxOwner, host === inboxOwner, !inboxBulkMutationPending, !inboxSelectionMode,
+                  !inboxFilterWorkPending, !inboxFiltersPresented, !inboxGroupPresented, !inboxSortPresented,
+                  !areaPickerPresented, !morePresented, !taskStatusMenuPresented,
+                  !appLock.concealed, UIApplication.shared.applicationState == .active else { return }
+        }
         if taskActionNotice.text("operation") == "completion", taskActionNotice.text("source") == "reference",
            taskActionNotice.text("requestId") == referenceProjectNextActionOrigin.text("requestId") {
             invalidateReferenceProjectNextAction()
         }
         busy = true
         error = nil
-        defer { finishOperation() }
+        defer { if !inboxUndo || host === inboxOwner { finishOperation() } }
+        var inboxDispatched = false
+        var inboxAttemptRequest: String?
         do {
-            let proofField = ["delete", "archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete"].contains(taskActionNotice.text("operation")) ? "deleteRequestId"
+            let proofField = ["delete", "archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete", "inboxBulkDelete"].contains(taskActionNotice.text("operation")) ? "deleteRequestId"
                 : taskActionNotice.text("operation") == "completion" ? "completionRequestId" : "cancelRequestId"
             var fields: CoreObject = ["requestId": UUID().uuidString.lowercased(),
                                      proofField: taskActionNotice.text("requestId")]
             if taskActionNotice.text("operation") == "cancel", taskActionCompleteCancellation { fields["version"] = 2 }
             let request = try json(fields)
+            if inboxUndo { inboxAttemptRequest = request }
             taskActionUndoRequest = request
-            let result = try await query(taskActionUndoMethod, [request])
+            if let inboxOwner, inboxUndo { inboxBulkUndoOwner = (inboxOwner, request) }
+            let result = try await query(taskActionUndoMethod, [request], beforeDispatch: {
+                guard inboxUndo else { return true }
+                let admitted = self.host === inboxOwner && !self.appLock.concealed
+                    && UIApplication.shared.applicationState == .active && !Task.isCancelled
+                    && self.selectedSurface == inboxSurface && self.inboxSelectionGeneration == inboxSelection
+                    && self.foregroundSyncGeneration == inboxForeground && !self.inboxFilterWorkPending
+                    && !self.taskPresented && !self.capturePresented && !self.areaPickerPresented && !self.morePresented
+                    && !self.inboxFiltersPresented && !self.inboxGroupPresented && !self.inboxSortPresented && !self.taskStatusMenuPresented
+                    && self.inboxBulkUndoOwner?.request.utf8.elementsEqual(request.utf8) == true
+                if admitted { inboxDispatched = true }
+                return admitted
+            })
+            if inboxUndo {
+                guard inboxBulkUndoOwner?.host === inboxOwner,
+                      taskActionUndoRequest?.utf8.elementsEqual(request.utf8) == true else { return }
+            }
             if taskActionNotice.text("source") == "board" { selectedSurface = .board }
-            try acknowledgeTaskActionUndo(result)
+            let warmInbox = !inboxUndo || (host === inboxOwner && selectedSurface == inboxSurface
+                && inboxSelectionGeneration == inboxSelection && foregroundSyncGeneration == inboxForeground
+                && !Task.isCancelled && !appLock.concealed && UIApplication.shared.applicationState == .active)
+            try acknowledgeTaskActionUndo(result, inboxWarm: warmInbox)
+            guard warmInbox else { return }
             do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
         } catch {
+            if inboxUndo, !inboxDispatched, let request = inboxAttemptRequest,
+               inboxBulkUndoOwner?.host === inboxOwner,
+               inboxBulkUndoOwner?.request.utf8.elementsEqual(request.utf8) == true,
+               taskActionUndoRequest?.utf8.elementsEqual(request.utf8) == true {
+                let warm = host === inboxOwner && selectedSurface == inboxSurface
+                    && inboxSelectionGeneration == inboxSelection && foregroundSyncGeneration == inboxForeground
+                    && !Task.isCancelled && !appLock.concealed && UIApplication.shared.applicationState == .active
+                taskActionUndoRequest = nil; inboxBulkUndoOwner = nil
+                if warm { inboxBulkNoticeHost = nil; taskActionNotice = [:]; retryNeeded = false }
+                return
+            }
             let historyUndo = ["done", "archive"].contains(taskActionNotice.text("source"))
             let referenceUndo = taskActionNotice.text("source") == "reference"
+            if inboxUndo, let request = inboxAttemptRequest {
+                guard inboxBulkUndoOwner?.host === inboxOwner,
+                      taskActionUndoRequest?.utf8.elementsEqual(request.utf8) == true else { return }
+            }
             if isDefiniteRejection(error) {
                 taskActionUndoRequest = nil
                 taskActionNotice = [:]
+                if inboxUndo { inboxBulkUndoOwner = nil; inboxBulkNoticeHost = nil }
             }
+            if inboxUndo, host !== inboxOwner || selectedSurface != inboxSurface
+                || inboxSelectionGeneration != inboxSelection || foregroundSyncGeneration != inboxForeground
+                || Task.isCancelled || appLock.concealed || UIApplication.shared.applicationState != .active { return }
             retryNeeded = taskActionUndoRequest != nil
             self.error = error.localizedDescription
             if historyUndo { historyError = error.localizedDescription }
             if referenceUndo { referenceError = error.localizedDescription }
+            if inboxUndo { inboxReadError = error.localizedDescription }
         }
     }
 
-    private func acknowledgeTaskActionUndo(_ result: CoreObject) throws {
+    private func acknowledgeTaskActionUndo(_ result: CoreObject, inboxWarm: Bool = true) throws {
         guard taskActionUndoRequest != nil else { throw CocoaError(.coderReadCorrupt) }
-        if ["archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete"].contains(taskActionNotice.text("operation")) {
+        let inboxUndo = taskActionNotice.text("source") == "inbox"
+        let inboxOwner = inboxBulkUndoOwner?.host
+        if inboxUndo {
+            guard let request = taskActionUndoRequest,
+                  inboxBulkUndoOwner?.request.utf8.elementsEqual(request.utf8) == true else { throw CocoaError(.coderReadCorrupt) }
+        }
+        if ["archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete", "inboxBulkDelete"].contains(taskActionNotice.text("operation")) {
             guard Set(result.keys) == Set(["count"]), let count = result["count"] as? NSNumber,
                   CFGetTypeID(count) != CFBooleanGetTypeID(),
                   count.doubleValue == Double(taskActionNotice.number("count")) else { throw CocoaError(.coderReadCorrupt) }
@@ -28469,10 +29064,13 @@ final class CoreModel: ObservableObject {
         }
         if ["done", "archive"].contains(taskActionNotice.text("source")) { historyError = nil }
         if taskActionNotice.text("source") == "reference" { referenceError = nil }
+        if inboxUndo {
+            if inboxWarm, host === inboxOwner { inboxReadError = nil }
+            inboxBulkUndoOwner = nil; inboxBulkNoticeHost = nil
+        }
         taskActionUndoRequest = nil
         taskActionNotice = [:]
-        retryNeeded = false
-        error = nil
+        if !inboxUndo || (inboxWarm && host === inboxOwner) { retryNeeded = false; error = nil }
     }
 
     private var taskDeleteRequest: String?
@@ -30053,6 +30651,8 @@ final class CoreModel: ObservableObject {
     }
 
     func openCapture() async {
+        guard !inboxBulkCompositionBlocked else { return }
+        guard selectedSurface != .inbox || !inboxSelectionMode else { return }
         guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
         if let submitted = captureSubmission, host !== submitted.host {
             captureSubmission = nil; capturePending = false; captureBusyOwner = nil
@@ -30088,6 +30688,8 @@ final class CoreModel: ObservableObject {
     }
 
     func openProcessInbox() async {
+        guard !inboxBulkCompositionBlocked else { return }
+        guard selectedSurface != .inbox || !inboxSelectionMode else { return }
         let caller = selectedSurface
         let fromInbox = caller == .inbox && inboxActionsEnabled && !inbox.object("process").text("label").isEmpty
         let reviewInbox = reviewGuide.object("content")
@@ -30440,6 +31042,8 @@ final class CoreModel: ObservableObject {
     }
 
     func openMindSweep() async {
+        guard !inboxBulkCompositionBlocked else { return }
+        guard selectedSurface != .inbox || !inboxSelectionMode else { return }
         let entry = inbox.object("mindSweep")
         let caller = selectedSurface
         let reviewStep = reviewGuide.object("content").text("step")
@@ -30848,6 +31452,8 @@ final class CoreModel: ObservableObject {
     }
 
     func complete(_ id: String, taskRevision: String) async {
+        guard !inboxBulkCompositionBlocked else { return }
+        guard selectedSurface != .inbox || !inboxSelectionMode else { return }
         guard !inboxGroupPresented, !inboxFiltersPresented, !inboxFilterWorkPending else { return }
         if selectedSurface == .inbox { guard inboxActionsEnabled else { return } }
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
@@ -30962,6 +31568,9 @@ final class CoreModel: ObservableObject {
     }
 
     func retry() async {
+        if let owner = inboxBulkMutationHost {
+            guard host === owner, !appLock.concealed, UIApplication.shared.applicationState == .active else { return }
+        }
         #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
         if settingsAIGeminiRetryFixtureValue == "not-invoked" {
             let owners: [(String, Bool)] = [
@@ -30999,6 +31608,14 @@ final class CoreModel: ObservableObject {
         guard !busy, !projectRenameEditing || projectRenameRequest != nil else { return }
         guard ready else { await start(); return }
         guard let retryHost = host else { return }
+        let inboxRetryHost = inboxBulkMutationHost
+        let inboxRetrySelection = inboxSelectionGeneration, inboxRetryForeground = foregroundSyncGeneration
+        let inboxRetrySurface = selectedSurface
+        let inboxRetryWarm = {
+            self.host === retryHost && self.selectedSurface == inboxRetrySurface
+                && self.inboxSelectionGeneration == inboxRetrySelection && self.foregroundSyncGeneration == inboxRetryForeground
+                && !Task.isCancelled && !self.appLock.concealed && UIApplication.shared.applicationState == .active
+        }
         let captureRetry = capturePending ? captureSubmission : nil
         guard !capturePending || captureRetry?.host === retryHost else { return }
         let eventRetry = calendarEventTaskPending
@@ -31024,7 +31641,8 @@ final class CoreModel: ObservableObject {
         if let captureRetry { captureBusyOwner = captureRetry.id }
         var boardTaskOpened = false
         defer {
-            if captureRetry == nil || (host === retryHost && captureBusyOwner == captureRetry?.id) {
+            if (inboxRetryHost == nil || host === inboxRetryHost)
+                && (captureRetry == nil || (host === retryHost && captureBusyOwner == captureRetry?.id)) {
                 if captureRetry != nil { captureBusyOwner = nil }
                 finishOperation()
                 #if DEBUG && targetEnvironment(simulator)
@@ -31035,6 +31653,11 @@ final class CoreModel: ObservableObject {
         }
         do {
             let acknowledgment = try await retryHost.retryPending()
+            if inboxRetryHost === retryHost {
+                try await retryInboxBulk(on: retryHost, acknowledgment: acknowledgment,
+                    selectionGeneration: inboxRetrySelection, foreground: inboxRetryForeground, surface: inboxRetrySurface)
+                return
+            }
             guard host === retryHost else { throw CancellationError() }
             guard attachmentRetryCurrent() else { throw CancellationError() }
             if let pending = eventRetry {
@@ -32158,6 +32781,26 @@ final class CoreModel: ObservableObject {
             }
             if !calendarPreferencePending { calendarComposerNavigation = nil }
         } catch {
+            if let inboxRetryHost {
+                if let pending = inboxTasksMoveOwner, pending.host === inboxRetryHost {
+                    handleInboxTasksMoveError(error, on: pending.host, request: pending.request,
+                        warm: inboxTasksMoveWarm(on: pending.host, generation: inboxRetrySelection, foreground: inboxRetryForeground))
+                } else if let pending = inboxBulkDeleteOwner, pending.host === inboxRetryHost,
+                   archivedTasksDeleteRequest?.utf8.elementsEqual(pending.request.utf8) == true {
+                    await handleArchivedTasksDeleteError(error, inboxWarm: inboxRetryWarm())
+                } else if let pending = inboxBulkUndoOwner, pending.host === inboxRetryHost,
+                          taskActionUndoRequest?.utf8.elementsEqual(pending.request.utf8) == true {
+                    let warm = inboxRetryWarm()
+                    if isDefiniteRejection(error) {
+                        taskActionUndoRequest = nil; inboxBulkUndoOwner = nil; inboxBulkNoticeHost = nil; taskActionNotice = [:]
+                    }
+                    if warm {
+                        retryNeeded = taskActionUndoRequest != nil
+                        self.error = error.localizedDescription; inboxReadError = error.localizedDescription
+                    }
+                }
+                return
+            }
             guard host === retryHost else { return }
             guard captureRetry == nil || captureBusyOwner == captureRetry?.id else { return }
             if let pending = eventRetry {
@@ -32288,12 +32931,17 @@ final class CoreModel: ObservableObject {
                 await handleTrashRestoreError(error)
                 return
             }
-            if taskActionUndoRequest != nil, ["archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete"].contains(taskActionNotice.text("operation")) {
+            if taskActionUndoRequest != nil, ["archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete", "inboxBulkDelete"].contains(taskActionNotice.text("operation")) {
                 let referenceUndo = taskActionNotice.text("source") == "reference"
-                if isDefiniteRejection(error) { taskActionUndoRequest = nil; taskActionNotice = [:] }
+                let inboxUndo = taskActionNotice.text("source") == "inbox"
+                if isDefiniteRejection(error) {
+                    taskActionUndoRequest = nil; taskActionNotice = [:]
+                    if inboxUndo { inboxBulkUndoOwner = nil; inboxBulkNoticeHost = nil }
+                }
                 retryNeeded = taskActionUndoRequest != nil
                 self.error = error.localizedDescription
-                if referenceUndo { referenceError = error.localizedDescription }
+                if inboxUndo { inboxReadError = error.localizedDescription }
+                else if referenceUndo { referenceError = error.localizedDescription }
                 else { historyError = error.localizedDescription }
                 return
             }
@@ -32768,6 +33416,9 @@ final class CoreModel: ObservableObject {
         let intent = inboxPendingFilterEdit
         let params = intent?.base ?? inboxParams
         let fold = inboxPendingFold
+        let selectionMode = inboxSelectionMode, selectionGeneration = inboxSelectionGeneration
+        let selected = inboxSelectedIDs, range = inboxRangeSelectMode
+        let depth = selectionMode || inboxSelectionReading ? max(pageSize, items.count) : pageSize
         inboxGeneration += 1
         let generation = inboxGeneration
         let defaults = preferenceDefaults, preference = inboxFoldPreference
@@ -32775,6 +33426,7 @@ final class CoreModel: ObservableObject {
             self.inboxReadCurrent(owner, generation: generation, params: params)
                 && self.inboxPendingFilterEdit?.id == intent?.id
                 && self.inboxPendingFold?.axis == fold?.axis && self.inboxPendingFold?.ids == fold?.ids
+                && self.inboxSelectionMode == selectionMode && self.inboxSelectionGeneration == selectionGeneration
                 && self.preferenceDefaults === defaults && self.inboxFoldPreference == preference
                 && ownedGuard?() != false
                 && (ownerID == nil || self.foregroundSyncOwner.map {
@@ -32792,11 +33444,28 @@ final class CoreModel: ObservableObject {
             }
             var input = params.merging(["offset": 0, "limit": pageSize]) { _, next in next }
             if let intent { input["filterEdit"] = intent.edit }
-            let nextInbox = try await query("inboxView", [try json(input)], beforeDispatch: current)
+            var nextInbox = try await query("inboxView", [try json(input)], beforeDispatch: current)
             guard current() else { throw CancellationError() }
             try validateInboxPage(nextInbox, revision: nextInbox.text("revision"), total: nextInbox.number("total"),
                                   count: min(pageSize, nextInbox.number("total")))
             let acceptedParams = effectiveInboxParams(nextInbox)
+            var rows = nextInbox.objects("items")
+            while rows.count < min(depth, nextInbox.number("total")) {
+                let limit = min(pageSize, min(depth, nextInbox.number("total")) - rows.count)
+                let page = try await query("inboxView", [try json(acceptedParams.merging([
+                    "offset": rows.count, "limit": limit, "revision": nextInbox.text("revision")]) { _, next in next })], beforeDispatch: current)
+                guard current() else { throw CancellationError() }
+                try validateInboxPage(page, revision: nextInbox.text("revision"), total: nextInbox.number("total"), count: limit, against: nextInbox)
+                rows += page.objects("items")
+            }
+            nextInbox["items"] = rows
+            var nextBulk: CoreObject?
+            if selectionMode {
+                let bulk = try await query("menuRead", ["bulk", try json(inboxTaskBulkInput(params: acceptedParams))], beforeDispatch: current)
+                guard current() else { throw CancellationError() }
+                try validateInboxTaskBulk(bulk, snapshot: nextInbox, subsetOf: selected)
+                nextBulk = bulk
+            }
             let tokens = nextInbox.object("filters").object("tokens")
             guard acceptedParams.text("groupBy") == params.text("groupBy"),
                   try json(acceptedParams["collapsedGroupIds"] ?? NSNull()) == json(params["collapsedGroupIds"] ?? NSNull()),
@@ -32805,6 +33474,7 @@ final class CoreModel: ObservableObject {
                   let tokenItems = tokens["items"] as? [CoreObject], tokenItems.count == min(100, tokenTotal) else {
                 throw CocoaError(.coderReadCorrupt)
             }
+            var acceptedFold: (map: CoreObject, encoded: String)?
             if let fold {
                 guard inboxFoldPreferenceWritable, fold.axis == params.text("groupBy"),
                       let ids = inboxFoldIDs(params["collapsedGroupIds"]), ids == fold.ids else {
@@ -32812,8 +33482,19 @@ final class CoreModel: ObservableObject {
                 }
                 var map = inboxCollapsedGroups
                 map[fold.axis] = ids
-                defaults.set(try json(map), forKey: preference)
-                inboxCollapsedGroups = map
+                acceptedFold = (map, try json(map))
+            }
+            let acceptedParamsJSON = try json(acceptedParams)
+            guard current() else { throw CancellationError() }
+            if let nextBulk { try acceptInboxTaskBulk(nextBulk, range: range) }
+            if let context = inboxBulkConfirmation,
+               !context.params.utf8.elementsEqual(acceptedParamsJSON.utf8)
+                || !context.revision.utf8.elementsEqual(nextInbox.text("revision").utf8) {
+                cancelArchiveBulkDeleteConfirmation()
+            }
+            if let acceptedFold {
+                defaults.set(acceptedFold.encoded, forKey: preference)
+                inboxCollapsedGroups = acceptedFold.map
                 inboxPendingFold = nil
             }
             // Validate against the captured base before core normalization changes the accepted params.

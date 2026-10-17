@@ -14,6 +14,7 @@ import { sanitizeLogContext } from './log-sanitize';
  */
 const RELEASE_CHECK_FIELD_NAMES = [
     // ios-inbox-filters reuses releaseCheck, operation, and count below.
+    // ios-inbox-bulk-trash reuses releaseCheck, count, and outcome below.
     // ios-inbox-group: fixed grouping choice and aggregate folded headings.
     'axis', 'collapsedCount',
     // ios-search-publication reuses releaseCheck, operation, outcome, enabled, and count below.
@@ -177,6 +178,11 @@ const RELEASE_CHECK_FIELD_NAMES = [
 ];
 
 describe('release diagnostics field names', () => {
+    it.each(['deleted', 'restored'])('preserves content-free Inbox bulk Trash %s acknowledgement fields', outcome => {
+        const receipt = { releaseCheck: 'v1.3.5/ios-inbox-bulk-trash', count: 2, outcome };
+        expect(sanitizeLogContext(receipt)).toEqual({ ...receipt, count: '2' });
+    });
+
     it('preserves the content-free native Pomodoro SQL confirmation', () => {
         const receipt = { releaseCheck: 'v1.3.5/ios-pomodoro-credit', outcome: 'confirmed' };
         expect(sanitizeLogContext(receipt)).toEqual(receipt);

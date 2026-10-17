@@ -1099,3 +1099,262 @@ final class NativeBoardMoveTests: XCTestCase {
     }
 
 }
+
+
+extension NativeBoardMoveTests {
+    private func inboxBulk739Fixture(_ core: CoreHost) async throws -> (ids: [String], deletion: [String: Any]) {
+        let ids = (0..<2).map { _ in UUID().uuidString.lowercased() }
+        for id in ids { _ = try await core.call("captureSubmit", argumentsJSON: capture(core, title: "Inbox bulk fixture", id: id)) }
+        let beforeRead = try inboxBulk739Snapshot()
+        let params: [String: Any] = ["groupBy": "none", "collapsedGroupIds": [String](), "filters": [String: Any]()]
+        let bulk = try object(await core.call("menuRead", argumentsJSON: json(["bulk", json([
+            "list": "inbox", "params": params, "taskIds": ids])])))
+        XCTAssertEqual(bulk["selectedIds"] as? [String], ids)
+        let toggled = try object(await core.call("menuRead", argumentsJSON: json(["bulk", json([
+            "list": "inbox", "params": params, "taskIds": ids,
+            "selectionEdit": ["taskId": ids[1], "range": false]])])))
+        XCTAssertEqual(toggled["selectedIds"] as? [String], [ids[0]])
+        let invalidParams: [[String: Any]] = [["sortBy": "title"], ["includeArchivedProjects": true], ["filterEdit": ["type": "search", "value": "ignored"]], ["offset": 0]]
+        for invalid in invalidParams {
+            await expectFailure("INVALID_INPUT: Inbox selection requires the list's own view params") {
+                _ = try await core.call("menuRead", argumentsJSON: json(["bulk", json([
+                    "list": "inbox", "params": invalid, "taskIds": ids])]))
+            }
+        }
+        await expectFailure("INVALID_INPUT: Unsupported native Inbox selection read") {
+            _ = try await core.call("menuRead", argumentsJSON: json(["bulk", json([
+                "list": "inbox", "params": params, "taskIds": ids, "picker": ["kind": "removeTag"]])]))
+        }
+        await expectFailure("INVALID_INPUT: Inbox selection requires bounded unique task IDs") {
+            _ = try await core.call("menuRead", argumentsJSON: json(["bulk", json([
+                "list": "inbox", "params": params, "taskIds": [ids[0], ids[0]]])]))
+        }
+        await expectFailure("INVALID_INPUT: Inbox selection requires a bounded row and range flag") {
+            _ = try await core.call("menuRead", argumentsJSON: json(["bulk", json([
+                "list": "inbox", "params": params, "taskIds": ids,
+                "selectionEdit": ["taskId": ids[0], "range": "false"]])]))
+        }
+        for flag in ["busy", "rangeSelectMode"] {
+            var invalid: [String: Any] = ["list": "inbox", "params": params, "taskIds": ids]
+            invalid[flag] = 1
+            await expectFailure("INVALID_INPUT: Unsupported native Inbox selection read") {
+                _ = try await core.call("menuRead", argumentsJSON: json(["bulk", json(invalid)]))
+            }
+        }
+        for list in ["done", "reference"] {
+            let control = try object(await core.call("menuRead", argumentsJSON: json(["bulk", json([
+                "list": list, "params": ["groupBy": "none"], "taskIds": [String]()])])))
+            XCTAssertEqual(control["selectedIds"] as? [String], [])
+        }
+        XCTAssertEqual(try inboxBulk739Snapshot(), beforeRead)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let revisions = try XCTUnwrap(bulk["taskRevisions"] as? [String: String])
+        XCTAssertEqual(Set(revisions.keys), Set(ids))
+        return (ids, ["requestId": UUID().uuidString.lowercased(), "source": "inbox", "taskIds": ids, "taskRevisions": revisions])
+    }
+
+    private func inboxBulk739Snapshot() throws -> [String] {
+        let sql = try SQLiteBridge(url: database); defer { sql.close() }
+        return try ["tasks", "projects", "sections", "areas", "settings", "native_request_receipts"].map {
+            let raw = try sql.execute("SELECT * FROM \($0) ORDER BY rowid")
+            return try json(NativeJSON.jsonObject(with: Data(raw.utf8)))
+        }
+    }
+
+    func testInboxBulkTrash739FailedCommitExactRetryAndPublicUndo() async throws {
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        _ = try await core.call("dataSetting", argumentsJSON: json([json([
+            "requestId": UUID().uuidString, "edit": ["type": "debugLogging", "value": true],
+        ])]))
+        let fixture = try await inboxBulk739Fixture(core), before = try inboxBulk739Snapshot()
+        let undo: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "deleteRequestId": try XCTUnwrap(fixture.deletion["requestId"])]
+        var commands: [String] = []; faults.commandDiagnostic = { if $0.hasPrefix("inboxTasksDelete") { commands.append($0) } }
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Inbox bulk COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("archivedTasksDeleteWrite", argumentsJSON: json([json(fixture.deletion)])) }
+        let pending = try Data(contentsOf: journal)
+        XCTAssertEqual(try inboxBulk739Snapshot(), before); XCTAssertEqual(commands, [])
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        XCTAssertEqual(try Data(contentsOf: journal), pending); XCTAssertEqual(try inboxBulk739Snapshot(), before)
+        faults.beforeSQL = nil
+        let retry = try await core.retryPending()
+        let saved = try object(XCTUnwrap(retry))
+        XCTAssertEqual(saved["count"] as? Int, 2)
+        for id in fixture.ids {
+            XCTAssertEqual(try storedTask(id)["status"] as? String, "inbox")
+            XCTAssertTrue(try storedTask(id)["deletedAt"] is String)
+        }
+        let restored = try object(await core.call("archivedTasksDeleteUndoWrite", argumentsJSON: json([json(undo)])))
+        XCTAssertEqual(restored["count"] as? Int, 2)
+        for id in fixture.ids {
+            XCTAssertEqual(try storedTask(id)["status"] as? String, "inbox")
+            XCTAssertTrue(try storedTask(id)["deletedAt"] is NSNull)
+        }
+        XCTAssertEqual(commands, ["inboxTasksDelete", "inboxTasksDeleteUndo"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let after = try inboxBulk739Snapshot()
+        XCTAssertEqual(Array(after[1...4]), Array(before[1...4]))
+        let shared = try object(await core.diagnosticsFileAction("logShare"))
+        let url = try await core.validatedDiagnosticsShareURL(XCTUnwrap(shared["path"] as? String))
+        let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map { try object(String($0)) }
+        let confirmed = lines.filter { $0["message"] as? String == "Native Inbox bulk Trash confirmed" }
+        XCTAssertEqual(confirmed.count, 2)
+        XCTAssertTrue(confirmed.allSatisfy { $0["scope"] as? String == "native-host" })
+        XCTAssertEqual(try confirmed.map { try json(XCTUnwrap($0["context"])) }.sorted(), try ["deleted", "restored"].map {
+            try json(["releaseCheck": "v1.3.5/ios-inbox-bulk-trash", "count": "2", "outcome": $0, "category": "storage"])
+        }.sorted())
+        await core.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(try inboxBulk739Snapshot(), after); await cold.close()
+    }
+
+    func testInboxBulkTrash739UndoRequiresCurrentOriginalReceipt() async throws {
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let fixture = try await inboxBulk739Fixture(core)
+        _ = try await core.call("archivedTasksDeleteWrite", argumentsJSON: json([json(fixture.deletion)]))
+        let undo: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "deleteRequestId": try XCTUnwrap(fixture.deletion["requestId"])]
+        let sql = try SQLiteBridge(url: database)
+        _ = try sql.execute("DELETE FROM native_request_receipts WHERE request_id=?", parametersJSON: json([XCTUnwrap(fixture.deletion["requestId"])])); sql.close()
+        let before = try inboxBulk739Snapshot(); var journals = 0, commits = 0
+        faults.journalWrite = { journals += 1 }; faults.beforeSQL = { if $0 == "COMMIT" { commits += 1 } }
+        await expectFailure { _ = try await core.call("archivedTasksDeleteUndoWrite", argumentsJSON: json([json(undo)])) }
+        XCTAssertEqual(journals, 0); XCTAssertEqual(commits, 0)
+        XCTAssertEqual(try inboxBulk739Snapshot(), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    func testInboxBulkTrash739ColdOriginalJournalAndRecoverySource() async throws {
+        let faults = HostIOFaults(), writer = host(faults); _ = try await writer.start()
+        let fixture = try await inboxBulk739Fixture(writer), before = try inboxBulk739Snapshot()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Inbox bulk COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("archivedTasksDeleteWrite", argumentsJSON: json([json(fixture.deletion)])) }
+        XCTAssertEqual(try inboxBulk739Snapshot(), before)
+        let frozen = try completionJournalEnvelope()
+        await writer.close()
+        let replay = host(), startup = try object(await replay.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["source"] as? String, "inbox")
+        let outcome = try object(await replay.call("archivedTasksDeleteRetryOutcome", argumentsJSON: json([json(fixture.deletion)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed")
+        let prepared = try XCTUnwrap(frozen.envelope["prepared"] as? [String: Any])
+        let after = try XCTUnwrap(prepared["after"] as? [[String: Any]])
+        XCTAssertEqual(after.count, fixture.ids.count)
+        for task in after {
+            let saved = try storedTask(XCTUnwrap(task["id"] as? String))
+            XCTAssertEqual(saved["status"] as? String, "inbox")
+            XCTAssertEqual(saved["deletedAt"] as? String, task["deletedAt"] as? String)
+            XCTAssertEqual(saved["rev"] as? Int, task["rev"] as? Int)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await replay.close()
+    }
+
+    func testInboxBulkTrash739ReceiptRemovedAfterPrepareRefusesUndoCommit() async throws {
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let fixture = try await inboxBulk739Fixture(core)
+        _ = try await core.call("archivedTasksDeleteWrite", argumentsJSON: json([json(fixture.deletion)]))
+        let undo: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "deleteRequestId": try XCTUnwrap(fixture.deletion["requestId"])]
+        var tampered = false, commits = 0, baseline: [String]?
+        faults.journalWrite = {
+            guard !tampered else { return }; tampered = true
+            do {
+                let sql = try SQLiteBridge(url: self.database)
+                _ = try sql.execute("DELETE FROM native_request_receipts WHERE request_id=?", parametersJSON: self.json([try XCTUnwrap(fixture.deletion["requestId"])]))
+                sql.close(); baseline = try self.inboxBulk739Snapshot()
+            } catch { XCTFail("Cannot remove original Inbox receipt: \(error)") }
+        }
+        faults.beforeSQL = { if $0 == "COMMIT" { commits += 1 } }
+        await expectFailure { _ = try await core.call("archivedTasksDeleteUndoWrite", argumentsJSON: json([json(undo)])) }
+        XCTAssertTrue(tampered); XCTAssertEqual(commits, 0)
+        XCTAssertEqual(try inboxBulk739Snapshot(), try XCTUnwrap(baseline))
+        for id in fixture.ids { XCTAssertTrue(try storedTask(id)["deletedAt"] is String) }
+        await core.close()
+    }
+}
+
+
+// Task740 public method coverage belongs in the physical project target too.
+// These are real JSC/SQLite calls, not the generic runBulkAction writer.
+extension NativeBoardMoveTests {
+    private func inboxMove740Request(_ core: CoreHost, ids: [String], status: String) async throws -> [String: Any] {
+        let params: [String: Any] = ["groupBy": "none", "collapsedGroupIds": [String](), "filters": [String: Any]()]
+        let bulk = try object(await core.call("menuRead", argumentsJSON: json(["bulk", json(["list": "inbox", "params": params, "taskIds": ids])])))
+        XCTAssertEqual(bulk["selectedIds"] as? [String], ids)
+        let bar = try XCTUnwrap(bulk["bar"] as? [String: Any]), statuses = try XCTUnwrap(bar["statuses"] as? [[String: Any]])
+        XCTAssertEqual(statuses.compactMap { $0["status"] as? String }, ["next", "waiting", "someday", "done", "reference"])
+        XCTAssertTrue(statuses.allSatisfy { $0["enabled"] as? Bool == true && !($0["label"] as? String ?? "").isEmpty })
+        let revisions = try XCTUnwrap(bulk["taskRevisions"] as? [String: String]); XCTAssertEqual(Set(revisions.keys), Set(ids))
+        return ["requestId": UUID().uuidString.lowercased(), "source": "inbox", "taskIds": ids, "taskRevisions": revisions, "status": status, "params": params]
+    }
+
+    func testInboxBulkMove740PublicFiveStatusesDoneRecurrenceReferenceClearsAndDiagnostic() async throws {
+        for status in ["next", "waiting", "someday", "done", "reference"] {
+            let core = host(); _ = try await core.start()
+            _ = try await core.call("dataSetting", argumentsJSON: json([json(["requestId": UUID().uuidString, "edit": ["type": "debugLogging", "value": true]])]))
+            let fixture = try await inboxBulk739Fixture(core)
+            let unrelated = UUID().uuidString.lowercased()
+            _ = try await core.call("captureSubmit", argumentsJSON: capture(core, title: "Task740 unrelated", id: unrelated))
+            await core.close()
+            // Seed only this owned fixture, before a new production hydration.
+            let sql = try SQLiteBridge(url: database)
+            _ = try sql.execute("UPDATE tasks SET startTime='2070-10-10',dueDate='2070-10-11',isFocusedToday=1,focusOrder=7,pushCount=3 WHERE id=?", parametersJSON: json([fixture.ids[0]]))
+            _ = try sql.execute("UPDATE tasks SET recurrence=? WHERE id=?", parametersJSON: json([json(["rule": "weekly", "strategy": "after-completion", "seriesId": fixture.ids[1], "rrule": "FREQ=WEEKLY;COUNT=3;X-MINDWTR-SERIES-ID=\(fixture.ids[1])"]), fixture.ids[1]]))
+            let beforeIDs = try object("{\"rows\":" + sql.execute("SELECT id FROM tasks ORDER BY id") + "}")
+            let known = Set(try XCTUnwrap(beforeIDs["rows"] as? [[String: Any]]).compactMap { $0["id"] as? String }); sql.close()
+            let writer = host(); _ = try await writer.start()
+            let protected = try storedTask(unrelated), request = try await inboxMove740Request(writer, ids: fixture.ids, status: status)
+            let result = try object(await writer.call("inboxTasksMoveWrite", argumentsJSON: json([json(request)])))
+            XCTAssertEqual(try json(result), try json(["count": 2, "status": status]))
+            XCTAssertEqual(try json(storedTask(unrelated)), try json(protected)); XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            let notice = try object(await writer.call("inboxTasksMoveNotice", argumentsJSON: json([json(result)])))
+            XCTAssertEqual(Set(notice.keys), ["message"]); XCTAssertFalse((notice["message"] as? String ?? "").isEmpty)
+            for id in fixture.ids { XCTAssertEqual(try storedTask(id)["status"] as? String, status) }
+            if status == "reference" {
+                for id in fixture.ids {
+                    let row = try storedTask(id)
+                    for field in ["startTime", "dueDate", "recurrence", "completedAt", "cancelledAt", "focusOrder"] { XCTAssertTrue(row[field] is NSNull, field) }
+                    XCTAssertEqual(row["pushCount"] as? Int, 0); XCTAssertEqual((row["isFocusedToday"] as? NSNumber)?.boolValue, false)
+                }
+            }
+            let saved = try SQLiteBridge(url: database)
+            let rows = try XCTUnwrap(NativeJSON.jsonObject(with: Data(saved.execute("SELECT id,status FROM tasks ORDER BY id").utf8)) as? [[String: Any]])
+            let children = rows.filter { !known.contains($0["id"] as? String ?? "") }
+            XCTAssertEqual(children.count, status == "done" ? 1 : 0); XCTAssertTrue(children.allSatisfy { $0["status"] as? String == "inbox" })
+            let receipt = try XCTUnwrap(NativeJSON.jsonObject(with: Data(saved.execute("SELECT method,reply FROM native_request_receipts WHERE request_id=?", parametersJSON: json([XCTUnwrap(request["requestId"])])).utf8)) as? [[String: Any]])
+            XCTAssertEqual(receipt.count, 1); XCTAssertTrue((receipt.first?["method"] as? String)?.hasPrefix("inboxTasksMove:") == true)
+            XCTAssertEqual(try json(object(XCTUnwrap(receipt.first?["reply"] as? String))), try json(result)); saved.close()
+            let outcome = try object(await writer.call("inboxTasksMoveRetryOutcome", argumentsJSON: json([json(request)])))
+            XCTAssertEqual(outcome["kind"] as? String, "confirmed"); XCTAssertEqual(try json(XCTUnwrap(outcome["result"])), try json(result))
+            let shared = try object(await writer.diagnosticsFileAction("logShare")), url = try await writer.validatedDiagnosticsShareURL(XCTUnwrap(shared["path"] as? String))
+            let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map { try object(String($0)) }
+            let markers = lines.filter { $0["message"] as? String == "Native Inbox bulk status confirmed" && ($0["context"] as? [String: Any])?["status"] as? String == status }
+            XCTAssertEqual(markers.count, 1); XCTAssertEqual(markers.first?["scope"] as? String, "native-host")
+            XCTAssertEqual(try json(XCTUnwrap(markers.first?["context"])), try json(["releaseCheck": "v1.3.5/ios-inbox-bulk-status", "count": "2", "status": status, "outcome": "moved", "category": "storage"]))
+            await writer.close()
+        }
+    }
+
+    func testInboxBulkMove740PublicFailedCommitExactRetryColdSourceAndNoUndo() async throws {
+        let faults = HostIOFaults(), writer = host(faults); _ = try await writer.start()
+        let fixture = try await inboxBulk739Fixture(writer), request = try await inboxMove740Request(writer, ids: fixture.ids, status: "waiting")
+        let before = try inboxBulk739Snapshot()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Task740 public COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("inboxTasksMoveWrite", argumentsJSON: json([json(request)])) }
+        let original = try Data(contentsOf: journal), envelope = try completionJournalEnvelope()
+        XCTAssertEqual(envelope.command["method"] as? String, "inboxTasksMoveCommit"); XCTAssertEqual(try json(XCTUnwrap(envelope.envelope["request"])), try json(request))
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        let retried = try object(String(contentsOf: journal, encoding: .utf8))
+        // Match the existing recovery contract: outer JSON content and embedded request bytes both remain exact.
+        XCTAssertEqual(try json(retried), try json(object(String(decoding: original, as: UTF8.self))))
+        XCTAssertEqual(Data(try XCTUnwrap(retried["argumentsJSON"] as? String).utf8), Data(envelope.encoded.utf8))
+        XCTAssertEqual(try inboxBulk739Snapshot(), before)
+        await writer.close()
+        let cold = host(), startup = try object(await cold.start()), recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["source"] as? String, "inbox"); XCTAssertEqual(recovery["method"] as? String, "inboxTasksMoveCommit")
+        let result = try XCTUnwrap(recovery["result"] as? [String: Any]); XCTAssertEqual(Set(result.keys), ["count", "status"])
+        XCTAssertEqual(try json(result), try json(["count": 2, "status": "waiting"]))
+        let outcome = try object(await cold.call("inboxTasksMoveRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed"); XCTAssertEqual(try json(XCTUnwrap(outcome["result"])), try json(result))
+        for id in fixture.ids { XCTAssertEqual(try storedTask(id)["status"] as? String, "waiting") }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); await cold.close()
+    }
+}

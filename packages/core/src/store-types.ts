@@ -689,6 +689,9 @@ export interface TaskStore {
     /** Reference-only atomic batch, including all shared recurrence-created rows. */
     commitPreparedReferenceTasksMove: (input: import('./native-host-contract-reference-bulk-status').NativeReferenceTasksMovePrepared,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Inbox-only shared raw batch; the registered family validates its closed source and complete effect. */
+    commitPreparedInboxTasksMove: (input: import('./native-host-contract-inbox-bulk-status').NativeInboxTasksMovePrepared,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Reference Add tag's shared guarded raw batch; contract validates all selected members. */
     commitPreparedReferenceTasksAddTag: (input: import('./native-host-contract-reference-bulk-tag').NativeReferenceTasksAddTagPrepared,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;

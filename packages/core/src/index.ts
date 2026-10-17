@@ -386,3 +386,6 @@ export type { NativeAttachmentDraftDiscardInputV5, NativeAttachmentDraftDiscardC
 
 export { checklistProjectBlockReason, prepareChecklistProjectConversion } from './checklist-project-conversion';
 export type { ChecklistProjectConversion } from './checklist-project-conversion';
+
+export type { NativeInboxTasksMoveRequest, NativeInboxTasksMovePrepared, NativeInboxTasksMoveEnvelope,
+    NativeInboxTasksMoveResult, NativeInboxTasksMovePreparation, NativeInboxTasksMoveParams } from './native-host-contract-inbox-bulk-status';

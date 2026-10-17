@@ -6704,7 +6704,7 @@ final class FoundationUITests: XCTestCase {
             return frame
         }
         func fullyVisible(_ item: XCUIElement) -> Bool {
-            guard item.exists, item.isHittable else { return false }
+            guard item.exists else { return false }
             let frame = visibleViewport()
             // Accessibility frames can differ by floating-point rounding at a shared edge.
             return item.frame.minY >= frame.minY - 0.001 && item.frame.maxY <= frame.maxY + 0.001
@@ -6713,7 +6713,13 @@ final class FoundationUITests: XCTestCase {
             if fullyVisible(element) { break }
             let next = app.buttons[more]
             if !element.exists && !more.isEmpty && fullyVisible(next) {
-                boardEnabled(next); next.tap()
+                boardEnabled(next)
+                if !next.isHittable {
+                    expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: next)
+                    waitForExpectations(timeout: 10)
+                }
+                XCTAssertTrue(next.isHittable)
+                next.tap()
                 boardEnabled(ready ?? (app.buttons["board-filter-close"].exists ? app.buttons["board-filter-clear"] : app.buttons["board-filter-open"]))
                 continue
             }
@@ -6733,6 +6739,10 @@ final class FoundationUITests: XCTestCase {
                 withVelocity: .slow, thenHoldForDuration: 0.2)
         }
         boardEnabled(element)
+        if !element.isHittable {
+            expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: element)
+            waitForExpectations(timeout: 10)
+        }
         XCTAssertTrue(element.isHittable, element.identifier)
         XCTAssertTrue(fullyVisible(element), "\(element.identifier): row \(element.frame), viewport \(scroll.frame)")
     }
@@ -29917,7 +29927,7 @@ extension FoundationUITests {
         }
         // Reaching item001 traverses the first50 plus the revision-checked5-row continuation.
         let tail = app.buttons["task-title-inbox-sort-001"]
-        revealPagedElement(app, tail, in: app.scrollViews["inbox-scroll"], more: "inbox-more", ready: app.buttons["inbox-sort-open"])
+        revealPagedElement(app, tail, in: app.descendants(matching: .any)["inbox-scroll"].firstMatch, more: "inbox-more", ready: app.buttons["inbox-sort-open"])
         XCTAssertTrue(tail.exists); XCTAssertTrue(tail.isHittable)
         let previous = app.buttons["task-title-inbox-sort-002"]
         XCTAssertTrue(previous.exists); XCTAssertLessThan(previous.frame.minY, tail.frame.minY)
@@ -29999,7 +30009,7 @@ extension FoundationUITests {
         for axis in ["context", "tag"] {
             task737ChooseGroup(app, axis)
             let tail = app.buttons["task-title-inbox-group-055"]
-            let scroll = app.scrollViews["inbox-scroll"]
+            let scroll = app.descendants(matching: .any)["inbox-scroll"].firstMatch
             for _ in 0..<45 {
                 if tail.exists && tail.isHittable { break }
                 scroll.swipeUp(); boardEnabled(app.buttons["inbox-group-open"])
@@ -30009,7 +30019,7 @@ extension FoundationUITests {
         }
         func revealHeading(_ id: String) {
             let heading = app.buttons["inbox-section-" + id]
-            let scroll = app.scrollViews["inbox-scroll"]
+            let scroll = app.descendants(matching: .any)["inbox-scroll"].firstMatch
             for _ in 0..<45 where !heading.exists { scroll.swipeDown() }
             revealPagedElement(app, heading, in: scroll)
         }
@@ -30058,6 +30068,105 @@ extension FoundationUITests {
     // Task738 libraries are staged by root; these tests exercise read-only session filters.
     func testInboxFiltersNormalAndColdRead() throws { try task738InboxFilters("NORMAL") }
     func testInboxFiltersLargestTextAndColdRead() throws { try task738InboxFilters("LARGEST", largest: true) }
+
+    func testInboxFiltersNormalSelectedTokenHitPointProbe() throws {
+        try task739SelectedTokenModalAXProbe("NORMAL")
+    }
+
+    func testInboxFiltersLargestSelectedTokenHitPointProbe() throws {
+        try task739SelectedTokenModalAXProbe("LARGEST", largest: true)
+    }
+
+    private func task739SelectedTokenModalAXProbe(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_INBOX_FILTERS_UI_" + role + "_LIBRARY"],
+              let uuid = UUID(uuidString: library), uuid.uuidString.lowercased() == library else {
+            throw XCTSkip("An externally staged fresh canonical Inbox filter probe library is required")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US",
+            "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); defer { app.terminate() }
+        task736OpenInbox(app)
+        _ = app.buttons["inbox-process-primary"].label
+        XCTAssertFalse(app.buttons["inbox-filters-open"].isSelected)
+        // Retain Task738's presentation/disclosure prelude before the first alpha edit.
+        task738OpenFilters(app)
+        XCTAssertFalse(app.buttons["inbox-filter-projects"].exists)
+        XCTAssertFalse(app.buttons["inbox-filter-timeEstimates"].exists)
+        XCTAssertFalse(app.switches["inbox-include-archived-projects"].exists)
+        task738FilterTap(app, "inbox-filter-more")
+        boardTap(app, "inbox-filters-close")
+        task738OpenFilters(app)
+        XCTAssertFalse(app.textFields["inbox-filter-location"].exists)
+        boardTap(app, "inbox-filters-close")
+        XCTAssertFalse(app.buttons["inbox-filters-open"].isSelected)
+
+        task738OpenFilters(app); task738FilterTap(app, "inbox-filter-tokens")
+        task738PickerQuery(app, "@alpha")
+        let identifier = "inbox-filter-token-@alpha"
+        task739FilterModalAXState(app, role: role, phase: "before-first-tap")
+        task738FilterTap(app, identifier, picker: true)
+        task738TokenState(app.buttons[identifier], selected: true)
+        task739FilterModalAXState(app, role: role, phase: "after-first-selection")
+        let hitPointDeadline = ProcessInfo.processInfo.systemUptime + 10
+
+        // Do not scroll a geometrically visible row to repair an invalid AX hit point.
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let matches = app.buttons.matching(identifier: identifier)
+            let selected = matches.firstMatch
+            return matches.count == 1 && selected.exists && selected.isEnabled && selected.isSelected
+                && (selected.value as? String ?? "").isEmpty && selected.isHittable
+        }, object: nil)
+        guard XCTWaiter.wait(for: [ready], timeout: max(0, hitPointDeadline - ProcessInfo.processInfo.systemUptime)) == .completed else {
+            task739FilterModalAXState(app, role: role, phase: "selected-hittability-timeout")
+            XCTFail("The selected token must regain a native accessibility hit point before its second tap")
+            return
+        }
+        let matches = app.buttons.matching(identifier: identifier), selected = matches.firstMatch
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertTrue(selected.exists && selected.isEnabled && selected.isSelected)
+        XCTAssertTrue(selected.isHittable)
+        XCTAssertGreaterThanOrEqual(selected.frame.height, 44 - 1e-6)
+        selected.tap()
+        task738TokenState(app.buttons[identifier], selected: false, value: "Excluded")
+        task739FilterModalAXState(app, role: role, phase: "after-second-tap-excluded")
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        boardTap(app, "inbox-filters-close"); boardEnabled(app.buttons["inbox-filters-open"])
+        task739FilterModalAXState(app, role: role, phase: "after-panel-close")
+        XCTAssertTrue(app.buttons["inbox-process-primary"].exists && app.buttons["inbox-process-primary"].isEnabled)
+        XCTAssertTrue(app.buttons["area-open"].exists && app.buttons["area-open"].isEnabled)
+        XCTAssertTrue(app.buttons["tab-menu"].exists && app.buttons["tab-menu"].isEnabled)
+        XCTAssertTrue(app.descendants(matching: .any)["inbox-scroll"].firstMatch.exists)
+    }
+
+    private func task739FilterModalAXState(_ app: XCUIApplication, role: String, phase: String) {
+        // Start from an unfiltered native AX query. Export only fixed-category counts,
+        // state booleans and geometry; never labels, identifiers, values or hierarchy.
+        let sampleStarted = ProcessInfo.processInfo.systemUptime
+        let all = app.descendants(matching: .any).allElementsBoundByIndex
+        let identifiers = all.map { $0.identifier }
+        func count(_ predicate: (String) -> Bool) -> Int { identifiers.filter(predicate).count }
+        let matches = app.buttons.matching(identifier: "inbox-filter-token-@alpha"), token = matches.firstMatch
+        let exists = token.exists, picker = app.scrollViews["inbox-filter-picker-scroll"]
+        let keyboard = app.keyboards.firstMatch, primary = app.buttons["inbox-process-primary"]
+        let state = "role=\(role), phase=\(phase), axElements=\(all.count), "
+            + "taskTitles=\(count { $0.hasPrefix("task-title-") }), taskStatuses=\(count { $0.hasPrefix("task-status-") }), "
+            + "header=\(count { ["inbox-title", "area-open", "search-open"].contains($0) }), "
+            + "toolbar=\(count { ["inbox-sort-open", "inbox-group-open", "inbox-filters-open"].contains($0) }), "
+            + "primary=\(count { $0 == "inbox-process-primary" }), tabs=\(count { $0.hasPrefix("tab-") || $0 == "capture-open" }), "
+            + "matches=\(matches.count), exists=\(exists), enabled=\(exists && token.isEnabled), selected=\(exists && token.isSelected), "
+            + "hittable=\(exists && token.isHittable), valueEmpty=\(exists && (token.value as? String ?? "").isEmpty), "
+            + "valueExcluded=\(exists && (token.value as? String) == "Excluded"), "
+            + "row=\(exists ? token.frame : .zero), picker=\(picker.exists ? picker.frame : .zero), app=\(app.frame), "
+            + "primaryFrame=\(primary.exists ? primary.frame : .zero), keyboard=\(keyboard.exists), keyboardFrame=\(keyboard.exists ? keyboard.frame : .zero), "
+            + "alertContainers=\(app.alerts.count), sheetContainers=\(app.sheets.count), sampleSeconds=\(ProcessInfo.processInfo.systemUptime - sampleStarted)"
+        XCTAssertLessThanOrEqual(state.utf8.count, 2048)
+        let attachment = XCTAttachment(string: state)
+        attachment.name = "Task739 filter modal AX " + role + " " + phase
+        attachment.lifetime = .keepAlways; add(attachment)
+    }
 
     private func task738InboxFilters(_ role: String, largest: Bool = false) throws {
         continueAfterFailure = false
@@ -30110,7 +30219,7 @@ extension FoundationUITests {
         waitForExpectations(timeout: 10)
         boardTap(app, "inbox-filters-close"); boardEnabled(app.buttons["inbox-filters-open"])
         let tail = app.buttons["task-title-inbox-filter-110"]
-        revealPagedElement(app, tail, in: app.scrollViews["inbox-scroll"], more: "inbox-more", ready: app.buttons["inbox-filters-open"])
+        revealPagedElement(app, tail, in: app.descendants(matching: .any)["inbox-scroll"].firstMatch, more: "inbox-more", ready: app.buttons["inbox-filters-open"])
         XCTAssertTrue(tail.isHittable)
         boardTap(app, "inbox-chip-token:@beta"); boardEnabled(app.buttons["inbox-filters-open"])
         XCTAssertFalse(app.buttons["inbox-chip-token:@beta"].exists)
@@ -30143,7 +30252,7 @@ extension FoundationUITests {
         task738OpenFilters(app); task738FilterTap(app, "inbox-filter-tokens")
         task738FilterTap(app, "inbox-filter-match-tag-any", picker: true)
         boardTap(app, "inbox-filters-close"); boardEnabled(app.buttons["inbox-filters-open"])
-        revealPagedElement(app, tail, in: app.scrollViews["inbox-scroll"], more: "inbox-more", ready: app.buttons["inbox-filters-open"])
+        revealPagedElement(app, tail, in: app.descendants(matching: .any)["inbox-scroll"].firstMatch, more: "inbox-more", ready: app.buttons["inbox-filters-open"])
         XCTAssertTrue(tail.isHittable)
         task738Clear(app)
 
@@ -30184,7 +30293,7 @@ extension FoundationUITests {
         let groupedTail = app.descendants(matching: .any).matching(identifier: "inbox-item-context:@alpha-inbox-filter-110")
             .containing(.button, identifier: "task-title-inbox-filter-110").firstMatch
         let groupedTitle = groupedTail.buttons["task-title-inbox-filter-110"]
-        revealPagedElement(app, groupedTitle, in: app.scrollViews["inbox-scroll"])
+        revealPagedElement(app, groupedTitle, in: app.descendants(matching: .any)["inbox-scroll"].firstMatch)
         XCTAssertTrue(groupedTail.exists); XCTAssertTrue(groupedTitle.isHittable)
         XCTAssertTrue(!app.buttons["inbox-more"].exists || !app.buttons["inbox-more"].isHittable)
         groupedTitle.tap(); boardEnabled(app.buttons["task-view-close"])
@@ -30255,8 +30364,252 @@ extension FoundationUITests {
 
     private func task738AssertSubset(_ app: XCUIApplication, included: String, absent: String) {
         let title = app.buttons["task-title-inbox-filter-" + included]
-        revealPagedElement(app, title, in: app.scrollViews["inbox-scroll"], more: "inbox-more", ready: app.buttons["inbox-filters-open"])
+        revealPagedElement(app, title, in: app.descendants(matching: .any)["inbox-scroll"].firstMatch, more: "inbox-more", ready: app.buttons["inbox-filters-open"])
         XCTAssertTrue(title.isHittable)
         XCTAssertFalse(app.buttons["task-title-inbox-filter-" + absent].exists)
+    }
+}
+
+
+extension FoundationUITests {
+    func testInboxBulkTrashUndoNormalAndColdRead() throws { try task739InboxBulk("NORMAL") }
+    func testInboxBulkTrashUndoLargestTextAndColdRead() throws { try task739InboxBulk("LARGEST", largest: true) }
+
+    private func task739Count(_ app: XCUIApplication, _ expected: Int) {
+        let count = app.staticTexts["inbox-bulk-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 20))
+        let predicate = NSPredicate { _, _ in
+            Int(count.label.compactMap { $0.wholeNumberValue }.map(String.init).joined()) == expected
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 20), .completed)
+        XCTAssertFalse(app.buttons["inbox-bulk-select-all"].exists)
+    }
+
+    private func task739InboxBulk(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_INBOX_BULK_UI_" + role + "_LIBRARY"],
+              let uuid = UUID(uuidString: library), uuid.uuidString.lowercased() == library else {
+            throw XCTSkip("An externally staged canonical Inbox bulk library is required")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US", "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); defer { app.terminate() }
+        task736OpenInbox(app)
+        func start() {
+            let title = task192Reveal(app, "task-title-inbox-bulk-001", buttons: true, scrollID: "inbox-scroll", scans: 120)
+            title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.8)
+            task739Count(app, 1)
+            XCTAssertFalse(app.buttons["task-editor-save"].exists)
+            XCTAssertFalse(app.buttons["task-view-close"].exists)
+        }
+        func action(_ id: String) {
+            let control = ["inbox-bulk-range", "inbox-bulk-delete"].contains(id)
+                ? task192Reveal(app, id, buttons: true, scrollID: "inbox-bulk-actions-scroll", horizontal: true, scans: 12)
+                : app.buttons[id]
+            boardEnabled(control, timeout: 20)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44 - 0.01)
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44 - 0.01)
+            XCTAssertTrue(control.isHittable); control.tap()
+        }
+        start(); action("inbox-bulk-exit")
+        XCTAssertTrue(app.staticTexts["inbox-bulk-count"].waitForNonExistence(timeout: 20))
+        start(); task737ChooseGroup(app, "tag"); task739Count(app, 1)
+        for group in ["tag:#alpha", "tag:#beta"] {
+            let selected = task192Reveal(app, "inbox-select-" + group + "-inbox-bulk-001", buttons: true, scrollID: "inbox-scroll", scans: 120)
+            XCTAssertTrue(selected.isSelected)
+        }
+        task738OpenFilters(app); task738SetText(app, "inbox-filter-search", "Task739 Missing")
+        boardTap(app, "inbox-filters-close"); task739Count(app, 0)
+        XCTAssertFalse(app.buttons["inbox-bulk-delete"].isEnabled)
+        task738Clear(app); task739Count(app, 0); action("inbox-bulk-exit")
+        task737ChooseGroup(app, "none")
+        start(); action("inbox-bulk-range")
+        let tail = task192Reveal(app, "inbox-select-none-inbox-bulk-105", buttons: true, scrollID: "inbox-scroll", scans: 120, forwardOnly: true)
+        XCTAssertGreaterThanOrEqual(tail.frame.height, 44 - 0.01)
+        XCTAssertGreaterThanOrEqual(tail.frame.width, 44 - 0.01)
+        tail.tap(); task739Count(app, 105)
+        XCTAssertFalse(app.buttons["inbox-bulk-range"].isSelected)
+        XCTAssertTrue(tail.isSelected)
+        tail.tap(); task739Count(app, 104); tail.tap(); task739Count(app, 105)
+        action("inbox-bulk-delete")
+        let cancel = app.alerts.buttons.matching(identifier: "inbox-bulk-cancel").firstMatch
+        boardEnabled(cancel); cancel.tap(); task739Count(app, 105)
+        action("inbox-bulk-delete")
+        let confirm = app.alerts.buttons.matching(identifier: "inbox-bulk-confirm").firstMatch
+        boardEnabled(confirm); confirm.tap()
+        let undo = app.buttons.matching(identifier: "task-inboxBulkDelete-undo").firstMatch
+        boardEnabled(undo, timeout: 30)
+        XCTAssertGreaterThanOrEqual(undo.frame.height, 44 - 0.01)
+        undo.tap()
+        XCTAssertTrue(app.staticTexts["inbox-bulk-count"].waitForNonExistence(timeout: 30))
+        boardEnabled(app.buttons["inbox-filters-open"])
+        task738OpenFilters(app); task738SetText(app, "inbox-filter-search", "Task739 Batch 105")
+        boardTap(app, "inbox-filters-close")
+        XCTAssertTrue(app.buttons["task-title-inbox-bulk-105"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        app.terminate(); app.launch(); task736OpenInbox(app)
+        XCTAssertFalse(app.buttons["inbox-filters-open"].isSelected)
+        XCTAssertFalse(app.staticTexts["inbox-bulk-count"].exists)
+        XCTAssertFalse(app.buttons["task-inboxBulkDelete-undo"].exists)
+        task738OpenFilters(app); task738SetText(app, "inbox-filter-search", "Task739 Batch 105")
+        boardTap(app, "inbox-filters-close")
+        XCTAssertTrue(app.buttons["task-title-inbox-bulk-105"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["task-title-inbox-bulk-106"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+}
+
+
+// Task740: fresh root-owned role libraries only; no authored screenshots or fault hooks.
+extension FoundationUITests {
+    func testInboxBulkStatusAllFiveNormalAndColdRead() throws { try task740InboxStatus("NORMAL") }
+    func testInboxBulkStatusAllFiveLargestTextAndColdRead() throws { try task740InboxStatus("LARGEST", largest: true) }
+
+    private var task740InboxStatuses: [(status: String, label: String)] {
+        [("next", "Next"), ("waiting", "Waiting"), ("someday", "Someday"), ("done", "Done"), ("reference", "Reference")]
+    }
+
+    private func task740InboxStatusReady(_ element: XCUIElement) {
+        boardEnabled(element, timeout: 20)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in element.exists && element.isEnabled && element.isHittable }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
+        XCTAssertGreaterThanOrEqual(element.frame.width, 44 - 0.01)
+        XCTAssertGreaterThanOrEqual(element.frame.height, 44 - 0.01)
+    }
+
+    private func task740InboxStatusOptions(_ app: XCUIApplication) {
+        let expected = task740InboxStatuses.map { "inbox-bulk-status-" + $0.status }
+        let offered = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "inbox-bulk-status-"))
+        XCTAssertEqual(offered.allElementsBoundByIndex.map { $0.identifier }, expected)
+        for option in task740InboxStatuses {
+            let id = "inbox-bulk-status-" + option.status
+            let button = task192Reveal(app, id, buttons: true, scrollID: "inbox-bulk-actions-scroll", horizontal: true, scans: 16)
+            XCTAssertEqual(app.buttons.matching(identifier: id).count, 1)
+            XCTAssertEqual(button.label, "Move to " + option.label)
+            task740InboxStatusReady(button)
+        }
+        XCTAssertFalse(app.buttons["inbox-bulk-status-inbox"].exists)
+        XCTAssertFalse(app.buttons["inbox-bulk-status-archived"].exists)
+        XCTAssertFalse(app.buttons["inbox-bulk-select-all"].exists)
+    }
+
+    private func task740SetSearch(_ app: XCUIApplication, _ query: String) {
+        let input = app.textFields["inbox-filter-search"]
+        if !input.isHittable { revealPagedElement(app, input, in: app.scrollViews["inbox-filter-overview-scroll"]) }
+        boardEnabled(input); XCTAssertTrue(input.isHittable); input.tap()
+        let previous = input.value as? String ?? ""
+        let actual = previous == input.placeholderValue ? "" : previous
+        if actual != query {
+            if !actual.isEmpty {
+                // The public selection menu clears the whole old query even when
+                // a large-text field tap placed the caret before its suffix.
+                input.press(forDuration: 1)
+                let selectAll = app.descendants(matching: .any)["Select All"].firstMatch
+                for _ in 0..<4 {
+                    if selectAll.waitForExistence(timeout: 1), selectAll.isHittable { break }
+                    let next = app.buttons["Next Page"]
+                    guard next.exists && next.isHittable else { break }
+                    next.tap()
+                }
+                guard selectAll.exists && selectAll.isHittable else { XCTFail("Task740 search Select All unavailable"); return }
+                selectAll.tap(); input.typeText(XCUIKeyboardKey.delete.rawValue)
+                let cleared = NSPredicate { _, _ in
+                    let value = input.value as? String ?? ""
+                    return value.isEmpty || value == input.placeholderValue
+                }
+                guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: cleared, object: nil)], timeout: 5) == .completed else {
+                    XCTFail("Task740 search was not completely cleared"); return
+                }
+            }
+            input.typeText(query)
+        }
+        let exact = NSPredicate { _, _ in (input.value as? String ?? "").utf8.elementsEqual(query.utf8) }
+        guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: exact, object: nil)], timeout: 5) == .completed else {
+            XCTFail("Task740 search did not accept the exact requested query"); return
+        }
+        input.typeText("\n")
+    }
+
+    private func task740InboxStatus(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_INBOX_STATUS_UI_" + role + "_LIBRARY"],
+              let uuid = UUID(uuidString: library), uuid.uuidString.lowercased() == library else {
+            throw XCTSkip("An externally staged fresh canonical Task740 Inbox status library is required")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US", "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); defer { app.terminate() }
+        task736OpenInbox(app); task737ChooseGroup(app, "tag")
+        for option in task740InboxStatuses {
+            let prefix = "task740-" + option.status, query = "Task740 " + option.status + " batch"
+            task738OpenFilters(app); task740SetSearch(app, query)
+            boardTap(app, "inbox-filters-close"); boardEnabled(app.buttons["inbox-filters-open"])
+            XCTAssertTrue(app.buttons["inbox-filters-open"].isSelected)
+            let chip = app.buttons["inbox-chip-search"], filterLabel = chip.label
+            XCTAssertTrue(chip.exists); XCTAssertFalse(filterLabel.isEmpty)
+            let folded = task192Reveal(app, "inbox-section-tag:beta", buttons: true, scrollID: "inbox-scroll", scans: 120)
+            if folded.value as? String == "Collapse" { task740InboxStatusReady(folded); folded.tap(); boardEnabled(app.buttons["inbox-filters-open"]) }
+            XCTAssertEqual(folded.value as? String, "Expand")
+            let first = task192Reveal(app, "task-title-" + prefix + "-01", buttons: true, scrollID: "inbox-scroll", scans: 120)
+            task740InboxStatusReady(first); first.press(forDuration: 0.8); task739Count(app, 1)
+            let second = task192Reveal(app, "inbox-select-tag:alpha-" + prefix + "-02", buttons: true, scrollID: "inbox-scroll", scans: 120)
+            task740InboxStatusReady(second); second.tap(); task739Count(app, 2)
+            XCTAssertFalse(app.buttons["task-view-close"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists)
+            task740InboxStatusOptions(app)
+            let move = task192Reveal(app, "inbox-bulk-status-" + option.status, buttons: true, scrollID: "inbox-bulk-actions-scroll", horizontal: true, scans: 16)
+            task740InboxStatusReady(move); move.tap()
+            XCTAssertTrue(app.staticTexts["inbox-bulk-count"].waitForNonExistence(timeout: 30))
+            let notice = app.staticTexts["task-inboxBulkMove-notice"]
+            XCTAssertTrue(notice.waitForExistence(timeout: 5)); XCTAssertEqual(notice.label, "2 tasks")
+            XCTAssertFalse(app.buttons["task-inboxBulkMove-undo"].exists); XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+            XCTAssertFalse(app.buttons["inbox-bulk-exit"].exists); XCTAssertFalse(app.alerts.firstMatch.exists)
+            boardEnabled(app.buttons["inbox-filters-open"])
+            XCTAssertTrue(app.buttons["inbox-filters-open"].isSelected); XCTAssertEqual(chip.label, filterLabel)
+            task737SelectedGroup(app, "tag")
+            let retainedFold = task192Reveal(app, "inbox-section-tag:beta", buttons: true, scrollID: "inbox-scroll", scans: 120)
+            XCTAssertEqual(retainedFold.value as? String, "Expand")
+            for suffix in ["-01", "-02"] { XCTAssertFalse(app.buttons["task-title-" + prefix + suffix].exists) }
+            task740InboxStatusReady(retainedFold); retainedFold.tap(); boardEnabled(app.buttons["inbox-filters-open"])
+            let sentinel = task192Reveal(app, "task-title-" + prefix + "-03", buttons: true, scrollID: "inbox-scroll", scans: 120)
+            XCTAssertTrue(sentinel.exists, "The unselected Inbox sentinel must remain")
+            let openFold = task192Reveal(app, "inbox-section-tag:beta", buttons: true, scrollID: "inbox-scroll", scans: 120)
+            task740InboxStatusReady(openFold); openFold.tap(); boardEnabled(app.buttons["inbox-filters-open"])
+            XCTAssertEqual(openFold.value as? String, "Expand")
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        }
+        app.terminate(); app.launch(); task736OpenInbox(app)
+        XCTAssertFalse(app.buttons["inbox-filters-open"].isSelected)
+        XCTAssertFalse(app.staticTexts["inbox-bulk-count"].exists)
+        XCTAssertFalse(app.staticTexts["task-inboxBulkMove-notice"].exists); XCTAssertFalse(app.buttons["task-inboxBulkMove-undo"].exists)
+        task737SelectedGroup(app, "none"); task737ChooseGroup(app, "tag")
+        let savedFold = task192Reveal(app, "inbox-section-tag:beta", buttons: true, scrollID: "inbox-scroll", scans: 120)
+        XCTAssertEqual(savedFold.value as? String, "Expand", "Cold read retains the saved fold without restoring selection")
+        for option in task740InboxStatuses {
+            for index in 1...2 {
+                let id = String(format: "task740-%@-%02d", option.status, index)
+                boardTap(app, "search-open"); let search = app.textFields["search-input"]; boardEnabled(search)
+                search.tap(); let prior = search.value as? String ?? ""
+                search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: prior.count) + "id:" + id + "\n")
+                let result = app.buttons["search-task-" + id]; task740InboxStatusReady(result); result.tap()
+                boardTap(app, "task-mode-edit")
+                if option.status == "reference" {
+                    // Reference intentionally hides action status fields; this
+                    // existing public affordance is rendered only for Reference.
+                    boardEnabled(app.buttons["task-reference-convert-to-action"])
+                    XCTAssertFalse(app.buttons["task-editor-status-reference"].exists)
+                } else {
+                    let state = app.buttons["task-editor-status-" + option.status]
+                    revealPagedElement(app, state, in: app.scrollViews["task-editor-scroll"])
+                    XCTAssertTrue(state.isSelected, "Cold public task read must show the requested status")
+                }
+                // Read only: do not choose a status, change a field or Save.
+                boardTap(app, "task-view-close"); boardEnabled(app.textFields["search-input"])
+                XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+                boardTap(app, "search-close"); boardEnabled(app.buttons["inbox-filters-open"])
+                XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            }
+        }
     }
 }

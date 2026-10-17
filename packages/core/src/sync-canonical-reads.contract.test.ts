@@ -882,7 +882,7 @@ describe('canonical local reads contract', () => {
                     }
                 }
                 setStorageAdapter(new TrackedReceiptAdapter(sqlite.client, {
-                    rejectConcurrentWrites: label === 'commitPreparedReferenceTasksMove'
+                    rejectConcurrentWrites: label === 'commitPreparedInboxTasksMove' || label === 'commitPreparedReferenceTasksMove'
                         || label === 'commitPreparedReferenceTasksAddTag' || label === 'commitPreparedReferenceTasksRemoveTag',
                 }));
                 await loadNativeRequestReceipts(sqlite.client);
@@ -1339,6 +1339,40 @@ describe('canonical local reads contract', () => {
                     operation: 'delete', before: planned.prepared.before, after: planned.prepared.after,
                     deviceIdBefore: planned.prepared.deviceIdBefore, deviceIdToInitialize: planned.prepared.deviceIdToInitialize,
                 }, durable.authority)).toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+            },
+            commitPreparedInboxTasksMove: async (control) => {
+                const host = await nativeHost(control);
+                const taskIds = ['task-5', 'task-10'];
+                const sources = taskIds.map((id) => {
+                    const source = useTaskStore.getState()._tasksById.get(id);
+                    if (!source || source.status !== 'inbox') throw new Error(`Inbox Move fixture missing: ${id}`);
+                    return source;
+                });
+                const request = { requestId: 'd41122ed-aef4-4691-8bdd-bcd70104d740', taskIds, source: 'inbox' as const,
+                    taskRevisions: Object.fromEntries(sources.map((source) => [source.id, taskRevisionOf(source)])),
+                    status: 'next' as const, params: {} };
+                const planned = nativeValue(await host.prepareInboxTasksMove(request));
+                expect(nativeValue(host.validatePreparedInboxTasksMove({ request, prepared: planned.prepared })))
+                    .toEqual({ count: 2, status: 'next' });
+                const moved = new Map(planned.prepared.effect.tasks.map((pair) => [pair.after.id, pair.after]));
+                expect([...moved.keys()].sort()).toEqual([...taskIds].sort());
+                for (const source of sources) {
+                    expect(moved.get(source.id)).toMatchObject({ status: 'next', rev: (source.rev ?? 0) + 1 });
+                }
+                expect(planned.prepared.effect.createdTasks).toEqual([]);
+                expect(planned.prepared.effect.projects).toEqual([]);
+                expect(planned.prepared.effect.sections).toEqual([]);
+                const durable = nativeValue(await readAreaDurableData(false, true));
+                const before = durable.authority.snapshot;
+                control.expectPersisted((written) => {
+                    expect(written.tasks).toEqual(before.tasks.map((row) => moved.get(row.id) ?? row));
+                    expect(written.projects).toEqual(before.projects);
+                    expect(written.sections).toEqual(before.sections);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                control.resetBaseline();
+                expect(await useTaskStore.getState().commitPreparedInboxTasksMove(planned.prepared, durable.authority))
+                    .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
             },
             commitPreparedReferenceTasksMove: async (control) => {
                 const host = await nativeHost(control);
@@ -2445,7 +2479,7 @@ describe('canonical local reads contract', () => {
         for (const action of Object.keys(WRITE_ACTIONS).sort()) {
             const outcome = await runMutation(action, WRITE_ACTIONS[action], settled,
                 action === 'commitPreparedCalendarSubscriptionSetting' || action === 'commitPreparedCalendarSubscriptionAdd'
-                    || action === 'commitPreparedReferenceTasksMove'
+                    || action === 'commitPreparedInboxTasksMove' || action === 'commitPreparedReferenceTasksMove'
                     || action === 'commitPreparedReferenceTasksAddTag' || action === 'commitPreparedReferenceTasksRemoveTag');
             if (outcome.storeFields.length > 0 || outcome.readFields.length > 0) {
                 notCanonical.push({ action, ...outcome });
