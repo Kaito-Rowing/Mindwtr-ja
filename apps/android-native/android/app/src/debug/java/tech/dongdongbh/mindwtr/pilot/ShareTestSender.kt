@@ -9,14 +9,18 @@ import android.os.Bundle
 /**
  * Debug builds only (scripts/check-share-files-device.mjs): sends a file share to this app's launcher alias as another app's
  * share sheet does, which `am start` cannot (it has no list of URIs for SEND_MULTIPLE). Extras: `action` (SEND or
- * SEND_MULTIPLE), `type`, `uris` (a string list), and `subject` and `text` when set. Only ShareTestProvider's URIs go out.
+ * SEND_MULTIPLE), `type`, `uris` (a string list), and `subject` and `text` when set. Only this app's own URIs go out:
+ * ShareTestProvider's files, and the hostile ones the check expects refused (a `file://` URI, this app's other providers,
+ * with or without a user prefix).
  */
 class ShareTestSender : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try {
-            val authority = "$packageName.sharetest"
-            val uris = intent.getStringArrayListExtra("uris").orEmpty().map(Uri::parse).filter { it.scheme == "content" && it.authority == authority }
+            val uris = intent.getStringArrayListExtra("uris").orEmpty().map(Uri::parse).filter { uri ->
+                (uri.scheme == "file" && uri.path?.startsWith(dataDir.absolutePath) == true)
+                    || (uri.scheme == "content" && uri.authority?.substringAfterLast('@')?.startsWith("$packageName.") == true)
+            }
             val action = if (intent.getStringExtra("action") == Intent.ACTION_SEND_MULTIPLE) Intent.ACTION_SEND_MULTIPLE else Intent.ACTION_SEND
             val share = Intent(action).setClassName(this, "$packageName.MainActivity").setType(intent.getStringExtra("type") ?: "*/*")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)

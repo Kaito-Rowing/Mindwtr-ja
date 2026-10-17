@@ -10,7 +10,9 @@
 // fallbacks) are listed and saved; (c) seven files list six, and Cancel stores nothing; (d) a 51 MiB file and a blocked type
 // beside a PDF: core's notice counts two skipped files, the PDF is listed, and no copy over the cap is left; (e) a file that
 // cannot be read shows "Share unavailable"; (f) a file share's subject and text are left out, as RN's Android share module sends files only (the title is the file's name); (g) a share sent
-// to a stopped app opens after the boot and saves. Each share's staged files are gone once it opened. Titles are 77 + a
+// to a stopped app opens after the boot and saves; (h) a hostile share naming this app's own files (a file:// URI, this app's own
+// provider, and that provider behind a `0@` user prefix) shows "Share unavailable" and copies nothing. Each share's staged files are
+// gone once it opened. Titles are 77 + a
 // 12-digit run id + a number (check-projects-device.mjs --prune-old removes earlier runs'). It types nothing, never launches over
 // another app, removes its test files and leaves the app on its Inbox. It needs host `bun`.
 // Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
@@ -98,11 +100,11 @@ const largestCopy = () => Math.max(0, ...runAs('ls -l files/attachments 2>/dev/n
 
 // ---- the share and the screen ----
 /** Sends a share of the provider's [uris] ("mode/name"), as another app's share sheet does; waits until core prepared it. [fromApp] false: the app is stopped. */
-const share = async ({ action = 'SEND', type = '*/*', uris, subject, text }, expected, description, timeoutMs = 30_000, fromApp = true) => {
+const share = async ({ action = 'SEND', type = '*/*', uris, raw = [], subject, text }, expected, description, timeoutMs = 30_000, fromApp = true) => {
     if (fromApp) requireAppFront();
     // A stopped app's new process logs from zero.
     const before = fromApp ? prepared() : 0;
-    const extras = [`--es action android.intent.action.${action}`, `--es type '${type}'`, `--esal uris ${uris.map((uri) => `${PROVIDER}/${uri}`).join(',')}`,
+    const extras = [`--es action android.intent.action.${action}`, `--es type '${type}'`, `--esal uris ${[...uris.map((uri) => `${PROVIDER}/${uri}`), ...raw].join(',')}`,
         ...(subject ? [`--es subject '${subject}'`] : []), ...(text ? [`--es text '${text}'`] : [])];
     sh(`am start -W -n ${SENDER} ${extras.join(' ')}`);
     const deadline = Date.now() + timeoutMs;
@@ -224,6 +226,20 @@ try {
     tasks = stored([title(13)]);
     check(tasks[title(13)].length === 1 && tasks[title(13)][0].attachments.length === 1, '(g) the cold-started share is stored with its file');
     await noStaged('(g)');
+
+    // (h) A hostile share naming this app's own files: never opened, so nothing is copied, and RN's "Share unavailable".
+    const managed = tasks[title(13)][0].attachments[0].uri.split('/files/attachments/')[1];
+    const own = `${PKG}.FileSystemFileProvider/attachments/${managed}`;
+    for (const [label, uri] of [['a file:// URI', `file:///data/user/0/${PKG}/files/${DB}`], ['this app\'s own provider', `content://${own}`],
+        ['its provider behind a 0@ user prefix', `content://0@${own}`]]) {
+        const copies = runAs('ls files/attachments').split(/\s+/).filter(Boolean).length;
+        nodes = await share({ type: 'application/pdf', uris: [], raw: [uri] }, (current) => hasText(current, en['share.unavailable']), `the refusal of ${label}`);
+        check(!tagged(nodes, 'capture-modal') && runAs('ls files/attachments').split(/\s+/).filter(Boolean).length === copies,
+            `(h) ${label} shows "Share unavailable" and copies nothing`);
+        await noStaged('(h)');
+        // The next refusal must show its own notice.
+        await waitFor('the notice to go', (current) => !hasText(current, en['share.unavailable']), 20_000);
+    }
     console.log('Share files device check passed');
 } catch (error) {
     evidenced(error);

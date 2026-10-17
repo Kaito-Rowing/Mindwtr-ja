@@ -90,6 +90,17 @@ class SharedFileStagerTest {
     }
 
     @Test
+    fun aUserPrefixOnThisAppsOwnAuthorityIsStillRefused() {
+        // ContentResolver drops `<user>@` before it opens the provider, so the check compares what follows the last `@`; a
+        // real cross-profile share (`10@` another app's provider) still opens, and an empty authority is refused.
+        val uris = listOf("content://0@own.app/files/mindwtr.db", "content://10@own.app/x", "content://0@/x", "content://10@p/1")
+        val provider = Provider(uris.associateWith { Triple("secret".toByteArray(), "x.db", "application/octet-stream") })
+        val staged = stager(provider).stage(entry, uris)
+        assertEquals(listOf(true, true, true, false), (0 until 4).map { staged.getJSONObject(it).isNull("path") })
+        assertEquals(listOf("content://10@p/1"), provider.opened)
+    }
+
+    @Test
     fun aSizelessFileOverTheCapAndOneLargerThanDeclaredAreReportedTooLarge() {
         val big = ByteArray((SharedFileStager.MAX_BYTES + 10).toInt())
         val provider = Provider(mapOf("content://p/sizeless" to Triple(big, "a.bin", "application/octet-stream"), "content://p/liar" to Triple(big, "b.bin", "application/octet-stream")),

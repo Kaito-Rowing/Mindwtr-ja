@@ -15,7 +15,9 @@ import java.io.InputStream
  * - Each copy streams with a byte counter and stops past [MAX_BYTES] (core's attachment cap), so a huge share neither fills the
  *   disk nor waits for a copy core refuses; such a file is staged empty with a size over the cap, so core counts it skipped.
  * - Only another app's `content://` file: any other scheme (a `file://` URI opens inside this process) and this app's own
- *   providers are unreadable, never opened, so a share cannot make the app attach its own private files.
+ *   providers are unreadable, never opened, so a share cannot make the app attach its own private files. The authority is
+ *   compared as ContentResolver opens it: after the last `@` (a `0@` user prefix is dropped there, so it cannot hide this app's
+ *   provider; a real cross-profile share keeps its `10@` and opens); an empty one is refused, and so is any failed lookup.
  * - The provider's name, else the URI's last segment, and its MIME type, else `application/octet-stream` (RN's #1117 fallbacks
  *   for an empty cursor and a missing type). A file that cannot be opened is staged with no path: core counts it unreadable.
  * - `staged.json` is written last (temporary file, then rename), so a process death mid-copy leaves the entry to stage again.
@@ -50,7 +52,7 @@ class SharedFileStager(private val root: File, private val source: Source) {
     }
 
     private fun stageOne(uri: String, target: File): JSONObject {
-        val authority = CONTENT.find(uri)?.groupValues?.get(1)
+        val authority = CONTENT.find(uri)?.groupValues?.get(1)?.substringAfterLast('@')?.takeIf { it.isNotEmpty() }
         if (authority == null || runCatching { source.ownProvider(authority) }.getOrDefault(true)) {
             return JSONObject().put("path", JSONObject.NULL).put("name", JSONObject.NULL).put("mimeType", JSONObject.NULL).put("size", JSONObject.NULL)
         }
