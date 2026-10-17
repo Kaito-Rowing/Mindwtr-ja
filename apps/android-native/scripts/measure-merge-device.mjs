@@ -20,9 +20,10 @@
 //       tap before it. With --budget=<ms> it exits 1 unless the p90 tap-to-answer of the taps whose wait began inside the
 //       sync's span is at most <ms> (D9's target is 300); no such tap also fails. A tap (its DOWN and UP input events, by
 //       eventTimeNano) is answered by its own tab's read on the read thread (merge-tap-matching.mjs): one sample per tap, a
-//       delayed answer kept with its own tap. The first two taps of a run are not measured (the app is starting or resuming on
-//       a tab the run does not know). A series whose share of unanswered taps in the sync's span is above 5% fails the budget
-//       too: their answers, if any, went unmeasured.
+//       delayed answer kept with its own tap. The start taps are not measured: two on a cold start, one on a resume
+//       (merge-tap-matching.mjs measuredTaps). A trace whose app did not see all nine taps is an error (the tab order would be
+//       wrong). A series whose share of unanswered taps in the sync's span is above 5% fails the budget too: their answers, if
+//       any, went unmeasured.
 //
 // Every phone command runs inside the coordinator's lock: flock -o -w 14400 /home/dd/scratch/s23.lock node ...
 // Only the benchmark package (its own application id): the dev app's data is never touched.
@@ -33,7 +34,7 @@ import { dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { serveWebdav } from './sync-harness.mjs';
-import { assignTapAnswers } from './merge-tap-matching.mjs';
+import { assignTapAnswers, measuredTaps, TAPS_PER_SAMPLE } from './merge-tap-matching.mjs';
 
 const ADB = process.env.ADB ?? '/opt/android-sdk/platform-tools/adb';
 const TP = process.env.TRACE_PROCESSOR ?? '/home/dd/.cache/mindwtr-performance-tmp/mindwtr-perfetto/trace_processor';
@@ -191,7 +192,7 @@ duration_ms: 16000
         let tapper = null;
         if (taps) {
             const steps = [];
-            for (let i = 0; i < 9; i += 1) steps.push(`input tap ${(i % 2 ? targets.inbox : targets.focus).join(' ')}; sleep 0.4`);
+            for (let i = 0; i < TAPS_PER_SAMPLE; i += 1) steps.push(`input tap ${(i % 2 ? targets.inbox : targets.focus).join(' ')}; sleep 0.4`);
             const child = spawn(ADB, ['-s', serial, 'shell', `sleep 0.3; ${steps.join('; ')}`], { stdio: 'ignore' });
             tapper = new Promise((done) => child.on('exit', done));
         }
@@ -287,20 +288,25 @@ WHERE p.name GLOB '${PKG_GLOB}' AND s.name = 'core:wait' AND tt.utid != ${engine
             const known = tapEvents.get(tap);
             tapEvents.set(tap, { tap, first: known?.first ?? row.ts, last: row.ts });
         }
+        if (tapEvents.size !== 0 && tapEvents.size !== TAPS_PER_SAMPLE) {
+            results.push({ trace, error: `the app saw ${tapEvents.size} taps, not ${TAPS_PER_SAMPLE}` });
+            continue;
+        }
         const reads = waits.filter((w) => w.thread === 'mindwtr-read' && w.op).map((w) => ({ ts: w.ts, end: w.ts + w.dur, op: w.op, wait: w }));
         const answers = assignTapAnswers([...tapEvents.values()].sort((a, b) => a.first - b.first), reads);
-        // The first two taps of a run land while the app starts or resumes on a tab the run does not know, so one of them taps
-        // the tab already shown (no read) and the other may meet a launch read: neither is a measurement. From the third tap on,
-        // the shown tab is always the other one. In the sync's span: an answered tap whose read began there, an unanswered tap
-        // whose UP fell there.
-        const measured = answers.slice(2);
+        // The app process starts in a cold trace (its bindApplication); a resume trace's process was already running.
+        const [{ n: binds } = { n: 0 }] = query(trace, `SELECT COUNT(*) AS n FROM slice s JOIN thread_track tt ON s.track_id = tt.id
+     JOIN thread t USING (utid) JOIN process p USING (upid) WHERE p.name GLOB '${PKG_GLOB}' AND s.name GLOB 'bindApplication*';`);
+        // The start taps are no measurement (measuredTaps). In the sync's span: an answered tap whose read began there, an
+        // unanswered tap whose UP fell there.
+        const measured = measuredTaps(answers, binds > 0);
         const inSpan = measured.filter((a) => (a.call ? a.call.ts : a.last) >= span.start && (a.call ? a.call.ts : a.last) <= span.end);
-        for (const answer of answers) if (answer.call) answer.call.wait.tapToAnswerMs = answer.answerMs;
+        for (const answer of measured) if (answer.call) answer.call.wait.tapToAnswerMs = answer.answerMs;
         const taps = { inSpan: inSpan.length, answered: inSpan.filter((a) => a.call).length,
             unanswered: inSpan.filter((a) => !a.call).length, answersMs: inSpan.filter((a) => a.call).map((a) => a.answerMs),
             // Which taps of the run (0 = the first, a Focus tap) went unanswered.
             unansweredAt: inSpan.filter((a) => !a.call).map((a) => answers.indexOf(a)),
-            startTapsSkipped: Math.min(2, answers.length) };
+            startTapsSkipped: answers.length - measured.length, coldStart: binds > 0 };
         const steps = query(trace, `
 SELECT round((ts - ${span.start}) / 1e6, 1) AS atSyncMs, replace(replace(msg, ',', ';'), '"', '') AS msg FROM android_logs WHERE tag = '${TAG}'
   AND (msg GLOB '*Sync step*' OR msg GLOB '*Full sync merge*' OR msg GLOB '*Sync local reconcile*' OR msg GLOB '*sync state*'

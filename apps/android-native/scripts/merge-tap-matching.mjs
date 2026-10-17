@@ -7,6 +7,8 @@
 // tap. A tap with no such read is unanswered: its answer, if any, is not measured, and the budget counts it as a failure.
 
 export const TAB_READS = ['core:focus', 'core:menuRead'];
+/** The run taps nine times per sample (measure-merge-device.mjs run); the tab order holds only when the app saw all nine. */
+export const TAPS_PER_SAMPLE = 9;
 
 /**
  * taps: [{ tap, first, last }] in time order (one tap = its DOWN and UP input events, by eventTimeNano; ns).
@@ -21,4 +23,13 @@ export function assignTapAnswers(taps, calls) {
         const call = calls.find((candidate) => candidate.op === op && candidate.ts >= tap.first && candidate.ts < sameTabNext) ?? null;
         return { ...tap, call, answerMs: call ? Math.round((call.end - tap.last) / 1e5) / 10 : null };
     });
+}
+
+/**
+ * The taps that measure an answer. A cold start (the app process starts in the trace) skips two: tap 0 meets a launch read and
+ * tap 1 taps the tab the app opened on, which makes no read. A resume skips one: the app comes back on Focus, the previous
+ * sample's last tab, so tap 0 (Focus) makes no read, while tap 1 (Inbox) always switches tabs and is a real answer.
+ */
+export function measuredTaps(answers, coldStart) {
+    return answers.slice(coldStart ? 2 : 1);
 }
