@@ -183,8 +183,8 @@ export type DropboxAttachmentSyncOptions = {
 
 const CLOUD_REMOTE_MUTATION_REQUEST_HORIZON_MS = 35_000;
 
-/** The local file name a WebDAV or Dropbox download installs under: the cloud key's last segment. */
-const webdavDownloadFilename = (attachment: Attachment): string => (
+/** The local file name a download installs under: the cloud key's last segment. */
+const downloadFilename = (attachment: Attachment): string => (
   attachment.cloudKey?.split('/').pop() || `${attachment.id}${extractExtension(attachment.title)}`
 );
 
@@ -510,8 +510,8 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
       getLocalFilePresence: files.getLocalAttachmentPresence,
       deferUploads: options.phase === 'prepare',
       admission: options.activationProbe ? undefined : options.transferAdmission,
-      adoptExistingDownload: options.activationProbe || !attachmentsDir ? undefined : (attachment) => (
-        adoptVerifiedDownloadTarget(attachment, `${attachmentsDir}${webdavDownloadFilename(attachment)}`)
+      adoptExistingDownload: options.activationProbe ? undefined : (attachment) => (
+        adoptVerifiedDownloadTarget(attachment, `${attachmentsDir}${downloadFilename(attachment)}`)
       ),
       getLocalFileStat: (path) => files.statAttachmentFile(path),
       computeLocalFileHash: (path) => files.computeAttachmentFileHash(path),
@@ -770,7 +770,7 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
         await validateAttachmentHash(attachment, bytes);
         const targetUri = resolveAttachmentDownloadTargetPath(
           attachment,
-          `${attachmentsDir}${webdavDownloadFilename(attachment)}`,
+          `${attachmentsDir}${downloadFilename(attachment)}`,
           expectation,
         );
         const installed = await common.installAttachmentDownloadBytes(
@@ -982,9 +982,7 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
           await validateAttachmentHash(attachment, bytes);
           const fileHash = await computeSha256Hex(bytes);
           if (!fileHash) throw new Error('Attachment download hash is unavailable');
-          const filename = attachment.cloudKey.split('/').pop()
-            || `${attachment.id}${extractExtension(attachment.title)}`;
-          const targetUri = `${attachmentsDir}${filename}`;
+          const targetUri = `${attachmentsDir}${downloadFilename(attachment)}`;
           assertCloudNotAborted(options.signal);
           const installed = await common.installAttachmentDownloadBytes(
             attachment,
@@ -1537,7 +1535,7 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
         !options.activationProbe
         && expectation.kind === 'absent'
         && !recoverPendingUpload
-        && await adoptVerifiedDownloadTarget(attachment, `${attachmentsDir}${webdavDownloadFilename(attachment)}`)
+        && await adoptVerifiedDownloadTarget(attachment, `${attachmentsDir}${downloadFilename(attachment)}`)
       ) {
         await common.refreshBespokeAttachmentDownloadedContentStat(attachment, attachment.uri!);
         recordPatch(attachment);
@@ -1578,7 +1576,7 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
         await validateAttachmentHash(attachment, bytes);
         const targetUri = resolveAttachmentDownloadTargetPath(
           attachment,
-          `${attachmentsDir}${webdavDownloadFilename(attachment)}`,
+          `${attachmentsDir}${downloadFilename(attachment)}`,
           expectation,
         );
         assertDropboxNotAborted(options.signal);

@@ -211,9 +211,6 @@ export type AttachmentUploadSnapshot = {
  * overwrite metadata or start a remote transfer from a false premise. */
 export type LocalAttachmentPresence = 'present' | 'confirmed-not-found' | 'unreadable';
 
-/** Exact local generation an attachment download is allowed to replace. The
- * platform installer must enforce this at publication time, after the remote
- * bytes have been fetched and validated. */
 export type AttachmentTransferDirection = 'upload' | 'download';
 
 /**
@@ -254,6 +251,9 @@ export const createAttachmentTransferAdmission = (
     };
 };
 
+/** Exact local generation an attachment download is allowed to replace. The
+ * platform installer must enforce this at publication time, after the remote
+ * bytes have been fetched and validated. */
 export type AttachmentDownloadExpectation =
     | { kind: 'absent' }
     | { kind: 'present'; sha256: string };
