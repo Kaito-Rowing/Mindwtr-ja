@@ -9,7 +9,7 @@
 // files/attachments with the file's bytes; (b) three files (one whose provider gives no name, no size and no type, RN's #1117
 // fallbacks) are listed and saved; (c) seven files list six, and Cancel stores nothing; (d) a 51 MiB file and a blocked type
 // beside a PDF: core's notice counts two skipped files, the PDF is listed, and no copy over the cap is left; (e) a file that
-// cannot be read shows "Share unavailable"; (f) a share's subject is the title and its text the description; (g) a share sent
+// cannot be read shows "Share unavailable"; (f) a file share's subject and text are left out, as RN's Android share module sends files only (the title is the file's name); (g) a share sent
 // to a stopped app opens after the boot and saves. Each share's staged files are gone once it opened. Titles are 77 + a
 // 12-digit run id + a number (check-projects-device.mjs --prune-old removes earlier runs'). It types nothing, never launches over
 // another app, removes its test files and leaves the app on its Inbox. It needs host `bun`.
@@ -211,9 +211,9 @@ try {
     check(!tagged(nodes, 'capture-modal'), '(e) an unreadable file shows "Share unavailable" and opens nothing');
     await noStaged('(e)');
 
-    // (f) A subject and text with the file: the subject is the title, the text the description.
-    nodes = await share({ type: 'application/pdf', uris: [`file/${name(10, 'pdf')}`], subject: title(11), text: title(12) }, modal(title(11)), 'the capture screen titled with the subject');
-    check(tagged(nodes, 'capture-modal-description')?.text === title(12) && rows(nodes).length === 1, '(f) the subject is the title, the text the description, the file listed');
+    // (f) A subject and text with the file: RN's Android share module sends the files only, so the file's name is the title.
+    nodes = await share({ type: 'application/pdf', uris: [`file/${name(10, 'pdf')}`], subject: title(11), text: title(12) }, modal(title(10)), 'the capture screen titled with the file');
+    check(!tagged(nodes, 'capture-modal-description') && rows(nodes).length === 1, '(f) a file share\'s subject and text are left out, as RN\'s Android share leaves them');
     await cancel(nodes);
 
     // (g) A share sent to a stopped app opens after the boot, and saves.

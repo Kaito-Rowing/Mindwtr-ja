@@ -3254,6 +3254,9 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(intentRead, /Intent\.ACTION_SEND_MULTIPLE -> fileShare\(IntentCompat\.getParcelableArrayListExtra\(this, Intent\.EXTRA_STREAM, Uri::class\.java\)\.orEmpty\(\)\)/);
     assert.match(code(entryKt), /\.put\("uris", JSONArray\(uris\.take\(SharedFileStager\.MAX_FILES\)\.map \{ it\.toString\(\) \}\)\)/);
     assert.equal(code(entryKt).match(/getParcelable/g).length, 2, 'only the two EXTRA_STREAM reads');
+    // RN's Android share module sends a file share's files only: no text or subject (keeping them is RN bug (d), changed with RN).
+    assert.match(code(entryKt), /private fun fileShare\(uris: List<Uri>\): JSONObject = JSONObject\(\)\.put\("kind", "files"\)\s+\.put\("uris", [^\n]*\n(?!\s+\.put)/);
+    assert.match(entryKt, /\.put\("files", staged\)\.put\("text", JSONObject\.NULL\)\.put\("subject", JSONObject\.NULL\)/);
     assert.doesNotMatch(code(entryKt), /getSerializable|getBundleExtra/);
     // Entries wait in the persisted FIFO queue (EntryQueue.kt, JVM-tested) from the intent's arrival; the oldest opens only while
     // the app is free, is read in one perform (a capture's popup view too), and opens once the action ends; the editor opens

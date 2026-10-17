@@ -41,7 +41,8 @@ private val TILE_ROUTES = setOf("review", "calendar", "contexts", "board", "tras
  * The intent as core's entry point input, or null for any other launch (the launcher's). Only strings are read, as
  * expo-share-intent reads a text share (EXTRA_TEXT as a string; EXTRA_TITLE's text, and EXTRA_SUBJECT, which core uses
  * when the title is missing). A share of any other type, and every SEND_MULTIPLE, is a file share (`files`): its EXTRA_STREAM
- * URIs, at most RN's six (a later one is never read), with EXTRA_TEXT and EXTRA_SUBJECT. An extra another app broke reads as
+ * URIs, at most RN's six (a later one is never read), and nothing else: RN's Android share module sends a file share's files
+ * only (no EXTRA_TEXT or EXTRA_SUBJECT; keeping them is RN bug (d), for RN and this app together). An extra another app broke reads as
  * no entry; the input is untrusted, and core checks it again.
  */
 fun Intent.entryInput(): JSONObject? = runCatching {
@@ -65,9 +66,8 @@ fun Intent.entryInput(): JSONObject? = runCatching {
     }
 }.getOrNull()
 
-private fun Intent.fileShare(uris: List<Uri>): JSONObject = JSONObject().put("kind", "files")
+private fun fileShare(uris: List<Uri>): JSONObject = JSONObject().put("kind", "files")
     .put("uris", JSONArray(uris.take(SharedFileStager.MAX_FILES).map { it.toString() }))
-    .put("text", getStringExtra(Intent.EXTRA_TEXT) ?: JSONObject.NULL).put("subject", getStringExtra(Intent.EXTRA_SUBJECT) ?: JSONObject.NULL)
 
 /** A file share's provider, as RN's share module reads it: OpenableColumns' name and size, and the resolver's type. */
 class ContentSharedFileSource(private val context: Context) : SharedFileStager.Source {
@@ -169,8 +169,8 @@ class EntryRouter(private val shell: InboxViewModel, dir: File, private val stag
         perform { runtime ->
             val (reply, view) = try {
                 val reply = if (staged == null) runtime.menuRead("entryPoint", entry.input) else runtime.attachmentRequest("prepareSharedFiles",
-                    JSONObject().put("requestId", entry.id).put("files", staged).put("text", input.opt("text") ?: JSONObject.NULL)
-                        .put("subject", input.opt("subject") ?: JSONObject.NULL).toString())
+                    // RN's Android file share carries no text or subject (see entryInput).
+                    JSONObject().put("requestId", entry.id).put("files", staged).put("text", JSONObject.NULL).put("subject", JSONObject.NULL).toString())
                 check(reply.getInt("version") == 1) { "Unsupported core contract" }
                 // A capture opens RN's popup: core rebuilds its known tokens (openQuickCapture), then reads the entry's draft.
                 // RN's capture screen opens on the route params core answered: its first draft and view.
