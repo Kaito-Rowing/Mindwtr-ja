@@ -589,6 +589,7 @@ const measureRun = async (shape, workload, sizeMiB, act, done, { sourceBytes = 0
     const libraryBeforeMiB = pid() ? libraryNowMiB(`m-${workload}-before`) : null;
     const peak = { native: 0, java: 0, total: 0 };
     const linesBefore = transferLines();
+    const logsBefore = allLogs().split('\n').length;
     const probesBefore = allLogs().split('\n').filter((line) => line.includes('Native Android memory probe')).length;
     const started = Date.now();
     let sampling = true;
@@ -632,6 +633,12 @@ const measureRun = async (shape, workload, sizeMiB, act, done, { sourceBytes = 0
         expandedMiB: expandedBytes === null ? null : Math.round(expandedBytes / MIB * 10) / 10, libraryBeforeMiB, libraryAfterMiB, outcome,
         seconds: Math.round((Date.now() - started) / 1000), nativeMiB, javaMiB, pssMiB: Math.round(peak.total / 1024),
         appNativeMiB: app?.nativePeakMiB ?? null, appJavaMiB: app?.javaPeakMiB ?? null, probes, pass };
+    if (!pass) {
+        // The toast's words and the app's own lines for this row (step 0 run 4: a passing run kept no log, so a failed row had no cause).
+        row.toastText = toast.map((node) => node.text).filter(Boolean).join(' | ');
+        row.log = resolve(work, `row-${shape}-${workload}-${sizeMiB}${boundary ? '-b' : ''}-${run}.log`);
+        try { writeFileSync(row.log, allLogs().split('\n').slice(logsBefore).join('\n')); } catch { /* evidence only */ }
+    }
     measured.push(row);
     console.log(`measure ${JSON.stringify(row)}`);
     return { row, toast };
@@ -677,7 +684,10 @@ const importFile = async (key, file) => {
     await tap(tagged(nodes, `data-transfer-import-${key}`) ?? fail(`no ${key} import row`));
     await pickDocument(file.name);
     await until('the app back in front', () => !otherAppFront(), 15_000, 500);
-    await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 900_000)));
+    // RN's invalid-file warning and its failure toast are both titled Import failed and last 4.2 s (step 0 run 4: the wait
+    // for the question outlasted one unseen); measureRun's loop reads that toast at once.
+    const asked = await waitFor('the question or the import\'s failure', (current) => Boolean(confirmButton(current)) || hasText(current, en['settings.backupMobile.importFailed']), 900_000);
+    if (confirmButton(asked)) await tap(confirmButton(asked));
 };
 /** Each importer's largest file core admits (data-measure-fixtures.mjs, sized by encoded bytes); the expanded bytes are what core parses. */
 const importFixtures = () => Object.entries(importTexts(run)).map(([key, entries]) => {
@@ -725,11 +735,12 @@ const exportToFolder = async (tag) => {
     let failed = false;
     await until('the folder picker or the export\'s failure', async () => {
         if (otherAppFront()) return true;
-        failed = hasText(await screen().catch(() => []), en['settings.backupMobile.failedToExportBackup']);
+        const nodes = await screen().catch(() => []);
+        failed = ['settings.backupMobile.failedToExportBackup', 'settings.exportCsvFailed', 'settings.exportTaskNotesFailed'].some((key) => hasText(nodes, en[key]));
         return failed;
     }, 900_000, 1000);
-    if (failed) fail('the export failed');
-    await useTestFolder();
+    // measureRun's loop reads the failure toast.
+    if (!failed) await useTestFolder();
 };
 /** A new process on the Inbox, where the capture popup opens (the measurement's other steps end on Settings › Data). */
 const toInbox = async () => {
@@ -805,7 +816,7 @@ const boundarySequence = async (shape, limitMiB, imports) => {
     await restoreFile(filled);
     await toastWith(en['settings.backupMobile.restoreComplete'], 900_000);
     setProp('export_tree', TREE);
-    for (const [workload, tag, suffix] of [['export-json', 'data-transfer-export', '.json'], ['export-csv', 'data-transfer-export-csv', '.csv'], ['export-tasknotes', 'data-transfer-export-tasknotes', '.zip']]) {
+    for (const [workload, tag, suffix] of [['export-json', 'data-transfer-export', '.json'], ['export-csv', 'data-transfer-export-csv', '.csv']]) {
         const before = exportsOnPhone();
         await measureRun(shape, workload, limitMiB, () => exportToFolder(tag),
             () => exportsOnPhone().some((name) => !before.includes(name) && name.endsWith(suffix)), options);
@@ -868,6 +879,13 @@ const runSequence = async (shape, mib, { imports }) => {
     await measureFreshInstall();
     const fresh = await measureRun(shape, 'restore-fresh', mib, () => restoreFile(a), (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']), { sourceBytes: bytesOf(a), boundary });
     if (fresh.row.outcome !== 'done') return false;
+    // TaskNotes keeps its own 12 MiB library bound (step 0 run 4), so it is measured on the fresh library, the smallest here.
+    setProp('export_tree', TREE);
+    const zipsBefore = exportsOnPhone();
+    await measureRun(shape, 'export-tasknotes', mib, () => exportToFolder('data-transfer-export-tasknotes'),
+        () => exportsOnPhone().some((name) => !zipsBefore.includes(name) && name.endsWith('.zip')), { boundary });
+    sh(`rm -f ${PHONE_DIR}/mindwtr-backup*`);
+    setProp('export_tree', '');
     const b = measureFixture(`d1-m-${shape}-${mib}-b-${run}.json`, mib, shape, 'd1mb');
     push(b);
     await measureRun(shape, 'merge-over', mib, async () => {
@@ -881,7 +899,7 @@ const runSequence = async (shape, mib, { imports }) => {
             (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']) && !confirmButton(nodes), { boundary });
     } else measured.push({ shape, workload: 'undo', sizeMiB: mib, boundary, outcome: 'its restore did not land', pass: false });
     setProp('export_tree', TREE);
-    for (const [workload, tag, suffix] of [['export-json', 'data-transfer-export', '.json'], ['export-csv', 'data-transfer-export-csv', '.csv'], ['export-tasknotes', 'data-transfer-export-tasknotes', '.zip']]) {
+    for (const [workload, tag, suffix] of [['export-json', 'data-transfer-export', '.json'], ['export-csv', 'data-transfer-export-csv', '.csv']]) {
         const before = exportsOnPhone();
         await measureRun(shape, workload, mib, () => exportToFolder(tag),
             () => exportsOnPhone().some((name) => !before.includes(name) && name.endsWith(suffix)), { boundary });
@@ -919,8 +937,8 @@ const measure = async () => {
     }
     const proposal = proposeTransferLimit(measured, { shapes });
     for (const [cell, bound] of Object.entries(proposal.bounds)) console.log(`bound ${cell}: ${bound} MiB`);
-    if (proposal.limitMiB === null) {
-        console.log(`T: none: the matrix misses ${proposal.missing.join(', ')}`);
+    if (proposal.limitMiB === null || proposal.limitMiB < 1) {
+        console.log(proposal.limitMiB === null ? `T: none: the matrix misses ${proposal.missing.join(', ')}` : `T: none: the smallest bound is ${proposal.smallestMiB} MiB`);
     } else {
         console.log(`T candidate: ${proposal.limitMiB} MiB (half of the smallest bound, ${proposal.smallestMiB} MiB); boundary reruns at ${proposal.limitMiB} MiB`);
         for (const shape of shapes) await boundarySequence(shape, proposal.limitMiB, imports);

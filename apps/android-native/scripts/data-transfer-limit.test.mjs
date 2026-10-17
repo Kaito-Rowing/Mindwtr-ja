@@ -20,6 +20,11 @@ describe('the step 0 transfer limit', () => {
         expect(proposeTransferLimit(rows)).toMatchObject({ limitMiB: 0 });
     });
 
+    it('a TaskNotes export, bounded at 12 MiB on its own, never caps the limit', () => {
+        const rows = [...everyWorkload(64), row('rows', 'export-tasknotes', { libraryBeforeMiB: 26, pass: false })];
+        expect(proposeTransferLimit(rows)).toMatchObject({ limitMiB: 32 });
+    });
+
     it('proposes nothing while a workload or shape has no row', () => {
         const rows = everyWorkload(64).filter((item) => !(item.shape === 'notes' && item.workload === 'capture'));
         const proposal = proposeTransferLimit(rows);

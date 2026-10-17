@@ -1,8 +1,11 @@
 // Pass D1c step 0 (design §8, code review P2): the transfer limit from check-data-device.mjs's measured rows. Pure, so its
 // rule is tested apart from the phone (data-transfer-limit.test.mjs).
 
-/** Every Data workload the limit must hold for, each measured in every shape. */
-export const MEASURE_WORKLOADS = ['restore-fresh', 'merge-over', 'restore-over', 'undo', 'export-json', 'export-csv', 'export-tasknotes',
+/**
+ * Every Data workload the limit must hold for, each measured in every shape. A TaskNotes export is measured but has its own
+ * 12 MiB bound (step 0 run 4), so it does not set the limit.
+ */
+export const MEASURE_WORKLOADS = ['restore-fresh', 'merge-over', 'restore-over', 'undo', 'export-json', 'export-csv',
     'capture', 'import-todoist', 'import-ticktick', 'import-dgt', 'import-omnifocus', 'import-mindwtr-csv', 'cold-start', 'recovery-boot'];
 export const MEASURE_SHAPES = ['rows', 'notes'];
 
