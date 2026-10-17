@@ -14,3 +14,4 @@ Changes collected since the latest stable release.
 - Mobile: while Settings › Data › Getting Started is adding its tutorial project, the export, restore and import rows wait. Before, a restore started at that moment could replace the library under the new project.
 - Imports: a ZIP export whose recorded file sizes do not match its contents is refused as damaged. Before, such a file could import only part of a list, or count one file many times.
 - Mobile: a Calendar week with a deadline opens on the selected day (else today). Deadlines widen each day column, so fewer days fit; the week used to open on an earlier day, with the selected day off screen.
+- Android security: a file shared into Mindwtr is copied under a generated name, and only another app's content link is accepted. Before, a malicious app could pick the copy's name to overwrite Mindwtr's own files, or share a link to Mindwtr's private files (such as its database) so they became an attachment.
