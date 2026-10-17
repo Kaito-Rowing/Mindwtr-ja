@@ -115,6 +115,20 @@ test('a permission RN declares and the build drops is caught', async () => {
     assert.notDeepEqual(await problems('release', { ...files, manifest: dropped }), []);
 });
 
+test('narrower share filters, or the debug build\'s check entries in another build, are caught', async () => {
+    const files = await variant('release');
+    const root = (await parseStringPromise(files.manifest)).manifest;
+    const alias = root.application[0]['activity-alias'][0];
+    alias['intent-filter'] = alias['intent-filter'].filter((filter) => filter.action[0].$['android:name'] !== 'android.intent.action.SEND_MULTIPLE');
+    assert.notDeepEqual(await problems('release', { ...files, manifest: new Builder().buildObject({ manifest: root }) }), []);
+    for (const type of ['release', 'upgradetest', 'benchmark', 'benchmarkTrace']) {
+        const leaked = await variant(type);
+        const leakedRoot = (await parseStringPromise(leaked.manifest)).manifest;
+        leakedRoot.application[0].provider.push({ $: { 'android:name': 'tech.dongdongbh.mindwtr.pilot.ShareTestProvider', 'android:exported': 'true' } });
+        assert.notDeepEqual(await problems(type, { ...leaked, manifest: new Builder().buildObject({ manifest: leakedRoot }) }), [], type);
+    }
+});
+
 test('missing or changed shortcuts are caught', async () => {
     const files = await variant('release');
     assert.notDeepEqual(await problems('release', { ...files, shortcuts: '<shortcuts xmlns:android="http://schemas.android.com/apk/res/android"/>' }), []);

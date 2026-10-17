@@ -7,7 +7,8 @@
 // Every build type has its own package and link scheme, so only a release can replace RN's app or answer RN's links. The launcher
 // alias opens a declared activity, the widget providers are exported with their filter and provider XML, and the shortcuts are
 // RN's (build-shortcuts.mjs's output for the build), with the build's scheme as RN's widget module's mindwtr_link_scheme. The
-// permissions are RN's, so an upgrade keeps every grant. Gradle's checkVariantIdentity runs it for each variant (app/build.gradle.kts);
+// permissions are RN's, so an upgrade keeps every grant. The alias takes RN's shares (app.json's expo-share-intent filters). The
+// debug build's check entries (its widget host, quick capture alias, and file share provider and sender) are in no other build. Gradle's checkVariantIdentity runs it for each variant (app/build.gradle.kts);
 // it prints every problem and fails on any; check-variant-identity.test.mjs proves what it catches.
 // Usage: node check-variant-identity.mjs <build type> <merged AndroidManifest.xml> <mindwtr_shortcuts.xml> <BuildConfig.java>
 //     <mindwtr_link_scheme.xml>
@@ -46,6 +47,10 @@ const RN_PERMISSIONS = ['ACCESS_NETWORK_STATE', 'ACCESS_WIFI_STATE', 'FOREGROUND
     'POST_NOTIFICATIONS', 'READ_CALENDAR', 'RECEIVE_BOOT_COMPLETED', 'RECORD_AUDIO', 'SCHEDULE_EXACT_ALARM', 'USE_BIOMETRIC',
     'USE_FINGERPRINT', 'VIBRATE', 'WAKE_LOCK', 'WRITE_CALENDAR'].map((name) => `android.permission.${name}`);
 const PLAY_REFERRER = 'com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE';
+const SHARE_CONFIG = app.plugins.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-share-intent')[1];
+/** The debug build's exported check entries (src/debug): never in a build a user installs. */
+const DEBUG_ONLY = ['tech.dongdongbh.mindwtr.pilot.WidgetHostActivity', 'tech.dongdongbh.mindwtr.pilot.ShareTestProvider',
+    'tech.dongdongbh.mindwtr.pilot.ShareTestSender'];
 const WIDGET_PROVIDERS = ['TasksWidgetProvider', 'CompactWidgetProvider', 'QuickCaptureWidgetProvider'].map((name) => `tech.dongdongbh.mindwtr.androidwidget.${name}`);
 
 const attr = (node, name) => node?.$?.[`android:${name}`];
@@ -88,10 +93,19 @@ export async function identityProblems(type, manifest, shortcuts, buildConfig, l
         const schemes = (alias['intent-filter'] ?? []).filter((filter) => named(filter.action, 'android.intent.action.VIEW'))
             .flatMap((filter) => (filter.data ?? []).map((data) => attr(data, 'scheme')));
         expect('the alias link schemes', JSON.stringify(schemes), JSON.stringify([identity.scheme]));
+        // RN's share filters: SEND for text and files, SEND_MULTIPLE for files.
+        const types = (action) => (alias['intent-filter'] ?? []).filter((filter) => named(filter.action, action))
+            .flatMap((filter) => (filter.data ?? []).map((data) => attr(data, 'mimeType')));
+        expect('the alias SEND types', JSON.stringify(types('android.intent.action.SEND')), JSON.stringify(SHARE_CONFIG.androidIntentFilters));
+        expect('the alias SEND_MULTIPLE types', JSON.stringify(types('android.intent.action.SEND_MULTIPLE')), JSON.stringify(SHARE_CONFIG.androidMultiIntentFilters));
         if (type === 'release') expect('the MainActivity alias label', attr(alias, 'label'), app.name);
         if (!(alias['intent-filter'] ?? []).some((filter) => named(filter.action, 'android.intent.action.MAIN') && named(filter.category, 'android.intent.category.LAUNCHER'))) {
             problems.push(`${pkg}.MainActivity is not the launcher entry`);
         }
+    }
+    if (type !== 'debug') {
+        const components = Object.values(application).flatMap((nodes) => (Array.isArray(nodes) ? nodes : [])).map((node) => attr(node, 'name'));
+        for (const name of [...DEBUG_ONLY, `${pkg}.DebugQuickCapture`]) if (components.includes(name)) problems.push(`the debug build's ${name} is in this build`);
     }
     // A placed widget's provider: exported, updated by the widget host, with its provider XML.
     for (const name of [...WIDGET_PROVIDERS, `${pkg}.widget.TasksWidget`]) {
