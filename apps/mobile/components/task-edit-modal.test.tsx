@@ -235,6 +235,33 @@ describe('TaskEditModal', () => {
     }
   });
 
+  it('keeps the native editor mounted until dismissal and updates its dismissal callback', async () => {
+    const task: Task = {
+      id: 'dismiss-task', title: 'Original', status: 'next', contexts: [], tags: [],
+      createdAt: '2026-10-14T00:00:00.000Z', updatedAt: '2026-10-14T00:00:00.000Z',
+    };
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const firstDismiss = vi.fn();
+    const nextDismiss = vi.fn();
+    let tree!: renderer.ReactTestRenderer;
+    const editor = (visible: boolean, onDismiss: () => void) => (
+      <TaskEditModal visible={visible} task={task} onSave={onSave} onClose={onClose} onDismiss={onDismiss} />
+    );
+    await act(async () => { tree = renderer.create(editor(true, firstDismiss)); });
+    act(() => tree.root.findByType('TaskEditFormTab' as any).props.onTitleDraftChange('Unsaved'));
+    await act(async () => tree.update(editor(false, firstDismiss)));
+    expect(tree.root.findAllByType(Modal)[0].props.visible).toBe(false);
+    expect(firstDismiss).not.toHaveBeenCalled();
+    await act(async () => tree.update(editor(false, nextDismiss)));
+    act(() => tree.root.findAllByType(Modal)[0].props.onDismiss());
+    expect(nextDismiss).toHaveBeenCalledTimes(1);
+    expect(firstDismiss).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(task.title).toBe('Original');
+    await act(async () => tree.unmount());
+  });
+
   it.each([false, true])('copies persisted task references without saving or closing (readOnly=%s)', async (readOnly) => {
     const task: Task = {
       id: 'saved /?&#', title: 'Original title', status: 'next', contexts: [], tags: [],
