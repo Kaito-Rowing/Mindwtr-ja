@@ -3249,9 +3249,12 @@ describe('runSharedSyncCycle', () => {
         });
         let atCleanup: (() => void) | undefined;
         const runAttachmentCleanup = vi.fn(async () => { atCleanup!(); throw fatal; });
+        // The cycle publishes its saves before the refusal, so it has a published line it must not log after it.
+        const applyDataToStore = vi.fn((data: AppData) => { bundle.harness.inMemory = cloneAppData(data); });
         const bundle = createHarness({
             local, remote: createData([createTask('t-remote', 'Remote task')]), fastSyncScope: 'fatal-scope',
             io: { acquireRemoteMutationFence: vi.fn().mockResolvedValue(lease) },
+            storage: { applyDataToStore },
             hooks: {
                 runAttachmentCleanup,
                 handleRunErrorBeforeRequeue: vi.fn(async () => null),
@@ -3275,6 +3278,7 @@ describe('runSharedSyncCycle', () => {
             expect(io.acquireRemoteMutationFence).toHaveBeenCalledTimes(1);
             expect(lease.assertHeld).toHaveBeenCalled();
             expect(storage.persistLocal).toHaveBeenCalled();
+            expect(applyDataToStore).toHaveBeenCalled();
             expect(io.writeRemote).toHaveBeenCalled();
             acknowledged = cloneAppData(harness.persisted);
             expect(acknowledged.tasks.map((task) => task.id)).toEqual(expect.arrayContaining(['t-local', 't-remote']));
