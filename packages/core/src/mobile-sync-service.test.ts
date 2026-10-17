@@ -641,6 +641,74 @@ describe('mobile sync service behind fake ports', () => {
     expect(JSON.parse(fake.values.get(SYNC_ENCRYPTION_STATE_KEY)!)).toEqual({ state: 'off', partlyEncryptedScope: scope });
   });
 
+  describe('hands one transfer admission to every attachment pass of a cycle (D9b W7)', () => {
+    const withFile = (): AppData => ({ ...emptyData(), tasks: [{ id: 't1', title: 'T', status: 'inbox', tags: [], contexts: [],
+      createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
+      attachments: [{ id: 'a1', kind: 'file', title: 'a.pdf', uri: 'file:///a.pdf', cloudKey: 'attachments/a1.pdf', localStatus: 'available',
+        createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }] }] } as AppData);
+    type Port = 'syncWebdav' | 'syncCloud' | 'syncDropbox' | 'syncFile';
+    const cases: [Port, () => { fake: ReturnType<typeof createFakeHost>; options: Parameters<ReturnType<typeof createMobileSyncService>['performMobileSync']>[1] }][] = [
+      ['syncWebdav', () => ({ fake: createFakeHost({ values: WEBDAV_VALUES, secrets: { [WEBDAV_PASSWORD_KEY]: 'secret' } }), options: { manual: true } })],
+      ['syncCloud', () => ({ fake: createFakeHost({ values: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'selfhosted',
+        [CLOUD_URL_KEY]: 'https://cloud.example.com' }, secrets: { [CLOUD_TOKEN_KEY]: 'token' } }), options: { manual: true } })],
+      ['syncFile', () => ({ fake: createFakeHost(), options: { manual: true, configOverride: { backend: 'file' as const, syncPath: 'file:///sync/data.json' } } })],
+      ['syncDropbox', () => {
+        const fake = createFakeHost({ values: { [SYNC_BACKEND_KEY]: 'off' }, dropboxAppKey: 'client' });
+        const tokens = { accessToken: 'access', refreshToken: 'refresh', expiresAt: Date.now() + 3600_000 };
+        fake.host.core!.downloadDropboxAppData = vi.fn(async () => ({ data: emptyData(), rev: 'data-rev' })) as never;
+        fake.host.core!.getDropboxAppDataMetadata = vi.fn(async () => ({ rev: 'data-rev' }));
+        fake.host.core!.uploadDropboxAppData = vi.fn(async () => ({ rev: 'next-rev' }));
+        fake.host.dropboxAuth.getValidAccessTokenForTokens = vi.fn(async (_clientId, candidate) => ({ accessToken: candidate.accessToken, tokens: candidate }));
+        fake.host.fetch = vi.fn(async (input) => (String(input).endsWith('/files/list_folder')
+          ? new Response(JSON.stringify({ entries: [], has_more: false }))
+          : new Response(null, { status: 409 }))) as typeof fetch;
+        return { fake, options: { manual: true, configOverride: { backend: 'cloud' as const, cloudProvider: 'dropbox', dropbox: { tokens } } } };
+      }],
+    ];
+
+    it.each(cases)('%s: one admission per cycle, a new one the next cycle', async (port, build) => {
+      const { fake, options } = build();
+      const admissions: unknown[][] = [[], []];
+      let cycle = 0;
+      fake.host.attachments.hasPendingWork = async () => true;
+      fake.host.attachments.hasCompletedPresenceReconciliation = async () => true;
+      fake.host.attachments[port] = vi.fn(async (...args: unknown[]) => {
+        admissions[cycle].push((args[args.length - 1] as { transferAdmission?: unknown }).transferAdmission);
+        return false as const;
+      }) as never;
+      fake.host.encryption = { ...fake.host.encryption, probeLocationCiphertext: async () => 'plaintext' as const };
+      fake.host.localData.getData = async () => withFile();
+      fake.host.core!.getInMemoryAppDataSnapshot = () => withFile();
+      fake.host.core!.performSyncCycle = performSyncCycle;
+      const service = createMobileSyncService(fake.host);
+      for (cycle = 0; cycle < 2; cycle += 1) await service.performMobileSync(undefined, options);
+      for (const passes of admissions) {
+        expect(passes.length).toBeGreaterThan(0);
+        expect(passes[0]).toBeDefined();
+        expect(passes.every((admission) => admission === passes[0])).toBe(true);
+      }
+      expect(admissions[1][0]).not.toBe(admissions[0][0]);
+    });
+
+    it('gives an activation probe no admission, so its fallback passes may retry', async () => {
+      const fake = createFakeHost({ values: WEBDAV_VALUES, secrets: { [WEBDAV_PASSWORD_KEY]: 'secret' } });
+      const passes = vi.fn(async (..._args: unknown[]) => false as const);
+      fake.host.attachments.hasPendingWork = async () => true;
+      fake.host.attachments.syncWebdav = passes as never;
+      fake.host.encryption = { ...fake.host.encryption, probeLocationCiphertext: async () => 'plaintext' as const };
+      fake.host.localData.getData = async () => withFile();
+      fake.host.core!.getInMemoryAppDataSnapshot = () => withFile();
+      fake.host.core!.performSyncCycle = performSyncCycle;
+      const service = createMobileSyncService(fake.host);
+      await service.performMobileSync(undefined, {
+        activationProbe: true,
+        configOverride: { backend: 'webdav', webdav: { url: 'https://candidate.example.com/dav', username: 'bea', password: 'pw' } },
+      });
+      expect(passes).toHaveBeenCalled();
+      for (const call of passes.mock.calls) expect((call[call.length - 1] as { transferAdmission?: unknown }).transferAdmission).toBeUndefined();
+    });
+  });
+
   it('runs the attachment pass a deferred pre-sync phase owes, even when the document is unchanged', async () => {
     // A download the last process never finished (the native installer's boot recovery rolled it back): the record holds a
     // cloudKey and no local file. On a location this device has no fast-sync record or presence stamp for, the pre-sync
