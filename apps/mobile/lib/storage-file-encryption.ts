@@ -236,19 +236,22 @@ type DirectoryHandle = {
 
 const openSafDirectory = async (dirUri: string): Promise<DirectoryHandle> => {
     const entries = new Map<string, string>();
-    const listUris = async (): Promise<string[]> => (await listSafChildren(dirUri)).map((entry) => entry.uri);
+    // Names come from the provider's display name: document IDs are opaque, and only a
+    // path-like provider puts the file name in the URI's tail.
+    const listNamed = async (): Promise<{ uri: string; name: string }[]> => (await listSafChildren(dirUri))
+        .map((entry) => ({ uri: entry.uri, name: entry.name || getLeafName(entry.uri) }));
+    const nameOf = async (uri: string): Promise<string> => (await statSafDocument(uri))?.name || getLeafName(uri);
     const refresh = async (): Promise<void> => {
         const next = new Map<string, string>();
-        for (const entry of await listUris()) {
-            const name = getLeafName(entry);
-            if (name && !next.has(name)) next.set(name, entry);
+        for (const entry of await listNamed()) {
+            if (entry.name && !next.has(entry.name)) next.set(entry.name, entry.uri);
         }
         entries.clear();
         for (const [name, uri] of next) entries.set(name, uri);
     };
     await refresh();
     const listExact = async (name: string): Promise<string[]> => {
-        const matches = (await listUris()).filter((entry) => getLeafName(entry) === name);
+        const matches = (await listNamed()).filter((entry) => entry.name === name).map((entry) => entry.uri);
         if (matches.length === 1) entries.set(name, matches[0]);
         else entries.delete(name);
         return matches;
@@ -259,10 +262,10 @@ const openSafDirectory = async (dirUri: string): Promise<DirectoryHandle> => {
         resolve: async (name, options) => {
             let existing = entries.get(name);
             if (!existing) {
-                for (const entry of await listUris()) {
-                    if (getLeafName(entry) === name) {
-                        existing = entry;
-                        entries.set(name, entry);
+                for (const entry of await listNamed()) {
+                    if (entry.name === name) {
+                        existing = entry.uri;
+                        entries.set(name, entry.uri);
                         break;
                     }
                 }
@@ -280,7 +283,7 @@ const openSafDirectory = async (dirUri: string): Promise<DirectoryHandle> => {
             // therefore ask for application/octet-stream (no canonical extension, so
             // nothing is appended) — but providers vary, and a silently renamed artifact
             // is invisible to every other device, so say so loudly rather than never.
-            const createdName = getLeafName(created);
+            const createdName = await nameOf(created);
             if (createdName !== name) {
                 void logWarn('SAF provider renamed a sync artifact on create', {
                     scope: 'sync',
@@ -296,9 +299,9 @@ const openSafDirectory = async (dirUri: string): Promise<DirectoryHandle> => {
                 throw new Error('This Android build cannot create SAF transition files.');
             }
             let created = await StorageAccessFramework.createFileAsync(dirUri, name, mimeType);
-            if (created && getLeafName(created) !== name && options.repairDecoratedName === false) {
+            const createdName = created ? await nameOf(created) : name;
+            if (created && createdName !== name && options.repairDecoratedName === false) {
                 // The caller cannot publish by rename: delete only what this call created.
-                const createdName = getLeafName(created);
                 await deleteSyncArtifact(created).catch(() => undefined);
                 void logWarn('SAF provider renamed a new document on create; not published', {
                     scope: 'sync',
@@ -306,7 +309,7 @@ const openSafDirectory = async (dirUri: string): Promise<DirectoryHandle> => {
                 });
                 throw new SyncEncryptionRemoteConflictError(`${name} could not be created under its own name`);
             }
-            if (created && getLeafName(created) !== name) {
+            if (created && createdName !== name) {
                 // Some providers decorate the display name on create (an extension derived
                 // from the MIME type, most often ".bin" for application/octet-stream), which
                 // used to read as "another writer" and fail every File Sync write (#1113).
@@ -314,7 +317,6 @@ const openSafDirectory = async (dirUri: string): Promise<DirectoryHandle> => {
                 // a real racing peer. A provider that dedupes names on create may have done so
                 // because a peer holds the name: never rename onto a name already taken (some
                 // providers' rename replaces its target).
-                const createdName = getLeafName(created);
                 if ((await listExact(name)).length > 0) {
                     await deleteSyncArtifact(created).catch(() => undefined);
                     throw new SyncEncryptionRemoteConflictError(`${name} was created by another writer`);
@@ -347,7 +349,7 @@ const openSafDirectory = async (dirUri: string): Promise<DirectoryHandle> => {
             return created;
         },
         rename: async (uri, name) => {
-            const previousName = getLeafName(uri);
+            const previousName = [...entries].find(([, entryUri]) => entryUri === uri)?.[0] ?? getLeafName(uri);
             let renamed: { uri: string; name: string };
             try {
                 renamed = await renameSafTransitionDocument(uri, name);
@@ -496,8 +498,9 @@ export const listBlockingRetainedGenerations = async (syncFileUri: string): Prom
     if (!target) return [];
     if (isSaf(target.dirUri)) {
         return (await listSafChildren(target.dirUri))
-            .filter((entry) => isRetainedGenerationName(getLeafName(entry.uri)) && entry.size !== 0)
-            .map((entry) => getLeafName(entry.uri));
+            .map((entry) => ({ name: entry.name || getLeafName(entry.uri), size: entry.size }))
+            .filter((entry) => isRetainedGenerationName(entry.name) && entry.size !== 0)
+            .map((entry) => entry.name);
     }
     const normalized = target.dirUri.endsWith('/') ? target.dirUri : `${target.dirUri}/`;
     const blocking: string[] = [];
@@ -543,17 +546,9 @@ export const resolveFileSyncEncryptionTarget = async (syncFileUri: string): Prom
         const prefixMatch = syncFileUri.match(/^(content:\/\/[^/]+)/);
         const treeMatch = syncFileUri.match(/\/tree\/([^/?#]+)/);
         if (!prefixMatch || !treeMatch) return null;
-        const treeUri = `${prefixMatch[1]}/tree/${treeMatch[1]}`;
-        const docMatch = syncFileUri.match(/\/document\/([^/?#]+)/);
-        // The document id of data.json's PARENT is the sync directory. Fall back to the
-        // tree root when the URI is already a bare tree URI.
-        let dirUri = treeUri;
-        if (docMatch) {
-            const documentId = decodeURIComponent(docMatch[1]);
-            const lastSlash = documentId.lastIndexOf('/');
-            const parentId = lastSlash >= 0 ? documentId.slice(0, lastSlash) : documentId;
-            if (parentId) dirUri = `${treeUri}/document/${encodeURIComponent(parentId)}`;
-        }
+        // The sync folder is the picked tree's root document (as the folder lock takes it):
+        // document IDs are opaque, so a parent is never cut out of a child's ID.
+        const dirUri = `${prefixMatch[1]}/tree/${treeMatch[1]}/document/${treeMatch[1]}`;
         const attachmentsDirUri = await (await openSafDirectory(dirUri)).resolve(ATTACHMENTS_DIR_NAME, {
             createIfMissing: false,
         });

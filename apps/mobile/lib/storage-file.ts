@@ -186,21 +186,17 @@ const isICloudEvicted = (fileUri: string): boolean => {
     }
 };
 
-/** The folder's data.json (or legacy file) document URI, or null when a successful listing
+/** The folder's data.json (or legacy file) by display name, or null when a successful listing
  *  found none. A listing failure propagates: "unreadable" is never "absent". */
-const listDirectoryForSyncFile = async (directoryUri: string): Promise<string | null> => {
-    const entries = (await listSafChildren(directoryUri)).map((entry) => entry.uri);
-    const decoded: Array<{ entry: string; decoded: string }> = entries.map((entry: string) => ({
-        entry,
-        decoded: decodeUriSafe(entry),
+const listDirectoryForSyncFile = async (directoryUri: string): Promise<{ uri: string; name: string } | null> => {
+    const entries = (await listSafChildren(directoryUri)).map((entry) => ({
+        uri: entry.uri,
+        // Document IDs are opaque; only a path-like provider puts the name in the URI's tail.
+        name: entry.name || getUriLeafName(entry.uri),
     }));
-    const matchEntry = decoded.find((item) =>
-        item.decoded.endsWith(`/${SYNC_FILE_NAME}`)
-        || item.decoded.endsWith(`:${SYNC_FILE_NAME}`)
-        || item.decoded.endsWith(`/${LEGACY_SYNC_FILE_NAME}`)
-        || item.decoded.endsWith(`:${LEGACY_SYNC_FILE_NAME}`)
-    );
-    return matchEntry?.entry ?? null;
+    return entries.find((entry) => entry.name === SYNC_FILE_NAME)
+        ?? entries.find((entry) => entry.name === LEGACY_SYNC_FILE_NAME)
+        ?? null;
 };
 
 function sanitizeJsonText(raw: string): string {
@@ -358,14 +354,24 @@ const isListedInSafSyncFolder = async (documentUri: string): Promise<boolean> =>
     return (await listSafChildren(folderUri)).some((entry) => decodeUriSafe(entry.uri) === target);
 };
 
-type ResolvedSafSyncFile = { uri: string; exists: boolean };
+type ResolvedSafSyncFile = { uri: string; name: string; exists: boolean };
 
-/** A SAF folder's sync document: the listed one, or (confirmed absent) the URI it will be
- *  published under. Nothing is created here; the versioned write creates data.json when it
- *  publishes, so a folder never holds an empty data.json that no one wrote. */
+/** The display name each resolved SAF sync document was listed under. */
+const resolvedSyncNames = new Map<string, string>();
+
+/** The picked tree's root document: the sync folder itself (the folder lock takes the same). */
+const safTreeRootUri = (uri: string): string | null => {
+    const context = parseSafContext(uri);
+    return context ? buildTreeDocumentUri(context, context.treeIdDecoded) : null;
+};
+
+/** A SAF folder's sync document by display name: the listed one, or (confirmed absent) the
+ *  folder itself, with the name the first write publishes under. Nothing is created here; the
+ *  versioned write creates data.json when it publishes, so a folder never holds an empty
+ *  data.json that no one wrote. */
 const resolveSafSyncFile = async (uri: string): Promise<ResolvedSafSyncFile | null> => {
     const cached = syncUriResolutionCache.get(uri);
-    if (cached) return { uri: cached, exists: true };
+    if (cached) return { uri: cached, name: resolvedSyncNames.get(cached) ?? SYNC_FILE_NAME, exists: true };
 
     const context = parseSafContext(uri);
     if (!context) return null;
@@ -375,14 +381,25 @@ const resolveSafSyncFile = async (uri: string): Promise<ResolvedSafSyncFile | nu
     for (const candidate of [documentUri, treeUri]) {
         const match = await listDirectoryForSyncFile(candidate);
         if (match) {
-            syncUriResolutionCache.set(uri, match);
-            return { uri: match, exists: true };
+            syncUriResolutionCache.set(uri, match.uri);
+            resolvedSyncNames.set(match.uri, match.name);
+            return { uri: match.uri, name: match.name, exists: true };
         }
     }
     void logInfo('File Sync folder holds no data.json yet; the first sync creates it', {
         scope: 'sync', extra: { releaseCheck: 'v1.3.7/file-sync-saf-safety', check: 'create', outcome: 'deferred' },
     });
-    return { uri: buildTreeDocumentUri(context, buildChildDocId(context.treeIdDecoded, SYNC_FILE_NAME)), exists: false };
+    return { uri: documentUri, name: SYNC_FILE_NAME, exists: false };
+};
+
+/** The sync document's own name for a resolved URI: the name it was listed under, the URI's
+ *  tail on a path-like provider, else data.json (a folder whose sync file is not written yet). */
+const syncLeafName = (resolvedUri: string): string => {
+    const listed = resolvedSyncNames.get(resolvedUri);
+    if (listed) return listed;
+    const leaf = getUriLeafName(resolvedUri);
+    if (!resolvedUri.startsWith('content://')) return leaf || SYNC_FILE_NAME;
+    return leaf === SYNC_FILE_NAME || leaf === LEGACY_SYNC_FILE_NAME ? leaf : SYNC_FILE_NAME;
 };
 
 /** `createIfMissing` is accepted for the port's shape and never creates (see resolveSafSyncFile). */
@@ -638,7 +655,7 @@ const getUriLeafName = (uri: string): string => {
 };
 
 const encryptedLeafNameFor = (resolvedUri: string): string =>
-    syncEncryptedArtifactName(getUriLeafName(resolvedUri) || SYNC_FILE_NAME);
+    syncEncryptedArtifactName(syncLeafName(resolvedUri));
 
 /**
  * Decision #2 detection, mirroring `webdavGetSyncDocument`'s reasoning exactly: only ever
@@ -712,13 +729,13 @@ const readEncryptedSyncFile = async (
         // Propagate it so the keyed cycle cannot recreate `.enc` from local data while a
         // peer-restored plaintext document is merely unreadable.
         // Found by the folder listing: a lookup of a file that is not there proves nothing.
-        const plainUri = await resolveSyncArtifactSiblingUri(resolvedUri, getUriLeafName(resolvedUri) || SYNC_FILE_NAME, {
+        const plainUri = await resolveSyncArtifactSiblingUri(resolvedUri, syncLeafName(resolvedUri), {
             createIfMissing: false,
         });
         const plain = plainUri ? await readSyncArtifactBytes(plainUri) : null;
         if (isPlaintextSyncArtifact(plain)) {
             logSyncFileRead({
-                artifact: getUriLeafName(resolvedUri),
+                artifact: syncLeafName(resolvedUri),
                 exists: true,
                 kind: 'plaintext',
                 bytes: plain?.length ?? null,
@@ -851,7 +868,11 @@ const readSyncFileDetailed = async (
                 // threw) does not hold it: a lookup with no answer proves nothing. data.json is
                 // created only when the versioned write publishes it.
                 const isSafUri = resolvedUri.startsWith('content://');
-                const absent = isSafUri && !(await isListedInSafSyncFolder(resolvedUri));
+                // The folder itself (resolved with no sync file listed) holds no data, and a
+                // sync file is absent only when the folder's listing (which succeeded, or threw)
+                // does not hold it: a lookup with no answer proves nothing.
+                const absent = isSafUri && (resolvedUri === safTreeRootUri(resolvedUri)
+                    || !(await isListedInSafSyncFolder(resolvedUri)));
                 const read = absent ? null : isSafUri
                     ? await readSafText(resolvedUri)
                     : { text: await readFileText(resolvedUri), lengthVerified: true };
@@ -943,7 +964,7 @@ export const readSyncFileVersioned = async (
     const resolvedUri = await resolveSyncFileUri(fileUri, { createIfMissing: false });
     const remote = await createFileSyncEncryptionRemotePort(resolvedUri);
     if (!remote) throw new Error('Unable to open the selected sync folder for a versioned read');
-    const name = material ? encryptedLeafNameFor(resolvedUri) : getUriLeafName(resolvedUri);
+    const name = material ? encryptedLeafNameFor(resolvedUri) : syncLeafName(resolvedUri);
     const snapshot = await remote.read(name);
 
     if (snapshot.bytes) {
@@ -1060,7 +1081,7 @@ const writeSyncFileVersioned = async (
 ): Promise<void> => {
     const remote = await createFileSyncEncryptionRemotePort(resolvedUri);
     if (!remote) throw new Error('Unable to open the selected sync folder for an atomic write');
-    const name = material ? encryptedLeafNameFor(resolvedUri) : getUriLeafName(resolvedUri);
+    const name = material ? encryptedLeafNameFor(resolvedUri) : syncLeafName(resolvedUri);
     const expectedVersion = expectedFingerprint === FILE_SYNC_ABSENT_FINGERPRINT
         ? null
         : expectedFingerprint;

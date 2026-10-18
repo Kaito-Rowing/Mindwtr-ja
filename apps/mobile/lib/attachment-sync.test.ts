@@ -95,6 +95,22 @@ vi.mock('expo-file-system', () => ({
 vi.mock('expo-file-system/legacy', () => fileSystemMock);
 
 vi.mock('./attachment-file-installer', () => attachmentFileInstallerMock);
+// SafDocumentsCore's listing and lookup through the expo SAF mock above (a path-like provider:
+// the display name is the decoded tail of the document ID).
+vi.mock('./saf-documents', () => {
+  const nameOf = (uri: string) => {
+    const decoded = decodeURIComponent(uri).replace(/\/+$/, '');
+    return decoded.slice(Math.max(decoded.lastIndexOf('/'), decoded.lastIndexOf(':')) + 1);
+  };
+  return {
+    listSafChildren: vi.fn(async (uri: string) => {
+      const uris: string[] = await fileSystemMock.StorageAccessFramework.readDirectoryAsync(uri);
+      return uris.map((child) => ({ uri: child, name: nameOf(child), mime: null, size: null, lastModified: null }));
+    }),
+    statSafDocument: vi.fn(async (uri: string) => ({ uri, name: nameOf(uri), mime: null, size: null, lastModified: null })),
+  };
+});
+
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,

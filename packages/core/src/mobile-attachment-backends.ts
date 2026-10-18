@@ -66,7 +66,7 @@ import {
   DROPBOX_ATTACHMENT_MAX_UPLOADS_PER_SYNC,
   FILE_BACKEND_VALIDATION_CONFIG,
   getAttachmentLocalStatus,
-  getSafLeafName,
+  getSafDocumentName,
   isContentAttachmentUri,
   isHttpAttachmentUri,
   toAttachmentArrayBuffer,
@@ -2035,7 +2035,7 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
             }
             if (!targetUri) throw new Error('SAF attachment target creation failed');
             invocationOwnedTarget = targetUri;
-            if (getSafLeafName(targetUri) !== filename) {
+            if (await getSafDocumentName(saf, targetUri) !== filename) {
               await fs.delete(targetUri).catch(() => undefined);
               invocationOwnedTarget = null;
               const peerTarget = (await refreshSafEntriesByName()).get(filename) ?? null;

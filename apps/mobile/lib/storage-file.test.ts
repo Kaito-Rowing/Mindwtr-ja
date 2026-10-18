@@ -51,7 +51,12 @@ vi.mock('./file-system', () => fileSystemMock);
 vi.mock('./saf-documents', () => ({
   listSafChildren: vi.fn(async (dir: string) => {
     const uris: string[] = await fileSystemMock.StorageAccessFramework.readDirectoryAsync(dir);
-    return uris.map((uri) => ({ uri, name: uri.slice(uri.lastIndexOf('/') + 1), mime: null, size: null, lastModified: null }));
+    // A path-like provider's display name: the decoded tail of the document ID.
+    const nameOf = (uri: string) => {
+      const decoded = decodeURIComponent(uri);
+      return decoded.slice(Math.max(decoded.lastIndexOf('/'), decoded.lastIndexOf(':')) + 1);
+    };
+    return uris.map((uri) => ({ uri, name: nameOf(uri), mime: null, size: null, lastModified: null }));
   }),
   statSafDocument: vi.fn(async () => null),
   readSafDocument: vi.fn(async () => ({
@@ -235,7 +240,9 @@ describe('storage-file sync writes', () => {
 
     const result = await pickAndParseSyncFolder();
 
-    expect(result?.__fileUri).toBe(dataUri);
+    // An empty folder is picked as the folder itself; the first sync publishes data.json.
+    expect(result?.__fileUri).toBe(`${treeUri}/document/remote%3AStaleCheck`);
+    expect(dataUri).toContain('data.json');
   });
 });
 

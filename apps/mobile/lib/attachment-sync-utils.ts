@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LegacyFileSystem from 'expo-file-system/legacy';
 import * as FileSystem from './file-system';
+import { listSafChildren, statSafDocument } from './saf-documents';
 import {
   ATTACHMENTS_DIR_NAME,
   ATTACHMENT_PRESENCE_RECONCILE_INTERVAL_MS,
@@ -131,6 +132,10 @@ export const mobileAttachmentFileSystem: MobileAttachmentFileSystemPort = {
     if (!saf?.readDirectoryAsync) return null;
     return {
       readDirectory: (uri) => saf.readDirectoryAsync(uri),
+      // SafDocumentsCore's listing and lookup: display names (document IDs are opaque) and
+      // provider errors that reject instead of reading as an empty folder.
+      listChildren: (uri) => listSafChildren(uri),
+      stat: (uri) => statSafDocument(uri),
       makeDirectory: (parentUri, name) => saf.makeDirectoryAsync(parentUri, name),
       createFile: (parentUri, name, mimeType) => saf.createFileAsync(parentUri, name, mimeType),
       writeBytes: (uri, bytes) => saf.writeAsStringAsync(
