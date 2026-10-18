@@ -69,7 +69,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { bootFailure, box, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, inboxCount, tab, tagged, withDescription } from './device.mjs';
 import { serveWebdav, webdavDocument } from './sync-harness.mjs';
-import { PUBLISHED, REFRESHED, WIDGET_PREFS, corePublication, count, firstDifference, isRnPayloadPrefsWrite, publicationContext, widgetPrefs } from './widget-payload.mjs';
+import { PUBLISHED, REFRESHED, WIDGET_PREFS, WIDGET_LIST_PREFS, widgetSelections, corePublication, count, firstDifference, isRnPayloadPrefsWrite, publicationContext, widgetPrefs } from './widget-payload.mjs';
 
 const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6', '7', '8', '9', '10'];
 const USAGE = `usage: node check-upgrade-device.mjs <adb-serial> [--only=${SCENARIOS.join(',')}] [--keep]`;
@@ -298,7 +298,7 @@ const verifyWidgetPayload = (label, before, context) => {
     const after = widgetPrefsNow();
     check(isRnPayloadPrefsWrite(before, after),
         `(${label}) ${WIDGET_PREFS} is RN's widget payload store, its one key \`payload\` (before: ${before.entries.join(', ') || 'no file'}; after: ${after.entries.join(', ')})`);
-    const expected = corePublication({ db: pullDatabase(`${label}-widgets`), language: context.language, context, zone: phoneZone, out: resolve(work, `${label}-widgets.json`) });
+    const expected = corePublication({ listSelections: widgetSelections(runAs(`cat ${WIDGET_LIST_PREFS} 2>/dev/null || true`)), db: pullDatabase(`${label}-widgets`), language: context.language, context, zone: phoneZone, out: resolve(work, `${label}-widgets.json`) });
     const difference = firstDifference(JSON.parse(after.payload), JSON.parse(expected));
     check(difference === null, `(${label}) the payload equals core's publication on a copy of the database the native app left (${context.language}, ${context.locale}, `
         + `${context.scheme}, ${after.payload.length} characters)${difference ? `: ${difference}` : ''}`);

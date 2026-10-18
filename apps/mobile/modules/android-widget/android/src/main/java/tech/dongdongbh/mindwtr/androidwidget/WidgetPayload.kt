@@ -34,6 +34,8 @@ data class WidgetPayload(
   val lists: Map<String, ListPayload>,
   val listTitles: Map<String, String>,
   val savedFilters: List<SavedFilterOption>,
+  val contexts: List<SavedFilterOption> = emptyList(),
+  val tags: List<SavedFilterOption> = emptyList(),
   val emptyMessage: String,
   val focusUri: String,
   val themeMode: String,
@@ -240,6 +242,8 @@ data class WidgetPayload(
     lists[listId]?.title
       ?: listTitles[listId]
       ?: savedFilters.firstOrNull { listId == WidgetListStore.FILTER_PREFIX + it.id }?.name
+      ?: (contexts + tags).firstOrNull { it.id == listId }?.name
+      ?: listId.substringAfter(":").takeIf { WidgetListStore.isTokenList(listId) && navigableListIdOrNull(listId) != null }
       ?: "Upcoming".takeIf { listId == UPCOMING_LIST_ID }
 
   /** Unknown/retired selections draw and navigate as Focus; known legacy project payloads remain usable. */
@@ -447,6 +451,8 @@ data class WidgetPayload(
         lists = lists,
         listTitles = listTitles,
         savedFilters = savedFilters,
+        contexts = parseTokenOptions(root, "contexts", WidgetListStore.CONTEXT_PREFIX),
+        tags = parseTokenOptions(root, "tags", WidgetListStore.TAG_PREFIX),
         emptyMessage = root.stringOr("emptyMessage", defaults.emptyMessage),
         focusUri = focusUri,
         themeMode = root.stringOr("themeMode", "system"),
@@ -559,7 +565,7 @@ data class WidgetPayload(
             return null
           }
           decoded.takeIf {
-            it == NEXT_LIST_ID || it == UPCOMING_LIST_ID || it.startsWith(WidgetListStore.FILTER_PREFIX) || it.startsWith(WidgetListStore.PROJECT_PREFIX)
+            it == NEXT_LIST_ID || it == UPCOMING_LIST_ID || it.startsWith(WidgetListStore.FILTER_PREFIX) || it.startsWith(WidgetListStore.PROJECT_PREFIX) || WidgetListStore.isTokenList(it)
           }
             ?: return null
         }
@@ -589,8 +595,21 @@ data class WidgetPayload(
     private const val MAX_LIST_URI_LENGTH = 12_512
     private const val LIST_ROUTE_PREFIX = "/widget-list/"
 
+    private fun parseTokenOptions(root: JSONObject, field: String, prefix: String): List<SavedFilterOption> {
+      val list = root.optJSONArray(field) ?: return emptyList()
+      return (0 until list.length()).mapNotNull { index ->
+        val option = list.optJSONObject(index) ?: return@mapNotNull null
+        val id = option.optString("id")
+        val name = option.optString("name")
+        if (id.startsWith(prefix) && navigableListIdOrNull(id) != null && name.isNotBlank()) SavedFilterOption(id, name) else null
+      }.distinctBy { it.id }
+    }
+
     private fun navigableListIdOrNull(listId: String): String? = when {
       listId in FIXED_LIST_IDS -> listId
+      WidgetListStore.isTokenList(listId) &&
+        listId.length <= MAX_LIST_ID_LENGTH && listId.substringAfter(":").isNotBlank() &&
+        listId.none(Char::isISOControl) -> listId
       listId.startsWith(WidgetListStore.FILTER_PREFIX) &&
         listId.length <= MAX_LIST_ID_LENGTH &&
         listId.removePrefix(WidgetListStore.FILTER_PREFIX).isNotBlank() &&

@@ -47,7 +47,7 @@ type WidgetListDeps = {
 
 export function createWidgetListMethods(deps: WidgetListDeps) {
     return {
-        /** The widget list screen for `next`, `upcoming`, `filter:<id>` or `project:<id>`. */
+        /** The widget list screen for `next`, `upcoming`, `filter:<id>`, `project:<id>`, `context:<token>` or `tag:<token>`. */
         getWidgetListView(input: { id: string; offset?: number; limit?: number; revision?: string }): NativeHostResult<NativeWidgetListView> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;

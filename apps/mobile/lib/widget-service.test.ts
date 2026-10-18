@@ -153,6 +153,23 @@ describe('widget-service', () => {
         resetMobileWidgetRenderCache();
     });
 
+    it('publishes previously unselected context and tag caches and content-free proving diagnostics', async () => {
+        const source = buildData(3);
+        source.tasks[0].contexts = ['@家/desk +?'];
+        source.tasks[1].tags = ['#urgent'];
+        source.tasks[2].contexts = ['@empty'];
+        source.tasks[2].status = 'done';
+        expect(await updateMobileWidgetFromData(source)).toBe(true);
+        const payload = JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0]);
+        expect(payload.lists['context:@家/desk +?'].items.map((row: { id: string }) => row.id)).toEqual(['1']);
+        expect(payload.lists['tag:#urgent'].items.map((row: { id: string }) => row.id)).toEqual(['2']);
+        expect(payload.lists['context:@empty'].items).toEqual([]);
+        expect(mockLogInfo).toHaveBeenCalledWith('Android widget context and tag snapshots published', {
+            scope: 'widget', force: true,
+            extra: { releaseCheck: 'v1.3.7/widget-context-selection', count: 4 },
+        });
+    });
+
     it('never calls the native module when it is not linked (Expo Go)', async () => {
         mockAndroidWidgetIsSupported.mockReturnValue(false);
 

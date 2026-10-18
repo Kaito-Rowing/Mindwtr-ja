@@ -65,6 +65,14 @@ describe('native host contract: widget list screen', () => {
         expect(host.getWidgetListView({ id: 'next', offset: 50, limit: 50, revision: first.revision })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     });
 
+    it('opens direct context/tag routes with live shared matching and keeps removed selections empty', async () => {
+        const host = await open({ tasks: [task('desk', { contexts: ['@家/desk +?'], status: 'waiting' }), task('tag', { tags: ['#urgent'] })] });
+        expect(value(host.getWidgetListView({ id: 'context:@家/desk +?' }))).toMatchObject({ found: true, title: '@家/desk +?', total: 1 });
+        expect(ids(value(host.getWidgetListView({ id: 'tag:#urgent' })).rows)).toEqual(['tag']);
+        await useTaskStore.getState().updateTask('desk', { contexts: [] });
+        expect(value(host.getWidgetListView({ id: 'context:@家/desk +?' }))).toMatchObject({ found: true, title: '@家/desk +?', total: 0, rows: [] });
+    });
+
     it('uses a saved filter by ID, follows its rename, and becomes empty when it is deleted', async () => {
         const host = await open({
             tasks: [task('Zebra'), task('Alpha')],

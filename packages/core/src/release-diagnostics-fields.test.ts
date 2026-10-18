@@ -58,6 +58,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'inputTrusted', 'inputKind',
     // ios-search-publication reuses releaseCheck, operation, outcome, enabled, and count below.
     // ios-search-snapshot reuses releaseCheck and count below.
+    // widget-context-selection reuses releaseCheck and count below.
     // widget-upcoming reuses releaseCheck, platform, and count below.
     // ios-entity-link reuses releaseCheck, kind, and outcome below.
     // obsidian-inline-tag reuses releaseCheck and count below.

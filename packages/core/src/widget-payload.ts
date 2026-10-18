@@ -28,6 +28,8 @@ import type { AppData, AppTheme, Task, TaskSortBy } from './types';
 import { buildWidgetCompletionToken } from './widget-completion-token';
 import {
     buildWidgetSavedFilterOptions,
+    buildWidgetTokenOptions,
+    buildWidgetTokenTaskIndex,
     buildWidgetTaskList,
     WIDGET_FIXED_LIST_IDS,
     type WidgetTaskList,
@@ -154,12 +156,15 @@ export interface TasksWidgetPayload {
     // empty sections dropped, with `maxItems` shared across the two sections.
     // `items` stays for flat/legacy widget layouts and the QuickCapture kind.
     sections: WidgetTaskSection[];
-    // The lists placed widgets asked for (always `focus`), keyed by list id.
+    // Cached list snapshots (always `focus`), keyed by list id.
     lists: Record<string, WidgetListPayload>;
     // Titles of the fixed lists for the configuration screen.
     listTitles: Record<string, string>;
     // Saved filters the configuration screen offers.
     savedFilters: WidgetSavedFilterOption[];
+    /** Android chooser only: IDs already include context:/tag: and canonical tokens. */
+    contexts?: WidgetSavedFilterOption[];
+    tags?: WidgetSavedFilterOption[];
     emptyMessage: string;
     captureLabel: string;
     completeLabel: string;
@@ -454,8 +459,10 @@ export interface WidgetPayloadBuildOptions {
     systemColorScheme?: WidgetSystemColorScheme;
     maxItems?: number;
     listIds?: readonly string[];
-    /** Include every bounded saved-filter list offered by the iOS chooser. */
+    /** Include every bounded saved-filter list offered by the platform chooser. */
     includeSavedFilterLists?: boolean;
+    /** Android offers every known token and caches each list before selection. */
+    includeTokenLists?: boolean;
     /** What the Focus screen is filtering and sorting by right now (#1173). */
     focusFilter?: FocusWidgetFilter;
     /** Device locale for the "System" date format; defaults to the runtime's. */
@@ -604,14 +611,21 @@ export function createWidgetPayloadProjection(
         .filter((section) => section.key === 'focus' || section.key === 'schedule');
     const inboxCount = activeTasks.filter((task) => task.status === 'inbox').length;
     const dateLabel = formatDateLabel(now, language, 'long');
-    const listContext = { data, activeTasks, focusLists: lists, sortBy: widgetSort, prioritiesEnabled, tr };
+    const listContext = { data, activeTasks, focusLists: lists, sortBy: widgetSort, prioritiesEnabled, tr,
+        tokenTaskIndex: options?.includeTokenLists || options?.listIds?.some((id) => id.startsWith('context:') || id.startsWith('tag:'))
+            ? buildWidgetTokenTaskIndex(activeTasks) : undefined };
     const listTitles = widgetListTitles(tr);
     const savedFilters = buildWidgetSavedFilterOptions(data);
+    const tokenSources = options?.includeTokenLists ? { ...data, tasks: tasks.filter((task) => !task.deletedAt
+        && isTaskInActiveProject(task, projectById) && isTaskVisibleInArea(task, areaVisibility)) } : data;
+    const contexts = options?.includeTokenLists ? buildWidgetTokenOptions(tokenSources, 'contexts') : undefined;
+    const tags = options?.includeTokenLists ? buildWidgetTokenOptions(tokenSources, 'tags') : undefined;
     const taskLists = new Map<string, NonNullable<ReturnType<typeof buildWidgetTaskList>>>();
     const requestedListIds = new Set(options?.listIds ?? []);
     if (options?.includeSavedFilterLists) {
         for (const { id } of savedFilters) requestedListIds.add(`${WIDGET_SAVED_FILTER_LIST_PREFIX}${id}`);
     }
+    for (const option of [...(contexts || []), ...(tags || [])]) requestedListIds.add(option.id);
     for (const listId of requestedListIds) {
         if (listId === 'focus') continue;
         const projectId = listId.startsWith(WIDGET_PROJECT_LIST_PREFIX)
@@ -710,8 +724,13 @@ export function createWidgetPayloadProjection(
                 items,
                 sections,
                 lists: listPayloads,
-                listTitles,
+                listTitles: options?.includeTokenLists ? { ...listTitles,
+                    contexts: tr['contexts.title'] ?? 'Contexts', tags: tr['tags.title'] ?? 'Tags',
+                    search: tr['common.search'] ?? 'Search',
+                } : listTitles,
                 savedFilters,
+                ...(contexts ? { contexts } : {}),
+                ...(tags ? { tags } : {}),
                 emptyMessage: tr['list.noTasks'] ?? 'No tasks found',
                 captureLabel: tr['widget.capture'] ?? 'Quick capture',
                 completeLabel: tr['review.markDone'] ?? 'Mark Done',
@@ -772,8 +791,8 @@ export interface WidgetPublicationInput {
  * already holds. Publish all bounded GTD lists even before placement:
  * Compact needs Next Actions as its empty-today fallback, and a new Tasks
  * widget can switch to Inbox without an extra app opening (#1211). Saved
- * filter and project lists are built only when a placed widget asks for them
- * (`listSelections`, the widget module's stored choices).
+ * filters and every context/tag offered by the chooser are cached too. Legacy
+ * project lists are built when a placed widget asks for them.
  */
 export function androidWidgetProjectionOptions(
     input: WidgetPublicationInput & { listSelections: readonly string[] },
@@ -783,6 +802,8 @@ export function androidWidgetProjectionOptions(
         focusFilter: input.focusFilter,
         systemLocale: input.systemLocale,
         listIds: [...WIDGET_FIXED_LIST_IDS, ...input.listSelections],
+        includeSavedFilterLists: true,
+        includeTokenLists: true,
     };
 }
 

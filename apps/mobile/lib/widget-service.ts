@@ -177,6 +177,10 @@ async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, langua
             scope: 'widget',
             extra: { releaseCheck: ANDROID_WIDGET_RELEASE_CHECK, items: String(payload.items.length) },
         });
+        void logInfo('Android widget context and tag snapshots published', {
+            scope: 'widget', force: true,
+            extra: { releaseCheck: 'v1.3.7/widget-context-selection', count: (payload.contexts?.length ?? 0) + (payload.tags?.length ?? 0) },
+        });
         void logInfo('Upcoming widget snapshot published', {
             scope: 'widget',
             force: true,

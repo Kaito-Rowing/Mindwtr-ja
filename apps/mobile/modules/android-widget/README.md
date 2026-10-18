@@ -67,7 +67,7 @@ together with the header.
 
 List payloads may provide a validated hostless `mindwtr:///...` `openUri`.
 Legacy Focus, Inbox, Waiting, and Someday payloads map to their existing app
-routes. Next Actions and saved-filter ids map to the shared
+routes. Next Actions, Upcoming, saved-filter and context/tag ids map to the shared
 `/widget-list/<encoded-list-id>` destination; unknown or malformed ids fall
 back to Focus rather than becoming arbitrary paths.
 
@@ -79,7 +79,29 @@ of retaining a fixed or semi-transparent accent tint.
 Every Android snapshot includes bounded Focus, Inbox, Next Actions, Waiting,
 Upcoming, and Someday lists, even before a Tasks widget is placed. After the app has
 published once, a newly placed widget can select those cached lists without
-another app opening. Saved-filter lists remain published on demand.
+another app opening. All offered saved filters (up to the established 50-filter
+limit), contexts and tags also carry cached lists. The Tasks chooser groups these
+under their existing translated headings and offers search for longer inventories.
+Rows recycle through a native ListView; searching preserves the pending choice.
+Each widget stores its own selection.
+
+Context/tag options come from undeleted tasks visible under the current area and
+active-project rules, including retained done/archived task labels and hierarchy
+ancestors. They have no arbitrary token-count cap. Rows use the full actionable
+widget pool across statuses, shared canonical hierarchical filtering, and widget
+sorting; the Focus screen's current token filter does not narrow these lists.
+Selected removed labels stay empty under their own heading. IDs are
+`context:<canonical-token>` and `tag:<canonical-token>`; links encode the whole ID
+as one path segment. Android-only chooser metadata does not change iOS snapshots.
+
+Publication indexes task/token memberships once, then verifies indexed candidates
+with shared `applyFilter`. Each list retains the existing 200-row Android cache
+limit, with total count and overflow navigation; every offered list is published.
+There is no aggregate cache-size cutoff. A local Bun measurement with 5,000 tasks,
+100 hierarchical contexts and 50 tags took 35–98 ms including serialization and
+produced 5.0 MB; a stress inventory of 5,000 unique hierarchical contexts and tags
+took 97–127 ms and produced 7.9 MB. These host timings do not establish Android
+publication or launcher latency; snapshot size grows with token memberships.
 
 Upcoming is a preview of the shared Focus seven-day list. Its rows have no
 completion ring and open their task directly. Each row supplies `upcomingDate`

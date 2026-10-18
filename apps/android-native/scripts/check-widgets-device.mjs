@@ -27,7 +27,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { box, check, connect, evidenced, fail, Stopped, tab, tabSelected } from './device.mjs';
-import { WIDGET_PREFS, REFRESHED, PUBLISHED, corePublication, count, firstDifference, publicationContext, widgetPrefs } from './widget-payload.mjs';
+import { WIDGET_PREFS, WIDGET_LIST_PREFS, widgetSelections, REFRESHED, PUBLISHED, corePublication, count, firstDifference, publicationContext, widgetPrefs } from './widget-payload.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -181,7 +181,7 @@ const closeHost = async () => {
 const parity = (step) => {
     const context = lastInputs();
     const stored = storedPayload() ?? fail(`${step} no stored payload`);
-    const expected = corePublication({ db: pullDatabase(), language: context.language, context, zone: phoneZone, out: resolve(work, 'core-publication.json') });
+    const expected = corePublication({ listSelections: widgetSelections(runAs(`cat ${WIDGET_LIST_PREFS} 2>/dev/null || true`)), db: pullDatabase(), language: context.language, context, zone: phoneZone, out: resolve(work, 'core-publication.json') });
     const difference = firstDifference(JSON.parse(stored), JSON.parse(expected));
     check(difference === null, `${step} the payload Kotlin stored equals core's publication on a copy of the database (${context.language}, ${context.locale}, `
         + `${context.scheme}, ${stored.length} characters)${difference ? `: ${difference}` : ''}`);
