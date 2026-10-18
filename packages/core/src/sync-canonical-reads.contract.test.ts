@@ -858,6 +858,32 @@ describe('canonical local reads contract', () => {
         } finally { await sqlite.close(); }
     });
 
+    it('leaves canonical persisted and read-back documents after Inbox Remove tag', async () => {
+        const nativeValue = <T>(result: { ok: true; value: T } | { ok: false; error: { message: string } }): T => {
+            if (!result.ok) throw new Error(result.error.message); return result.value;
+        };
+        const fixture = convergeThroughStorage(buildLargeDocument(150));
+        const sqlite = await openSqliteHost(fixture, undefined, undefined, { rejectConcurrentWrites: true });
+        try {
+            await getStorageAdapter().saveData(buildSaveSnapshot(useTaskStore.getState()));
+            const taskIds = ['task-5', 'task-10'];
+            const sources = taskIds.map(id => useTaskStore.getState()._tasksById.get(id)!);
+            expect(sources.every(row => row.status === 'inbox')).toBe(true);
+            const request = { requestId: 'c79d9455-74a4-4cb6-a543-4b5f7a717743', source: 'inbox' as const,
+                taskIds, taskRevisions: Object.fromEntries(sources.map(row => [row.id, taskRevisionOf(row)])), tags: [' ###admin '], params: {} };
+            const planned = nativeValue(await sqlite.host.prepareInboxTasksRemoveTag(request));
+            if (planned.kind !== 'prepared') throw new Error('Expected changed Inbox tag');
+            const durable = nativeValue(await readAreaDurableData(false, true));
+            expect(await useTaskStore.getState().commitPreparedInboxTasksRemoveTag(planned.prepared, durable.authority))
+                .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+            await flushPendingSave();
+            const written = nativeValue(await readAreaDurableData(false, true)).authority.snapshot;
+            expect(remoteBytes(runNormalizePass(written))).toBe(remoteBytes(written));
+            const readBack = throughLocalStorage(written);
+            expect(remoteBytes(runNormalizePass(readBack))).toBe(remoteBytes(readBack));
+        } finally { await sqlite.close(); }
+    });
+
     it('leaves a canonical document after every store write action', async () => {
         report('');
         report('### Store write actions on a settled document');
@@ -909,7 +935,7 @@ describe('canonical local reads contract', () => {
                     }
                 }
                 setStorageAdapter(new TrackedReceiptAdapter(sqlite.client, {
-                    rejectConcurrentWrites: label === 'commitPreparedInboxTasksAddTag' || label === 'commitPreparedInboxTasksMove' || label === 'commitPreparedReferenceTasksMove'
+                    rejectConcurrentWrites: label === 'commitPreparedInboxTasksRemoveTag' || label === 'commitPreparedInboxTasksAddTag' || label === 'commitPreparedInboxTasksMove' || label === 'commitPreparedReferenceTasksMove'
                         || label === 'commitPreparedReferenceTasksAddTag' || label === 'commitPreparedReferenceTasksRemoveTag',
                 }));
                 await loadNativeRequestReceipts(sqlite.client);
@@ -1524,6 +1550,52 @@ describe('canonical local reads contract', () => {
                 });
                 control.resetBaseline();
                 expect(await useTaskStore.getState().commitPreparedReferenceTasksAddTag(planned.prepared, durable.authority))
+                    .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+            },
+            commitPreparedInboxTasksRemoveTag: async (control) => {
+                const host = await nativeHost(control);
+                const taskIds = ['task-5', 'task-10'];
+                const sources = taskIds.map((id) => {
+                    const source = useTaskStore.getState()._tasksById.get(id);
+                    if (!source || source.status !== 'inbox') throw new Error(`Inbox Remove-tag fixture missing: ${id}`);
+                    return source;
+                });
+                expect(sources[0].tags).toContain('#admin');
+                expect(sources[1].tags).toContain('#admin');
+                const request = { requestId: 'c79d9455-74a4-4cb6-a543-4b5f7a717197', source: 'inbox' as const, taskIds,
+                    taskRevisions: Object.fromEntries(sources.map((source) => [source.id, taskRevisionOf(source)])),
+                    tags: [' ###admin '], params: {} };
+                const planned = nativeValue(await host.prepareInboxTasksRemoveTag(request));
+                if (planned.kind !== 'prepared') throw new Error('Inbox Remove-tag fixture unexpectedly produced a no-op');
+                expect(nativeValue(host.validatePreparedInboxTasksRemoveTag({ request, prepared: planned.prepared })))
+                    .toEqual({ count: 2, changed: true });
+                const durable = nativeValue(await readAreaDurableData(false, true));
+                const before = durable.authority.snapshot;
+                const rawSources = taskIds.map((id) => {
+                    const row = before.tasks.find((task) => task.id === id);
+                    const raw = row && rawReadTaskSnapshot(row);
+                    if (!raw) throw new Error(`Inbox Remove-tag raw fixture missing: ${id}`);
+                    return raw;
+                });
+                const expectedUpdates = buildBulkTaskTokenUpdates(taskIds,
+                    new Map(rawSources.map((row) => [row.id, row])), 'tags', request.tags, 'remove');
+                expect(expectedUpdates.map((update) => update.id)).toEqual(taskIds);
+                const tagged = new Map(planned.prepared.effect.tasks.map((pair) => [pair.after.id, pair.after]));
+                expect([...tagged.keys()]).toEqual(taskIds);
+                expect(tagged.get('task-5')).toMatchObject({ status: 'inbox',
+                    tags: expectedUpdates[0].updates.tags, rev: (sources[0].rev ?? 0) + 1 });
+                expect(planned.prepared.effect.projects).toEqual([]);
+                expect(planned.prepared.effect.sections).toEqual([]);
+                control.expectPersisted((written) => {
+                    expect(written.tasks).toEqual(before.tasks.map((row) => tagged.get(row.id) ?? row));
+                    expect(written.projects).toEqual(before.projects);
+                    expect(written.sections).toEqual(before.sections);
+                    expect(written.areas).toEqual(before.areas);
+                    expect(written.people).toEqual(before.people);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                control.resetBaseline();
+                expect(await useTaskStore.getState().commitPreparedInboxTasksRemoveTag(planned.prepared, durable.authority))
                     .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
             },
             commitPreparedReferenceTasksRemoveTag: async (control) => {
@@ -2550,7 +2622,7 @@ describe('canonical local reads contract', () => {
         for (const action of Object.keys(WRITE_ACTIONS).sort()) {
             const outcome = await runMutation(action, WRITE_ACTIONS[action], settled,
                 action === 'commitPreparedCalendarSubscriptionSetting' || action === 'commitPreparedCalendarSubscriptionAdd'
-                    || action === 'commitPreparedInboxTasksAddTag' || action === 'commitPreparedInboxTasksMove' || action === 'commitPreparedReferenceTasksMove'
+                    || action === 'commitPreparedInboxTasksRemoveTag' || action === 'commitPreparedInboxTasksAddTag' || action === 'commitPreparedInboxTasksMove' || action === 'commitPreparedReferenceTasksMove'
                     || action === 'commitPreparedReferenceTasksAddTag' || action === 'commitPreparedReferenceTasksRemoveTag');
             if (outcome.storeFields.length > 0 || outcome.readFields.length > 0) {
                 notCanonical.push({ action, ...outcome });

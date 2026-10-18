@@ -316,6 +316,23 @@ final class CoreModel: ObservableObject {
     private var inboxBulkDeleteOwner: (host: CoreHost, request: String)?
     private var inboxBulkUndoOwner: (host: CoreHost, request: String)?
     private var inboxTasksMoveOwner: (host: CoreHost, request: String)?
+    private var inboxTasksRemoveTagOwner: (host: CoreHost, request: String)?
+    @Published private(set) var inboxBulkRemovePresented = false
+    @Published private(set) var inboxBulkRemoveOptions: CoreObject = [:]
+    @Published private(set) var inboxBulkRemoveQuery = ""
+    @Published private(set) var inboxBulkRemovePicks: [String] = []
+    @Published private(set) var inboxBulkRemoveItems: [CoreObject] = []
+    @Published private(set) var inboxBulkRemoveTotal = 0
+    @Published private(set) var inboxBulkRemoveCurrent = false
+    @Published private(set) var inboxBulkRemoveReading = false
+    @Published private(set) var inboxBulkRemoveReadError: String?
+    private var inboxBulkRemoveTask: Task<Void, Never>?
+    private var inboxBulkRemoveGeneration = 0
+    private var inboxBulkRemoveContext: InboxBulkConfirmation?
+    private var inboxBulkRemoveIDs: [String] = []
+    private var inboxBulkRemoveRevisions: CoreObject = [:]
+    private var inboxBulkRemoveParams: CoreObject = [:]
+    private var inboxBulkRemoveRevision = ""
     private var inboxTasksAddTagOwner: (host: CoreHost, request: String)?
     @Published private(set) var inboxBulkTagPresented = false
     @Published private(set) var inboxBulkTagText = ""
@@ -1796,6 +1813,7 @@ final class CoreModel: ObservableObject {
     private var resumeSyncTestThrowOnce = false
     #endif
 
+    private weak var inboxViewBoundaryRecordedHost: CoreHost?
     private var host: CoreHost? {
         didSet {
             if oldValue.map({ ObjectIdentifier($0) }) != host.map({ ObjectIdentifier($0) }) {
@@ -5585,7 +5603,7 @@ final class CoreModel: ObservableObject {
                     referenceProjectNextActionEditID = result.text("id")
                 }
             }
-            if ["inboxTasksMoveCommit", "inboxTasksAddTagCommit"].contains(recovery.text("method")), recovery.text("source") == "inbox" {
+            if ["inboxTasksMoveCommit", "inboxTasksAddTagCommit", "inboxTasksRemoveTagCommit"].contains(recovery.text("method")), recovery.text("source") == "inbox" {
                 selectedSurface = .inbox
                 clearInboxTaskSelection()
                 taskActionNotice = [:]; inboxBulkNoticeHost = nil
@@ -6167,6 +6185,16 @@ final class CoreModel: ObservableObject {
                 // A read failure retains the latest link until a fresh external wake.
             }
         }
+    }
+
+    func recordInboxViewBoundaryRendered() async {
+        guard ready, !appLock.concealed, selectedSurface == .inbox, !Task.isCancelled,
+              let currentHost = host, inboxViewBoundaryRecordedHost !== currentHost else { return }
+        inboxViewBoundaryRecordedHost = currentHost
+        _ = try? await currentHost.call("logLine", argumentsJSON: json([
+            "Native iOS Inbox view boundary rendered",
+            #"{"releaseCheck":"v1.3.5/ios-inbox-view-boundary","outcome":"rendered"}"#,
+        ]))
     }
 
     private func recordEntityLink(_ owner: EntityLinkOwner, kind: String, outcome: String) async {
@@ -20863,13 +20891,13 @@ final class CoreModel: ObservableObject {
 
     // MARK: Task739 Inbox selection, using the list's complete core-owned scope
     private var inboxBulkMutationPending: Bool {
-        inboxBulkDeleteOwner != nil || inboxBulkUndoOwner != nil || inboxTasksMoveOwner != nil || inboxTasksAddTagOwner != nil
+        inboxBulkDeleteOwner != nil || inboxBulkUndoOwner != nil || inboxTasksMoveOwner != nil || inboxTasksAddTagOwner != nil || inboxTasksRemoveTagOwner != nil
     }
     private var inboxBulkMutationHost: CoreHost? {
-        inboxTasksAddTagOwner?.host ?? inboxTasksMoveOwner?.host ?? inboxBulkDeleteOwner?.host ?? inboxBulkUndoOwner?.host
+        inboxTasksRemoveTagOwner?.host ?? inboxTasksAddTagOwner?.host ?? inboxTasksMoveOwner?.host ?? inboxBulkDeleteOwner?.host ?? inboxBulkUndoOwner?.host
     }
     private var inboxBulkCompositionBlocked: Bool {
-        inboxBulkMutationPending || inboxBulkConfirmation != nil || inboxBulkTagPresented
+        inboxBulkMutationPending || inboxBulkConfirmation != nil || inboxBulkTagPresented || inboxBulkRemovePresented
     }
     var inboxBulkRetryError: String? {
         guard let owner = inboxBulkMutationHost, host === owner, ready, !busy, !appLock.concealed,
@@ -20877,7 +20905,7 @@ final class CoreModel: ObservableObject {
               !taskPresented, !capturePresented, !areaPickerPresented, !morePresented,
               !inboxGroupPresented, !inboxSortPresented, !inboxFiltersPresented, !taskStatusMenuPresented,
               !mindSweepPresented, !processInboxPresented, !calendarComposerPresented, !calendarItemPresented else { return nil }
-        if inboxTasksMoveOwner != nil || inboxTasksAddTagOwner != nil { return label("task.doneStatusOutcomeUnknown") }
+        if inboxTasksMoveOwner != nil || inboxTasksAddTagOwner != nil || inboxTasksRemoveTagOwner != nil { return label("task.doneStatusOutcomeUnknown") }
         return label(inboxBulkUndoOwner == nil ? "task.archiveDeleteOutcomeUnknown" : "task.trashOutcomeUnknown")
     }
     private var inboxBulkSelectionEnabled: Bool {
@@ -20933,6 +20961,7 @@ final class CoreModel: ObservableObject {
         if changed {
             inboxSelectionGeneration += 1
             if inboxBulkConfirmation != nil { cancelArchiveBulkDeleteConfirmation() }
+            closeInboxBulkRemove(clearPicks: inboxTasksRemoveTagOwner == nil)
             closeInboxBulkTag(clearInput: inboxTasksAddTagOwner == nil)
         }
         inboxSelectedIDs = ids
@@ -20943,6 +20972,7 @@ final class CoreModel: ObservableObject {
     }
 
     private func clearInboxTaskSelection() {
+        closeInboxBulkRemove(clearPicks: inboxTasksRemoveTagOwner == nil)
         closeInboxBulkTag(clearInput: inboxTasksAddTagOwner == nil)
         inboxSelectionGeneration += 1
         if inboxBulkConfirmation != nil { cancelArchiveBulkDeleteConfirmation() }
@@ -21400,8 +21430,277 @@ final class CoreModel: ObservableObject {
         await publishInboxTasksAddTag(result, on: owner, foreground: foreground)
     }
 
+    // Task742: picker pages are read-only; dispatched removal debt stays on its original Host.
+    var inboxBulkRemoveEnabled: Bool {
+        inboxBulkSelectionEnabled && inboxBulk.object("bar").object("removeTag").flag("enabled")
+    }
+    var inboxBulkRemoveSaveEnabled: Bool {
+        inboxBulkRemovePresented && inboxBulkRemoveCurrent && !inboxBulkRemoveReading && inboxBulkRemoveReadError == nil
+            && !inboxBulkRemovePicks.isEmpty && inboxBulkRemovePicks.count <= 10_000 && !busy && !retryNeeded
+            && inboxTasksRemoveTagOwner == nil && inboxBulkRemoveContextIsCurrent()
+    }
+    var inboxBulkRemoveCanLoadMore: Bool {
+        inboxBulkRemoveCurrent && !inboxBulkRemoveReading && inboxBulkRemoveReadError == nil
+            && !busy && !retryNeeded && inboxBulkRemoveItems.count < inboxBulkRemoveTotal && inboxBulkRemoveContextIsCurrent()
+    }
+    func openInboxBulkRemove() {
+        guard inboxBulkRemoveEnabled, let owner = host else { return }
+        closeInboxBulkRemove()
+        do {
+            inboxBulkRemoveContext = InboxBulkConfirmation(host: owner, params: try json(inboxParams),
+                revision: inbox.text("revision"), selectionGeneration: inboxSelectionGeneration,
+                filterSequence: inboxFilterSequence, foregroundGeneration: foregroundSyncGeneration)
+        } catch { inboxReadError = label("task.updateFailed"); return }
+        inboxBulkRemoveOptions = inboxBulk.object("removeTag")
+        let labels = inboxBulk.object("addTag")
+        inboxBulkRemoveOptions["cancelLabel"] = labels["cancelLabel"]
+        inboxBulkRemoveOptions["saveLabel"] = labels["saveLabel"]
+        inboxBulkRemoveIDs = inboxSelectedIDs
+        inboxBulkRemoveRevisions = inboxSelectedRevisions
+        inboxBulkRemoveParams = inboxParams
+        inboxBulkRemovePresented = true
+        readInboxBulkRemove(reset: true)
+    }
+    func closeInboxBulkRemove(clearPicks: Bool = true) {
+        inboxBulkRemovePresented = false
+        inboxBulkRemoveGeneration += 1
+        inboxBulkRemoveTask?.cancel()
+        inboxBulkRemoveTask = nil
+        inboxBulkRemoveReading = false
+        inboxBulkRemoveCurrent = false
+        inboxBulkRemoveReadError = nil
+        inboxBulkRemoveQuery = ""
+        if clearPicks { inboxBulkRemovePicks = [] }
+        inboxBulkRemoveItems = []
+        inboxBulkRemoveTotal = 0
+        inboxBulkRemoveContext = nil
+        inboxBulkRemoveIDs = []
+        inboxBulkRemoveRevisions = [:]
+        inboxBulkRemoveParams = [:]
+        inboxBulkRemoveRevision = ""
+    }
+    private func inboxBulkRemoveContextIsCurrent() -> Bool {
+        guard inboxBulkRemovePresented, !retryNeeded, inboxTasksRemoveTagOwner == nil,
+              let context = inboxBulkRemoveContext, inboxBulkTagContextCurrent(context),
+              inboxExactJSON(inboxSelectedIDs, inboxBulkRemoveIDs),
+              inboxExactJSON(inboxSelectedRevisions, inboxBulkRemoveRevisions),
+              inboxExactJSON(inboxParams, inboxBulkRemoveParams) else { return false }
+        return true
+    }
+    func setInboxBulkRemoveQuery(_ query: String) {
+        guard inboxBulkRemovePresented, !busy, !retryNeeded else { return }
+        inboxBulkRemoveQuery = query
+        readInboxBulkRemove(reset: true, delay: 200_000_000)
+    }
+
+    func inboxBulkRemovePicked(_ value: String) -> Bool {
+        inboxBulkRemovePicks.contains { $0.utf8.elementsEqual(value.utf8) }
+    }
+
+    func toggleInboxBulkRemove(_ value: String) {
+        guard !busy, !retryNeeded, inboxBulkRemoveCurrent, !inboxBulkRemoveReading, inboxBulkRemoveContextIsCurrent(),
+              inboxBulkRemoveItems.contains(where: { $0.text("value").utf8.elementsEqual(value.utf8) }) else { return }
+        if let index = inboxBulkRemovePicks.firstIndex(where: { $0.utf8.elementsEqual(value.utf8) }) { inboxBulkRemovePicks.remove(at: index) }
+        else if inboxBulkRemovePicks.count < 10_000 { inboxBulkRemovePicks.append(value) }
+    }
+
+    func retryInboxBulkRemoveRead() { readInboxBulkRemove(reset: true) }
+    func loadMoreInboxBulkRemove() {
+        guard inboxBulkRemoveCanLoadMore else { return }
+        readInboxBulkRemove(reset: false)
+    }
+
+    private func readInboxBulkRemove(reset: Bool, delay: UInt64 = 0) {
+        guard !busy, inboxBulkRemoveContextIsCurrent(), let context = inboxBulkRemoveContext else { return }
+        inboxBulkRemoveGeneration += 1
+        let generation = inboxBulkRemoveGeneration, queryText = inboxBulkRemoveQuery
+        let offset = reset ? 0 : inboxBulkRemoveItems.count
+        let revision = inboxBulkRemoveRevision
+        if reset { inboxBulkRemoveItems = []; inboxBulkRemoveTotal = 0; inboxBulkRemoveRevision = "" }
+        inboxBulkRemoveCurrent = false
+        inboxBulkRemoveReading = true
+        inboxBulkRemoveReadError = nil
+        inboxBulkRemoveTask?.cancel()
+        func current() -> Bool {
+            generation == inboxBulkRemoveGeneration && queryText.utf8.elementsEqual(inboxBulkRemoveQuery.utf8)
+                && inboxBulkRemoveContextIsCurrent() && inboxBulkTagContextCurrent(context)
+        }
+        inboxBulkRemoveTask = Task {
+            defer { if generation == inboxBulkRemoveGeneration { inboxBulkRemoveReading = false } }
+            do {
+                if delay > 0 { try await Task.sleep(nanoseconds: delay) }
+                var start = offset
+                for attempt in 0..<2 {
+                    guard !Task.isCancelled, generation == inboxBulkRemoveGeneration, inboxBulkRemoveContextIsCurrent(),
+                          queryText.utf8.elementsEqual(inboxBulkRemoveQuery.utf8) else { return }
+                    var picker: CoreObject = ["kind": "removeTag", "query": queryText, "offset": start, "limit": 100]
+                    if start > 0 { picker["revision"] = revision }
+                    let request: CoreObject = ["list": "inbox", "params": inboxBulkRemoveParams, "taskIds": inboxBulkRemoveIDs, "picker": picker]
+                    do {
+                        let bulk = try await self.query("menuRead", ["bulk", try json(request)], beforeDispatch: current)
+                        guard !Task.isCancelled, generation == inboxBulkRemoveGeneration, inboxBulkRemoveContextIsCurrent(),
+                              queryText.utf8.elementsEqual(inboxBulkRemoveQuery.utf8) else { return }
+                        let acceptedIDs = try json(bulk["selectedIds"] ?? NSNull()), acceptedRevisions = try json(bulk.object("taskRevisions"))
+                        guard acceptedIDs.utf8.elementsEqual(try json(inboxBulkRemoveIDs).utf8),
+                              acceptedRevisions.utf8.elementsEqual(try json(inboxBulkRemoveRevisions).utf8) else {
+                            inboxBulkRemoveReadError = label("task.updateFailed")
+                            return
+                        }
+                        let options = bulk.object("picker")
+                        guard bulk.text("list") == "inbox", !bulk.text("revision").isEmpty, bulk["selectAll"] is NSNull,
+                              try json(bulk).utf8.count <= 2_000_000,
+                              Set(options.keys) == Set(["kind", "total", "items", "create", "submit"]), options.text("kind") == "removeTag",
+                              options["create"] is NSNull, options["submit"] is NSNull,
+                              let total = options["total"] as? NSNumber, CFGetTypeID(total) != CFBooleanGetTypeID(),
+                              total.doubleValue >= Double(start), total.doubleValue <= 9_007_199_254_740_991, total.doubleValue.rounded() == total.doubleValue,
+                              let items = options["items"] as? [CoreObject], items.count == min(100, total.intValue - start),
+                              items.allSatisfy({ Set($0.keys) == Set(["value", "label", "selected", "edit"])
+                                  && ($0["value"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 2_000_000 }) == true
+                                  && $0["label"] is String && $0["edit"] is NSNull
+                                  && ($0["selected"] as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() && !$0.boolValue }) == true }) else { throw CocoaError(.coderReadCorrupt) }
+                        let combined = start == 0 ? items : inboxBulkRemoveItems + items
+                        guard Set(combined.map { Data($0.text("value").utf8) }).count == combined.count,
+                              start == 0 || (bulk.text("revision").utf8.elementsEqual(revision.utf8) && total.intValue == inboxBulkRemoveTotal) else {
+                            throw CocoaError(.coderReadCorrupt)
+                        }
+                        inboxBulkRemoveItems = combined
+                        inboxBulkRemoveTotal = total.intValue
+                        inboxBulkRemoveRevision = bulk.text("revision")
+                        inboxBulkRemoveCurrent = true
+                        return
+                    } catch {
+                        guard start > 0, attempt == 0, error.localizedDescription.hasPrefix("STALE_REVISION:") else { throw error }
+                        // Replace stale pages under one fresh list revision; hidden picks remain exact.
+                        start = 0
+                    }
+                }
+            } catch {
+                guard current() else { return }
+                inboxBulkRemoveReadError = error.localizedDescription
+            }
+        }
+    }
+
+    private func inboxTasksRemoveTagOwned(on owner: CoreHost, request: String) -> Bool {
+        inboxTasksRemoveTagOwner?.host === owner && inboxTasksRemoveTagOwner?.request.utf8.elementsEqual(request.utf8) == true
+    }
+
+    func saveInboxBulkRemove() async {
+        guard inboxBulkRemoveSaveEnabled, let context = inboxBulkRemoveContext else { return }
+        let owner = context.host, ids = inboxBulkRemoveIDs, revisions = inboxBulkRemoveRevisions
+        let tags = inboxBulkRemovePicks
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString.lowercased(), "source": "inbox", "taskIds": ids,
+                "taskRevisions": revisions, "tags": tags, "params": try decode(context.params)])
+        } catch { inboxReadError = label("task.updateFailed"); return }
+        func current() -> Bool {
+            inboxBulkTagContextCurrent(context)
+                && inboxExactJSON(inboxSelectedIDs, ids) && inboxExactJSON(inboxSelectedRevisions, revisions)
+                && inboxExactJSON(inboxBulkRemovePicks, tags)
+        }
+        guard current() else { return }
+        closeInboxBulkRemove(clearPicks: false)
+        busy = true
+        inboxReadError = nil
+        inboxTasksRemoveTagOwner = (owner, request)
+        var dispatched = false
+        defer { if host === owner { finishOperation() } }
+        do {
+            let result = try await query("inboxTasksRemoveTagWrite", [request], beforeDispatch: {
+                let admitted = current() && self.inboxTasksRemoveTagOwned(on: owner, request: request)
+                if admitted { dispatched = true }
+                return admitted
+            })
+            guard inboxTasksRemoveTagOwned(on: owner, request: request) else { return }
+            let warm = current()
+            try acknowledgeInboxTasksRemoveTag(result, on: owner, request: request, warm: warm, allowNoop: true)
+            guard warm else { return }
+            await publishInboxTasksRemoveTag(result, on: owner, foreground: context.foregroundGeneration)
+        } catch {
+            guard inboxTasksRemoveTagOwned(on: owner, request: request) else { return }
+            if !dispatched { inboxTasksRemoveTagOwner = nil; return }
+            handleInboxTasksRemoveTagError(error, on: owner, request: request, warm: current())
+        }
+    }
+
+    private func acknowledgeInboxTasksRemoveTag(_ result: CoreObject, on owner: CoreHost, request: String,
+                                              warm: Bool, allowNoop: Bool = false) throws {
+        guard inboxTasksRemoveTagOwned(on: owner, request: request) else { throw CocoaError(.coderReadCorrupt) }
+        let frozen = try decode(request)
+        guard frozen.text("source") == "inbox", let ids = frozen["taskIds"] as? [String],
+              Set(result.keys) == Set(["count", "changed"]),
+              let changed = result["changed"] as? NSNumber, CFGetTypeID(changed) == CFBooleanGetTypeID(),
+              let count = result["count"] as? NSNumber, CFGetTypeID(count) != CFBooleanGetTypeID(),
+              count.doubleValue.rounded() == count.doubleValue,
+              changed.boolValue ? (count.doubleValue > 0 && count.doubleValue <= Double(ids.count)) : (allowNoop && count.doubleValue == 0) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        inboxTasksRemoveTagOwner = nil // Durable ACK retires debt before any refresh/notice read.
+        guard warm else { return }
+        retryNeeded = false; inboxReadError = nil; error = nil
+        closeInboxBulkRemove()
+        if changed.boolValue { clearInboxTaskSelection() }
+    }
+
+    private func publishInboxTasksRemoveTag(_ result: CoreObject, on owner: CoreHost, foreground: Int) async {
+        guard result.flag("changed") else { return }
+        let generation = inboxSelectionGeneration
+        let current = { self.inboxTasksMoveWarm(on: owner, generation: generation, foreground: foreground) }
+        guard current() else { return }
+        try? await readInbox(ownedGuard: current)
+        guard current(), let input = try? await query("inboxBulkTagInput", ["", result.number("count")], beforeDispatch: current),
+              current(), let notice = input["notice"] as? CoreObject, Set(notice.keys) == Set(["title", "message"]),
+              !notice.text("title").isEmpty, !notice.text("message").isEmpty else { return }
+        showTaskActionNotice(["operation": "inboxBulkRemoveTag", "source": "inbox", "undoEnabled": false,
+            "message": notice.text("title") + ": " + notice.text("message")])
+    }
+
+    private func handleInboxTasksRemoveTagError(_ failure: Error, on owner: CoreHost, request: String, warm: Bool) {
+        guard inboxTasksRemoveTagOwned(on: owner, request: request) else { return }
+        if isDefiniteRejection(failure) { inboxTasksRemoveTagOwner = nil }
+        guard warm else { return }
+        retryNeeded = inboxTasksRemoveTagOwner != nil
+        error = retryNeeded ? failure.localizedDescription : nil
+        inboxReadError = failure.localizedDescription
+    }
+
+    private func retryInboxTasksRemoveTag(on owner: CoreHost, acknowledgment: String?, selectionGeneration: Int,
+                                      foreground: Int, surface: Surface) async throws {
+        guard let pending = inboxTasksRemoveTagOwner, pending.host === owner else { throw CocoaError(.coderReadCorrupt) }
+        let request = pending.request
+        let currentDebt = { self.inboxTasksRemoveTagOwned(on: owner, request: request) }
+        let outcome: CoreObject
+        if host === owner {
+            outcome = try await query("inboxTasksRemoveTagRetryOutcome", [request], beforeDispatch: { self.host === owner && currentDebt() })
+        } else {
+            outcome = try decode(await owner.call("inboxTasksRemoveTagRetryOutcome", argumentsJSON: json([request])))
+        }
+        guard currentDebt() else { throw CancellationError() }
+        let warm = surface == .inbox && inboxTasksMoveWarm(on: owner, generation: selectionGeneration, foreground: foreground)
+        if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+            if warm {
+                let unknown = label("task.doneStatusOutcomeUnknown")
+                retryNeeded = true; inboxReadError = unknown; error = unknown
+            }
+            return
+        }
+        guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else { throw CocoaError(.coderReadCorrupt) }
+        let result = outcome.object("result")
+        if let acknowledgment, !inboxExactJSON(result, try decode(acknowledgment)) { throw CocoaError(.coderReadCorrupt) }
+        try acknowledgeInboxTasksRemoveTag(result, on: owner, request: request, warm: warm)
+        guard warm else { return }
+        await publishInboxTasksRemoveTag(result, on: owner, foreground: foreground)
+    }
+
+
     private func retryInboxBulk(on owner: CoreHost, acknowledgment: String?, selectionGeneration: Int,
                                 foreground: Int, surface: Surface) async throws {
+        if inboxTasksRemoveTagOwner?.host === owner {
+            try await retryInboxTasksRemoveTag(on: owner, acknowledgment: acknowledgment,
+                selectionGeneration: selectionGeneration, foreground: foreground, surface: surface)
+            return
+        }
         if inboxTasksAddTagOwner?.host === owner {
             try await retryInboxTasksAddTag(on: owner, acknowledgment: acknowledgment,
                 selectionGeneration: selectionGeneration, foreground: foreground, surface: surface)
@@ -32988,7 +33287,10 @@ final class CoreModel: ObservableObject {
             if !calendarPreferencePending { calendarComposerNavigation = nil }
         } catch {
             if let inboxRetryHost {
-                if let pending = inboxTasksAddTagOwner, pending.host === inboxRetryHost {
+                if let pending = inboxTasksRemoveTagOwner, pending.host === inboxRetryHost {
+                    handleInboxTasksRemoveTagError(error, on: pending.host, request: pending.request,
+                        warm: inboxTasksMoveWarm(on: pending.host, generation: inboxRetrySelection, foreground: inboxRetryForeground))
+                } else if let pending = inboxTasksAddTagOwner, pending.host === inboxRetryHost {
                     handleInboxTasksAddTagError(error, on: pending.host, request: pending.request,
                         warm: inboxTasksMoveWarm(on: pending.host, generation: inboxRetrySelection, foreground: inboxRetryForeground))
                 } else if let pending = inboxTasksMoveOwner, pending.host === inboxRetryHost {

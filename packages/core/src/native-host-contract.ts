@@ -296,6 +296,7 @@ import { createArchivedTaskRestoreMethods } from './native-host-contract-archive
 import { createInboxTasksMoveMethods } from './native-host-contract-inbox-bulk-status';
 import { createReferenceTasksMoveMethods } from './native-host-contract-reference-bulk-status';
 import { createInboxTasksAddTagMethods } from './native-host-contract-inbox-bulk-tag';
+import { createInboxTasksRemoveTagMethods } from './native-host-contract-inbox-bulk-remove-tag';
 import { createReferenceTasksAddTagMethods } from './native-host-contract-reference-bulk-tag';
 import { createReferenceTasksRemoveTagMethods } from './native-host-contract-reference-bulk-remove-tag';
 import { createArchivedTasksRestoreMethods } from './native-host-contract-archive-bulk-restore';
@@ -1873,6 +1874,7 @@ export function createNativeHostContract(options: {
         ...createInboxTasksMoveMethods({ readiness, save }),
         ...createReferenceTasksAddTagMethods({ readiness, save }),
         ...createInboxTasksAddTagMethods({ readiness, save }),
+        ...createInboxTasksRemoveTagMethods({ readiness, save }),
         ...createReferenceTasksRemoveTagMethods({ readiness, save }),
         ...createArchivedTasksDeleteMethods({ readiness, save, t: () => translate }),
         ...createProjectDateMethods({ readiness, save,

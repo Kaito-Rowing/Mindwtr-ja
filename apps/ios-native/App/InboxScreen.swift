@@ -19,7 +19,7 @@ struct InboxScreen: View {
         model.area.objects("options").first(where: { $0.text("id") == "__all__" })?.text("state") == "included"
     }
     private var menuPanelPresented: Bool {
-        model.inboxSortPresented || model.inboxGroupPresented || model.inboxFiltersPresented || model.inboxBulkTagPresented || model.morePresented || !model.somedayPanel.isEmpty || !model.referencePanel.isEmpty || !model.historyPanel.isEmpty
+        model.inboxSortPresented || model.inboxGroupPresented || model.inboxFiltersPresented || (model.inboxBulkTagPresented || model.inboxBulkRemovePresented) || model.morePresented || !model.somedayPanel.isEmpty || !model.referencePanel.isEmpty || !model.historyPanel.isEmpty
     }
     private var menuListPrefix: String {
         model.selectedSurface == .savedSearch ? "saved-search" : model.selectedSurface == .contexts ? "contexts" : model.selectedSurface == .trash ? "trash" : model.selectedSurface == .history ? "history" : model.selectedSurface == .reference ? "reference" : model.selectedSurface == .someday ? "someday" : "waiting"
@@ -73,7 +73,11 @@ struct InboxScreen: View {
                         } else {
                             header
                             if model.ready {
-                                if model.selectedSurface == .inbox { inboxContent }
+                                // Bound opaque metadata after an observed iOS 17 stack overflow.
+                                if model.selectedSurface == .inbox {
+                                    AnyView(inboxContent)
+                                        .onAppear { Task { await model.recordInboxViewBoundaryRendered() } }
+                                }
                                 else if model.selectedSurface == .review { ReviewScreen(model: model, palette: palette) }
                                 else if model.selectedSurface == .calendar { CalendarScreen(model: model, palette: palette) }
                                 else if model.selectedSurface == .board { BoardScreen(model: model, palette: palette) }
@@ -126,7 +130,7 @@ struct InboxScreen: View {
                             FailureBanner(model: model, palette: palette)
                         }
                     }
-                    .allowsHitTesting(!model.inboxGroupPresented && !model.inboxFiltersPresented && !model.inboxBulkTagPresented)
+                    .allowsHitTesting(!model.inboxGroupPresented && !model.inboxFiltersPresented && !(model.inboxBulkTagPresented || model.inboxBulkRemovePresented))
                     .accessibilityElement(children: menuPanelPresented ? .ignore : .contain)
                     .accessibilityHidden(menuPanelPresented)
                     if model.morePresented { MoreMenuSheet(model: model, palette: palette) }
@@ -148,12 +152,15 @@ struct InboxScreen: View {
             // More's content, dismissal backdrop and visible tabs share one modal boundary.
             .accessibilityElement(children: .contain)
             .accessibilityAddTraits(model.morePresented || model.inboxSortPresented || model.inboxGroupPresented ? .isModal : [])
-            .disabled(model.inboxBulkTagPresented || model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
+            .disabled((model.inboxBulkTagPresented || model.inboxBulkRemovePresented) || model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
                 && (model.reviewGuidePresented || model.reviewPickerPresented)))
-            .accessibilityHidden(model.inboxBulkTagPresented || model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
+            .accessibilityHidden((model.inboxBulkTagPresented || model.inboxBulkRemovePresented) || model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
                 || (model.selectedSurface == .review && (model.reviewGuidePresented || model.reviewPickerPresented)))
             if model.inboxBulkTagPresented && model.selectedSurface == .inbox && !model.appLock.concealed {
                 InboxBulkTagDialog(model: model, palette: palette)
+            }
+            if model.inboxBulkRemovePresented && model.selectedSurface == .inbox && !model.appLock.concealed {
+                InboxBulkRemoveTagDialog(model: model, palette: palette)
             }
             if model.selectedSurface == .board && model.boardFiltersPresented {
                 BoardFiltersSheet(model: model, palette: palette)
@@ -343,7 +350,7 @@ struct InboxScreen: View {
         VStack(spacing: 0) {
             toolbar
             inboxFilterChips
-            if model.inboxSelectionMode { inboxBulkDeleteBar }
+            if model.inboxSelectionMode { AnyView(inboxBulkDeleteBar) }
             primaryAction.disabled(!model.inboxActionsEnabled || model.inboxSelectionMode)
             // Selection uses the same row-local UIKit gesture host as Done and Reference.
             List {
@@ -460,6 +467,12 @@ struct InboxScreen: View {
                     .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.inboxBulkTagEnabled)
                     .accessibilityLabel(model.inboxBulk.object("bar").object("addTag").text("accessibilityLabel"))
                     .accessibilityIdentifier("inbox-bulk-tag-open")
+                    Button { model.openInboxBulkRemove() } label: {
+                        inboxBulkActionLabel(model.inboxBulk.object("bar").object("removeTag").text("label"))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.inboxBulkRemoveEnabled)
+                    .accessibilityLabel(model.inboxBulk.object("bar").object("removeTag").text("label"))
+                    .accessibilityIdentifier("inbox-bulk-remove-tag-open")
                     Button { Task { await model.toggleInboxTaskRange() } } label: {
                         inboxBulkActionLabel(model.inboxBulk.object("bar").object("range").text("label"))
                     }
@@ -2108,6 +2121,124 @@ private struct InboxBulkTagDialog: View {
             .accessibilityIdentifier("inbox-bulk-tag-dialog").accessibilityAction(.escape) {
                 if !model.busy && !model.retryNeeded { model.closeInboxBulkTag() }
             }
+        }
+    }
+}
+
+private struct InboxBulkRemoveTagDialog: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @FocusState private var focused: Bool
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.inboxBulkRemoveOptions.text("title")).rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+            Text(model.inboxBulkRemoveOptions.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var queryInput: some View {
+        TextField(model.inboxBulkRemoveOptions.text("placeholder"), text: Binding(get: { model.inboxBulkRemoveQuery }, set: { model.setInboxBulkRemoveQuery($0) }))
+            .rnFont(16).textInputAutocapitalization(.never).autocorrectionDisabled().focused($focused)
+            .submitLabel(.done).onSubmit { focused = false }
+            .padding(12).frame(minHeight: 44).background(palette.input, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+            .accessibilityLabel(model.inboxBulkRemoveOptions.text("placeholder"))
+            .disabled(model.busy || model.retryNeeded)
+            .accessibilityIdentifier("inbox-bulk-remove-tag-input")
+            .fixedSize(horizontal: false, vertical: true).layoutPriority(1)
+    }
+
+    private var options: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AppChipFlow {
+                ForEach(model.inboxBulkRemoveItems.indices, id: \.self) { index in
+                    let item = model.inboxBulkRemoveItems[index]
+                    let picked = model.inboxBulkRemovePicked(item.text("value"))
+                    Button { model.toggleInboxBulkRemove(item.text("value")) } label: {
+                        Text(item.text("label")).rnFont(14).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 12).padding(.vertical, 8).frame(minWidth: 44, minHeight: 44)
+                            .background(picked ? palette.tint : palette.filter, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(picked ? palette.tint : palette.border, lineWidth: 1))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(picked ? palette.onTint : palette.text)
+                    .disabled(model.busy || model.retryNeeded || !model.inboxBulkRemoveCurrent || model.inboxBulkRemoveReading)
+                    .accessibilityLabel(item.text("label")).accessibilityAddTraits(picked ? .isSelected : [])
+                    .accessibilityIdentifier("inbox-bulk-remove-tag-option-\(index)")
+                }
+            }
+            if model.inboxBulkRemoveReading { ProgressView().accessibilityLabel(model.label("common.loading")) }
+            if model.inboxBulkRemoveCurrent && model.inboxBulkRemoveTotal == 0 {
+                Text(model.label("common.noMatches")).rnFont(14).foregroundStyle(palette.secondary)
+                    .accessibilityIdentifier("inbox-bulk-remove-tag-no-matches")
+            }
+            if model.inboxBulkRemoveItems.count < model.inboxBulkRemoveTotal {
+                Button { model.loadMoreInboxBulkRemove() } label: {
+                    Text(model.label("common.more")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.inboxBulkRemoveCanLoadMore)
+                .accessibilityIdentifier("inbox-bulk-remove-tag-more")
+            }
+            if let error = model.inboxBulkRemoveReadError {
+                Text(error).rnFont(13).foregroundStyle(palette.danger).accessibilityIdentifier("inbox-bulk-remove-tag-read-error")
+                Button { model.retryInboxBulkRemoveRead() } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.busy || model.retryNeeded || model.inboxBulkRemoveReading)
+                .accessibilityIdentifier("inbox-bulk-remove-tag-read-retry")
+            }
+        }
+    }
+
+    private var actions: some View {
+        HStack {
+            Spacer()
+            Button { model.closeInboxBulkRemove() } label: {
+                Text(model.inboxBulkRemoveOptions.text("cancelLabel")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(palette.secondary).disabled(model.busy || model.retryNeeded).accessibilityIdentifier("inbox-bulk-remove-tag-cancel")
+            Button { Task { await model.saveInboxBulkRemove() } } label: {
+                Text(model.inboxBulkRemoveOptions.text("saveLabel")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.inboxBulkRemoveSaveEnabled)
+            .accessibilityIdentifier("inbox-bulk-remove-tag-save")
+        }
+        .fixedSize(horizontal: false, vertical: true).layoutPriority(1)
+    }
+
+    private func contents(scrollingHeading: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !scrollingHeading { heading }
+            queryInput
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if scrollingHeading { heading }
+                    options
+                }
+            }
+            .scrollDismissesKeyboard(.interactively).frame(minHeight: 44, maxHeight: 480)
+            .accessibilityIdentifier("inbox-bulk-remove-tag-scroll")
+            actions
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { if !model.busy && !model.retryNeeded { model.closeInboxBulkRemove() } }.accessibilityHidden(true)
+                // Keep one query field as keyboard height changes. Accessibility
+                // text or less than 500pt moves only informational copy into the scroll.
+                contents(scrollingHeading: dynamicTypeSize.isAccessibilitySize || geometry.size.height < 500)
+                .padding(16).frame(maxWidth: 420, maxHeight: max(0, geometry.size.height - 32))
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(16)
+            }
+            .foregroundStyle(palette.text).accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("inbox-bulk-remove-tag-dialog").accessibilityAction(.escape) { if !model.busy && !model.retryNeeded { model.closeInboxBulkRemove() } }
+            .onAppear { focused = true }
         }
     }
 }

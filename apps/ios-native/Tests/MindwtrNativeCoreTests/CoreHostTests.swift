@@ -37468,3 +37468,109 @@ extension CoreHostTests {
         }
     }
 }
+
+// Task742: public strict Remove-tag carrier, read union and original-journal recovery.
+extension CoreHostTests {
+    private func seedInboxRemove742() async throws -> [String] {
+        let ids = try await seedInboxMove740(), sql = try SQLiteBridge(url: database)
+        defer { sql.close() }
+        for (index, id) in ids.enumerated() {
+            let tags = index == 1 ? ["#Keep742"] : ["#Remove742", "#Keep742"]
+            _ = try sql.execute("UPDATE tasks SET tags=? WHERE id=?", parametersJSON: json([json(tags), id]))
+        }
+        return ids
+    }
+    private func inboxRemove742Request(_ core: CoreHost, ids: [String], tags: [String] = ["  ###Remove742  "]) async throws -> [String: Any] {
+        var request = try await inboxMove740Request(core, ids: ids, status: "next")
+        request.removeValue(forKey: "status"); request["tags"] = tags
+        return request
+    }
+    func testInboxBulkRemoveTag742StrictSurfaceAndPickerReadBounds() async throws {
+        let ids = try await seedInboxRemove742(), faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        let request = try await inboxRemove742Request(core, ids: ids)
+        var writes = 0, journals = 0
+        faults.beforeSQL = { if self.archive180IsDomainWrite($0) { writes += 1 } }; faults.journalWrite = { journals += 1 }
+        let params: [String: Any] = ["groupBy": "none"]
+        let bulk = try object(await core.call("menuRead", argumentsJSON: json(["bulk", json([
+            "list": "inbox", "params": params, "taskIds": ids, "picker": ["kind": "removeTag", "query": "remove742", "offset": 0, "limit": 100]])])))
+        XCTAssertEqual(bulk["selectedIds"] as? [String], ids)
+        let picker = try XCTUnwrap(bulk["picker"] as? [String: Any]), items = try XCTUnwrap(picker["items"] as? [[String: Any]])
+        XCTAssertEqual(items.compactMap { $0["value"] as? String }, ["#Remove742"])
+        XCTAssertTrue(picker["create"] is NSNull); XCTAssertTrue(picker["submit"] is NSNull)
+        for edit: [String: Any] in [["kind": "custom"], ["kind": "removeTag", "offset": 1], ["kind": "removeTag", "limit": 101], ["kind": "removeTag", "query": String(repeating: "x", count: 501)]] {
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("menuRead", argumentsJSON: json(["bulk", json(["list": "inbox", "params": params, "taskIds": ids, "picker": edit])])) }
+        }
+        var invalid: [[String: Any]] = []
+        for tags in [[Any](), ["x", "x"], [true], [""], [String(repeating: "x", count: 2_000_001)]] {
+            var value = request; value["tags"] = tags; invalid.append(value)
+        }
+        var wrongSource = request; wrongSource["source"] = "reference"; invalid.append(wrongSource)
+        var extra = request; extra["tag"] = "#Remove742"; invalid.append(extra)
+        var wrongParams = request; wrongParams["params"] = ["includeArchivedProjects": true]; invalid.append(wrongParams)
+        for value in invalid {
+            for method in ["inboxTasksRemoveTagWrite", "inboxTasksRemoveTagRetryOutcome"] {
+                await expectFailure("INVALID_INPUT") { _ = try await core.call(method, argumentsJSON: json([json(value)])) }
+            }
+        }
+        for args in ["[]", try json([json(request), json(request)])] {
+            await expectFailure { _ = try await core.call("inboxTasksRemoveTagWrite", argumentsJSON: args) }
+        }
+        await expectFailure { _ = try await core.call("inboxTasksRemoveTagCommit", argumentsJSON: json([json(request)])) }
+        let raw = try json(request), duplicate = String(raw.dropLast()) + ",\"source\":\"inbox\"}"
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("inboxTasksRemoveTagWrite", argumentsJSON: json([duplicate])) }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0); XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+    func testInboxBulkRemoveTag742MixedCountUnchangedRawRowsAndNoop() async throws {
+        let ids = try await seedInboxRemove742(), faults = HostIOFaults(), core = host(faults)
+        var acknowledgments: [String] = []; faults.commandDiagnostic = { acknowledgments.append($0) }
+        _ = try await core.start()
+        let unchanged = try json(storedTask(ids[1])), sentinel = try json(storedTask(ids[0] + "-protected")), total = try taskCount()
+        let request = try await inboxRemove742Request(core, ids: ids)
+        let result = try object(await core.call("inboxTasksRemoveTagWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(result), try json(["count": 2, "changed": true]))
+        XCTAssertEqual(try json(storedTask(ids[1])), unchanged); XCTAssertEqual(try json(storedTask(ids[0] + "-protected")), sentinel)
+        XCTAssertEqual(try taskCount(), total)
+        for id in [ids[0], ids[2]] { XCTAssertEqual(try storedTask(id)["tags"] as? String, try json(["#Keep742"])) }
+        XCTAssertTrue(acknowledgments.contains("inboxTasksRemoveTagCoreAck:2"))
+        let sql = try SQLiteBridge(url: database), baseline = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql)
+        XCTAssertTrue(try archive181ReceiptRows(sql).contains { ($0["method"] as? String)?.hasPrefix("inboxTasksRemoveTag:") == true })
+        sql.close(); let count = acknowledgments.count
+        var writes = 0, journals = 0
+        faults.beforeSQL = { if self.archive180IsDomainWrite($0) { writes += 1 } }; faults.journalWrite = { journals += 1 }
+        for tags in [["#Remove742"], ["#Unknown742"], ["###"]] {
+            let noop = try await inboxRemove742Request(core, ids: ids, tags: tags)
+            let result = try object(await core.call("inboxTasksRemoveTagWrite", argumentsJSON: json([json(noop)])))
+            XCTAssertEqual(try json(result), try json(["count": 0, "changed": false]))
+            let outcome = try object(await core.call("inboxTasksRemoveTagRetryOutcome", argumentsJSON: json([json(noop)])))
+            XCTAssertEqual(outcome["kind"] as? String, "unproven")
+        }
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), baseline); XCTAssertEqual(try doneTask176Receipts(check), receipts)
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0); XCTAssertEqual(acknowledgments.count, count)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); check.close(); await core.close()
+    }
+    func testInboxBulkRemoveTag742FailedCommitExactRetryColdSourceAndOriginalReceipt() async throws {
+        let ids = try await seedInboxRemove742(), faults = HostIOFaults(), writer = host(faults)
+        _ = try await writer.start(); let request = try await inboxRemove742Request(writer, ids: ids)
+        let sql = try SQLiteBridge(url: database), baseline = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql); sql.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Task742 COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("inboxTasksRemoveTagWrite", argumentsJSON: json([json(request)])) }
+        let original = try Data(contentsOf: journal), envelope = try doneTask176Journal("inboxTasksRemoveTag")
+        XCTAssertEqual(try json(XCTUnwrap(envelope["request"])), try json(request))
+        for _ in 0..<2 { await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }; try assertJournalContentUnchanged(original) }
+        let failed = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failed), baseline); XCTAssertEqual(try doneTask176Receipts(failed), receipts); failed.close(); await writer.close()
+        let cold = host(bundleURL: try dateBundle(at: archive180Clock, suffix: "MindwtrHost.inboxTasksRemoveTagPrepare=function(){throw new Error('Task742 must not reprepare');};"))
+        let startup = try object(await cold.start()), recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["source"] as? String, "inbox"); XCTAssertEqual(recovery["method"] as? String, "inboxTasksRemoveTagCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["count": 2, "changed": true]))
+        let outcome = try object(await cold.call("inboxTasksRemoveTagRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed")
+        var wrong = request; wrong["tags"] = ["#Keep742"]
+        let wrongOutcome = try object(await cold.call("inboxTasksRemoveTagRetryOutcome", argumentsJSON: json([json(wrong)])))
+        XCTAssertEqual(wrongOutcome["kind"] as? String, "unproven")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); await cold.close()
+    }
+}

@@ -392,3 +392,6 @@ export type { NativeInboxTasksMoveRequest, NativeInboxTasksMovePrepared, NativeI
 
 export type { NativeInboxTasksAddTagRequest, NativeInboxTasksAddTagPrepared, NativeInboxTasksAddTagEnvelope,
     NativeInboxTasksAddTagResult, NativeInboxTasksAddTagPreparation } from './native-host-contract-inbox-bulk-tag';
+
+export type { NativeInboxTasksRemoveTagRequest, NativeInboxTasksRemoveTagPrepared, NativeInboxTasksRemoveTagEnvelope,
+    NativeInboxTasksRemoveTagResult, NativeInboxTasksRemoveTagPreparation } from './native-host-contract-inbox-bulk-remove-tag';

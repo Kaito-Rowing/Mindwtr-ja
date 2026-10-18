@@ -30686,3 +30686,112 @@ extension FoundationUITests {
         }
     }
 }
+
+// Task742: three fresh production-hydrated rows; public union picks only, no invented no-op option.
+extension FoundationUITests {
+    func testInboxBulkRemoveTag742NormalCancelMultiPickSearchMixedAndColdRead() throws { try task742InboxRemove("NORMAL") }
+    func testInboxBulkRemoveTag742LargestCancelMultiPickSearchMixedAndColdRead() throws { try task742InboxRemove("LARGEST", largest: true) }
+
+    private func task742OpenRemove(_ app: XCUIApplication) {
+        let open = task192Reveal(app, "inbox-bulk-remove-tag-open", buttons: true, scrollID: "inbox-bulk-actions-scroll", horizontal: true, scans: 16)
+        task740InboxStatusReady(open); open.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["inbox-bulk-remove-tag-dialog"].waitForExistence(timeout: 15))
+        boardEnabled(app.textFields["inbox-bulk-remove-tag-input"])
+    }
+    private func task742Option(_ app: XCUIApplication, _ value: String) -> XCUIElement {
+        let option = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "inbox-bulk-remove-tag-option-", value)).firstMatch
+        task740InboxStatusReady(option)
+        XCTAssertGreaterThanOrEqual(option.frame.height, 44 - 0.01); XCTAssertGreaterThanOrEqual(option.frame.width, 44 - 0.01)
+        return option
+    }
+    private func task742PickerQuery(_ app: XCUIApplication, _ query: String) {
+        let input = app.textFields["inbox-bulk-remove-tag-input"]
+        if !input.isHittable { revealPagedElement(app, input, in: app.scrollViews["inbox-bulk-remove-tag-scroll"]) }
+        boardEnabled(input); XCTAssertTrue(input.isHittable); input.tap()
+        let previous = input.value as? String ?? ""
+        let actual = previous == input.placeholderValue ? "" : previous
+        if actual != query {
+            if !actual.isEmpty {
+                // These fixture queries are short alpha/beta/gamma tokens. Tapping
+                // the edit menu makes XCTest treat this app Alert as an interruption
+                // and cancel it; type deletes in the field and require a full clear.
+                input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: actual.count))
+                let cleared = NSPredicate { _, _ in
+                    let value = input.value as? String ?? ""
+                    return value.isEmpty || value == input.placeholderValue
+                }
+                guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: cleared, object: nil)], timeout: 5) == .completed else {
+                    XCTFail("Task742 picker query was not completely cleared"); return
+                }
+            }
+            input.typeText(query)
+        }
+        let exact = NSPredicate { _, _ in (input.value as? String ?? "").utf8.elementsEqual(query.utf8) }
+        guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: exact, object: nil)], timeout: 5) == .completed else {
+            XCTFail("Task742 picker query did not accept the exact requested query"); return
+        }
+        input.typeText("\n")
+    }
+
+
+    private func task742InboxRemove(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_INBOX_REMOVE_TAG_UI_" + role + "_LIBRARY"],
+              let uuid = UUID(uuidString: library), uuid.uuidString.lowercased() == library else {
+            throw XCTSkip("An externally staged fresh canonical Task742 Inbox Remove tag library is required")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US", "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); defer { app.terminate() }
+        task736OpenInbox(app); task737ChooseGroup(app, "none")
+        task738OpenFilters(app); task740SetSearch(app, "Task742 remove batch")
+        boardTap(app, "inbox-filters-close"); boardEnabled(app.buttons["inbox-filters-open"])
+        let first = task192Reveal(app, "task-title-task742-remove-01", buttons: true, scrollID: "inbox-scroll", scans: 120)
+        task740InboxStatusReady(first); first.press(forDuration: 0.8); task739Count(app, 1)
+        let second = task192Reveal(app, "inbox-select-none-task742-remove-02", buttons: true, scrollID: "inbox-scroll", scans: 120)
+        task740InboxStatusReady(second); second.tap(); task739Count(app, 2)
+        task742OpenRemove(app); XCTAssertFalse(app.buttons["inbox-bulk-remove-tag-save"].isEnabled)
+        task742PickerQuery(app, "alpha"); let cancelled = task742Option(app, "#alpha"); cancelled.tap()
+        XCTAssertTrue(cancelled.isSelected); task742PickerQuery(app, "beta")
+        boardTap(app, "inbox-bulk-remove-tag-cancel"); task739Count(app, 2)
+        task742OpenRemove(app); XCTAssertFalse(app.buttons["inbox-bulk-remove-tag-save"].isEnabled)
+        let query = app.textFields["inbox-bulk-remove-tag-input"]
+        XCTAssertTrue((query.value as? String ?? "").isEmpty || query.value as? String == query.placeholderValue)
+        task742PickerQuery(app, "alpha"); let alpha = task742Option(app, "#alpha"); XCTAssertFalse(alpha.isSelected); alpha.tap()
+        task742PickerQuery(app, "beta"); let beta = task742Option(app, "#beta"); XCTAssertFalse(beta.isSelected); beta.tap()
+        task742PickerQuery(app, "alpha"); XCTAssertTrue(task742Option(app, "#alpha").isSelected)
+        task742PickerQuery(app, "gamma"); XCTAssertFalse(task742Option(app, "#gamma").isSelected)
+        boardEnabled(app.buttons["inbox-bulk-remove-tag-save"]); boardTap(app, "inbox-bulk-remove-tag-save")
+        XCTAssertTrue(app.staticTexts["inbox-bulk-count"].waitForNonExistence(timeout: 30))
+        let notice = app.staticTexts["task-inboxBulkRemoveTag-notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15)); XCTAssertEqual(notice.label, "Done: 1 task")
+        XCTAssertFalse(app.buttons["task-inboxBulkRemoveTag-undo"].exists); XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        app.terminate(); app.launch(); task736OpenInbox(app)
+        XCTAssertFalse(app.staticTexts["inbox-bulk-count"].exists); XCTAssertFalse(app.textFields["inbox-bulk-remove-tag-input"].exists)
+        for index in 1...3 {
+            let id = String(format: "task742-remove-%02d", index)
+            boardTap(app, "search-open"); let search = app.textFields["search-input"]; boardEnabled(search)
+            search.tap(); let prior = search.value as? String ?? ""
+            search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: prior.count) + "id:" + id + "\n")
+            let result = app.buttons["search-task-" + id]; task740InboxStatusReady(result); result.tap()
+            boardTap(app, "task-mode-edit"); let tags = app.textFields["task-editor-tags"]
+            let header = app.buttons["task-editor-section-organization"]
+            boardEnabled(header)
+            revealPagedElement(app, header, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
+            if header.value as? String == "Expand" {
+                header.tap()
+                expectation(for: NSPredicate(format: "value == %@", "Collapse"), evaluatedWith: header)
+                waitForExpectations(timeout: 10)
+            }
+            XCTAssertEqual(header.value as? String, "Collapse")
+            boardEnabled(tags)
+            revealPagedElement(app, tags, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
+            let displayed = tags.value as? String ?? "", rawTags = displayed == tags.placeholderValue ? "" : displayed
+            let values = Set(rawTags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
+            XCTAssertEqual(values, index == 1 ? Set<String>() : Set([index == 2 ? "#gamma" : "#alpha"]))
+            boardTap(app, "task-view-close"); XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+            boardTap(app, "search-close"); boardEnabled(app.buttons["inbox-filters-open"])
+        }
+    }
+}
