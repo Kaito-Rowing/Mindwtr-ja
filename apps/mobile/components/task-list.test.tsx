@@ -1243,12 +1243,29 @@ describe('TaskList', () => {
     expect(row.props.rowContext).toEqual(expect.objectContaining({
       focusTaskLimit: 3,
       showTaskAge: false,
+      showStatusBadge: true,
       timeEstimatesEnabled: true,
     }));
 
     act(() => {
       tree.unmount();
     });
+  });
+
+  it('refreshes shared row status visibility when the editor layout changes (#1405)', async () => {
+    const task = makeTask('status-layout', 'Task');
+    const renderList = () => <TaskList showHeader={false} statusFilter="next" taskSource={[task]} title="Next" />;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(renderList()); });
+    const showStatusBadge = () => tree.root.findByType('SwipeableTaskItem' as unknown as React.ElementType).props.rowContext.showStatusBadge;
+    expect(showStatusBadge()).toBe(true);
+    storeState.settings = { ...storeState.settings, gtd: { taskEditor: { hidden: ['status'] } } };
+    await act(async () => { tree.update(renderList()); });
+    expect(showStatusBadge()).toBe(false);
+    storeState.settings = { ...storeState.settings, gtd: { taskEditor: { hidden: [] } } };
+    await act(async () => { tree.update(renderList()); });
+    expect(showStatusBadge()).toBe(true);
+    act(() => { tree.unmount(); });
   });
 
   it('reads focusedCount from the memoized store selector, not a fresh scan of the rendered task list (#766)', async () => {
