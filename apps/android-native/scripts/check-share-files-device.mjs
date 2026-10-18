@@ -110,7 +110,9 @@ const share = async ({ action = 'SEND', type = '*/*', uris, raw = [], subject, t
     const fileUri = uris.length === 0 && raw.length === 1 && raw[0].startsWith('file://') ? raw[0] : null;
     sh(fileUri
         ? `am start -W -a android.intent.action.${action} -t '${type}' --eu android.intent.extra.STREAM '${fileUri}' -n ${PKG}/${PKG}.MainActivity`
-        : `am start -W -n ${SENDER} ${extras.join(' ')}`);
+        // Each sender start opens its own task: after the cold start (g) the sender is the app task's root, and a plain start of the
+        // same intent only brings that task to the front, so the sender never runs and no share is sent.
+        : `am start -W --activity-multiple-task -n ${SENDER} ${extras.join(' ')}`);
     const deadline = Date.now() + timeoutMs;
     while (prepared() === before) {
         if (Date.now() > deadline) fail(`core never prepared the share for ${description}`);
