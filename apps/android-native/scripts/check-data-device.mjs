@@ -941,11 +941,13 @@ const runSequence = async (shape, mib, { imports }) => {
  * TickTick's and Mindwtr CSV's largest files (one ZIP entry of about 80k and 100k rows) on a fresh library at step 0's raised
  * limit: each imports every row (QuickJS refused the one push that took them all, so step 0 read "No importable records"), the
  * toast's recovery snapshot is the newest on disk and in Sync › Recovery snapshots, and its Undo brings the library back.
+ * Each import starts on its own fresh install: an Undo leaves the imported rows as tombstones, so on one library the second
+ * import's snapshot held the first's 79k (44 MiB) and its Undo passed the 15 min commit budget (batch2: BudgetTooLarge).
  */
 const largeImports = async () => {
-    await measureFreshInstall();
     const live = (label) => sqlite(pullDb(label), 'SELECT count(*) AS n FROM tasks WHERE deletedAt IS NULL')[0].n;
     for (const item of importFixtures().filter(({ key }) => key === 'ticktick' || key === 'mindwtr-csv')) {
+        await measureFreshInstall();
         const before = live(`li-${item.key}-before`);
         await importFile(item.key, item.file);
         const toast = await waitFor(`the ${item.key} import's toast`, (current) => hasText(current, en['settings.backupMobile.importComplete'])
