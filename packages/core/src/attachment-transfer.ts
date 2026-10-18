@@ -823,6 +823,8 @@ export async function runAttachmentTransferLifecycle(
             }
             if (adopted) {
                 itemMutated = true;
+                // Adopted is installed: clear the mark exactly as the download branch below does.
+                attachment.staleContentHash = undefined;
                 const freshPath = attachment.uri ? resolveLocalPath(attachment.uri) : '';
                 if (freshPath) await refreshContentStat(attachment, freshPath, true);
             }

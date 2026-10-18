@@ -205,6 +205,31 @@ describe('the mark across merges (stale-review2)', () => {
         expect(prepared.pendingContentUpload).toBeUndefined();
     });
 
+    it('a download adopted from its target clears the mark like an install, even when its stat is not recorded (D9b W7 + N2)', async () => {
+        const winner = base({ fileHash: NEW, contentRev: 2, staleContentHash: OLD, uri: '' });
+        const disk = { hash: NEW, stat: { mtimeMs: 1000, size: 10 } };
+        const onDownload = vi.fn(async () => true);
+        const adopted = (await runAttachmentTransferLifecycle({
+            attachmentsById: new Map([[winner.id, winner]]),
+            getLocalFilePresence: async () => 'present',
+            onUpload: vi.fn(async () => true),
+            onUploadError: vi.fn(),
+            onDownload,
+            onDownloadError: vi.fn(),
+            adoptExistingDownload: async (attachment) => { attachment.uri = '/managed/att-1.txt'; return true; },
+            contentChangePhase: 'post-merge',
+            getLocalFileStat: async () => null,
+            computeLocalFileHash: async () => disk.hash,
+        })).patches.get('att-1') ?? winner;
+        expect(onDownload).not.toHaveBeenCalled();
+        expect(adopted.contentMtimeMs).toBeUndefined();
+        expect(adopted.staleContentHash).toBeUndefined();
+        const next = merge(adopted, remote(base({ fileHash: Y, contentRev: 3 }), T3));
+        expect(next.staleContentHash).toBe(NEW);
+        const prepared = (await pass(next, 'prepare', disk)).patches.get('att-1') ?? next;
+        expect(prepared.pendingContentUpload).toBeUndefined();
+    });
+
     it('a merge with no recorded stat still marks the local identity, which only matches exactly those bytes (N3)', async () => {
         const local = base({ fileHash: OLD, contentRev: 1 });
         const merged = merge(local, remote(base({ fileHash: NEW, contentRev: 2 })));
