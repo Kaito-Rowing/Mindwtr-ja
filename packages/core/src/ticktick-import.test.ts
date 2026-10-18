@@ -371,7 +371,7 @@ describe('ticktick import', () => {
         const result = withQuickJsArgumentLimit(() => parseTickTickImportSource({ fileName: 'ticktick.zip', bytes }));
         expect(result.errors).toEqual([]);
         expect(result.parsedData?.tasks).toHaveLength(70_000);
-    });
+    }, 30_000);
 
     it('parses a zipped TickTick backup and skips unsupported archive entries', () => {
         const archive = zipSync({

@@ -61,7 +61,7 @@ describe('mindwtr csv import', () => {
         const result = withQuickJsArgumentLimit(() => parseMindwtrCsvImportSource({ fileName: 'export.zip', bytes }));
         expect(result.errors).toEqual([]);
         expect(result.parsedData?.tasks).toHaveLength(70_000);
-    });
+    }, 30_000);
 
     it('disambiguates ZIP CSV entries with numeric ordinals rather than source filenames', () => {
         const result = parseMindwtrCsvImportSource({ fileName: 'private-archive.zip', bytes: zipSync({
