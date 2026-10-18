@@ -129,6 +129,7 @@ data class WidgetPayload(
     val audioSaved: String,
     val audioError: String,
     val audioPermissionDenied: String,
+    val descriptionPlaceholder: String = "Description (optional)",
   )
 
   /** True when the launcher's own day/night resources should color the widget. */
@@ -415,6 +416,7 @@ data class WidgetPayload(
       val quickCapture = QuickCaptureLabels(
         title = labels.stringOr("title", defaults.quickCapture.title),
         placeholder = labels.stringOr("placeholder", defaults.quickCapture.placeholder),
+        descriptionPlaceholder = labels.stringOr("descriptionPlaceholder", defaults.quickCapture.descriptionPlaceholder),
         save = labels.stringOr("save", defaults.quickCapture.save),
         cancel = labels.stringOr("cancel", defaults.quickCapture.cancel),
         added = labels.stringOr("added", defaults.quickCapture.added),

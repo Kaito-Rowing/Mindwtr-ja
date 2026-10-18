@@ -433,8 +433,8 @@ export function QuickCaptureSheet({
   // object, so they cannot disagree. A background sync landing mid-draft leaves
   // it one capture stale — accepted, to keep the scan off the keystroke path.
   const [quickAddParseOptions, setQuickAddParseOptions] = useState(readQuickAddParseOptions);
-  // Every chosen option (core's QuickCaptureOptions), including the More
-  // panel's note (#1118). Changes go through editOptions below.
+  // Every chosen option (core's QuickCaptureOptions), including the description.
+  // Changes go through editOptions below.
   const [options, setOptions] = useState<QuickCaptureOptions>(() => createQuickCaptureOptions({ projects: [], defaultAreaId: null }));
   const {
     note: noteValue,

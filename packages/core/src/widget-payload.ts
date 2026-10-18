@@ -179,6 +179,7 @@ export interface TasksWidgetPayload {
 // Labels for the native Android quick-capture dialog (#1169). Localized here
 // so the Kotlin side (modules/android-widget) carries no string tables.
 export interface AndroidQuickCaptureLabels {
+    descriptionPlaceholder: string;
     title: string;
     placeholder: string;
     save: string;
@@ -216,6 +217,7 @@ export function buildAndroidQuickCaptureLabels(language: Language, audioEnabled 
     void loadTranslations(language);
     const t = getTranslator(language);
     return {
+        descriptionPlaceholder: t('taskEdit.descriptionPlaceholder'),
         title: resolveI18nText(t, 'widget.capture', { fallback: 'Quick capture' }),
         placeholder: resolveI18nText(t, 'inbox.addPlaceholder', { fallback: 'Add task to inbox...' }),
         save: resolveI18nText(t, 'common.save', { fallback: 'Save' }),

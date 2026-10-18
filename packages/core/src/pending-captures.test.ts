@@ -386,3 +386,45 @@ describe('drainPendingCaptureQueue', () => {
         expect(deps.log.error).toHaveBeenCalledWith(expect.any(Error), { scope: 'shortcuts', extra: { message: 'Failed to read pending captures' } });
     });
 });
+
+
+describe('Android capture description persistence', () => {
+    it('emits a content-free receipt after a new noted text capture is durable', async () => {
+        await openStore([]);
+        const queue = fakeQueue({ [`${CAPTURE_ID}.json`]: {
+            id: CAPTURE_ID, title: 'Private title', note: 'Private note', source: 'android-quick-capture',
+        } });
+        const deps = storeDeps(queue.port);
+        await drainPendingCaptureQueue(deps);
+        expect(saved().tasks[0].description).toBe('Private note');
+        expect(queue.stored.size).toBe(0);
+        expect(deps.log.info).toHaveBeenCalledWith('Quick capture dialog item ingested', {
+            scope: 'capture', force: true,
+            extra: { releaseCheck: 'v1.3.7/quick-capture-description', kind: 'text', outcome: 'created' },
+        });
+    });
+
+    it.each(['text', 'audio'] as const)('persists literal notes once across %s queue cleanup retry', async (kind) => {
+        await openStore([]);
+        const note = '- Tell @Todd\n- /due:tomorrow is supporting text';
+        const queue = fakeQueue({ [`${AUDIO_ID}.json`]: {
+            kind, id: AUDIO_ID, title: 'Tell Todd', note, source: 'android-quick-capture',
+            ...(kind === 'audio' ? { audioPath: `file:///data/files/quick-capture-audio/${AUDIO_ID}.wav` } : {}),
+        } });
+        queue.failDelete.add(`${AUDIO_ID}.json`);
+        const deps = storeDeps(queue.port, {
+            audio: { resolvePath: (capture) => capture.audioPath, transcribe: async () => 'about the event', delete: async () => undefined },
+        });
+        await drainPendingCaptureQueue(deps);
+        expect(saved().tasks).toHaveLength(1);
+        expect(saved().tasks[0]).toMatchObject({ description: note, contexts: [] });
+        expect(saved().tasks[0].dueDate).toBeUndefined();
+        expect(queue.stored.size).toBe(1);
+        expect(JSON.stringify(vi.mocked(deps.log.info).mock.calls)).not.toContain('v1.3.7/quick-capture-description');
+        await restartStore();
+        await drainPendingCaptureQueue(storeDeps(queue.port, { audio: deps.audio }));
+        expect(saved().tasks).toHaveLength(1);
+        expect(saved().tasks[0].description).toBe(note);
+        expect(queue.stored.size).toBe(0);
+    });
+});

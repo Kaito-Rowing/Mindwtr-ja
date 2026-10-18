@@ -1480,7 +1480,7 @@ describe('QuickCaptureSheet save handling', () => {
     });
   });
 
-  it('toasts a rejected capture instead of closing silently', async () => {
+  it('retains the title and multiline description after a rejected capture for retry', async () => {
     addTask.mockResolvedValue({ success: false, error: 'Archived project' });
     const onClose = vi.fn();
 
@@ -1494,8 +1494,12 @@ describe('QuickCaptureSheet save handling', () => {
 
     const body = tree.root.findAll((node) => String(node.type) === 'QuickCaptureSheetBody')[0];
     if (!body) throw new Error('QuickCaptureSheetBody not found');
+    const description = 'First line\n@home /due:tomorrow #literal';
     await act(async () => {
-      body.props.handleSave();
+      body.props.onNoteChange(description);
+    });
+    await act(async () => {
+      tree.root.findAll((node) => String(node.type) === 'QuickCaptureSheetBody')[0].props.handleSave();
       await Promise.resolve();
     });
 
@@ -1504,6 +1508,15 @@ describe('QuickCaptureSheet save handling', () => {
       message: 'Failed to add task',
     }));
     expect(onClose).not.toHaveBeenCalled();
+    const retryBody = tree.root.findAll((node) => String(node.type) === 'QuickCaptureSheetBody')[0];
+    expect(retryBody.props.value).toBe('Rejected capture');
+    expect(retryBody.props.noteValue).toBe(description);
+    addTask.mockResolvedValue({ success: true, id: 'task-retry' });
+    await act(async () => {
+      retryBody.props.handleSave();
+    });
+    expect(addTask).toHaveBeenLastCalledWith('Rejected capture', expect.objectContaining({ description }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('queues a late failed capture without overwriting a newer draft and consumes it once', async () => {
@@ -2295,7 +2308,7 @@ describe('QuickCaptureSheet save handling', () => {
     }));
     expect(onClose).not.toHaveBeenCalled();
   });
-  it('saves the More-panel note as the task description', async () => {
+  it('saves the optional quick-capture description without parsing its lines', async () => {
     addTask.mockResolvedValue({ success: true, id: 'task-1' });
 
     let tree!: ReturnType<typeof create>;
@@ -2320,7 +2333,7 @@ describe('QuickCaptureSheet save handling', () => {
     expect(getBody().props.noteValue).toBe('');
 
     await act(async () => {
-      getBody().props.onNoteChange('  Bring the old one and two photos  ');
+      getBody().props.onNoteChange('  Bring the old one and two photos\n@home /due:tomorrow #literal  ');
       await Promise.resolve();
     });
 
@@ -2330,7 +2343,7 @@ describe('QuickCaptureSheet save handling', () => {
     });
 
     expect(addTask).toHaveBeenCalledWith('Renew passport', expect.objectContaining({
-      description: 'Bring the old one and two photos',
+      description: 'Bring the old one and two photos\n@home /due:tomorrow #literal',
       status: 'inbox',
     }));
   });
