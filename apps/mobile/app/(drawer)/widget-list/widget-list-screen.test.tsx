@@ -15,7 +15,12 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock('@mindwtr/core', async (original) => ({
   ...await original<typeof import('@mindwtr/core')>(),
-  useTaskStore: (selector: (store: unknown) => unknown) => selector({ ...state.data, ...state.canonical, updateTask: state.updateTask, deleteTask: state.deleteTask, fetchData: state.fetchData }),
+  useTaskStore: (selector: (store: unknown) => unknown, equality?: (a: unknown, b: unknown) => boolean) => {
+    const selected = selector({ ...state.data, ...state.canonical, updateTask: state.updateTask, deleteTask: state.deleteTask, fetchData: state.fetchData });
+    const previous = React.useRef(selected);
+    if (!equality?.(previous.current, selected)) previous.current = selected;
+    return previous.current;
+  },
 }));
 vi.mock('expo-router', () => ({
   router: { push: vi.fn() },

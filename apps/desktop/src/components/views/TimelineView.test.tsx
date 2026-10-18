@@ -174,18 +174,27 @@ describe('TimelineView (#1111)', () => {
         }
     });
 
-    it('draws task bars thinner than the solid project bar and gridlines as real elements, not a gradient', () => {
+    it.each([
+        { day: 18, minorDays: [7], gridDays: [7, 14] },
+        { day: 19, minorDays: [6, 20], gridDays: [6, 13, 20] },
+    ])('draws task bars thinner than the solid project bar and gridlines as real elements, not a gradient (October $day)', ({ day, minorDays, gridDays }) => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(2026, 9, day, 12));
         setStore({
             projects: [{ id: 'p1', title: 'Remodel', status: 'active', startDate: iso(0), dueDate: iso(20), createdAt: iso(-60), updatedAt: iso(-60) } as Project],
             tasks: [makeTask({ id: 't1', title: 'Tiles', projectId: 'p1', startTime: iso(1), dueDate: iso(6) })],
         });
+        useTaskStore.setState({ settings: { weekStart: 'sunday' } });
         renderTimeline();
         const projectHeight = Number.parseFloat(projectBarFor('p1')?.style.height ?? '0');
         const taskHeight = Number.parseFloat(barFor('t1')?.style.height ?? '0');
         expect(projectHeight).toBeGreaterThan(taskHeight);
-        // Week zoom over a 21-day range: at least two week boundaries inside it.
-        const gridlines = document.querySelectorAll('[data-testid="timeline-gridline-minor"]');
-        expect(gridlines.length).toBeGreaterThanOrEqual(2);
+        // November 1 is both Sunday and a month start, so it uses the stronger month line.
+        const gridlines = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="timeline-gridline-minor"]'));
+        expect(gridlines.map((line) => Number.parseFloat(line.style.left))).toEqual(minorDays.map((days) => days * 12));
+        const allGridlines = Array.from(gridlines[0]?.parentElement?.children ?? []) as HTMLElement[];
+        expect(allGridlines.map((line) => Number.parseFloat(line.style.left)).sort((a, b) => a - b))
+            .toEqual(gridDays.map((days) => days * 12));
         const withGradient = Array.from(document.querySelectorAll<HTMLElement>('div'))
             .filter((element) => element.style.backgroundImage.includes('gradient'));
         expect(withGradient).toHaveLength(0);

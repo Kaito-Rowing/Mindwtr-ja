@@ -29,6 +29,8 @@ export default function WidgetListScreen() {
   const { isDark } = useTheme();
   const tc = useThemeColors();
   const dayKey = useLocalDayKey(id === 'upcoming');
+  // The projection reads the current clock internally; midnight must invalidate it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const list = useMemo(() => resolveWidgetListDestination(data, language, id), [data, id, language, dayKey]);
   const title = list?.title ?? t('search.noResults');
   const available = Boolean(list);
@@ -39,7 +41,6 @@ export default function WidgetListScreen() {
       extra: { releaseCheck: 'v1.3.3/saved-list-shortcut', available },
     });
   }, [source, id, available]);
-  const listKind = id === 'next' ? 'next' : typeof id === 'string' && id.startsWith('project:') ? 'project' : 'filter';
   const { updateTask, deleteTask, fetchData } = useTaskStore((state) => ({
     updateTask: state.updateTask,
     deleteTask: state.deleteTask,
