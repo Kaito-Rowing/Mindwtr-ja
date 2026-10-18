@@ -1078,18 +1078,25 @@ const writeSyncFileVersioned = async (
         throw new SyncEncryptionRemoteConflictError(`${name} changed before the File Sync write`);
     }
 
-    // Preserve the previous verified generation through the same best-effort backup policy
-    // as the legacy writer. The authoritative write below remains atomic even if this copy
-    // is unsupported or races; a backup failure never licenses an unconditional overwrite.
+    // Preserve the previous generation as the backup, best effort: only one this cycle can read
+    // (it parses, or it decrypts and parses) is worth keeping, and the rotation never writes into
+    // an existing file (FileSyncRemotePort.rotateBackup). A failed rotation never licenses an
+    // unconditional overwrite; the authoritative write below stays atomic either way.
     if (current.bytes && (material || !resolvedUri.startsWith('content://'))) {
         try {
+            const readable = material
+                ? parseAppData(new TextDecoder().decode(
+                    await decryptRemoteArtifactOrThrow(current.bytes, material.key, mobileSyncCryptoPrimitives),
+                ))
+                : parseAppData(new TextDecoder().decode(current.bytes));
+            void readable;
             const backupName = material ? syncEncryptedArtifactName(BACKUP_FILE_NAME) : BACKUP_FILE_NAME;
-            const backupUri = await resolveSyncArtifactSiblingUri(resolvedUri, backupName, {
-                createIfMissing: true,
+            await remote.rotateBackup(backupName, current.bytes);
+            void logInfo('File Sync backup rotated through a new file', {
+                scope: 'sync', extra: { releaseCheck: 'v1.3.7/file-sync-saf-safety', check: 'backup', outcome: 'rotated' },
             });
-            if (backupUri) await writeSyncArtifactBytes(backupUri, current.bytes);
         } catch (error) {
-            void logWarn('File Sync backup rotation failed; continuing with the atomic write', {
+            void logWarn('File Sync backup rotation skipped; continuing with the atomic write', {
                 scope: 'sync',
                 extra: { error: error instanceof Error ? error.message : String(error) },
             });

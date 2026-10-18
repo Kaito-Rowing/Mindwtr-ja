@@ -903,6 +903,121 @@ describe('a missing or broken sync file next to an earlier copy stops the sync (
   });
 });
 
+describe('backup rotation never writes into an existing file (B8)', () => {
+  const SAF_DIR = 'content://provider/tree/root/document/root';
+  const writtenUris = async () => {
+    const fileSystem = await import('./file-system');
+    return () => [
+      ...vi.mocked(fileSystem.StorageAccessFramework!.writeAsStringAsync!).mock.calls.map((call) => call[0] as string),
+      ...vi.mocked(fileSystem.writeAsStringAsync).mock.calls.map((call) => call[0] as string),
+    ];
+  };
+
+  it('rotates data.json.enc.bak through a new file and a rename over two encrypted cycles', async () => {
+    await seedEncrypted(appData('first'), material, `${SAF_DIR}/data.json.enc`);
+    await seedEncrypted(appData('older'), material, `${SAF_DIR}/data.json.enc.bak`);
+    for (const title of ['second', 'third']) {
+      const existing = new Set(fs.files.keys());
+      vi.clearAllMocks();
+      const written = await writtenUris();
+      const remote = await readSyncFileVersioned(SAF_SYNC_URI, { material });
+      await writeSyncFile(SAF_SYNC_URI, appData(title), { material, expectedFingerprint: remote.fingerprint });
+      // A file created in this call may reuse an old path (the canonical is recreated under its
+      // name after the old one moved aside); only a write into a file that existed before counts.
+      const { StorageAccessFramework } = await import('./file-system');
+      const created = new Set(await Promise.all(
+        vi.mocked(StorageAccessFramework!.createFileAsync!).mock.results.map((result) => result.value as Promise<string>),
+      ));
+      expect(written().filter((uri) => existing.has(uri) && !created.has(uri))).toEqual([]);
+    }
+    const { decryptSyncArtifact } = await import('@mindwtr/core');
+    const backup = await decryptSyncArtifact(fs.files.get(`${SAF_DIR}/data.json.enc.bak`)!, material.key, mobileSyncCryptoPrimitives);
+    expect(JSON.parse(new TextDecoder().decode(backup))).toMatchObject({ tasks: [{ title: 'second' }] });
+    expect([...fs.files.keys()].filter((uri) => uri.includes('.mindwtr-et-'))).toEqual([]);
+  });
+
+  it('never replaces a backup a peer publishes while the old one is moved aside', async () => {
+    const BACKUP = `${SAF_DIR}/data.json.enc.bak`;
+    await seedEncrypted(appData('first'), material, `${SAF_DIR}/data.json.enc`);
+    await seedEncrypted(appData('older'), material, BACKUP);
+    const peerBackup = await encryptSyncArtifact(
+      new TextEncoder().encode(JSON.stringify(appData('peer-backup'))), material, mobileSyncCryptoPrimitives,
+    );
+    const cas = await import('./sync-file-transition-cas');
+    const previous = vi.mocked(cas.renameSafTransitionDocument).getMockImplementation()!;
+    // A provider whose rename replaces an existing target; a peer publishes its backup the
+    // moment this device moved the old one aside.
+    vi.mocked(cas.renameSafTransitionDocument).mockImplementation(async (uri: string, name: string) => {
+      const target = `${dirOf(uri)}/${name}`;
+      const bytes = fs.files.get(uri);
+      if (!bytes) throw new Error(`ENOENT ${uri}`);
+      fs.files.set(target, bytes);
+      fs.files.delete(uri);
+      if (uri === BACKUP && name.startsWith('.mindwtr-et-q-')) fs.files.set(BACKUP, peerBackup);
+      return { uri: target, name };
+    });
+    onTestFinished(() => { vi.mocked(cas.renameSafTransitionDocument).mockImplementation(previous); });
+
+    const remote = await readSyncFileVersioned(SAF_SYNC_URI, { material });
+    await writeSyncFile(SAF_SYNC_URI, appData('second'), { material, expectedFingerprint: remote.fingerprint });
+
+    expect(fs.files.get(BACKUP)).toEqual(peerBackup);
+  });
+
+  it('skips the rotation when the provider decorates the new backup name, so no rename can replace a peer backup', async () => {
+    const BACKUP = `${SAF_DIR}/data.json.enc.bak`;
+    await seedEncrypted(appData('first'), material, `${SAF_DIR}/data.json.enc`);
+    const older = await seedEncrypted(appData('older'), material, BACKUP);
+    const peerBackup = await encryptSyncArtifact(
+      new TextEncoder().encode(JSON.stringify(appData('peer-backup'))), material, mobileSyncCryptoPrimitives,
+    );
+    const fileSystem = await import('./file-system');
+    const create = vi.mocked(fileSystem.StorageAccessFramework!.createFileAsync!);
+    const previousCreate = create.getMockImplementation()!;
+    // This provider appends ".bin" to a new backup's name (#1113's decoration).
+    create.mockImplementation(async (dir: string, name: string, mime: string) => (
+      name === 'data.json.enc.bak' ? previousCreate(dir, `${name}.bin`, mime) : previousCreate(dir, name, mime)
+    ));
+    const cas = await import('./sync-file-transition-cas');
+    const rename = vi.mocked(cas.renameSafTransitionDocument);
+    const previousRename = rename.getMockImplementation()!;
+    // A replacing rename, and a peer that publishes its backup just before a rename onto that name.
+    rename.mockImplementation(async (uri: string, name: string) => {
+      const target = `${dirOf(uri)}/${name}`;
+      if (target === BACKUP) fs.files.set(BACKUP, peerBackup);
+      const bytes = fs.files.get(uri);
+      if (!bytes) throw new Error(`ENOENT ${uri}`);
+      fs.files.set(target, bytes);
+      fs.files.delete(uri);
+      return { uri: target, name };
+    });
+    onTestFinished(() => {
+      create.mockImplementation(previousCreate);
+      rename.mockImplementation(previousRename);
+    });
+
+    const remote = await readSyncFileVersioned(SAF_SYNC_URI, { material });
+    await writeSyncFile(SAF_SYNC_URI, appData('second'), { material, expectedFingerprint: remote.fingerprint });
+
+    expect(rename.mock.calls.filter(([, name]) => name === 'data.json.enc.bak')).toEqual([]);
+    expect(fs.files.has(`${BACKUP}.bin`)).toBe(false);
+    const kept = [...fs.files.entries()].filter(([, bytes]) => Buffer.from(bytes).equals(Buffer.from(older)));
+    expect(kept).toHaveLength(1);
+    expect(fs.files.has(BACKUP) ? fs.files.get(BACKUP) : peerBackup).toEqual(peerBackup);
+  });
+
+  it('does not rotate a sync file that does not parse into the backup', async () => {
+    fs.files.set(SYNC_URI, new TextEncoder().encode('not a document'));
+    const remote = await readSyncFileVersioned(SYNC_URI);
+    expect(remote.needsRepair).toBe(true);
+
+    await writeSyncFile(SYNC_URI, appData('mine'), { expectedFingerprint: remote.fingerprint });
+
+    expect(fs.files.has(`${SYNC_DIR}/data.json.bak`)).toBe(false);
+    expect(textOf(SYNC_URI)).toContain('mine');
+  });
+});
+
 describe('non-truncating provider padding (decision #8)', () => {
   it('pads raw bytes with 0x20 before Base64, not after', () => {
     const padded = padBytesForNonTruncatingOverwrite(new Uint8Array([1, 2, 3]), 6);

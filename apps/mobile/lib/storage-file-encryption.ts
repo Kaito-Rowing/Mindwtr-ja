@@ -228,7 +228,9 @@ type DirectoryHandle = {
     refresh(): Promise<void>;
     resolve(name: string, options: { createIfMissing: boolean; mimeType?: string }): Promise<string | null>;
     listExact(name: string): Promise<string[]>;
-    createNew(name: string, mimeType?: string): Promise<string>;
+    /** `repairDecoratedName: false` refuses a provider-decorated create instead of renaming it
+     *  onto `name` (a rename that may replace a document a peer just published there). */
+    createNew(name: string, mimeType?: string, options?: { repairDecoratedName?: boolean }): Promise<string>;
     rename(uri: string, name: string): Promise<string>;
 };
 
@@ -289,18 +291,34 @@ const openSafDirectory = async (dirUri: string): Promise<DirectoryHandle> => {
             return created;
         },
         listExact,
-        createNew: async (name, mimeType = DEFAULT_ARTIFACT_MIME) => {
+        createNew: async (name, mimeType = DEFAULT_ARTIFACT_MIME, options = {}) => {
             if (!StorageAccessFramework?.createFileAsync) {
                 throw new Error('This Android build cannot create SAF transition files.');
             }
             let created = await StorageAccessFramework.createFileAsync(dirUri, name, mimeType);
+            if (created && getLeafName(created) !== name && options.repairDecoratedName === false) {
+                // The caller cannot publish by rename: delete only what this call created.
+                const createdName = getLeafName(created);
+                await deleteSyncArtifact(created).catch(() => undefined);
+                void logWarn('SAF provider renamed a new document on create; not published', {
+                    scope: 'sync',
+                    extra: { requested: name, created: createdName },
+                });
+                throw new SyncEncryptionRemoteConflictError(`${name} could not be created under its own name`);
+            }
             if (created && getLeafName(created) !== name) {
                 // Some providers decorate the display name on create (an extension derived
                 // from the MIME type, most often ".bin" for application/octet-stream), which
                 // used to read as "another writer" and fail every File Sync write (#1113).
                 // Repair with the exact-rename CAS; the listExact guard below still catches
-                // a real racing peer.
+                // a real racing peer. A provider that dedupes names on create may have done so
+                // because a peer holds the name: never rename onto a name already taken (some
+                // providers' rename replaces its target).
                 const createdName = getLeafName(created);
+                if ((await listExact(name)).length > 0) {
+                    await deleteSyncArtifact(created).catch(() => undefined);
+                    throw new SyncEncryptionRemoteConflictError(`${name} was created by another writer`);
+                }
                 try {
                     const repaired = await renameSafTransitionDocument(created, name);
                     void logWarn('SAF provider renamed a transition scratch on create; repaired', {
@@ -596,9 +614,9 @@ export type FileSyncTransitionTestHooks = {
     onInventoryPoint?: (point: FileSyncTransitionInventoryPoint) => void | Promise<void>;
 };
 
-const transitionScratchName = (kind: 'stage' | 'quarantine'): string => {
+const transitionScratchName = (kind: 'stage' | 'quarantine' | 'backup'): string => {
     transitionScratchCounter += 1;
-    const kindCode = kind === 'stage' ? 's' : 'q';
+    const kindCode = kind === 'stage' ? 's' : kind === 'quarantine' ? 'q' : 'b';
     const nonce = Math.random().toString(36).slice(2, 10);
     return `${TRANSITION_SCRATCH_MARKER}${kindCode}-${Date.now().toString(36)}-${transitionScratchCounter.toString(36)}-${nonce}`;
 };
@@ -619,10 +637,21 @@ type ArtifactLocation = { directory: DirectoryHandle; leaf: string; mimeType: st
  * peer therefore causes a conflict without being overwritten or deleted; staged and
  * quarantined generations remain available for retry/recovery.
  */
+/** The transition port, plus the ordinary write's backup rotation over the same folder handle. */
+export type FileSyncRemotePort = SyncEncryptionRemotePort & {
+    /**
+     * Replaces backup document `name` with `bytes` without ever writing into an existing file:
+     * the old backup is renamed aside, a new document is created exclusively under the backup's
+     * name and written, its identity and bytes are verified, and only then is the old backup
+     * deleted. A failure leaves the old backup in place (by name or as the renamed copy) and throws.
+     */
+    rotateBackup(name: string, bytes: Uint8Array): Promise<void>;
+};
+
 export const createFileSyncEncryptionRemotePort = async (
     syncFileUri: string,
     testHooks: FileSyncTransitionTestHooks = {},
-): Promise<SyncEncryptionRemotePort | null> => {
+): Promise<FileSyncRemotePort | null> => {
     const target = await resolveFileSyncEncryptionTarget(syncFileUri);
     if (!target) return null;
 
@@ -809,7 +838,39 @@ export const createFileSyncEncryptionRemotePort = async (
         }
     };
 
+    const rotateBackup = async (name: string, bytes: Uint8Array): Promise<void> => {
+        const mimeType = name.endsWith('.json') ? 'application/json' : DEFAULT_ARTIFACT_MIME;
+        const existing = await documents.listExact(name);
+        if (existing.length > 1) throw new SyncEncryptionRemoteConflictError(`${name} is ambiguous`);
+        let displacedUri: string | null = null;
+        let displacedName: string | null = null;
+        if (existing.length === 1) {
+            displacedName = transitionScratchName('quarantine');
+            displacedUri = await documents.rename(existing[0], displacedName);
+        }
+        // Exclusive install: a new document under the backup's name, never a rename onto it (a
+        // provider's rename may replace a backup a peer published meanwhile). createNew fails
+        // closed when that name is taken; the old backup then stays in its quarantine.
+        const installedUri = await documents.createNew(name, mimeType, { repairDecoratedName: false });
+        await writeSyncArtifactBytes(installedUri, bytes);
+        const installed = await documents.listExact(name);
+        const written = await readSyncArtifactBytes(installedUri);
+        if (
+            installed.length !== 1
+            || installed[0] !== installedUri
+            || !written
+            || await versionFor(written) !== await versionFor(bytes)
+        ) {
+            throw new SyncEncryptionRemoteConflictError(`${name} could not be verified after backup rotation`);
+        }
+        if (displacedUri && displacedName) {
+            await deleteSyncArtifact(displacedUri);
+            documents.entries.delete(displacedName);
+        }
+    };
+
     return {
+        rotateBackup,
         list: async (): Promise<SyncEncryptionRemoteEntry[]> => (await captureInventory()).entries,
         captureInventory,
         read,
