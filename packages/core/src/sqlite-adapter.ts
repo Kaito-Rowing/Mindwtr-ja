@@ -16,6 +16,7 @@ import { normalizeRelativeStartOffset } from './task-relative-start';
 import { logInfo, logWarn } from './logger';
 import { keepSavedFilters } from './saved-filters';
 import { sleep } from './async-utils';
+import { mapPass, runToEnd, type CooperativePass } from './cooperative';
 import { hasRawReadRow, rawReadRow, rememberRawReadRow, rememberRawReadSettings, rawReadSettingsJson, savedFilterSqliteRow } from './sqlite-raw-snapshot';
 export { rawReadTaskSnapshot } from './sqlite-raw-snapshot';
 import { TASK_SQLITE_COLUMNS, TASK_SQLITE_MIGRATION_COLUMNS, taskFromSqliteRow, taskToSqliteRow } from './task-sync-schema';
@@ -261,6 +262,21 @@ const getTaskRowEntry = (task: Task): TaskRowEntry => {
     return entry;
 };
 
+/** A save's entity rows and their fingerprints (each row as JSON), per table, in saveData's write order. */
+type SqliteSaveRows = Record<'areas' | 'projects' | 'people' | 'sections' | 'tasks', { rows: unknown[][]; fingerprints: string[] }>;
+
+function* saveRowsPass(data: AppData, nowIso: string): CooperativePass<SqliteSaveRows> {
+    const split = (entries: TaskRowEntry[]) => ({ rows: entries.map((entry) => entry.row), fingerprints: entries.map((entry) => entry.fingerprint) });
+    const people = Array.isArray(data.people) ? data.people : [];
+    return {
+        areas: split(yield* mapPass(data.areas, (area) => rawReadRow(area, areaToSqliteRow(area, nowIso)))),
+        projects: split(yield* mapPass(data.projects, (project) => rawReadRow(project, projectToSqliteRow(project)))),
+        people: split(yield* mapPass(people, (person) => rawReadRow(person, personToSqliteRow(person, nowIso)))),
+        sections: split(yield* mapPass(data.sections, (section) => rawReadRow(section, sectionToSqliteRow(section)))),
+        tasks: split(yield* mapPass(data.tasks, getTaskRowEntry)),
+    };
+}
+
 const isFts5SyntaxError = (error: unknown): boolean => (
     error instanceof Error && /fts5: syntax error/i.test(error.message)
 );
@@ -469,6 +485,8 @@ export class SqliteAdapter {
     // voids a read token without voiding the cold-start fingerprint shortcut, which only entity writes can stale.
     private generation = 0;
     private readonly readTokens = new WeakMap<object, SqliteReadToken>();
+    /** Rows a sliced sync cycle built before its save (prepareSaveRows), with the write generation they were built at. */
+    private readonly preparedSaveRows = new WeakMap<AppData, { generation: number; rows: SqliteSaveRows }>();
     // One owner at a time for a guarded adapter's SQL (design.md W2): a public method holds the lock through every statement
     // it runs, so no other caller's SQL lands inside its transaction or between its reads. A public method takes it and runs
     // its protected …Now body; a …Now body assumes the lock and calls only …Now bodies, never a public method (no re-entry).
@@ -557,6 +575,17 @@ export class SqliteAdapter {
     /** The token of a guarded read's snapshot, or of a token save's document (its successor). */
     readTokenOf(data: AppData): SqliteReadToken | undefined {
         return this.readTokens.get(data);
+    }
+
+    /**
+     * Design D9b §2: a sliced sync cycle builds [data]'s save rows and fingerprints here, in slices, before it takes the
+     * write gate. It runs no SQL and takes no lock. saveData uses them for this exact document while no write transaction
+     * has run since; otherwise it builds them in its transaction (correct, slower, logged).
+     */
+    *prepareSaveRows(data: AppData): CooperativePass<void> {
+        const generation = this.generation;
+        const rows = yield* saveRowsPass(data, new Date().toISOString());
+        this.preparedSaveRows.set(data, { generation, rows });
     }
 
     /**
@@ -1586,6 +1615,17 @@ export class SqliteAdapter {
             }
             claimBaselines();
         }
+        // Rows prepared for this document count only if no write ran since: a write voids them as it voids a token.
+        const prepared = this.preparedSaveRows.get(data);
+        this.preparedSaveRows.delete(data);
+        const preparedRows = prepared?.generation === this.generation ? prepared.rows : undefined;
+        if (options?.onStale && !preparedRows) {
+            logInfo('SQLite sync save built its rows in the transaction', {
+                scope: 'sqlite',
+                category: 'storage',
+                context: { reason: prepared ? 'write-since' : 'unprepared', tasks: data.tasks?.length ?? 0 },
+            });
+        }
         this.noteWrite();
         stats.incremental = previousSave !== null;
         let saveStep = 'begin';
@@ -1777,14 +1817,16 @@ export class SqliteAdapter {
                 return keptLive;
             };
 
+            saveStep = 'rows';
+            const saveRows = preparedRows ?? runToEnd(saveRowsPass(data, nowIso));
             saveStep = 'areas';
             await upsertBatch(
                 'areas',
                 [...AREA_UPSERT_COLUMNS],
-                data.areas.map((area) => rawReadRow(area, areaToSqliteRow(area, nowIso)).row),
+                saveRows.areas.rows,
                 AREA_UPSERT_UPDATE_CLAUSE,
                 200,
-                undefined,
+                saveRows.areas.fingerprints,
                 {
                     rev: AREA_UPSERT_COLUMNS.indexOf('rev'),
                     updatedAt: AREA_UPSERT_COLUMNS.indexOf('updatedAt'),
@@ -1795,10 +1837,10 @@ export class SqliteAdapter {
             await upsertBatch(
                 'projects',
                 [...PROJECT_UPSERT_COLUMNS],
-                data.projects.map((project) => rawReadRow(project, projectToSqliteRow(project)).row),
+                saveRows.projects.rows,
                 PROJECT_UPSERT_UPDATE_CLAUSE,
                 200,
-                undefined,
+                saveRows.projects.fingerprints,
                 {
                     rev: PROJECT_UPSERT_COLUMNS.indexOf('rev'),
                     updatedAt: PROJECT_UPSERT_COLUMNS.indexOf('updatedAt'),
@@ -1810,10 +1852,10 @@ export class SqliteAdapter {
             await upsertBatch(
                 'people',
                 [...PERSON_UPSERT_COLUMNS],
-                people.map((person) => rawReadRow(person, personToSqliteRow(person, nowIso)).row),
+                saveRows.people.rows,
                 PERSON_UPSERT_UPDATE_CLAUSE,
                 200,
-                undefined,
+                saveRows.people.fingerprints,
                 {
                     rev: PERSON_UPSERT_COLUMNS.indexOf('rev'),
                     updatedAt: PERSON_UPSERT_COLUMNS.indexOf('updatedAt'),
@@ -1824,10 +1866,10 @@ export class SqliteAdapter {
             await upsertBatch(
                 'sections',
                 [...SECTION_UPSERT_COLUMNS],
-                data.sections.map((section) => rawReadRow(section, sectionToSqliteRow(section)).row),
+                saveRows.sections.rows,
                 SECTION_UPSERT_UPDATE_CLAUSE,
                 200,
-                undefined,
+                saveRows.sections.fingerprints,
                 {
                     rev: SECTION_UPSERT_COLUMNS.indexOf('rev'),
                     updatedAt: SECTION_UPSERT_COLUMNS.indexOf('updatedAt'),
@@ -1835,14 +1877,13 @@ export class SqliteAdapter {
             );
 
             saveStep = 'tasks';
-            const taskRowEntries = data.tasks.map(getTaskRowEntry);
             await upsertBatch(
                 'tasks',
                 [...TASK_UPSERT_COLUMNS],
-                taskRowEntries.map((entry) => entry.row),
+                saveRows.tasks.rows,
                 TASK_UPSERT_UPDATE_CLAUSE,
                 200,
-                taskRowEntries.map((entry) => entry.fingerprint),
+                saveRows.tasks.fingerprints,
                 {
                     rev: TASK_UPSERT_COLUMNS.indexOf('rev'),
                     updatedAt: TASK_UPSERT_COLUMNS.indexOf('updatedAt'),

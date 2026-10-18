@@ -1,5 +1,5 @@
 import type { AppData, Attachment } from './types';
-import type { CloudProvider } from './sync-client-helpers';
+import type { CloudProvider, PreparedStorePublish } from './sync-client-helpers';
 import type { SyncBackend } from './sync-service-utils';
 import {
     isSyncFileGenerationCorruptError,
@@ -128,6 +128,9 @@ type SharedSyncRunState = {
     wroteLocal: boolean;
     /** Each store publish's wait for the write gate, in ms, and the step of the first: the cycle's one published line. */
     publishedGateWaitsMs: number[];
+    /** Sliced cycles: each save's time in the gate (ms), and whether its prepared store publish was swapped in. */
+    publishedCommitMs: number[];
+    publishedSwaps: ('prepared' | 'in-gate')[];
     publishedStep: string | null;
     remoteDataForCompare: AppData | null;
     /** The authoritative remote read repaired a legacy attachment shape and
@@ -619,6 +622,8 @@ class SharedSyncRunMachine {
         preSyncedLocalData: null,
         wroteLocal: false,
         publishedGateWaitsMs: [],
+        publishedCommitMs: [],
+        publishedSwaps: [],
         publishedStep: null,
         remoteDataForCompare: null,
         remoteLegacyAttachmentsChanged: false,
@@ -1059,25 +1064,41 @@ class SharedSyncRunMachine {
             throw new Error('Sliced sync save refused: no read token');
         }
         await this.assertRemoteMutationFenceHeld();
+        // Design D9b §2, W6: a sliced cycle builds the save's rows and the store publish in slices before the gate, so
+        // the gate holds only the save's transaction and the swap. Each is keyed to this document; the gate checks it.
+        let prepared: PreparedStorePublish | undefined;
+        if (this.slicer && typeof data !== 'function') {
+            const rows = this.storage.prepareLocalSave?.(data);
+            if (rows) await runSliced('sync:prepareSave', rows, this.slicer);
+            if (this.storage.applyDataToStore && this.storage.prepareStorePublish) {
+                prepared = await runSliced('sync:preparePublish', this.storage.prepareStorePublish(data), this.slicer);
+            }
+        }
         return runSyncStoreSave(async (gateWaitMs) => {
-            // Pending store saves land first; a command they carry moved the change stamp, which the
-            // check below turns into a requeue before anything of this cycle is written.
-            await this.store.flushPendingSave();
-            const next = typeof data === 'function' ? data() : data;
-            this.ensureLocalSnapshotFresh(next);
-            const persisted = await traceSectionAsync('sync:saveData', () => (this.slicedCycle
-                ? this.storage.persistLocal(next, { token: this.state.localReadToken, onStale: () => this.staleDatabase() })
-                : this.storage.persistLocal(next))) ?? next;
-            // The committed save's successor token authorizes only this cycle's next save.
-            if (this.slicedCycle) this.state.localReadToken = this.storage.readTokenOf?.(next);
-            // Disk has moved past the snapshot this cycle read, so it is no longer
-            // a baseline for the unchanged-write guard.
-            this.state.localSnapshotMatchesDisk = false;
-            // Behind the gate only an ungated writer can move the stamp during the save. The committed
-            // document is published anyway, so the store matches the disk; then the cycle requeues.
-            let staleDuringSave: unknown = null;
-            try { this.ensureLocalSnapshotFresh(persisted); } catch (error) { staleDuringSave = error; }
-            this.publishToStore(persisted, gateWaitMs);
+            const heldAt = Date.now();
+            // From the gate to the publish, in one turn on the native host (its SQLite calls settle in the turn).
+            const { persisted, staleDuringSave } = await traceSectionAsync('sync:commitPublish', async () => {
+                // Pending store saves land first; a command they carry moved the change stamp, which the
+                // check below turns into a requeue before anything of this cycle is written.
+                await this.store.flushPendingSave();
+                const next = typeof data === 'function' ? data() : data;
+                this.ensureLocalSnapshotFresh(next);
+                const committed = await traceSectionAsync('sync:saveData', () => (this.slicedCycle
+                    ? this.storage.persistLocal(next, { token: this.state.localReadToken, onStale: () => this.staleDatabase() })
+                    : this.storage.persistLocal(next))) ?? next;
+                // The committed save's successor token authorizes only this cycle's next save.
+                if (this.slicedCycle) this.state.localReadToken = this.storage.readTokenOf?.(next);
+                // Disk has moved past the snapshot this cycle read, so it is no longer
+                // a baseline for the unchanged-write guard.
+                this.state.localSnapshotMatchesDisk = false;
+                // Behind the gate only an ungated writer can move the stamp during the save. The committed
+                // document is published anyway, so the store matches the disk; then the cycle requeues.
+                let stale: unknown = null;
+                try { this.ensureLocalSnapshotFresh(committed); } catch (error) { stale = error; }
+                this.publishToStore(committed, gateWaitMs, prepared);
+                return { persisted: committed, staleDuringSave: stale };
+            });
+            if (this.slicedCycle) this.state.publishedCommitMs.push(Date.now() - heldAt);
             this.state.wroteLocal = true;
             if (staleDuringSave) throw staleDuringSave;
             await this.storage.afterPersistLocal?.();
@@ -1085,10 +1106,11 @@ class SharedSyncRunMachine {
         });
     }
 
-    private publishToStore(data: AppData, gateWaitMs: number): void {
+    private publishToStore(data: AppData, gateWaitMs: number, prepared?: PreparedStorePublish): void {
         if (!this.storage.applyDataToStore) return;
         traceSection('sync:storePublish', () => {
-            this.storage.applyDataToStore!(data);
+            const swapped = prepared ? this.storage.applyDataToStore!(data, prepared) : this.storage.applyDataToStore!(data);
+            if (prepared) this.state.publishedSwaps.push(swapped ? 'prepared' : 'in-gate');
             const currentChangeAt = this.store.getLastDataChangeAt();
             this.state.localSnapshotChangeAt = currentChangeAt;
             this.state.localDataCache = {
@@ -1107,6 +1129,11 @@ class SharedSyncRunMachine {
             backend: this.backend,
             step: this.state.publishedStep,
             gateWaitMs: this.state.publishedGateWaitsMs.join(','),
+            // Sliced cycles only (D9b W6): each save's time in the gate, and whether its prepared publish was swapped in.
+            ...(this.slicedCycle ? {
+                commitPublishMs: this.state.publishedCommitMs.join(','),
+                storePublish: this.state.publishedSwaps.join(','),
+            } : {}),
             releaseCheck: 'v1.3.7/sync-write-gate',
         });
     }

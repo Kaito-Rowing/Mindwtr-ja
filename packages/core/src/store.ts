@@ -653,8 +653,11 @@ export const STORE_NON_COMMAND_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 type FetchDataOptions = Parameters<TaskStore['fetchData']>[0];
-const storeDataOf = (state: TaskStore) => [state._allTasks, state._allProjects, state._allSections, state._allAreas,
+/** The store's data references. Equal references mean the same data: the store replaces its lists and never edits them. */
+export const storeDataOf = (state: TaskStore) => [state._allTasks, state._allProjects, state._allSections, state._allAreas,
     state._allPeople, state.settings, state.lastDataChangeAt] as const;
+export const sameStoreData = (left: readonly unknown[], right: readonly unknown[]): boolean =>
+    left.length === right.length && left.every((value, index) => value === right[index]);
 
 /**
  * A preloaded snapshot is current only for the store its caller saw. A load waits for a sync save that holds
@@ -665,8 +668,8 @@ const preloadedLoadOptions = (options: FetchDataOptions): FetchDataOptions => {
     if (!options?.preloadedData) return options;
     const calledAgainst = storeDataOf(useTaskStore.getState());
     const stillRelevant = options.isResultStillRelevant;
-    return { ...options, isResultStillRelevant: () => storeDataOf(useTaskStore.getState())
-        .every((value, index) => value === calledAgainst[index]) && (stillRelevant?.() ?? true) };
+    return { ...options, isResultStillRelevant: () => sameStoreData(storeDataOf(useTaskStore.getState()), calledAgainst)
+        && (stillRelevant?.() ?? true) };
 };
 
 const wrapStoreWriteActions = (actions: TaskStore): TaskStore => {

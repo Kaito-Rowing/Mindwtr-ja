@@ -39,7 +39,7 @@ const doc = (tasks: Task[], settings: AppData['settings'] = {}, projects: Projec
 
 const databases: Database[] = [];
 
-async function openStore(guarded: boolean, receipts = false) {
+async function openStore(guarded: boolean, receipts = false, extraTasks: Task[] = []) {
     await flushPendingSave(); resetForTests(); resetNativeRequestReceipts();
     const db = new DatabaseSync(':memory:'); databases.push(db);
     const client: SqliteClient = {
@@ -48,7 +48,7 @@ async function openStore(guarded: boolean, receipts = false) {
         get: async <T,>(sql: string, params: unknown[] = []) => db.prepare(sql).all(...params)[0] as T | undefined,
         exec: async (sql) => { db.exec(sql); },
     };
-    await new SqliteAdapter(client).saveData(doc([task({})], { deviceId: 'this-device' }, [project({})]));
+    await new SqliteAdapter(client).saveData(doc([task({}), ...extraTasks], { deviceId: 'this-device' }, [project({})]));
     const options = guarded ? { rejectConcurrentWrites: true } : {};
     const adapter = receipts ? new NativeReceiptSqliteAdapter(client, options) : new SqliteAdapter(client, options);
     setStorageAdapter(adapter);
@@ -56,7 +56,7 @@ async function openStore(guarded: boolean, receipts = false) {
     return adapter;
 }
 
-function createHost(adapter: SqliteAdapter, remote: AppData) {
+function createHost(adapter: SqliteAdapter, remote: AppData, sliced = false) {
     const values = new Map<string, string>([
         [SYNC_BACKEND_KEY, 'cloud'], [CLOUD_PROVIDER_KEY, 'selfhosted'], [CLOUD_URL_KEY, 'https://cloud.example.test'],
     ]);
@@ -77,6 +77,7 @@ function createHost(adapter: SqliteAdapter, remote: AppData) {
         return { fingerprint: 'remote-after-put' };
     });
     const lease = { lost: false };
+    const logs: { message: string; extra?: Record<string, string> }[] = [];
     const encryption = createSyncEncryptionStateStore({
         storage,
         secureConfig: { getSecureConfigValue: async () => null, setSecureConfigValue: async () => undefined, deleteSecureConfigValue: async () => undefined },
@@ -103,7 +104,20 @@ function createHost(adapter: SqliteAdapter, remote: AppData) {
             subscribe: () => ({ remove: () => undefined }),
         },
         localData: { getData: () => adapter.getData(), saveData: (data: AppData) => adapter.saveData(data) },
-        log: { info: () => undefined, warn: () => undefined, syncError: async () => null, sanitize: (message: string) => message },
+        // Native Android's sliced cycles (D9b): token-checked reads and saves, rows prepared before the gate.
+        ...(sliced ? {
+            sliceYield: async () => undefined,
+            localData: {
+                getData: (options?: SaveOptions) => adapter.getData(options),
+                saveData: (data: AppData, options?: SaveOptions) => adapter.saveData(data, options),
+                readTokenOf: (data: AppData) => adapter.readTokenOf(data),
+                prepareSave: (data: AppData) => adapter.prepareSaveRows(data),
+            },
+        } : {}),
+        log: {
+            info: (message: string, context?: { extra?: Record<string, string> }) => { logs.push({ message, extra: context?.extra }); },
+            warn: () => undefined, syncError: async () => null, sanitize: (message: string) => message,
+        },
         externalCalendars: { load: async () => [], save: async () => undefined },
         fetch: vi.fn(async () => { throw new Error('no network in tests'); }),
         crypto: {},
@@ -123,8 +137,10 @@ function createHost(adapter: SqliteAdapter, remote: AppData) {
             })),
         },
     } as unknown as MobileSyncServiceHost<unknown>;
-    return { host, putStarted, releasePut: () => releasePut(), put, lease };
+    return { host, putStarted, releasePut: () => releasePut(), put, lease, logs };
 }
+
+type SaveOptions = Parameters<SqliteAdapter['saveData']>[1];
 
 const runCycle = async (service: ReturnType<typeof createMobileSyncService>) => {
     const result = await service.performMobileSync(undefined, { manual: true });
@@ -136,7 +152,7 @@ const runCycle = async (service: ReturnType<typeof createMobileSyncService>) => 
 const winner = () => doc([task({ title: 'winner', rev: 2, revBy: 'other-device', updatedAt: NEWER })], {},
     [project({ isFocused: true, rev: 2, revBy: 'other-device', updatedAt: NEWER })]);
 
-describe.each([false, true])('a command during the remote write (guarded adapter: %s)', (guarded) => {
+describe.each([[false, false], [true, false], [true, true]])('a command during the remote write (guarded adapter: %s, sliced: %s)', (guarded, sliced) => {
     beforeEach(() => { vi.useRealTimers(); });
     afterEach(async () => {
         await flushPendingSave(); resetForTests();
@@ -145,7 +161,7 @@ describe.each([false, true])('a command during the remote write (guarded adapter
 
     it('acts on the merged row, so the remote title survives the completion', async () => {
         const adapter = await openStore(guarded);
-        const fake = createHost(adapter, winner());
+        const fake = createHost(adapter, winner(), sliced);
         const service = createMobileSyncService(fake.host);
         const cycle = service.performMobileSync(undefined, { manual: true });
         try {
@@ -168,7 +184,7 @@ describe.each([false, true])('a command during the remote write (guarded adapter
 
     it('keeps the pending remote-write marker through a settings command', async () => {
         const adapter = await openStore(guarded);
-        const fake = createHost(adapter, winner());
+        const fake = createHost(adapter, winner(), sliced);
         const service = createMobileSyncService(fake.host);
         const cycle = service.performMobileSync(undefined, { manual: true });
         try {
@@ -195,11 +211,11 @@ describe.each([false, true])('a command during the remote write (guarded adapter
 
     it('defers a command that arrives between the first save commit and its store publish', async () => {
         const adapter = await openStore(guarded);
-        const fake = createHost(adapter, winner());
+        const fake = createHost(adapter, winner(), sliced);
         fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
         let command: Promise<unknown> | null = null;
-        fake.host.localData.saveData = async (data: AppData) => {
-            await adapter.saveData(data);
+        fake.host.localData.saveData = async (data: AppData, options?: SaveOptions) => {
+            await adapter.saveData(data, options);
             // The commit has landed; the cycle has not published it yet.
             command ??= useTaskStore.getState().updateTask('shared', { status: 'done' });
         };
@@ -219,9 +235,9 @@ describe.each([false, true])('a command during the remote write (guarded adapter
 
     it('publishes the committed document before a lease check after the commit fails', async () => {
         const adapter = await openStore(guarded);
-        const fake = createHost(adapter, winner());
-        fake.host.localData.saveData = async (data: AppData) => {
-            await adapter.saveData(data);
+        const fake = createHost(adapter, winner(), sliced);
+        fake.host.localData.saveData = async (data: AppData, options?: SaveOptions) => {
+            await adapter.saveData(data, options);
             // The rows are committed; the File Sync lease check that follows the save now fails.
             fake.lease.lost = true;
         };
@@ -246,7 +262,7 @@ describe.each([false, true])('a command during the remote write (guarded adapter
 
     it('lets a load that began before a sync save publish only before that save', async () => {
         const adapter = await openStore(guarded);
-        const fake = createHost(adapter, winner());
+        const fake = createHost(adapter, winner(), sliced);
         fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
         let releaseRead!: () => void;
         const readHeld = new Promise<void>((resolve) => { releaseRead = resolve; });
@@ -281,7 +297,7 @@ describe.each([false, true])('a command during the remote write (guarded adapter
     it('drops a preloaded snapshot that waited behind a sync save, so the publication of the save stands', async () => {
         const adapter = await openStore(guarded);
         const old = getInMemoryAppDataSnapshot();
-        const fake = createHost(adapter, winner());
+        const fake = createHost(adapter, winner(), sliced);
         let load: Promise<void> | null = null;
         let afterLoad: { title?: string; saved?: Task } = {};
         fake.put.mockImplementation(async () => {
@@ -293,8 +309,8 @@ describe.each([false, true])('a command during the remote write (guarded adapter
             afterLoad = { title, saved: (await adapter.getData()).tasks.find((row) => row.id === 'shared') };
             return { fingerprint: 'remote-after-put' };
         });
-        fake.host.localData.saveData = async (data: AppData) => {
-            await adapter.saveData(data);
+        fake.host.localData.saveData = async (data: AppData, options?: SaveOptions) => {
+            await adapter.saveData(data, options);
             // A reconciliation took this snapshot before the save; its load queues behind the save's hold of the gate.
             load ??= useTaskStore.getState().fetchData({ silent: true, preloadedData: old });
         };
@@ -310,7 +326,7 @@ describe.each([false, true])('a command during the remote write (guarded adapter
 
     it('admits commands while the cycle runs its attachments phase, after its save released the gate', async () => {
         const adapter = await openStore(guarded);
-        const fake = createHost(adapter, winner());
+        const fake = createHost(adapter, winner(), sliced);
         fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
         let releaseAttachments!: () => void;
         const attachmentsHeld = new Promise<void>((resolve) => { releaseAttachments = resolve; });
@@ -339,7 +355,7 @@ describe.each([false, true])('a command during the remote write (guarded adapter
 
     it('publishes nothing when the save fails before its commit', async () => {
         const adapter = await openStore(guarded);
-        const fake = createHost(adapter, winner());
+        const fake = createHost(adapter, winner(), sliced);
         fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
         fake.host.localData.saveData = async () => { throw new Error('disk full before commit'); };
         const service = createMobileSyncService(fake.host);
@@ -493,5 +509,150 @@ describe('a native command during the sync save', () => {
         expect(isStoreCommand(helpers.deviceCalendar.prepareDeviceCalendarSetting)).toBe(true);
         expect(isStoreCommand(helpers.calendarSubscriptionAdd.commitPreparedCalendarSubscriptionAdd)).toBe(true);
         expect(isStoreCommand(helpers.preparedProjectAvailability.commitPreparedProjectFileAvailability)).toBe(true);
+    });
+});
+
+// D9b W6 (design §3, §7): a sliced cycle builds its save rows and its store publish before the gate; the gate swaps the
+// publish in only onto the store it was built against, and the end-of-cycle refresh is dropped only when it changes nothing.
+describe('a sliced cycle\'s prepared rows, prepared swap and refresh drop', () => {
+    let now: { mockRestore: () => void } | null = null;
+    beforeEach(() => {
+        vi.useRealTimers();
+        // Every slice is due at once, so each pass yields at every point it may.
+        let clock = 0;
+        now = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 10));
+    });
+    afterEach(async () => {
+        now?.mockRestore();
+        await flushPendingSave(); resetForTests();
+        for (const db of databases.splice(0)) db.close();
+    });
+
+    const other = task({ id: 'other', title: 'on disk' });
+    /** Runs [act] once, at the [nth] slice yield after the first save's rows were prepared. */
+    const afterRowsPrepared = (fake: ReturnType<typeof createHost>, adapter: SqliteAdapter, nth: number, act: () => Promise<unknown> | unknown) => {
+        let yieldsSincePrepared = -1;
+        fake.host.localData.prepareSave = (data: AppData) => (function* () {
+            yield* adapter.prepareSaveRows(data);
+            if (yieldsSincePrepared < 0) yieldsSincePrepared = 0;
+            yield;
+        })();
+        fake.host.sliceYield = async () => {
+            if (yieldsSincePrepared < 0) return;
+            yieldsSincePrepared += 1;
+            if (yieldsSincePrepared === nth) await act();
+        };
+    };
+    const published = (fake: ReturnType<typeof createHost>) => fake.logs.find((line) => line.message === 'Sync save published to the store')?.extra;
+
+    it('swaps in the prepared publish, and the store then equals disk', async () => {
+        const adapter = await openStore(true, false, [other]);
+        const fake = createHost(adapter, winner(), true);
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
+        const service = createMobileSyncService(fake.host);
+        try {
+            expect((await runCycle(service)).success).toBe(true);
+            expect(published(fake)?.storePublish).toMatch(/^prepared(,prepared)+$/);
+            const disk = await adapter.getData();
+            const state = useTaskStore.getState();
+            expect(state._allTasks).toEqual(disk.tasks);
+            expect(state._allProjects).toEqual(disk.projects);
+            expect(state._tasksById.get('shared')?.title).toBe('winner');
+        } finally {
+            service.__mobileSyncTestUtils.reset();
+        }
+    });
+
+    it('refuses the sync save when a command lands between the preparation and the gate, and keeps the command\'s row', async () => {
+        const adapter = await openStore(true);
+        const fake = createHost(adapter, winner(), true);
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
+        afterRowsPrepared(fake, adapter, 1, () => useTaskStore.getState().updateTask('shared', { title: 'edited here' }));
+        const service = createMobileSyncService(fake.host);
+        try {
+            const result = await runCycle(service);
+            expect(result).toMatchObject({ success: true, skipped: 'requeued' });
+            expect(fake.put).not.toHaveBeenCalled();
+            const saved = (await adapter.getData()).tasks.find((row) => row.id === 'shared');
+            expect(saved?.title).toBe('edited here');
+            expect(saved?.revBy).toBe('this-device');
+            expect(useTaskStore.getState()._tasksById.get('shared')?.title).toBe('edited here');
+            expect((await adapter.getData()).settings.pendingRemoteWriteAt).toBeUndefined();
+        } finally {
+            service.__mobileSyncTestUtils.reset();
+        }
+    });
+
+    it('computes the publish in the gate when the store moved after the preparation without a new stamp or token', async () => {
+        const adapter = await openStore(true, false, [other]);
+        // The store shows a copy of 'other' that disk does not hold, at the same revision. A change during the
+        // preparation (as a load would make: no stamp, no write) shows disk's row again.
+        const diskOther = useTaskStore.getState()._tasksById.get('other')!;
+        const withOther = (row: Task) => (state: { _allTasks: Task[] }) => ({ _allTasks: state._allTasks.map((item) => (item.id === 'other' ? row : item)) });
+        useTaskStore.setState(withOther({ ...diskOther, title: 'stale copy' }));
+        const stamp = useTaskStore.getState().lastDataChangeAt;
+        const fake = createHost(adapter, winner(), true);
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
+        // The second yield after the rows: the publish's preparation has taken the store's references by then.
+        afterRowsPrepared(fake, adapter, 2, () => useTaskStore.setState(withOther(diskOther)));
+        const service = createMobileSyncService(fake.host);
+        try {
+            expect(await runCycle(service)).toMatchObject({ success: true });
+            expect(useTaskStore.getState().lastDataChangeAt).toBe(stamp);
+            expect(published(fake)?.storePublish).toMatch(/^in-gate(,prepared)+$/);
+            const disk = await adapter.getData();
+            expect(useTaskStore.getState()._allTasks).toEqual(disk.tasks);
+            expect(useTaskStore.getState()._tasksById.get('other')?.title).toBe('on disk');
+        } finally {
+            service.__mobileSyncTestUtils.reset();
+        }
+    });
+
+    // A task done long ago, which the load's auto-archive migration archives, written as an old client would (no
+    // pushCount, a legacy status casing), so it also needs normalizeTaskForLoad.
+    const doneLongAgo = () => ({
+        ...task({ id: 'done-old', title: 'Done long ago', rev: 1, revBy: 'other-device' }),
+        status: 'done', completedAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString(), pushCount: undefined,
+    } as Task);
+    const cycleStore = async (sliced: boolean, remote: AppData) => {
+        const adapter = await openStore(true, false, [other]);
+        const fake = createHost(adapter, remote, sliced);
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
+        const load = vi.spyOn(useTaskStore.getState(), 'fetchData');
+        load.mockClear();
+        const service = createMobileSyncService(fake.host);
+        try {
+            expect((await runCycle(service)).success).toBe(true);
+        } finally {
+            service.__mobileSyncTestUtils.reset();
+        }
+        const refreshes = load.mock.calls.filter(([options]) => options?.preloadedData).length;
+        load.mockRestore();
+        const state = useTaskStore.getState();
+        // Each fresh store draws its own analytics id; the sync status times are the cycle's own.
+        const { lastSyncAt: _at, lastSyncHistory: _history, lastSyncStats: _stats, analyticsProfileId: _id, ...settings } = state.settings;
+        return {
+            refreshes,
+            store: { tasks: state._allTasks, visible: state.tasks, projects: state._allProjects, settings },
+        };
+    };
+
+    it.each([
+        ['a document no load would change', () => winner()],
+        ['a document that needs normalizeTaskForLoad and a load migration', () => ({ ...winner(), tasks: [...winner().tasks, doneLongAgo()] })],
+    ])('ends with the store an unsliced cycle leaves, refreshing only when the load changes something: %s', async (name, remote) => {
+        vi.useFakeTimers({ toFake: ['Date'], now: new Date() });
+        try {
+            const unsliced = await cycleStore(false, remote());
+            const sliced = await cycleStore(true, remote());
+            expect(unsliced.refreshes).toBe(1);
+            expect(sliced.refreshes).toBe(name.startsWith('a document no load') ? 0 : 1);
+            expect(sliced.store).toEqual(unsliced.store);
+            if (!name.startsWith('a document no load')) {
+                expect(sliced.store.tasks.find((row) => row.id === 'done-old')?.status).toBe('archived');
+            }
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

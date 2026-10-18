@@ -31,12 +31,13 @@ import { probeWebdavSyncCompatibility, webdavGetSyncDocument, webdavHeadFile, we
 import { deleteDropboxFileVersioned, downloadDropboxAppData, DropboxFileNotFoundError, getDropboxAppDataMetadata, getDropboxFileMetadata, isDropboxUnauthorizedError, uploadDropboxAppData } from './dropbox';
 import { hasPendingSyncSideEffects, injectExternalCalendars as injectExternalCalendarsForSync, normalizeCloudUrl, normalizeWebdavUrl, persistExternalCalendars as persistExternalCalendarsForSync } from './sync-helpers';
 import { buildFastSyncScope, parseFastSyncState, serializeFastSyncState, type FastSyncState } from './sync-fast-sync';
-import { CLOUD_PROVIDER_DROPBOX, CLOUD_PROVIDER_SELF_HOSTED, applySyncedDataToStore, createAbortableFetch, getInMemoryAppDataSnapshot, normalizeCloudProvider as normalizeCoreCloudProvider, type CloudProvider } from './sync-client-helpers';
+import { CLOUD_PROVIDER_DROPBOX, CLOUD_PROVIDER_SELF_HOSTED, applySyncedDataToStore, createAbortableFetch, getInMemoryAppDataSnapshot, prepareSyncedDataPublishPass, normalizeCloudProvider as normalizeCoreCloudProvider, type CloudProvider } from './sync-client-helpers';
 import { buildSyncPayloadSurfaceTraceExtra, buildSyncPayloadTraceExtra, isSyncPayloadTraceEnabled, SYNC_TRACE_EVENT_MESSAGES } from './sync-payload-trace';
 import { isLikelyOfflineSyncError, isRemoteSyncBackend, SYNC_FILE_NAME, SyncFileLockUnavailableError, type SyncBackend } from './sync-service-utils';
 import { summarizeTaskLifecycleCounts } from './task-utils';
 import { decodeUriSafe } from './async-utils';
-import { flushPendingSave, useTaskStore } from './store';
+import { flushPendingSave, sameStoreData, storeDataOf, useTaskStore } from './store';
+import type { CooperativePass } from './cooperative';
 import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
 import { performSyncCycle } from './sync';
 import { isSecretConfigKey } from './sync-secret-storage';
@@ -476,6 +477,8 @@ export type MobileSyncServiceHost<Lease> = {
     saveData(data: AppData, options?: { token?: SqliteReadToken } & SqliteStaleOption): Promise<AppData | void>;
     /** The SQLite adapter's read token (D9b W3); a sliced cycle without it has every save refused. */
     readTokenOf?(data: AppData): SqliteReadToken | undefined;
+    /** The SQLite adapter's prepareSaveRows (D9b §2): a sliced cycle builds a save's rows before the write gate. */
+    prepareSave?(data: AppData): CooperativePass<void>;
   };
   log: MobileSyncLogPort;
   externalCalendars: {
@@ -933,6 +936,8 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
     private readonly requestFollowUpAfter: MobileRequestFollowUpAfter;
 
     private lastStep = 'init';
+    /** The last save's publish when it swapped in a prepared state (sliced cycles, D9b W6): the store references it left. */
+    private lastPreparedPublish: { data: AppData; storeData: readonly unknown[]; loadCovered: boolean } | null = null;
     private readonly syncDiagnosticStartedAt = Date.now();
     private syncDiagnosticPhaseStartedAt = this.syncDiagnosticStartedAt;
     private attachmentPrepareStartedAt = this.syncDiagnosticStartedAt;
@@ -1432,7 +1437,16 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
         // After the store shows the committed save: a lease lost now ends the cycle, never the publish.
         afterPersistLocal: () => this.assertFileSyncLeaseHeld(),
         // In the same gate hold as the save: a command never acts on a store older than the disk.
-        applyDataToStore: (data) => applySyncedDataToStore(data, core.useTaskStore),
+        applyDataToStore: (data, prepared) => {
+          const swapped = applySyncedDataToStore(data, core.useTaskStore, prepared);
+          this.lastPreparedPublish = swapped && prepared
+            ? { data, storeData: storeDataOf(core.useTaskStore.getState()), loadCovered: prepared.loadCovered }
+            : null;
+          return swapped;
+        },
+        // Sliced cycles only (sync-run calls these when the host binds sliceYield).
+        prepareLocalSave: (data) => host.localData.prepareSave?.(data),
+        prepareStorePublish: (data) => prepareSyncedDataPublishPass(data, core.useTaskStore),
         persistSyncStatus: async (updates) => {
           await this.assertFileSyncLeaseHeld();
           await applyLocalSyncStatus(updates);
@@ -2036,8 +2050,19 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           // whose result the identity reconcile then discards. Sync status bookkeeping
           // still reaches the store through persistSyncStatus.
           const refreshStartedAt = Date.now();
-          if (!info.localWriteSkipped) {
+          // D9b W6: the refresh is dropped when the last save swapped in a prepared publish of this document, the store
+          // has not moved since, and a load of the document would change nothing (prepareSyncedDataPublishPass).
+          const published = this.lastPreparedPublish;
+          const refreshCovered = !info.localWriteSkipped && published !== null && published.loadCovered
+            && published.data === mergedData && !core.useTaskStore.getState().isLoading
+            && sameStoreData(storeDataOf(core.useTaskStore.getState()), published.storeData);
+          if (refreshCovered) {
+            // The one store change the silent refresh makes even when its load changes nothing.
+            core.useTaskStore.setState((state) => (state.error === null ? state : { error: null }));
+          } else if (!info.localWriteSkipped) {
             await traceSectionAsync('sync:storeApply', () => core.useTaskStore.getState().fetchData({ silent: true, preloadedData: mergedData }));
+          }
+          if (!info.localWriteSkipped) {
             // The refresh alone never publishes this cycle's status: the store keeps its
             // previous settings object whenever the incoming one differs only in the
             // volatile lastSync* keys (reuseSettingsIfEquivalent, #766), so the Sync
@@ -2058,6 +2083,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
               releaseCheck: 'v1.2.7/sync-status-published',
               backend: this.backend,
               statusPublished: info.localWriteSkipped ? 'unchanged' : 'wrote-local',
+              ...(refreshCovered ? { storeRefresh: 'dropped' } : {}),
               lastSyncAt: String(mergedData.settings.lastSyncAt ?? 'none'),
               lastSyncStatus: String(mergedData.settings.lastSyncStatus ?? 'none'),
             },

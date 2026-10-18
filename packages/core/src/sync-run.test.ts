@@ -2719,6 +2719,44 @@ describe('runSharedSyncCycle', () => {
         expect(sliced.remote).toEqual(atOnce.remote);
     });
 
+    it('prepares each save\'s rows and store publish in slices before the gate, and never yields from the gate through the publish (D9b W6)', async () => {
+        const bundle = createHarness({ remote: createData([createTask('t-local', 'Local task'), createTask('t-remote', 'Remote task')]) });
+        // Is the write gate held? A store command cannot start while a sync save holds it.
+        const gateHeld = () => Promise.race([
+            runStoreCommand(async () => false),
+            new Promise<boolean>((resolve) => { setTimeout(() => resolve(true), 0); }),
+        ]);
+        const yieldsInGate: boolean[] = [];
+        bundle.notifier.sliceYield = async () => { yieldsInGate.push(await gateHeld()); };
+        const prepared: unknown[] = [];
+        const order = bundle.harness.callOrder;
+        bundle.storage.prepareLocalSave = vi.fn((data: AppData) => (function* () { order.push('prepareSave'); yield; yield; return void data; })());
+        bundle.storage.prepareStorePublish = vi.fn((data: AppData) => (function* () {
+            order.push('preparePublish');
+            yield;
+            const publish = { data, against: [], update: {}, loadCovered: false };
+            prepared.push(publish);
+            return publish;
+        })());
+        bundle.storage.applyDataToStore = vi.fn((data: AppData) => { bundle.harness.inMemory = cloneAppData(data); return true; });
+        let clock = 0;
+        const now = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 10));
+        try {
+            expect((await bundle.run()).success).toBe(true);
+        } finally {
+            now.mockRestore();
+        }
+
+        const saves = vi.mocked(bundle.storage.persistLocal).mock.calls.length;
+        expect(saves).toBeGreaterThanOrEqual(1);
+        // Each save: its rows, then its publish, then the gate.
+        expect(order.filter((step) => ['prepareSave', 'preparePublish', 'persistLocal'].includes(step)))
+            .toEqual(Array.from({ length: saves }, () => ['prepareSave', 'preparePublish', 'persistLocal']).flat());
+        expect(vi.mocked(bundle.storage.applyDataToStore!).mock.calls.map((call) => call[1])).toEqual(prepared);
+        expect(yieldsInGate.length).toBeGreaterThanOrEqual(3 * saves);
+        expect(yieldsInGate.every((held) => !held)).toBe(true);
+    });
+
     it('hands every attachment phase of one cycle the same transfer admission, and a new cycle a new one (D9b W7)', async () => {
         const seen: unknown[] = [];
         const syncAttachments = vi.fn(async (_data: AppData, helpers: { transferAdmission?: unknown; phase?: string }) => {

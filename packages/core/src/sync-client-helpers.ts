@@ -1,10 +1,15 @@
-import { useTaskStore } from './store';
+import { sameStoreData, storeDataOf, useTaskStore } from './store';
 import { CLOUD_PROVIDER_DROPBOX } from './sync-storage-keys';
 import { computeSyncChangeFingerprint } from './sync-helpers';
 import { cloneAppData } from './sync-runtime-utils';
 import { normalizeAppData } from './sync-normalization';
-import { reconcileEntityCollection, reuseSettingsIfEquivalent, stripSensitiveSettings } from './store-helpers';
-import type { AppData } from './types';
+import { hasSameEntityIdentity, reconcileEntityCollection, reconcileEntityCollectionPass, reuseSettingsIfEquivalent, stripSensitiveSettings } from './store-helpers';
+import { SLICE_ITEMS, type CooperativePass } from './cooperative';
+import { buildLoadContext, runLoadMigrationsPass } from './store-load-migrations';
+import { normalizeTaskForLoad } from './task-status';
+import { normalizeProjectLifecycleFields } from './project-status';
+import type { TaskStore } from './store-types';
+import type { AppData, Project, Task } from './types';
 
 export const DEFAULT_ATTACHMENT_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const CLOUD_PROVIDER_SELF_HOSTED = 'selfhosted' as const;
@@ -83,15 +88,100 @@ export const captureInMemoryAppDataSnapshot = (): AppData => {
     };
 };
 
+/** A store publish built before the write gate (D9b W6): applySyncedDataToStore swaps it in when the store has not moved. */
+export type PreparedStorePublish = {
+    /** The document it publishes; any other document is computed in the gate. */
+    readonly data: AppData;
+    /** The store's data references it was reconciled against (storeDataOf). */
+    readonly against: readonly unknown[];
+    /** Only what changed: the reconciled lists that differ from the store's, and the settings when they differ. */
+    readonly update: Partial<TaskStore>;
+    /**
+     * True when a load of [data] (the end-of-cycle refresh, fetchData with it preloaded) would leave the store as this publish
+     * does: the load keeps every row this publish shows, and no load migration applies. Checked at preparation time.
+     */
+    readonly loadCovered: boolean;
+};
+
+/**
+ * Builds applySyncedDataToStore's state for [data] against the store as it is now, as a cooperative pass. Its first step
+ * takes the store's references; later steps read only them, never the live store.
+ */
+export function* prepareSyncedDataPublishPass(
+    data: AppData,
+    store: Pick<typeof useTaskStore, 'getState'> = useTaskStore,
+): CooperativePass<PreparedStorePublish> {
+    const next = normalizeAppData(data);
+    const state = store.getState();
+    const against = storeDataOf(state);
+    const tasks = yield* reconcileEntityCollectionPass(state._allTasks, state._tasksById, next.tasks);
+    const projects = yield* reconcileEntityCollectionPass(state._allProjects, state._projectsById, next.projects);
+    const sections = yield* reconcileEntityCollectionPass(state._allSections, state._sectionsById, next.sections);
+    const areas = yield* reconcileEntityCollectionPass(state._allAreas, state._areasById, next.areas);
+    const people = yield* reconcileEntityCollectionPass(state._allPeople, state._peopleById, next.people ?? []);
+    const settings = reuseSettingsIfEquivalent(state.settings, stripSensitiveSettings(next.settings ?? state.settings));
+    const update: Partial<TaskStore> = {};
+    if (tasks.items !== state._allTasks) update._allTasks = tasks.items;
+    if (projects.items !== state._allProjects) update._allProjects = projects.items;
+    if (sections.items !== state._allSections) update._allSections = sections.items;
+    if (areas.items !== state._allAreas) update._allAreas = areas.items;
+    if (people.items !== state._allPeople) update._allPeople = people.items;
+    if (settings !== state.settings) update.settings = settings;
+    const loadCovered = yield* loadCoveredPass(next, { tasks: tasks.items, projects: projects.items });
+    return { data, against, update, loadCovered };
+}
+
+/**
+ * Would fetchData's load pipeline, run on [data] against a store that shows [shown], change the store? It mirrors fetchData
+ * (store-settings.ts): it normalizes each task and project for load, keeps the store's row where the normalized one has the
+ * same revision identity and the same Focus fields, and runs the load migrations on the normalized document.
+ */
+function* loadCoveredPass(
+    data: AppData,
+    shown: { tasks: readonly Task[]; projects: readonly Project[] },
+): CooperativePass<boolean> {
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
+    const tasks: Task[] = new Array(data.tasks.length);
+    for (let index = 0; index < data.tasks.length; index += 1) {
+        const task = normalizeTaskForLoad(data.tasks[index], nowIso);
+        const kept = shown.tasks[index];
+        if (!hasSameEntityIdentity(kept, task) || kept.isFocusedToday !== task.isFocusedToday || kept.focusOrder !== task.focusOrder) {
+            return false;
+        }
+        tasks[index] = task;
+        if ((index + 1) % SLICE_ITEMS === 0) yield;
+    }
+    const projects = data.projects.map(normalizeProjectLifecycleFields);
+    if (projects.some((project, index) => !hasSameEntityIdentity(shown.projects[index], project))) return false;
+    const rawSettings = data.settings && typeof data.settings === 'object' ? data.settings : {};
+    const settings = stripSensitiveSettings(rawSettings as AppData['settings']);
+    const people = data.people ?? [];
+    const isFreshInstall = tasks.length === 0 && projects.length === 0 && data.sections.length === 0
+        && data.areas.length === 0 && people.length === 0 && Object.keys(settings).length === 0;
+    const { applied } = yield* runLoadMigrationsPass(
+        { tasks, projects, sections: data.sections, areas: data.areas, people, settings },
+        buildLoadContext(settings, isFreshInstall, nowIso, nowMs),
+    );
+    return applied.length === 0;
+}
+
 /**
  * Publish a document a sync save just wrote, inside the same store write gate hold
  * (store-write-gate.ts), so the next command acts on what disk holds. Rows whose
  * revision identity did not change keep their objects, as a load does (#766).
+ * A [prepared] publish of this document is swapped in when the store still holds what it was built against; else, and
+ * without one, the publish is computed here. Returns true when it swapped.
  */
 export const applySyncedDataToStore = (
     data: AppData,
-    store: Pick<typeof useTaskStore, 'setState'> = useTaskStore,
-): void => {
+    store: Pick<typeof useTaskStore, 'setState' | 'getState'> = useTaskStore,
+    prepared?: PreparedStorePublish,
+): boolean => {
+    if (prepared && prepared.data === data && sameStoreData(storeDataOf(store.getState()), prepared.against)) {
+        if (Object.keys(prepared.update).length > 0) store.setState(prepared.update);
+        return true;
+    }
     const next = normalizeAppData(data);
     store.setState((state) => ({
         _allTasks: reconcileEntityCollection(state._allTasks, state._tasksById, next.tasks).items,
@@ -101,6 +191,7 @@ export const applySyncedDataToStore = (
         _allPeople: reconcileEntityCollection(state._allPeople, state._peopleById, next.people ?? []).items,
         settings: reuseSettingsIfEquivalent(state.settings, stripSensitiveSettings(next.settings ?? state.settings)),
     }));
+    return false;
 };
 
 /**

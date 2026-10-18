@@ -55,6 +55,9 @@ const createFakeHost = (options: FakeOptions = {}) => {
   const store = {
     lastDataChangeAt: 1,
     settings: {} as AppData['settings'],
+    // A slicing host's cycle prepares its store publish against these (D9b W6).
+    _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
+    _tasksById: new Map(), _projectsById: new Map(), _sectionsById: new Map(), _areasById: new Map(), _peopleById: new Map(),
     setError: vi.fn(),
     fetchData: vi.fn(async () => undefined),
   };

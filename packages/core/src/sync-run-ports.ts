@@ -1,7 +1,8 @@
 import type { AppData, AppSettings } from './types';
 import type { MergeStats, SyncCycleIO, SyncCycleResult, SyncHistoryEntry } from './sync-types';
 import type { FastSyncState } from './sync-fast-sync';
-import type { CloudProvider } from './sync-client-helpers';
+import type { CloudProvider, PreparedStorePublish } from './sync-client-helpers';
+import type { CooperativePass } from './cooperative';
 import type { SyncBackend } from './sync-service-utils';
 import type { buildMergeSummaryLog } from './sync-log-utils';
 import type { SyncRemoteMutationFenceLease } from './sync-remote-fence';
@@ -185,8 +186,13 @@ export interface SyncRunStorage {
     afterPersistLocal?(): Promise<void>;
     /** Apply persisted data to the in-memory store right after each committed local
      *  write, inside the store write gate (the machine then refreshes its change-tracking
-     *  from the store). Desktop and the mobile sync service bind it. */
-    applyDataToStore?(data: AppData): void;
+     *  from the store). Desktop and the mobile sync service bind it. A sliced cycle passes the
+     *  publish it prepared (prepareStorePublish); the result is true when that was swapped in. */
+    applyDataToStore?(data: AppData, prepared?: PreparedStorePublish): boolean | void;
+    /** D9b §2: a sliced cycle builds the save's rows for [data] in slices before the gate; the save uses them. */
+    prepareLocalSave?(data: AppData): CooperativePass<void> | undefined;
+    /** D9b W6: a sliced cycle builds the store publish for [data] in slices before the gate (applyDataToStore). */
+    prepareStorePublish?(data: AppData): CooperativePass<PreparedStorePublish>;
     /** Persist sync status fields to the device-local status cache (and the
      *  in-memory settings), never to the synced document. */
     persistSyncStatus(updates: SyncStatusUpdates): Promise<void>;

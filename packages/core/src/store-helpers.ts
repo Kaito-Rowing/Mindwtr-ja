@@ -27,6 +27,7 @@ import type { AiSettings, AppData, Area, Attachment, Person, Project, Section, T
 import { generateUUID as uuidv4 } from './uuid';
 import type { DerivedState, SaveBaseState, TaskStore } from './store-types';
 import { retainRawReadSettingsSnapshot } from './sqlite-raw-snapshot';
+import { mapPass, runToEnd, type CooperativePass } from './cooperative';
 
 const hasOwnField = (value: object, field: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value, field);
 
@@ -1000,15 +1001,24 @@ const isAttachmentOnlyDivergence = <T extends EntityWithRevision>(existing: T, i
     )
 );
 
+type ReconciledCollection<T> = { items: T[]; byId: Map<string, T>; replacedCount: number; attachmentOnlyReplacedCount: number };
+
 export const reconcileEntityCollection = <T extends EntityWithRevision>(
     previousItems: readonly T[],
     previousById: Map<string, T>,
     incomingItems: readonly T[]
-): { items: T[]; byId: Map<string, T>; replacedCount: number; attachmentOnlyReplacedCount: number } => {
+): ReconciledCollection<T> => runToEnd(reconcileEntityCollectionPass(previousItems, previousById, incomingItems));
+
+/** reconcileEntityCollection as a cooperative pass: a sliced sync cycle reconciles its store publish before the gate (D9b W6). */
+export function* reconcileEntityCollectionPass<T extends EntityWithRevision>(
+    previousItems: readonly T[],
+    previousById: Map<string, T>,
+    incomingItems: readonly T[]
+): CooperativePass<ReconciledCollection<T>> {
     let changed = previousItems.length !== incomingItems.length;
     let replacedCount = 0;
     let attachmentOnlyReplacedCount = 0;
-    const nextItems = incomingItems.map((incoming, index) => {
+    const nextItems = yield* mapPass(incomingItems, (incoming, index) => {
         const existing = previousById.get(incoming.id);
         const reuseExisting = existing != null && hasSameEntityIdentity(existing, incoming);
         if (!reuseExisting) {
@@ -1039,7 +1049,7 @@ export const reconcileEntityCollection = <T extends EntityWithRevision>(
         replacedCount,
         attachmentOnlyReplacedCount,
     };
-};
+}
 
 // Device-local sync status stamps; they change every sync cycle and are
 // overlaid from local storage on each platform, so a settings object that
