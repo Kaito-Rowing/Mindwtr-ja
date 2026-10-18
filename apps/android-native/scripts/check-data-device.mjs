@@ -957,7 +957,9 @@ const largeImports = async () => {
         const imported = Number(/Imported (\d+) task/.exec(words)?.[1] ?? NaN);
         const snapshot = /data\.[\dT.-]+\.snapshot\.json/.exec(words)?.[0];
         const after = live(`li-${item.key}-after`);
-        check(imported > 65_535 && after === before + imported, `(LI ${item.key}) every row is a live task: ${imported} imported, ${before} -> ${after}`);
+        // The fixture's own rows (data-measure-fixtures.mjs: one task per line after the header), not the importer's count.
+        const rows = { ticktick: 79_477, 'mindwtr-csv': 99_999 }[item.key];
+        check(imported === rows && after === before + rows, `(LI ${item.key}) every one of the fixture's ${rows} rows is a live task: ${imported} imported, ${before} -> ${after}`);
         check(snapshot && [...snapshots()].sort().at(-1) === snapshot, `(LI ${item.key}) the toast's recovery snapshot ${snapshot} is the newest on disk`);
         await undoNewest();
         const undone = live(`li-${item.key}-undo`);
