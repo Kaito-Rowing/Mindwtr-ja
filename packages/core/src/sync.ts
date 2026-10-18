@@ -1312,6 +1312,19 @@ const isLocalSyncAbortError = (error: unknown): boolean => (
     error instanceof Error && error.name === 'LocalSyncAbort'
 );
 
+/**
+ * The retry-schedule save after a failed remote write. On a sliced cycle (design D9b W1) a refused one keeps the network
+ * error, so the normal failure path runs; only this cycle's backoff record is lost, and the next cycle writes it.
+ */
+const saveRemoteWriteRetrySchedule = async (io: SyncCycleIO, data: AppData): Promise<void> => {
+    try {
+        await io.writeLocal(data);
+    } catch (saveError) {
+        if (!io.slicer || !isLocalSyncAbortError(saveError)) throw saveError;
+        logWarn('Sync retry schedule save refused; the remote write error stands', { scope: 'sync' });
+    }
+};
+
 const getPendingRemoteWriteAttemptCount = (data: AppData): number => {
     const attempts = data.settings.pendingRemoteWriteAttempts;
     if (typeof attempts !== 'number' || !Number.isFinite(attempts) || attempts < 0) {
@@ -1603,7 +1616,7 @@ async function performSyncCycleUnlocked(io: SyncCycleIO): Promise<SyncCycleResul
                 // has to land or the next cycle hammers a failing backend.
                 io.onStep?.('write-local');
                 await yieldToUi();
-                await io.writeLocal(withPendingRemoteWriteRetry(finalData, nowIso, error));
+                await saveRemoteWriteRetrySchedule(io, withPendingRemoteWriteRetry(finalData, nowIso, error));
             }
             throw error;
         }
@@ -1647,7 +1660,7 @@ async function performSyncCycleUnlocked(io: SyncCycleIO): Promise<SyncCycleResul
         const localDataWithRetry = withPendingRemoteWriteRetry(canonicalWithPendingRemoteWrite, nowIso, error);
         io.onStep?.('write-local');
         await yieldToUi();
-        await io.writeLocal(localDataWithRetry);
+        await saveRemoteWriteRetrySchedule(io, localDataWithRetry);
         throw error;
     }
 

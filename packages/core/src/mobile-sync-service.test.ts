@@ -519,6 +519,22 @@ describe('mobile sync service behind fake ports', () => {
     }
   });
 
+  it('a slicing host saves on the token of its own read, carried across the local status merge (D9b W3)', async () => {
+    const fake = createFakeHost({ values: { ...WEBDAV_VALUES, '@mindwtr_local_sync_status_v1': JSON.stringify({ lastSyncStatus: 'success' }) } });
+    fake.host.sliceYield = async () => undefined;
+    const read = emptyData();
+    const token = { epoch: 7, generation: 3 };
+    const getData = vi.fn(async () => read);
+    const saveData = vi.fn(async () => undefined);
+    fake.host.localData = { getData, saveData, readTokenOf: (data) => (data === read ? token : undefined) };
+    const service = createMobileSyncService(fake.host);
+
+    await service.performMobileSync();
+
+    expect(getData).toHaveBeenCalledWith({ onStale: expect.any(Function) });
+    expect(saveData.mock.calls[0]?.[1]).toMatchObject({ token, onStale: expect.any(Function) });
+  });
+
   it('treats a lifecycle abort as a success and queues a follow-up', async () => {
     const fake = createFakeHost({ values: WEBDAV_VALUES });
     const service = createMobileSyncService(fake.host);

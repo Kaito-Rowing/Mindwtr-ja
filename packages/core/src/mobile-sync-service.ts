@@ -9,6 +9,7 @@
 // are unchanged, and a candidate configuration is only ever proven here (`activationProbe`),
 // never saved — the settings transaction saves it after the proof succeeds.
 import type { AppData, Attachment } from './types';
+import type { SqliteReadToken, SqliteStaleOption } from './sqlite-adapter';
 import { SYNC_ENCRYPTION_LOG_EVENTS, buildSyncEncryptionActivationExtra, buildSyncEncryptionErrorExtra, buildSyncEncryptionRemoteReadExtra, buildSyncEncryptionStateExtra, type SyncEncryptionStateDecision } from './sync-encryption-diagnostics';
 import { buildSyncLocationScope, isSyncEncryptionPartlyEncryptedError, markRemoteEncryptionDiscovered, SyncEncryptionPartlyEncryptedError, markRemotePlaintextDiscovered, restoreVerifiedRemoteEncryption, syncEncryptedArtifactName, SyncEncryptionRemoteConflictError, SyncEncryptionRemotePlaintextError, SyncEncryptionRemoteVersionUnavailableError, SyncEncryptionTerminalError, SyncEncryptionTransitionIncompleteError, type SyncEncryptionState } from './sync-encryption';
 import { SyncEncryptionNoKeyError, SyncEncryptionStateUnavailableError, type SyncEncryptionStateStore } from './sync-encryption-local-state';
@@ -449,6 +450,11 @@ const CLOUDKIT_UNAVAILABLE: MobileSyncCloudKitPort = {
 export type MobileSyncServiceHost<Lease> = {
   /** Defaults to true. False leaves any later cycle to a fresh caller-owned invocation. */
   allowQueuedFollowUp?: boolean;
+  /**
+   * D9b, native Android only: the notifier's slice port (sync-run-ports.ts). A host that binds it gets sliced cycles, with
+   * token-checked saves, write-free aborts and quiet-paced follow-ups. React Native binds none. No host binds it yet.
+   */
+  sliceYield?(): Promise<void>;
   /** The device key-value store (React Native: AsyncStorage). */
   storage: SyncKeyValueStoragePort;
   /** Reads a secret sync key (`isSecretConfigKey`) from the keystore. */
@@ -464,8 +470,10 @@ export type MobileSyncServiceHost<Lease> = {
   network: MobileSyncNetworkPort;
   /** The local snapshot on disk (React Native: the SQLite storage adapter). */
   localData: {
-    getData(): Promise<AppData>;
-    saveData(data: AppData): Promise<AppData | void>;
+    getData(options?: SqliteStaleOption): Promise<AppData>;
+    saveData(data: AppData, options?: { token?: SqliteReadToken } & SqliteStaleOption): Promise<AppData | void>;
+    /** The SQLite adapter's read token (D9b W3); a sliced cycle without it has every save refused. */
+    readTokenOf?(data: AppData): SqliteReadToken | undefined;
   };
   log: MobileSyncLogPort;
   externalCalendars: {
@@ -670,6 +678,8 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
     }));
   };
 
+  // D9b W3: a sliced cycle's read document (after the status merge) and its SQLite read token.
+  const readTokens = new WeakMap<AppData, SqliteReadToken>();
   const mergeLocalSyncStatus = async (data: AppData): Promise<AppData> => {
     const status = await readLocalSyncStatus();
     if (!status) return data;
@@ -1398,11 +1408,20 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
 
     private createStorage(): SyncRunStorage {
       return {
-        readPersistedLocal: async () => mergeLocalSyncStatus(await host.localData.getData()),
-        persistLocal: async (data) => {
-          await this.assertFileSyncLeaseHeld();
-          await host.localData.saveData(data);
+        readPersistedLocal: async (options) => {
+          if (!options) return mergeLocalSyncStatus(await host.localData.getData());
+          // A sliced cycle: the status merge makes a new document, so its token is carried over to it.
+          const read = await host.localData.getData(options);
+          const merged = await mergeLocalSyncStatus(read);
+          const token = host.localData.readTokenOf?.(read);
+          if (token) readTokens.set(merged, token);
+          return merged;
         },
+        persistLocal: async (data, options) => {
+          await this.assertFileSyncLeaseHeld();
+          await (options ? host.localData.saveData(data, options) : host.localData.saveData(data));
+        },
+        readTokenOf: (data) => readTokens.get(data) ?? host.localData.readTokenOf?.(data),
         // After the store shows the committed save: a lease lost now ends the cycle, never the publish.
         afterPersistLocal: () => this.assertFileSyncLeaseHeld(),
         // In the same gate hold as the save: a command never acts on a store older than the disk.
@@ -1438,6 +1457,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           void log.warn(message, { scope: 'sync', extra });
         },
         sanitizeLogMessage: (message) => log.sanitize(message),
+        ...(host.sliceYield ? { sliceYield: () => host.sliceYield!() } : {}),
         logSyncError: (error, context) => {
           this.logEncryptionFailure(error, context.step);
           return log.syncError(error, {

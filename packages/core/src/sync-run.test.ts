@@ -44,6 +44,11 @@ import { NativeAttachmentCleanupUnconfirmedError } from './native-attachment-cle
 import { LocalSyncAbort } from './sync-client-helpers';
 import { resetForTests } from './store';
 import { isArchiveRetentionSyncCompleted } from './store-archive-retention';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { openScratchSqlite } from './screen-parity.replay';
+import { SqliteAdapter } from './sqlite-adapter';
 
 // Each harness stands up its own fake store, so the process-wide idle-cycle
 // snapshot (keyed on sync scope + the store's change stamp, unique inside a
@@ -4779,5 +4784,143 @@ describe('device-local AI settings survive a disk-vs-memory reconcile', () => {
         expect(ai?.speechToText?.baseUrl).toBe('http://old-speech/v1');
         expect(ai?.speechToText?.offlineModelPath).toBe('/old/model.bin');
         expect(harness.remote?.settings.ai?.baseUrl).toBeUndefined();
+    });
+});
+
+// D9b change 4a (design.md W1, W3): a sliced cycle (a host that binds sliceYield) saves only on its own read's token, and an
+// abort writes nothing: no recovery save, no status. The storage is a real guarded SQLite adapter; a calendar write is the
+// foreign write that voids the token. Every unsliced cycle keeps today's saves.
+describe('sliced cycle write safety (D9b W1, W3)', () => {
+    const closers: (() => void)[] = [];
+    afterEach(() => { closers.splice(0).forEach((close) => close()); });
+    const NETWORK_ERROR = 'Network request failed';
+
+    const adapterHarness = async (config: HarnessConfig & { sliced: boolean; refuseAtSave?: number }) => {
+        const dir = mkdtempSync(join(tmpdir(), 'mindwtr-sliced-safety-'));
+        const sql = openScratchSqlite(join(dir, 'mindwtr.db'));
+        closers.push(() => { sql.close(); rmSync(dir, { recursive: true, force: true }); });
+        const local = config.local ?? createData([createTask('t-local', 'Local task')]);
+        await new SqliteAdapter(sql.client).saveData(local);
+        const adapter = new SqliteAdapter(sql.client, { rejectConcurrentWrites: true });
+        let saves = 0;
+        const voidToken = () => adapter.upsertCalendarSyncEntry({ taskId: 't-local', calendarEventId: `e-${saves}`, calendarId: 'c', platform: 'android', lastSyncedAt: STAMP });
+        const bundle = createHarness({
+            ...config,
+            local,
+            storage: {
+                readPersistedLocal: vi.fn(async (options?: Parameters<SyncRunStorage['readPersistedLocal']>[0]) => adapter.getData(options)),
+                persistLocal: vi.fn(async (data: AppData, options?: Parameters<SyncRunStorage['persistLocal']>[1]) => {
+                    saves += 1;
+                    if (saves === config.refuseAtSave) await voidToken();
+                    await (options ? adapter.saveData(data, options) : adapter.saveData(data));
+                }),
+                readTokenOf: (data) => adapter.readTokenOf(data),
+                ...config.storage,
+            },
+        });
+        if (config.sliced) bundle.notifier.sliceYield = async () => undefined;
+        return { ...bundle, adapter, voidToken };
+    };
+    const remoteWithNewTask = () => createData([createTask('t-local', 'Local task'), createTask('t-remote', 'Remote task')]);
+    // A prepare pass that changed attachment bookkeeping: an abort would have saved it through the recovery save.
+    const preparedAttachments = { syncAttachments: vi.fn(async (data: AppData, helpers: { phase?: string }) => (helpers.phase === 'prepare' ? cloneAppData(data) : false)) };
+
+    it.each([1, 2])('a foreign write before save %i refuses it: nothing more is written, no status, the marker stays, and the next cycle publishes', async (refuseAtSave) => {
+        const bundle = await adapterHarness({ sliced: true, refuseAtSave, remote: remoteWithNewTask(), io: preparedAttachments });
+
+        const result = await bundle.run();
+
+        expect(result).toMatchObject({ success: true, skipped: 'requeued' });
+        expect(bundle.hooks.requestFollowUp).toHaveBeenCalled();
+        expect(bundle.harness.infos.find((line) => line.message === 'Sync cycle requeued')?.extra?.reason).toBe('stale-db');
+        // No recovery save after the refusal, and no sync status.
+        expect(bundle.storage.persistLocal).toHaveBeenCalledTimes(refuseAtSave);
+        expect(bundle.harness.statusUpdates).toEqual([]);
+        const disk = await bundle.adapter.getData();
+        if (refuseAtSave === 1) {
+            expect(disk.tasks.map((task) => task.id)).toEqual(['t-local']);
+            expect(bundle.io.writeRemote).not.toHaveBeenCalled();
+        } else {
+            // Save 1 committed the merge with the pending-write marker; the refused save 2 leaves it for the next cycle.
+            expect(disk.tasks.map((task) => task.id).sort()).toEqual(['t-local', 't-remote']);
+            expect(disk.settings.pendingRemoteWriteAt).toBeTruthy();
+        }
+
+        const next = await bundle.run();
+        expect(next.success).toBe(true);
+        expect(next.skipped).toBeUndefined();
+        const after = await bundle.adapter.getData();
+        expect(after.tasks.map((task) => task.id).sort()).toEqual(['t-local', 't-remote']);
+        expect(after.settings.pendingRemoteWriteAt).toBeUndefined();
+    });
+
+    it('an unsliced cycle passes no token, so the same foreign write refuses nothing', async () => {
+        const bundle = await adapterHarness({ sliced: false, refuseAtSave: 1, remote: remoteWithNewTask() });
+
+        expect((await bundle.run()).success).toBe(true);
+        expect(vi.mocked(bundle.storage.readPersistedLocal).mock.calls.every((call) => call.length === 0)).toBe(true);
+        expect(vi.mocked(bundle.storage.persistLocal).mock.calls.every((call) => call.length === 1)).toBe(true);
+        expect((await bundle.adapter.getData()).tasks.map((task) => task.id).sort()).toEqual(['t-local', 't-remote']);
+    });
+
+    it('a sliced cycle flushes pending store saves right before its read, so the save gate\'s flush cannot void the token', async () => {
+        const bundle = await adapterHarness({ sliced: true, remote: remoteWithNewTask() });
+        const read = bundle.storage.readPersistedLocal;
+        bundle.storage.readPersistedLocal = vi.fn(async (options) => { bundle.harness.callOrder.push('read'); return read(options); });
+
+        expect((await bundle.run()).success).toBe(true);
+        // The cycle-start flush, then the one right before the read.
+        const order = bundle.harness.callOrder;
+        expect(order.slice(0, order.indexOf('read'))).toEqual(['flush', 'flush']);
+    });
+
+    it.each([true, false])('the offline hook\'s pre-sync save runs only on an unsliced cycle (sliced: %s)', async (sliced) => {
+        const bundle = await adapterHarness({
+            sliced,
+            remote: remoteWithNewTask(),
+            io: { ...preparedAttachments, readRemote: vi.fn(async () => { throw new Error(NETWORK_ERROR); }) },
+            hooks: {
+                handleRunErrorAfterRequeue: async (_error, context) => {
+                    await context.persistPreSyncedData();
+                    return { success: true, skipped: 'offline' };
+                },
+            },
+        });
+
+        expect(await bundle.run()).toMatchObject({ success: true, skipped: 'offline' });
+        expect(bundle.storage.persistLocal).toHaveBeenCalledTimes(sliced ? 0 : 1);
+    });
+
+    it('a refused retry-schedule save after a failed remote write keeps the network error, not a requeue', async () => {
+        const bundle = await adapterHarness({
+            sliced: true,
+            refuseAtSave: 2,
+            remote: remoteWithNewTask(),
+            io: { writeRemote: vi.fn(async () => { throw new Error(NETWORK_ERROR); }) },
+        });
+
+        const result = await bundle.run();
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain(NETWORK_ERROR);
+        expect(bundle.hooks.finalizeErrorStatus).toHaveBeenCalledTimes(1);
+        // Save 1's marker stays; the refused save recorded no backoff.
+        const disk = await bundle.adapter.getData();
+        expect(disk.settings.pendingRemoteWriteAt).toBeTruthy();
+        expect(disk.settings.pendingRemoteWriteAttempts ?? 0).toBe(0);
+    });
+
+    it('an idle cycle carries its token to the next cycle, whose save then commits', async () => {
+        const bundle = await adapterHarness({ sliced: true, fastSyncScope: 'scope-sliced-idle', policy: { carryIdleCycleSnapshot: true } });
+        await bundle.run();
+        await bundle.run();
+        vi.mocked(bundle.storage.readPersistedLocal).mockClear();
+        bundle.harness.remote = remoteWithNewTask();
+
+        const third = await bundle.run({ manual: true });
+
+        expect(bundle.storage.readPersistedLocal).not.toHaveBeenCalled();
+        expect(third.success).toBe(true);
+        expect((await bundle.adapter.getData()).tasks.map((task) => task.id).sort()).toEqual(['t-local', 't-remote']);
     });
 });

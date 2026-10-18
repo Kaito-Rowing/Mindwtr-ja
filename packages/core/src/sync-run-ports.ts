@@ -8,6 +8,7 @@ import type { SyncRemoteMutationFenceLease } from './sync-remote-fence';
 import type { SyncCryptoKdfParams, SyncKeyMaterial } from './sync-crypto';
 import type { SyncEncryptionRemoteReadLogInput } from './sync-encryption-diagnostics';
 import type { AttachmentTransferAdmission } from './attachment-transfer';
+import type { SqliteReadToken, SqliteStaleOption } from './sqlite-adapter';
 
 /**
  * ADR 0014 — shared sync orchestration ports.
@@ -173,10 +174,13 @@ export type SyncStatusUpdates = Partial<Pick<AppSettings,
 export interface SyncRunStorage {
     /** Persisted local snapshot (disk), already merged with any device-local
      *  sync-status cache the platform keeps outside the synced document. */
-    readPersistedLocal(): Promise<AppData>;
+    readPersistedLocal(options?: SqliteStaleOption): Promise<AppData>;
     /** Durably persist the merged snapshot locally. Implementations must mark
-     *  the write as self-written for every watcher the platform runs. */
-    persistLocal(data: AppData): Promise<AppData | void>;
+     *  the write as self-written for every watcher the platform runs. A sliced cycle (design D9b W3) passes its read's
+     *  token and onStale: a refused save writes nothing and throws onStale's error. */
+    persistLocal(data: AppData, options?: { token?: SqliteReadToken } & SqliteStaleOption): Promise<AppData | void>;
+    /** D9b W3: the token of a document readPersistedLocal returned, or of one persistLocal just committed (its successor). */
+    readTokenOf?(data: AppData): SqliteReadToken | undefined;
     /** A check after a committed local save (File Sync's lease). It runs once the store shows that save. */
     afterPersistLocal?(): Promise<void>;
     /** Apply persisted data to the in-memory store right after each committed local
@@ -206,7 +210,7 @@ export type SyncPayloadTraceEvent =
 
 /** Phase checkpoints for mobile's elapsed-time/payload-shape diagnostics
  *  (issue #766 log analysis). Desktop leaves `onDiagnostic` unset. */
-export type SyncFollowUpReason = 'stale-local' | 'remote-conflict' | 'server-contribution'
+export type SyncFollowUpReason = 'stale-local' | 'stale-db' | 'remote-conflict' | 'server-contribution'
     | 'remote-fence-busy' | 'remote-fence-release' | 'file-lock-busy';
 
 export type SyncRunDiagnosticEvent = {

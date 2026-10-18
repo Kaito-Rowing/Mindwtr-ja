@@ -11,7 +11,8 @@ export const CLOUD_PROVIDER_SELF_HOSTED = 'selfhosted' as const;
 export { CLOUD_PROVIDER_DROPBOX } from './sync-storage-keys';
 export type CloudProvider = typeof CLOUD_PROVIDER_SELF_HOSTED | typeof CLOUD_PROVIDER_DROPBOX;
 
-export type LocalSyncAbortReason = 'local-data-changed' | 'remote-write-conflict';
+/** 'stale-db': another write reached the database after this sliced cycle's read (design D9b W3/W4). */
+export type LocalSyncAbortReason = 'local-data-changed' | 'stale-db' | 'remote-write-conflict';
 
 export class LocalSyncAbort extends Error {
     readonly reason: LocalSyncAbortReason;
