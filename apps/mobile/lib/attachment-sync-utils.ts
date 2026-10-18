@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LegacyFileSystem from 'expo-file-system/legacy';
 import * as FileSystem from './file-system';
-import { listSafChildren, statSafDocument } from './saf-documents';
+import { listSafChildren, statSafDocument, writeSafDocument } from './saf-documents';
 import {
   ATTACHMENTS_DIR_NAME,
   ATTACHMENT_PRESENCE_RECONCILE_INTERVAL_MS,
@@ -138,11 +138,9 @@ export const mobileAttachmentFileSystem: MobileAttachmentFileSystemPort = {
       stat: (uri) => statSafDocument(uri),
       makeDirectory: (parentUri, name) => saf.makeDirectoryAsync(parentUri, name),
       createFile: (parentUri, name, mimeType) => saf.createFileAsync(parentUri, name, mimeType),
-      writeBytes: (uri, bytes) => saf.writeAsStringAsync(
-        uri,
-        bytesToBase64(bytes),
-        { encoding: FileSystem.EncodingType.Base64 },
-      ),
+      // No writability pre-check (SafDocumentsCore.writeBytes): expo's legacy SAF write refuses
+      // every attempt on RSAF, which never declares FLAG_SUPPORTS_WRITE (#1001).
+      writeBytes: (uri, bytes) => writeSafDocument(uri, bytes),
     };
   },
 };

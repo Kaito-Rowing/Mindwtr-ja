@@ -59,6 +59,9 @@ class AndroidSafDocumentProvider(private val context: Context) : SafDocumentProv
         }
     }
 
+    override fun openWrite(uri: String): java.io.OutputStream =
+        resolver.openOutputStream(Uri.parse(uri), "w") ?: throw java.io.IOException("The provider returned no output stream")
+
     override fun isReachable(uri: String): Boolean {
         val authority = Uri.parse(uri).authority ?: return false
         val client = resolver.acquireUnstableContentProviderClient(authority) ?: return false

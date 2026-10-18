@@ -27,6 +27,12 @@ class SafDocumentsCoreTest {
 
         override fun isReachable(uri: String) = reachable
         override fun openRead(uri: String): SafOpenedDocument = throw UnsupportedOperationException()
+        var written: java.io.ByteArrayOutputStream? = null
+        var writeError: Throwable? = null
+        override fun openWrite(uri: String): java.io.OutputStream {
+            writeError?.let { throw it }
+            return java.io.ByteArrayOutputStream().also { written = it }
+        }
     }
 
     private fun row(name: String) = SafDocumentRow("content://p/tree/t/document/$name", name, null, 3, 0, null)
@@ -83,6 +89,20 @@ class SafDocumentsCoreTest {
     }
 
     @Test
+    fun aWriteGoesStraightToTheOutputStreamWithNoFlagCheck() {
+        // FLAG_SUPPORTS_WRITE (2) is absent from the row, as RSAF reports it.
+        val provider = FakeProvider().apply { document = SafDocumentQuery.Found(row("x").copy(flags = 0)) }
+        SafDocumentsCore(provider).writeBytes("content://p/tree/t/document/x", byteArrayOf(1, 2, 3))
+        assertEquals(listOf<Byte>(1, 2, 3), provider.written!!.toByteArray().toList())
+    }
+
+    @Test
+    fun aFailedWriteIsAnError() {
+        val provider = FakeProvider().apply { writeError = java.io.IOException("disk full") }
+        assertUnavailable { SafDocumentsCore(provider).writeBytes("content://p/tree/t/document/x", byteArrayOf(1)) }
+    }
+
+    @Test
     fun statReturnsTheRow() {
         val provider = FakeProvider().apply { document = SafDocumentQuery.Found(row("data.json")) }
         assertEquals("data.json", SafDocumentsCore(provider).stat("content://p/tree/t/document/data.json")?.name)
@@ -118,6 +138,7 @@ class SafDocumentsCoreReadTest {
         }
         override fun isReachable(uri: String) = true
         override fun openRead(uri: String): SafOpenedDocument = Opened(bytes, descriptorSizes, failAfter)
+        override fun openWrite(uri: String): java.io.OutputStream = throw UnsupportedOperationException()
     }
 
     private val uri = "content://p/tree/t/document/t%2Fdata.json"

@@ -1,4 +1,4 @@
-import { base64ToBytes } from '@mindwtr/core';
+import { base64ToBytes, bytesToBase64 } from '@mindwtr/core';
 import { requireNativeModule } from 'expo-modules-core';
 
 import { logInfo, logWarn } from './app-log';
@@ -27,6 +27,7 @@ type SafDocumentsNativeModule = {
   listChildrenAsync(uri: string): Promise<SafDocumentEntry[]>;
   statAsync(uri: string): Promise<SafDocumentEntry | null>;
   readAsync(uri: string): Promise<{ base64: string; lengthVerified: boolean }>;
+  writeAsync(uri: string, base64: string): Promise<void>;
 };
 
 let testModule: SafDocumentsNativeModule | null | undefined;
@@ -44,7 +45,7 @@ const getModule = (): SafDocumentsNativeModule => {
       resolvedModule = null;
     }
   }
-  if (!resolvedModule?.listChildrenAsync || !resolvedModule.statAsync || !resolvedModule.readAsync) {
+  if (!resolvedModule?.listChildrenAsync || !resolvedModule.statAsync || !resolvedModule.readAsync || !resolvedModule.writeAsync) {
     throw new Error(`${SAF_DOCUMENTS_UNAVAILABLE}: SAF document calls are unavailable in this build`);
   }
   return resolvedModule;
@@ -55,7 +56,7 @@ let listedOnce = false;
 
 /** One proving line per process for a listing that ran through SafDocumentsCore, and one per
  *  provider error it surfaced instead of answering "empty" or "absent". */
-const traced = async <T>(check: 'listing' | 'lookup' | 'read', call: () => Promise<T>): Promise<T> => {
+const traced = async <T>(check: 'listing' | 'lookup' | 'read' | 'write', call: () => Promise<T>): Promise<T> => {
   try {
     const value = await call();
     if (check === 'listing' && !listedOnce) {
@@ -88,6 +89,11 @@ export const readSafDocument = async (uri: string): Promise<SafDocumentRead> => 
   const read = await getModule().readAsync(uri);
   return { bytes: base64ToBytes(read.base64), lengthVerified: read.lengthVerified === true };
 });
+
+/** Writes a SAF document through the provider's output stream with no writability pre-check
+ *  (SafDocumentsCore.writeBytes): RSAF never declares FLAG_SUPPORTS_WRITE (#1001). */
+export const writeSafDocument = async (uri: string, bytes: Uint8Array): Promise<void> =>
+  traced('write', () => getModule().writeAsync(uri, bytesToBase64(bytes)));
 
 export const setSafDocumentsNativeModuleForTests = (
   nativeModule: SafDocumentsNativeModule | null | undefined,

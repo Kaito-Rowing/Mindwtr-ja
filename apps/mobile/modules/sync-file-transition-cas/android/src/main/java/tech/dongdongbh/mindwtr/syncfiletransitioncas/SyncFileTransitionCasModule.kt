@@ -46,6 +46,11 @@ class SyncFileTransitionCasModule : Module() {
       documentCall { documents.stat(uriValue)?.toMap() }
     }
 
+    // A write with no writability pre-check (SafDocumentsCore.writeBytes); Base64 as expo's SAF writes take bytes.
+    AsyncFunction("writeAsync") { uriValue: String, base64: String ->
+      documentCall { documents.writeBytes(uriValue, android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)) }
+    }
+
     // The whole document or an error, never a part (SafDocumentsCore.readBytes); Base64 as expo's SAF reads hand bytes over.
     AsyncFunction("readAsync") { uriValue: String ->
       documentCall {

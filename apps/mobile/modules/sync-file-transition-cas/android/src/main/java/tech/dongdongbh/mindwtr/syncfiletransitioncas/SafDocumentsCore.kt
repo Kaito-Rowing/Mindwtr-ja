@@ -89,6 +89,19 @@ class SafDocumentsCore(
         }
     }
 
+    /**
+     * Writes [bytes] into document [uri] (File Sync writes only into documents it just created) through the provider's
+     * output stream, with no writability pre-check: RSAF (rclone) never sets FLAG_SUPPORTS_WRITE, and expo's legacy SAF
+     * write refused every attempt on it (#1001). A failed close is a failed write.
+     */
+    fun writeBytes(uri: String, bytes: ByteArray) {
+        try {
+            provider.openWrite(uri).use { it.write(bytes) }
+        } catch (error: Throwable) {
+            throw SafDocumentUnavailableException("$UNAVAILABLE: the document write failed", error)
+        }
+    }
+
     private fun readAll(stream: java.io.InputStream, maxBytes: Long): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         val buffer = ByteArray(64 * 1024)
@@ -148,6 +161,8 @@ interface SafDocumentProvider {
     /** Whether [uri]'s authority names an installed provider this app can reach. */
     fun isReachable(uri: String): Boolean
     fun openRead(uri: String): SafOpenedDocument
+    /** The document's output stream in mode "w". */
+    fun openWrite(uri: String): java.io.OutputStream
 }
 
 open class SafDocumentUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
