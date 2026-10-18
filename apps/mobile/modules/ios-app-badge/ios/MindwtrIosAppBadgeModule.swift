@@ -17,7 +17,7 @@ public final class MindwtrIosAppBadgeModule: Module {
             let center = UNUserNotificationCenter.current()
             center.requestAuthorization(options: [.badge]) { _, error in
                 if let error = error {
-                    promise.reject("ERR_BADGE_AUTHORIZATION", "Badge authorization failed", error)
+                    promise.reject("ERR_BADGE_AUTHORIZATION", "Badge authorization failed: \(error.localizedDescription)")
                     return
                 }
                 center.getNotificationSettings { settings in
@@ -35,7 +35,7 @@ public final class MindwtrIosAppBadgeModule: Module {
             if #available(iOS 16.0, *) {
                 UNUserNotificationCenter.current().setBadgeCount(value) { error in
                     if let error = error {
-                        promise.reject("ERR_BADGE_UPDATE", "Badge update failed", error)
+                        promise.reject("ERR_BADGE_UPDATE", "Badge update failed: \(error.localizedDescription)")
                     } else {
                         promise.resolve(nil)
                     }
