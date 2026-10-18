@@ -34,7 +34,7 @@ import {
 import { logWarn } from './app-log';
 import { base64ToBytes, bytesToBase64 } from './attachment-sync-utils';
 import * as FileSystem from './file-system';
-import { listSafChildren, statSafDocument } from './saf-documents';
+import { listSafChildren, readSafDocument, statSafDocument } from './saf-documents';
 import { renameSafTransitionDocument } from './sync-file-transition-cas';
 
 const StorageAccessFramework = FileSystem.StorageAccessFramework;
@@ -58,16 +58,17 @@ const getLeafName = (uri: string): string => {
 /** Reads a sync artifact as raw bytes, or `null` when it does not exist. Never throws for
  *  a missing file — callers distinguish "absent" from "unreadable" and an absent `.enc`
  *  sibling is the normal case on every plaintext folder. */
+/** Bytes a SAF read returned without a provider-reported length to prove them whole. They may
+ *  be used, but a document that fails to parse from them is never repaired (dd, 10-18). */
+const unverifiedLengthReads = new WeakSet<Uint8Array>();
+export const isUnverifiedLengthRead = (bytes: Uint8Array): boolean => unverifiedLengthReads.has(bytes);
+
 export const readSyncArtifactBytes = async (uri: string): Promise<Uint8Array | null> => {
     try {
         if (isSaf(uri)) {
-            if (!StorageAccessFramework?.readAsStringAsync) {
-                throw new Error('This Android build does not support Storage Access Framework (SAF).');
-            }
-            const base64 = await StorageAccessFramework.readAsStringAsync(uri, {
-                encoding: FileSystem.EncodingType.Base64,
-            });
-            return base64 ? base64ToBytes(base64) : new Uint8Array(0);
+            const read = await readSafDocument(uri);
+            if (!read.lengthVerified) unverifiedLengthReads.add(read.bytes);
+            return read.bytes;
         }
         const file = new ExpoFile(uri);
         if (!file.exists) return null;

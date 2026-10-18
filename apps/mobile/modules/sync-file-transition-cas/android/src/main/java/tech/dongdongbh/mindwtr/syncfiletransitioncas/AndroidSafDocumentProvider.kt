@@ -45,6 +45,20 @@ class AndroidSafDocumentProvider(private val context: Context) : SafDocumentProv
         return cursor.use { if (it.moveToFirst()) SafDocumentQuery.Found(row(it, uri)) else SafDocumentQuery.Missing }
     }
 
+    override fun openRead(uri: String): SafOpenedDocument {
+        val descriptor = resolver.openFileDescriptor(Uri.parse(uri), "r")
+            ?: throw java.io.IOException("The provider returned no descriptor")
+        val stream = java.io.FileInputStream(descriptor.fileDescriptor)
+        return object : SafOpenedDocument {
+            override val stream: java.io.InputStream = stream
+            // -1 for a pipe or socket: no length from the descriptor.
+            override fun size(): Long? = descriptor.statSize.takeIf { it >= 0 }
+            override fun close() {
+                try { stream.close() } finally { descriptor.close() }
+            }
+        }
+    }
+
     override fun isReachable(uri: String): Boolean {
         val authority = Uri.parse(uri).authority ?: return false
         val client = resolver.acquireUnstableContentProviderClient(authority) ?: return false

@@ -24,6 +24,7 @@ describe('saf-documents', () => {
     setSafDocumentsNativeModuleForTests({
       listChildrenAsync: vi.fn(async () => { throw new Error('SAF_DOCUMENT_UNAVAILABLE: no listing'); }),
       statAsync: vi.fn(async () => null),
+      readAsync: vi.fn(async () => ({ base64: '', lengthVerified: true })),
     });
     await expect(listSafChildren('content://p/tree/t')).rejects.toThrow('SAF_DOCUMENT_UNAVAILABLE');
     expect(log.logWarn).toHaveBeenCalledWith('File Sync provider error kept the folder unread', {

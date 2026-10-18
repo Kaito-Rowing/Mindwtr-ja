@@ -46,6 +46,17 @@ class SyncFileTransitionCasModule : Module() {
       documentCall { documents.stat(uriValue)?.toMap() }
     }
 
+    // The whole document or an error, never a part (SafDocumentsCore.readBytes); Base64 as expo's SAF reads hand bytes over.
+    AsyncFunction("readAsync") { uriValue: String ->
+      documentCall {
+        val read = documents.readBytes(uriValue, Runtime.getRuntime().maxMemory() / 5)
+        mapOf(
+          "base64" to android.util.Base64.encodeToString(read.bytes, android.util.Base64.NO_WRAP),
+          "lengthVerified" to read.lengthVerified,
+        )
+      }
+    }
+
     AsyncFunction("renameDocumentAsync") { uriValue: String, displayName: String ->
       val uri = Uri.parse(uriValue)
       if (uri.scheme != "content") {

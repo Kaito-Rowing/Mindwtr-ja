@@ -8,7 +8,11 @@ package tech.dongdongbh.mindwtr.syncfiletransitioncas
  * what it has (often nothing) when the children query throws, and DocumentFile.exists reads any error as "absent"; sync then
  * mistook an unreadable folder for an empty one.
  */
-class SafDocumentsCore(private val provider: SafDocumentProvider) {
+class SafDocumentsCore(
+    private val provider: SafDocumentProvider,
+    /** Waits between size re-queries (tests pass a recorder). */
+    private val sleep: (Long) -> Unit = { Thread.sleep(it) },
+) {
     /** The documents in folder [dirUri]. Empty only when the provider listed an empty folder. */
     fun listChildren(dirUri: String): List<SafDocumentRow> {
         val rows = try {
@@ -41,9 +45,81 @@ class SafDocumentsCore(private val provider: SafDocumentProvider) {
         }
     }
 
+    /**
+     * The whole document, or an error; never a part of it. Every length the provider reports (the descriptor's size and
+     * COLUMN_SIZE) must equal the bytes read; when they disagree they are asked again after [SIZE_SETTLE_DELAYS_MS]
+     * (about 2 s in all), because the Downloads provider updates COLUMN_SIZE from an asynchronous close listener. A document
+     * no length is reported for is read and answered with lengthVerified = false: the caller must not repair from it.
+     * Error texts carry no URI and no file name (sync reads some words in them as "invalid JSON, repair it").
+     */
+    fun readBytes(uri: String, maxBytes: Long): SafDocumentRead {
+        val row = stat(uri) ?: throw SafDocumentUnavailableException("$UNAVAILABLE: the document is gone")
+        if (row.flags and FLAG_PARTIAL != 0L) {
+            throw SafDocumentIncompleteException("$INCOMPLETE: the document is still downloading")
+        }
+        val opened = try {
+            provider.openRead(uri)
+        } catch (error: Throwable) {
+            throw SafDocumentUnavailableException("$UNAVAILABLE: the provider could not open the document", error)
+        }
+        opened.use { document ->
+            val bytes = try {
+                readAll(document.stream, maxBytes)
+            } catch (error: SafDocumentTooLargeException) {
+                throw error
+            } catch (error: Throwable) {
+                throw SafDocumentUnavailableException("$UNAVAILABLE: the document read failed", error)
+            }
+            var columnSize = row.size
+            var descriptorSize = document.size()
+            for (delay in listOf(0L) + SIZE_SETTLE_DELAYS_MS) {
+                if (delay > 0) {
+                    sleep(delay)
+                    columnSize = stat(uri)?.size
+                    descriptorSize = document.size()
+                }
+                val reported = listOfNotNull(columnSize, descriptorSize)
+                if (reported.all { it == bytes.size.toLong() }) return SafDocumentRead(bytes, reported.isNotEmpty())
+            }
+            throw SafDocumentIncompleteException(
+                if (descriptorSize != null && columnSize != null && descriptorSize != columnSize)
+                    "$INCOMPLETE: the provider reports inconsistent sizes"
+                else "$INCOMPLETE: short read",
+            )
+        }
+    }
+
+    private fun readAll(stream: java.io.InputStream, maxBytes: Long): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val count = stream.read(buffer)
+            if (count < 0) return out.toByteArray()
+            if (out.size().toLong() + count > maxBytes) {
+                throw SafDocumentTooLargeException("$TOO_LARGE: the document exceeds this device's read limit")
+            }
+            out.write(buffer, 0, count)
+        }
+    }
+
     companion object {
         const val UNAVAILABLE = "SAF_DOCUMENT_UNAVAILABLE"
+        const val INCOMPLETE = "SAF_DOCUMENT_INCOMPLETE"
+        const val TOO_LARGE = "SAF_DOCUMENT_TOO_LARGE"
+        /** DocumentsContract.Document.FLAG_PARTIAL. */
+        const val FLAG_PARTIAL = 8192L
+        /** Re-query after 250 ms, 750 ms and 2 s. */
+        val SIZE_SETTLE_DELAYS_MS = listOf(250L, 500L, 1250L)
     }
+}
+
+/** A whole document's bytes; [lengthVerified] says a reported length confirmed them. */
+class SafDocumentRead(val bytes: ByteArray, val lengthVerified: Boolean)
+
+/** An open read: its stream, and the descriptor's size now (null when the descriptor has none, as a pipe). */
+interface SafOpenedDocument : AutoCloseable {
+    val stream: java.io.InputStream
+    fun size(): Long?
 }
 
 /** One document as the provider describes it. [uri] is its tree document URI; [name] is its display name. */
@@ -71,6 +147,9 @@ interface SafDocumentProvider {
     fun queryDocument(uri: String): SafDocumentQuery
     /** Whether [uri]'s authority names an installed provider this app can reach. */
     fun isReachable(uri: String): Boolean
+    fun openRead(uri: String): SafOpenedDocument
 }
 
-class SafDocumentUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class SafDocumentUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class SafDocumentIncompleteException(message: String) : SafDocumentUnavailableException(message)
+class SafDocumentTooLargeException(message: String) : SafDocumentUnavailableException(message)

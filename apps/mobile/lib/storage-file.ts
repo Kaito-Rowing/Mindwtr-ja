@@ -33,9 +33,10 @@ import {
     SyncEncryptionNoKeyError,
     syncEncryptionLocalState,
 } from './sync-encryption-state';
-import { listSafChildren } from './saf-documents';
+import { listSafChildren, readSafDocument } from './saf-documents';
 import {
     createFileSyncEncryptionRemotePort,
+    isUnverifiedLengthRead,
     readSyncArtifactBytes,
     resolveSyncArtifactSiblingUri,
     writeSyncArtifactBytes,
@@ -209,7 +210,7 @@ function sanitizeJsonText(raw: string): string {
     return text;
 }
 
-function parseAppData(text: string): AppData {
+function parseAppDataUnchecked(text: string): AppData {
     const sanitized = sanitizeJsonText(text);
     if (!sanitized) throw new Error('Sync file is empty');
     const tryParse = (value: string): AppData => {
@@ -237,6 +238,35 @@ function parseAppData(text: string): AppData {
     }
 }
 
+/** The sync document's bytes are not a Mindwtr document (empty, not JSON, or missing its lists).
+ *  Only this error licenses "use local data and repair the file"; a provider error never does,
+ *  even when its text names data.json. */
+export class SyncFileDocumentParseError extends Error {
+    constructor(message: string, options?: { cause?: unknown }) {
+        super(message);
+        this.name = 'SyncFileDocumentParseError';
+        if (options) (this as Error & { cause?: unknown }).cause = options.cause;
+    }
+}
+
+/** The sync document could not be proven whole (its provider reports no length) and does not
+ *  parse, so it may be a cut-off read of real data: the cycle stops and never repairs from it
+ *  (dd, 10-18). "conflict" in the text classifies it as a sync conflict. */
+export class FileSyncUnverifiedReadError extends Error {
+    constructor() {
+        super('File Sync read conflict: the sync file could not be proven complete and did not parse; nothing was written');
+        this.name = 'FileSyncUnverifiedReadError';
+    }
+}
+
+function parseAppData(text: string): AppData {
+    try {
+        return parseAppDataUnchecked(text);
+    } catch (error) {
+        throw new SyncFileDocumentParseError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+}
+
 const writeWithModernFileApi = (fileUri: string, content: string): void => {
     const file = new ExpoFile(fileUri);
     if (!file.exists) {
@@ -245,13 +275,16 @@ const writeWithModernFileApi = (fileUri: string, content: string): void => {
     file.write(content);
 };
 
+/** A SAF document's text, whole (SafDocumentsCore.readBytes), with whether a reported length
+ *  proved it whole. */
+const readSafText = async (fileUri: string): Promise<{ text: string; lengthVerified: boolean }> => {
+    const read = await readSafDocument(fileUri);
+    return { text: new TextDecoder().decode(read.bytes), lengthVerified: read.lengthVerified };
+};
+
 async function readFileText(fileUri: string): Promise<string | null> {
     if (fileUri.startsWith('content://')) {
-        if (!StorageAccessFramework?.readAsStringAsync) {
-            throw new Error('This Android build does not support Storage Access Framework (SAF).');
-        }
-        // Do not fall back to FileSystem.* for content:// URIs — it will throw Invalid URI.
-        return await StorageAccessFramework.readAsStringAsync(fileUri);
+        return (await readSafText(fileUri)).text;
     }
 
     if (Platform.OS === 'ios' && fileUri.startsWith('file://')) {
@@ -626,7 +659,8 @@ const discoverEncryptedSyncFolder = async (
     const encUri = await resolveSyncArtifactSiblingUri(resolvedUri, encryptedLeafNameFor(resolvedUri), {
         createIfMissing: false,
     });
-    if (encUri) candidates.push(await readSyncArtifactBytes(encUri));
+    const encBytes = encUri ? await readSyncArtifactBytes(encUri) : null;
+    if (encUri) candidates.push(encBytes);
     for (const bytes of candidates) {
         if (!bytes || bytes.length === 0) continue;
         const inspected = inspectSyncArtifact(bytes);
@@ -648,6 +682,9 @@ const discoverEncryptedSyncFolder = async (
         }, locationScope);
         return true;
     }
+    // An existing `.enc` that read empty or headerless with no reported length proving it
+    // whole may be a cut-off read of real ciphertext: never license a plaintext write beside it.
+    if (encBytes && isUnverifiedLengthRead(encBytes)) throw new FileSyncUnverifiedReadError();
     return false;
 };
 
@@ -660,6 +697,9 @@ const readEncryptedSyncFile = async (
         createIfMissing: false,
     });
     const bytes = encUri ? await readSyncArtifactBytes(encUri) : null;
+    // An empty `.enc` read with no reported length proving it whole may be cut off: it is not
+    // "no encrypted generation".
+    if (bytes && bytes.length === 0 && isUnverifiedLengthRead(bytes)) throw new FileSyncUnverifiedReadError();
     if (!bytes || bytes.length === 0) {
         // Inverse of discoverEncryptedSyncFolder: a peer ran the disable transition here, so
         // the `.enc` artifact is gone and the plaintext original is back. Never "no data" —
@@ -686,6 +726,10 @@ const readEncryptedSyncFile = async (
             await flushSyncEncryptionLocalState();
             throw new SyncEncryptionRemotePlaintextError();
         }
+        // The typed plaintext check above wins; whatever remains (empty or whitespace bytes no
+        // reported length proved whole) may be a cut-off read of the restored plaintext, so it
+        // is never "no data here".
+        if (plain && isUnverifiedLengthRead(plain)) throw new FileSyncUnverifiedReadError();
         logSyncFileRead({
             artifact: encryptedLeafNameFor(resolvedUri),
             exists: false,
@@ -795,8 +839,12 @@ export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOpti
                 // A SAF sync file is absent only when the folder's listing (which succeeded, or
                 // threw) does not hold it: a lookup with no answer proves nothing. data.json is
                 // created only when the versioned write publishes it.
-                const absent = resolvedUri.startsWith('content://') && !(await isListedInSafSyncFolder(resolvedUri));
-                const fileContent = absent ? null : await readFileText(resolvedUri);
+                const isSafUri = resolvedUri.startsWith('content://');
+                const absent = isSafUri && !(await isListedInSafSyncFolder(resolvedUri));
+                const read = absent ? null : isSafUri
+                    ? await readSafText(resolvedUri)
+                    : { text: await readFileText(resolvedUri), lengthVerified: true };
+                const fileContent = read?.text ?? null;
                 if (!fileContent) {
                     // "Nothing here" is also the exact shape of a folder a peer encrypted
                     // and whose plaintext original it then removed — take one look before
@@ -805,11 +853,23 @@ export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOpti
                     if (await discoverEncryptedSyncFolder(resolvedUri, null, options?.locationScope)) {
                         throw new SyncEncryptionNoKeyError();
                     }
+                    if (read && !read.lengthVerified) throw new FileSyncUnverifiedReadError();
                     return null;
                 }
-                return parseAppData(fileContent);
+                try {
+                    return parseAppData(fileContent);
+                } catch (parseError) {
+                    if (read && !read.lengthVerified) {
+                        const rawBytes = new TextEncoder().encode(fileContent);
+                        if (await discoverEncryptedSyncFolder(resolvedUri, rawBytes, options?.locationScope)) {
+                            throw new SyncEncryptionNoKeyError();
+                        }
+                        throw new FileSyncUnverifiedReadError();
+                    }
+                    throw parseError;
+                }
             } catch (error) {
-                if (error instanceof SyncEncryptionNoKeyError) throw error;
+                if (error instanceof SyncEncryptionNoKeyError || error instanceof FileSyncUnverifiedReadError) throw error;
                 lastError = error;
                 // Small backoff to allow file writes to finish.
                 await sleep(120 + attempt * 80);
@@ -829,6 +889,7 @@ export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOpti
         // three lines does not fail a test today. They exist so that a future wording
         // change ("...is not valid JSON container...") cannot silently turn a wrong
         // passphrase into "no remote data, overwrite it".
+        if (error instanceof FileSyncUnverifiedReadError) throw error;
         if (error instanceof SyncEncryptionNoKeyError
             || error instanceof SyncEncryptionRemotePlaintextError
             || error instanceof SyncEncryptionTerminalError) {
@@ -840,7 +901,7 @@ export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOpti
         if (fileUri.startsWith('content://') && /Invalid URI|IllegalArgumentException/i.test(message)) {
             throw new Error('Cannot access the selected sync file. Please re-select it in Settings → Sync.');
         }
-        if (/JSON|Unexpected token|trailing characters|Invalid data format|Sync file is empty/i.test(message)) {
+        if (error instanceof SyncFileDocumentParseError) {
             void logWarn('[Sync] Invalid JSON in sync file. Using local data and repairing file.', { scope: 'sync' });
             void logInfo('Invalid JSON in sync file; using local data.', { scope: 'sync', extra: { operation: 'read' } });
             return null;
@@ -910,8 +971,16 @@ export const readSyncFileVersioned = async (
                 material.key,
                 mobileSyncCryptoPrimitives,
             );
+            let decrypted: AppData;
+            try {
+                decrypted = parseAppData(new TextDecoder().decode(plaintext));
+            } catch (error) {
+                // Decryption's own typed errors (above) win; only what remains is wrapped.
+                if (isUnverifiedLengthRead(snapshot.bytes)) throw new FileSyncUnverifiedReadError();
+                throw error;
+            }
             return {
-                data: parseAppData(new TextDecoder().decode(plaintext)),
+                data: decrypted,
                 fingerprint: snapshot.version,
                 source: 'primary',
             };
@@ -937,6 +1006,15 @@ export const readSyncFileVersioned = async (
                 // primary version remains the CAS target for any subsequent repair.
             }
         }
+    }
+
+    if (!material && snapshot.bytes && isUnverifiedLengthRead(snapshot.bytes)) {
+        // No reported length proved these bytes whole, and they are empty or do not parse:
+        // they may be a cut-off read of real data. Encryption discovery still comes first.
+        if (await discoverEncryptedSyncFolder(resolvedUri, snapshot.bytes, options?.locationScope)) {
+            throw new SyncEncryptionNoKeyError();
+        }
+        throw new FileSyncUnverifiedReadError();
     }
 
     const recovered = await readSyncFile(fileUri, options);

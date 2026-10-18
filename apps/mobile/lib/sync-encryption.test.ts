@@ -171,10 +171,16 @@ const safDocumentsFake = vi.hoisted(() => ({
     const bytes = fs.files.get(uri);
     return bytes ? { uri, name: uri.slice(uri.lastIndexOf('/') + 1), mime: null, size: bytes.length, lastModified: null } : null;
   },
+  read: async (uri: string) => {
+    const { StorageAccessFramework } = await import('./file-system');
+    const base64: string = await StorageAccessFramework!.readAsStringAsync!(uri, { encoding: 'base64' } as never);
+    return { bytes: new Uint8Array(Buffer.from(base64, 'base64')), lengthVerified: true };
+  },
 }));
 vi.mock('./saf-documents', () => ({
   listSafChildren: vi.fn(safDocumentsFake.list),
   statSafDocument: vi.fn(safDocumentsFake.stat),
+  readSafDocument: vi.fn(safDocumentsFake.read),
 }));
 vi.mock('./sync-path-bookmarks', () => ({
   createSyncPathBookmark: vi.fn(async () => null),
@@ -212,6 +218,7 @@ import {
 } from '@mindwtr/core';
 import {
   FILE_SYNC_ABSENT_FINGERPRINT,
+  FileSyncUnverifiedReadError,
   pickAndParseSyncFolder,
   readSyncFile,
   readSyncFileVersioned,
@@ -333,6 +340,7 @@ beforeEach(async () => {
   const safDocuments = await import('./saf-documents');
   vi.mocked(safDocuments.listSafChildren).mockImplementation(safDocumentsFake.list);
   vi.mocked(safDocuments.statSafDocument).mockImplementation(safDocumentsFake.stat);
+  vi.mocked(safDocuments.readSafDocument).mockImplementation(safDocumentsFake.read);
 });
 
 afterEach(() => {
@@ -691,6 +699,125 @@ describe('File Sync never creates data.json before it publishes one (B2)', () =>
     expect(remote.fingerprint).toBe(FILE_SYNC_ABSENT_FINGERPRINT);
     await writeSyncFile(picked!.__fileUri!, appData('first'), { expectedFingerprint: remote.fingerprint });
     expect(textOf('content://provider/tree/root/document/root/data.json')).toContain('first');
+  });
+});
+
+describe('File Sync reads are whole or refused, and an unproven read never repairs (B6)', () => {
+  const SAF_CANONICAL = 'content://provider/tree/root/document/root/data.json';
+  const full = (): Uint8Array => new TextEncoder().encode(JSON.stringify(appData('remote-only'), null, 2));
+  const traceWrites = async () => {
+    const fileSystem = await import('./file-system');
+    return () => [
+      ...vi.mocked(fileSystem.StorageAccessFramework!.writeAsStringAsync!).mock.calls,
+      ...vi.mocked(fileSystem.StorageAccessFramework!.createFileAsync!).mock.calls,
+      ...vi.mocked(fileSystem.StorageAccessFramework!.deleteAsync!).mock.calls,
+    ];
+  };
+
+  it('refuses a clean short read (32 of 113 declared bytes) instead of repairing from it', async () => {
+    fs.files.set(SAF_CANONICAL, full());
+    const fileSystem = await import('./file-system');
+    // The provider's stream ends early, as a short EOF; expo's read hands the prefix over as if whole.
+    const prefix = Buffer.from(full().slice(0, 32));
+    vi.mocked(fileSystem.StorageAccessFramework!.readAsStringAsync!).mockImplementation(
+      async (_uri: string, options?: { encoding?: string }) => prefix.toString(options?.encoding === 'base64' ? 'base64' : 'utf8'),
+    );
+    const safDocuments = await import('./saf-documents');
+    vi.mocked(safDocuments.readSafDocument).mockRejectedValue(new Error('SAF_DOCUMENT_INCOMPLETE: short read'));
+    const writes = await traceWrites();
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI)).rejects.toThrow('SAF_DOCUMENT_INCOMPLETE');
+    expect(writes()).toEqual([]);
+  });
+
+  it('stops on a no-length document that does not parse, instead of repairing the remote from local data', async () => {
+    fs.files.set(SAF_CANONICAL, new TextEncoder().encode('{"tasks": [{"id": "t1", "ti'));
+    const safDocuments = await import('./saf-documents');
+    vi.mocked(safDocuments.readSafDocument).mockImplementation(async (uri: string) => ({
+      bytes: fs.files.get(uri)!, lengthVerified: false,
+    }));
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI)).rejects.toBeInstanceOf(FileSyncUnverifiedReadError);
+  });
+
+  it('reads a no-length document that parses', async () => {
+    fs.files.set(SAF_CANONICAL, full());
+    const safDocuments = await import('./saf-documents');
+    vi.mocked(safDocuments.readSafDocument).mockImplementation(async (uri: string) => ({
+      bytes: fs.files.get(uri)!, lengthVerified: false,
+    }));
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI)).resolves.toMatchObject({
+      source: 'primary', data: { tasks: [{ title: 'remote-only' }] },
+    });
+  });
+
+  it.each([0, 10])('stops when discovery reads %i bytes of data.json.enc that no reported length proves whole', async (length) => {
+    const sealed = await seedEncrypted(appData('peer'), material, 'content://provider/tree/root/document/root/data.json.enc');
+    fs.files.set('content://provider/tree/root/document/root/data.json.enc', sealed.slice(0, length));
+    const safDocuments = await import('./saf-documents');
+    vi.mocked(safDocuments.readSafDocument).mockImplementation(async (uri: string) => ({
+      bytes: fs.files.get(uri)!, lengthVerified: false,
+    }));
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI)).rejects.toBeInstanceOf(FileSyncUnverifiedReadError);
+    expect([...fs.files.keys()].filter((uri) => uri.endsWith('/data.json'))).toEqual([]);
+  });
+
+  it.each([['empty', ''], ['whitespace', '   \n']])(
+    'refuses a keyed read when the restored plaintext reads %s with no length proving it whole', async (_label, text) => {
+      // A peer disabled encryption: data.json.enc is gone and the plaintext original is back.
+      fs.files.set(SAF_CANONICAL, full());
+      const safDocuments = await import('./saf-documents');
+      vi.mocked(safDocuments.readSafDocument).mockImplementation(async () => ({
+        bytes: new TextEncoder().encode(text), lengthVerified: false,
+      }));
+
+      await expect(readSyncFileVersioned(SAF_SYNC_URI, { material })).rejects.toBeInstanceOf(FileSyncUnverifiedReadError);
+    },
+  );
+
+  it('keeps the remote-plaintext refusal when the restored plaintext reads whole without a length', async () => {
+    fs.files.set(SAF_CANONICAL, full());
+    const safDocuments = await import('./saf-documents');
+    vi.mocked(safDocuments.readSafDocument).mockImplementation(async (uri: string) => ({
+      bytes: fs.files.get(uri)!, lengthVerified: false,
+    }));
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI, { material })).rejects.toBeInstanceOf(SyncEncryptionRemotePlaintextError);
+  });
+
+  it('keeps the typed decrypt error for an unproven read of a sealed document', async () => {
+    const sealed = await seedEncrypted(appData('peer'), material, 'content://provider/tree/root/document/root/data.json.enc');
+    const tampered = new Uint8Array(sealed);
+    tampered[tampered.length - 1] ^= 0xff;
+    fs.files.set('content://provider/tree/root/document/root/data.json.enc', tampered);
+    const safDocuments = await import('./saf-documents');
+    vi.mocked(safDocuments.readSafDocument).mockImplementation(async (uri: string) => ({
+      bytes: fs.files.get(uri)!, lengthVerified: false,
+    }));
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI, { material })).rejects.toBeInstanceOf(SyncEncryptionTerminalError);
+  });
+
+  it('does not repair when a provider error names the sync file, though the name contains "json"', async () => {
+    fs.files.set(SAF_CANONICAL, new TextEncoder().encode('not a document'));
+    const fileSystem = await import('./file-system');
+    let reads = 0;
+    vi.mocked(fileSystem.StorageAccessFramework!.readAsStringAsync!).mockImplementation(async () => {
+      reads += 1;
+      if (reads === 1) return Buffer.from('not a document').toString('base64');
+      throw new Error(`Permission Denial: reading ${SAF_CANONICAL}`);
+    });
+    const safDocuments = await import('./saf-documents');
+    let safReads = 0;
+    vi.mocked(safDocuments.readSafDocument).mockImplementation(async () => {
+      safReads += 1;
+      if (safReads === 1) return { bytes: new TextEncoder().encode('not a document'), lengthVerified: true };
+      throw new Error(`Permission Denial: reading ${SAF_CANONICAL}`);
+    });
+
+    await expect(readSyncFileVersioned(SAF_CANONICAL)).rejects.toThrow('Permission Denial');
   });
 });
 

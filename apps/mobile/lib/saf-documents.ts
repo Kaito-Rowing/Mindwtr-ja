@@ -1,3 +1,4 @@
+import { base64ToBytes } from '@mindwtr/core';
 import { requireNativeModule } from 'expo-modules-core';
 
 import { logInfo, logWarn } from './app-log';
@@ -18,9 +19,14 @@ export type SafDocumentEntry = {
   lastModified: number | null;
 };
 
+/** A whole SAF document. `lengthVerified` is false when the provider reported no length to
+ *  check the bytes against: the caller may use them but must never repair from them. */
+export type SafDocumentRead = { bytes: Uint8Array; lengthVerified: boolean };
+
 type SafDocumentsNativeModule = {
   listChildrenAsync(uri: string): Promise<SafDocumentEntry[]>;
   statAsync(uri: string): Promise<SafDocumentEntry | null>;
+  readAsync(uri: string): Promise<{ base64: string; lengthVerified: boolean }>;
 };
 
 let testModule: SafDocumentsNativeModule | null | undefined;
@@ -38,7 +44,7 @@ const getModule = (): SafDocumentsNativeModule => {
       resolvedModule = null;
     }
   }
-  if (!resolvedModule?.listChildrenAsync || !resolvedModule.statAsync) {
+  if (!resolvedModule?.listChildrenAsync || !resolvedModule.statAsync || !resolvedModule.readAsync) {
     throw new Error(`${SAF_DOCUMENTS_UNAVAILABLE}: SAF document calls are unavailable in this build`);
   }
   return resolvedModule;
@@ -49,7 +55,7 @@ let listedOnce = false;
 
 /** One proving line per process for a listing that ran through SafDocumentsCore, and one per
  *  provider error it surfaced instead of answering "empty" or "absent". */
-const traced = async <T>(check: 'listing' | 'lookup', call: () => Promise<T>): Promise<T> => {
+const traced = async <T>(check: 'listing' | 'lookup' | 'read', call: () => Promise<T>): Promise<T> => {
   try {
     const value = await call();
     if (check === 'listing' && !listedOnce) {
@@ -75,6 +81,13 @@ export const listSafChildren = async (dirUri: string): Promise<SafDocumentEntry[
  *  query with no answer rejects: it proves nothing). */
 export const statSafDocument = async (uri: string): Promise<SafDocumentEntry | null> =>
   traced('lookup', () => getModule().statAsync(uri));
+
+/** A SAF document's bytes, whole: a short read, sizes that disagree, a document still
+ *  downloading or one over the read limit reject (SafDocumentsCore.readBytes). */
+export const readSafDocument = async (uri: string): Promise<SafDocumentRead> => traced('read', async () => {
+  const read = await getModule().readAsync(uri);
+  return { bytes: base64ToBytes(read.base64), lengthVerified: read.lengthVerified === true };
+});
 
 export const setSafDocumentsNativeModuleForTests = (
   nativeModule: SafDocumentsNativeModule | null | undefined,
