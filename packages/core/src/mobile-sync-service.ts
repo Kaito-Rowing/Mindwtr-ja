@@ -239,6 +239,8 @@ type MobileRequestFollowUpAfter = (delayMs: number, nextArg?: MobileSyncRequest)
 // half-duty rule exactly on the whale libraries that need it most — an 80s cycle
 // got a 60s gap, keeping a 7k-task device near-continuously mid-sync (#766).
 const MIN_FOLLOW_UP_DELAY_MS = 1_000;
+// D9b W5: a sliced cycle aborts on any edit during its run, so on a slicing host a follow-up waits until edits pause this long.
+const FOLLOW_UP_QUIET_MS = 2_000;
 const MAX_FOLLOW_UP_DELAY_MS = 5 * 60_000;
 
 /** Raw network state as the host reads it (React Native: expo-network). */
@@ -2555,12 +2557,17 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
     }
   }
 
+  // On a slicing host: how long until edits have paused for FOLLOW_UP_QUIET_MS (0 elsewhere).
+  const quietWaitMs = () => (host.sliceYield
+    ? Math.max(0, FOLLOW_UP_QUIET_MS - (Date.now() - core.useTaskStore.getState().lastDataChangeAt))
+    : 0);
   const mobileSyncOrchestrator = createSyncOrchestrator<MobileSyncRequest | undefined, MobileSyncResult>({
+    getFollowUpWaitMs: quietWaitMs,
     getFollowUpDelayMs: (lastCycleDurationMs, minimumDelayMs) => {
       const pacedDelayMs = Math.min(Math.max(lastCycleDurationMs, MIN_FOLLOW_UP_DELAY_MS), MAX_FOLLOW_UP_DELAY_MS);
       // A busy remote fence or File Sync lock asks for a longer wait than pacing;
       // log the delay that actually applies so a 229s fence wait stops reading as 1.2s.
-      const delayMs = Math.max(pacedDelayMs, minimumDelayMs);
+      const delayMs = Math.max(pacedDelayMs, minimumDelayMs, quietWaitMs());
       logSyncInfo('Sync follow-up scheduled', {
         delayMs: String(delayMs),
         lastCycleDurationMs: String(lastCycleDurationMs),

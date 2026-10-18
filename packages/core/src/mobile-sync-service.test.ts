@@ -535,6 +535,54 @@ describe('mobile sync service behind fake ports', () => {
     expect(saveData.mock.calls[0]?.[1]).toMatchObject({ token, onStale: expect.any(Function) });
   });
 
+  it('waits for a quiet period after the last edit before a follow-up on a slicing host (D9b W5)', async () => {
+    const delays = async (sliceYield?: () => Promise<void>) => {
+      const fake = createFakeHost({ values: WEBDAV_VALUES });
+      fake.host.sliceYield = sliceYield;
+      fake.store.lastDataChangeAt = Date.now() - 500;
+      const service = createMobileSyncService(fake.host);
+      const performSyncCycle = vi.mocked(fake.host.core!.performSyncCycle!);
+      performSyncCycle.mockImplementationOnce(async () => {
+        service.abortMobileSync();
+        throw new Error('aborted');
+      });
+      await service.performMobileSync();
+      await service.waitForMobileSyncIdle();
+      expect(performSyncCycle).toHaveBeenCalledTimes(2);
+      return fake.logs.filter((line) => line.message === 'Sync follow-up scheduled').map((line) => Number(line.extra?.delayMs));
+    };
+
+    // An edit 500 ms ago: a slicing cycle would abort on the next edit, so it waits until 2 s have passed without one.
+    const [sliced] = await delays(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(sliced).toBeGreaterThanOrEqual(1_400);
+    // React Native slices nothing and keeps its pacing.
+    expect(await delays()).toEqual([1_000]);
+  });
+
+  it('rechecks the quiet period when the follow-up timer fires: an edit during the wait pushes it back (D9b W5)', async () => {
+    const fake = createFakeHost({ values: WEBDAV_VALUES });
+    fake.host.sliceYield = () => new Promise((resolve) => setTimeout(resolve, 0));
+    fake.store.lastDataChangeAt = Date.now() - 500;
+    const service = createMobileSyncService(fake.host);
+    const performSyncCycle = vi.mocked(fake.host.core!.performSyncCycle!);
+    const starts: number[] = [];
+    const original = performSyncCycle.getMockImplementation()!;
+    performSyncCycle.mockImplementation(async (io) => { starts.push(Date.now()); return original(io); });
+    performSyncCycle.mockImplementationOnce(async () => {
+      starts.push(Date.now());
+      service.abortMobileSync();
+      throw new Error('aborted');
+    });
+    await service.performMobileSync();
+    // The follow-up waits ~1.5 s; an edit lands 1.4 s in.
+    await new Promise((resolve) => setTimeout(resolve, 1_400));
+    const editAt = Date.now();
+    fake.store.lastDataChangeAt = editAt;
+    await vi.waitFor(() => expect(starts).toHaveLength(2), { timeout: 5_000, interval: 50 });
+    expect(starts[1] - editAt).toBeGreaterThanOrEqual(1_950);
+  }, 10_000);
+
+
   it('treats a lifecycle abort as a success and queues a follow-up', async () => {
     const fake = createFakeHost({ values: WEBDAV_VALUES });
     const service = createMobileSyncService(fake.host);
