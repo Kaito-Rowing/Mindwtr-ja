@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { useTaskStore } from './store';
+import { runToEnd } from './cooperative';
+import { cloneAppDataPass } from './sync-runtime-utils';
 import {
     CLOUD_PROVIDER_DROPBOX,
     CLOUD_PROVIDER_SELF_HOSTED,
     DEFAULT_ATTACHMENT_CLEANUP_INTERVAL_MS,
     LocalSyncAbort,
+    captureInMemoryAppDataSnapshot,
     createAbortableFetch,
     ensureFreshLocalSyncSnapshot,
     getInMemoryAppDataSnapshot,
@@ -33,6 +36,29 @@ describe('sync-client-helpers', () => {
 
         expect(useTaskStore.getState()._allTasks[0]!.title).toBe('Task');
         expect(useTaskStore.getState()._allPeople[0]!.name).toBe('Alex');
+    });
+
+    it('captures the store in one read, and copying the capture gives the deep snapshot (D9b change 3 review P3-2)', () => {
+        const now = '2026-01-01T00:00:00.000Z';
+        useTaskStore.setState((state) => ({
+            ...state,
+            _allTasks: [{ id: 't1', title: 'Task', status: 'inbox', tags: ['#a'], checklist: [{ id: 'c1', title: 'one', isCompleted: false }], createdAt: now, updatedAt: now }],
+            _allProjects: [{ id: 'p1', title: 'Project', status: 'active', color: '#000000', createdAt: now, updatedAt: now }],
+            _allSections: [{ id: 's1', projectId: 'p1', title: 'Section', createdAt: now, updatedAt: now }],
+            _allAreas: [{ id: 'a1', name: 'Area', order: 0, createdAt: now, updatedAt: now }],
+            _allPeople: [{ id: 'person-1', name: 'Alex', createdAt: now, updatedAt: now }],
+            settings: { gtd: { autoArchiveDays: 7 } },
+        }));
+        const expected = getInMemoryAppDataSnapshot();
+
+        const captured = captureInMemoryAppDataSnapshot();
+        // The store replaces its lists after the capture; the capture keeps the state it read.
+        useTaskStore.setState({ _allTasks: [], _allPeople: [] });
+        const copy = runToEnd(cloneAppDataPass(captured));
+
+        expect(copy).toEqual(expected);
+        copy.tasks[0]!.tags!.push('#b');
+        expect(captured.tasks[0]!.tags).toEqual(['#a']);
     });
 
     it('fingerprints store changes without cloning, and ignores device-local sync status', () => {

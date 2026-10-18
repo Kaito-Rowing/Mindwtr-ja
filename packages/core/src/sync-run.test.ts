@@ -140,6 +140,15 @@ const createHarness = (config: HarnessConfig = {}) => {
     const store: SyncRunStoreBridge = {
         getLastDataChangeAt: () => harness.lastDataChangeAt,
         getInMemorySnapshot: () => cloneAppData(harness.inMemory),
+        // A sliced run takes the lists in one turn and copies them in slices (change 3 review P3-2).
+        captureInMemorySnapshot: () => ({
+            tasks: [...harness.inMemory.tasks],
+            projects: [...harness.inMemory.projects],
+            sections: [...harness.inMemory.sections],
+            areas: [...harness.inMemory.areas],
+            people: [...(harness.inMemory.people ?? [])],
+            settings: harness.inMemory.settings,
+        }),
         flushPendingSave: vi.fn(async () => {
             harness.callOrder.push('flush');
         }),
