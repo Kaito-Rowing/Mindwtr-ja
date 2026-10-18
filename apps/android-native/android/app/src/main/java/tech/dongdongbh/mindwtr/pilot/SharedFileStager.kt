@@ -16,8 +16,10 @@ import java.io.InputStream
  *   disk nor waits for a copy core refuses; such a file is staged empty with a size over the cap, so core counts it skipped.
  * - Only another app's `content://` file: any other scheme (a `file://` URI opens inside this process) and this app's own
  *   providers are unreadable, never opened, so a share cannot make the app attach its own private files. The authority is
- *   compared as ContentResolver opens it: after the last `@` (a `0@` user prefix is dropped there, so it cannot hide this app's
- *   provider; a real cross-profile share keeps its `10@` and opens); an empty one is refused, and so is any failed lookup.
+ *   compared as ContentResolver opens it ([shareAuthority]): decoded, after the last `@` (a `0@` user prefix is dropped there,
+ *   so it cannot hide this app's provider; a real cross-profile share keeps its `10@` and opens). The raw text must spell the
+ *   same authority plainly (no `%`, `\`, port or other character), so no encoding can make the two differ; an empty one is
+ *   refused, and so is any failed lookup.
  * - The provider's name, else the URI's last segment, and its MIME type, else `application/octet-stream` (RN's #1117 fallbacks
  *   for an empty cursor and a missing type). A file that cannot be opened is staged with no path: core counts it unreadable.
  * - `staged.json` is written last (temporary file, then rename), so a process death mid-copy leaves the entry to stage again.
@@ -34,6 +36,8 @@ class SharedFileStager(private val root: File, private val source: Source) {
         fun mimeType(uri: String): String?
         /** Whether [authority] is one of this app's own providers. */
         fun ownProvider(authority: String): Boolean
+        /** [uri]'s authority as ContentResolver opens it (Android's Uri: decoded, ending at `\`), or null. */
+        fun authority(uri: String): String?
     }
 
     /** The entry's staged files (core's NativeSharedFile list), or null until they are all staged. */
@@ -52,7 +56,7 @@ class SharedFileStager(private val root: File, private val source: Source) {
     }
 
     private fun stageOne(uri: String, target: File): JSONObject {
-        val authority = CONTENT.find(uri)?.groupValues?.get(1)?.substringAfterLast('@')?.takeIf { it.isNotEmpty() }
+        val authority = shareAuthority(uri, runCatching { source.authority(uri) }.getOrNull())
         if (authority == null || runCatching { source.ownProvider(authority) }.getOrDefault(true)) {
             return JSONObject().put("path", JSONObject.NULL).put("name", JSONObject.NULL).put("mimeType", JSONObject.NULL).put("size", JSONObject.NULL)
         }
@@ -107,8 +111,19 @@ class SharedFileStager(private val root: File, private val source: Source) {
         const val MAX_BYTES = 50L * 1024 * 1024
         private const val STAGED = "staged.json"
         private val ENTRY_ID = Regex("^[0-9a-f-]{36}$")
-        /** A `content://` URI's authority. */
-        private val CONTENT = Regex("^content://([^/?#]+)")
+        /** A `content://` URI's authority spelled plainly: letters, digits, `.`, `_`, `-` and a user's `@`, then the path or the end. */
+        private val PLAIN_CONTENT = Regex("^content://([A-Za-z0-9._@-]+)(?=[/?#]|$)")
+
+        /**
+         * The provider a share's [raw] URI opens, given its [decoded] authority (Android's Uri.getAuthority: what ContentResolver
+         * opens), or null to refuse it: not `content://`, not spelled plainly, spelled differently from the decoded one, or empty
+         * once the user prefix (`<user>@`, which ContentResolver drops) is gone.
+         */
+        fun shareAuthority(raw: String, decoded: String?): String? {
+            val plain = PLAIN_CONTENT.find(raw)?.groupValues?.get(1) ?: return null
+            if (decoded != plain) return null
+            return plain.substringAfterLast('@').takeIf { it.isNotEmpty() }
+        }
 
         /** Copies [input] to [out], at most [MAX_BYTES] + 1 bytes; answers the bytes copied (over the cap: stopped there). */
         fun copyCapped(input: InputStream, out: java.io.OutputStream): Long {

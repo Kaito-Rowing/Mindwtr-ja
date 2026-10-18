@@ -3279,7 +3279,9 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(entryKt, /if \(!queue\.add\(input\.toString\(\)\)\) [^\n]*\s+else if \(input\.optString\("kind"\) == "files"\) queue\.all\(\)\.lastOrNull\(\)\?\.let \{ stage\(it\) \}/);
     assert.match(entryKt, /stagingThread\.execute \{\s+val failure = runCatching \{ stager\.stage\(entry\.id, uris\) \}\.exceptionOrNull\(\)/);
     // A failed staging waits as a failed read does (EntryLifecycle's back-off), never a loop; the router stops staging with its ViewModel.
-    assert.match(entryKt, /if \(failure != null\) failed\(entry, "Staging failed"\) else pump\(\)/);
+    assert.match(entryKt, /if \(failure != null && lifecycle\.head == entry\.id\) failed\(entry, "Staging failed"\) else pump\(\)/);
+    assert.match(entryKt, /shell\.coreHost\(\)\?\.logLine\("Native file share staging failed releaseCheck=v1\.3\.7\/native-share-files", context\)/);
+    assert.match(entryKt, /override fun authority\(uri: String\): String\? = Uri\.parse\(uri\)\.authority/);
     assert.match(model, /entries\.close\(\)\s+super\.onCleared\(\)/);
     // Only another app's content:// file is opened (a file:// URI or this app's own provider would attach the app's private files).
     assert.match(entryKt, /override fun ownProvider\(authority: String\): Boolean = context\.packageManager\.resolveContentProvider\(authority, 0\)\?\.packageName == context\.packageName\s+&& !\(BuildConfig\.DEBUG && authority == "\$\{context\.packageName\}\.sharetest"\)/);

@@ -25,6 +25,8 @@ class SharedFileStagerTest {
         override fun size(uri: String) = declared[uri] ?: files[uri]?.first?.size?.toLong()
         override fun mimeType(uri: String) = files[uri]?.third
         override fun ownProvider(authority: String) = authority == "own.app"
+        /** The authority as ContentResolver opens it, decoded (java.net.URI decodes as Android's Uri does, and refuses a `\`). */
+        override fun authority(uri: String): String? = runCatching { java.net.URI(uri).authority }.getOrNull()
     }
 
     private fun stager(provider: Provider) = SharedFileStager(folder.root, provider)
@@ -98,6 +100,20 @@ class SharedFileStagerTest {
         val staged = stager(provider).stage(entry, uris)
         assertEquals(listOf(true, true, true, false), (0 until 4).map { staged.getJSONObject(it).isNull("path") })
         assertEquals(listOf("content://10@p/1"), provider.opened)
+    }
+
+    @Test
+    fun anEncodedOrEscapedAuthorityIsRefusedBeforeItIsOpened() {
+        // ContentResolver opens the decoded authority, which ends at `\`: an encoded `@` or `.`, an encoded letter, or a
+        // backslash would hide this app's own provider from a check of the raw text.
+        val uris = listOf("content://0%40own.app/x", "content://own%2Eapp/x", "content://%6Fwn.app/x", "content://own.app\\x/y", "content://own.app:80/x", "content://p/1")
+        val provider = Provider(uris.associateWith { Triple("secret".toByteArray(), "x.db", "application/octet-stream") })
+        val staged = stager(provider).stage(entry, uris)
+        assertEquals(listOf(true, true, true, true, true, false), (0 until 6).map { staged.getJSONObject(it).isNull("path") })
+        assertEquals(listOf("content://p/1"), provider.opened)
+        assertEquals("own.app", SharedFileStager.shareAuthority("content://0@own.app/x", "0@own.app"))
+        assertNull(SharedFileStager.shareAuthority("content://0%40own.app/x", "0@own.app"))
+        assertNull(SharedFileStager.shareAuthority("content://own.app/x", "other.app"))
     }
 
     @Test

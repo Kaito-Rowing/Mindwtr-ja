@@ -31,6 +31,19 @@ class EntryLifecycleTest {
         assertTrue(queue.all().isEmpty())
     }
 
+    @Test fun aFailureOfAnotherEntryNeverFreesTheEntryBeingRead() {
+        // A file share staged in the background fails while the head entry is being read: the head is not read twice.
+        val (queue, lifecycle) = process()
+        queue.add("""{"n":1}""")
+        queue.add("""{"kind":"files"}""")
+        val read = lifecycle.next(blocked = false)!!
+        lifecycle.failed(queue.all()[1], "Staging failed")
+        clock += 120_000
+        assertNull(lifecycle.next(blocked = false))
+        lifecycle.opened(read)
+        assertEquals("""{"kind":"files"}""", lifecycle.next(blocked = false)?.input)
+    }
+
     @Test fun workOpenedBeforeTheScreenKeepsTheEntryForALaterRead() {
         val (queue, lifecycle) = process()
         queue.add("""{"n":1}""")

@@ -50,7 +50,8 @@ class EntryLifecycle(private val queue: EntryQueue, private val now: () -> Long)
      */
     fun failed(entry: EntryQueue.Entry, message: String?): Failure {
         if (!entryRetryable(message)) return Failure.Refused(message.orEmpty().substringAfter(": "))
-        reading = null
+        // Another entry's failure (a file share staged in the background) never frees the entry being read.
+        if (reading == entry.id) reading = null
         failures += 1
         val delay = minOf(MAX_WAIT_MS, FIRST_WAIT_MS shl minOf(failures - 1, 4))
         retryAt = now() + delay

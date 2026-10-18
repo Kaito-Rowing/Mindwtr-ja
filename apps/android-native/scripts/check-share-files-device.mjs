@@ -11,7 +11,7 @@
 // beside a PDF: core's notice counts two skipped files, the PDF is listed, and no copy over the cap is left; (e) a file that
 // cannot be read shows "Share unavailable"; (f) a file share's subject and text are left out, as RN's Android share module sends files only (the title is the file's name); (g) a share sent
 // to a stopped app opens after the boot and saves; (h) a hostile share naming this app's own files (a file:// URI, this app's own
-// provider, and that provider behind a `0@` user prefix) shows "Share unavailable" and copies nothing. Each share's staged files are
+// provider, and that provider behind a `0@` user prefix, plain or encoded) shows "Share unavailable" and copies nothing. Each share's staged files are
 // gone once it opened. Titles are 77 + a
 // 12-digit run id + a number (check-projects-device.mjs --prune-old removes earlier runs'). It types nothing, never launches over
 // another app, removes its test files and leaves the app on its Inbox. It needs host `bun`.
@@ -231,7 +231,7 @@ try {
     const managed = tasks[title(13)][0].attachments[0].uri.split('/files/attachments/')[1];
     const own = `${PKG}.FileSystemFileProvider/attachments/${managed}`;
     for (const [label, uri] of [['a file:// URI', `file:///data/user/0/${PKG}/files/${DB}`], ['this app\'s own provider', `content://${own}`],
-        ['its provider behind a 0@ user prefix', `content://0@${own}`]]) {
+        ['its provider behind a 0@ user prefix', `content://0@${own}`], ['its provider behind an encoded user prefix', `content://0%40${own}`]]) {
         const copies = runAs('ls files/attachments').split(/\s+/).filter(Boolean).length;
         nodes = await share({ type: 'application/pdf', uris: [], raw: [uri] }, (current) => hasText(current, en['share.unavailable']), `the refusal of ${label}`);
         check(!tagged(nodes, 'capture-modal') && runAs('ls files/attachments').split(/\s+/).filter(Boolean).length === copies,

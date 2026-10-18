@@ -75,6 +75,7 @@ class ContentSharedFileSource(private val context: Context) : SharedFileStager.S
     override fun name(uri: String): String? = column(uri, android.provider.OpenableColumns.DISPLAY_NAME)
     override fun size(uri: String): Long? = column(uri, android.provider.OpenableColumns.SIZE)?.toLongOrNull()
     override fun mimeType(uri: String): String? = context.contentResolver.getType(Uri.parse(uri))
+    override fun authority(uri: String): String? = Uri.parse(uri).authority
     /** This app's providers (a hostile share naming this app's own files); the debug build's share test provider plays another app. */
     override fun ownProvider(authority: String): Boolean = context.packageManager.resolveContentProvider(authority, 0)?.packageName == context.packageName
         && !(BuildConfig.DEBUG && authority == "${context.packageName}.sharetest")
@@ -142,11 +143,17 @@ class EntryRouter(private val shell: InboxViewModel, dir: File, private val stag
         val uris = JSONObject(entry.input).optJSONArray("uris")?.let { list -> List(list.length()) { list.optString(it) } }.orEmpty()
         stagingThread.execute {
             val failure = runCatching { stager.stage(entry.id, uris) }.exceptionOrNull()
-            if (failure != null) Log.w(CoreHost.TAG, "Native Android file share staging failed ${failure.javaClass.simpleName}")
+            if (failure != null) {
+                // The tester's diagnostics log: the failure's class only (a message can name the shared file).
+                val context = JSONObject().put("releaseCheck", "v1.3.7/native-share-files").put("error", failure.javaClass.simpleName)
+                shell.coreHost()?.logLine("Native file share staging failed releaseCheck=v1.3.7/native-share-files", context)
+                    ?: Log.w(CoreHost.TAG, "Native file share staging failed $context")
+            }
             main.post {
                 staging.remove(entry.id)
-                // A staging that failed (the disk full) waits as a failed read does, then stages again; never a loop.
-                if (failure != null) failed(entry, "Staging failed") else pump()
+                // A staging that failed (the disk full) waits as a failed read does, then stages again; never a loop. Only the
+                // head entry's failure waits: a later one stages again when it is the head.
+                if (failure != null && lifecycle.head == entry.id) failed(entry, "Staging failed") else pump()
             }
         }
     }

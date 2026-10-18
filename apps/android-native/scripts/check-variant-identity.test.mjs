@@ -126,6 +126,9 @@ test('narrower share filters, or the debug build\'s check entries in another bui
         const leakedRoot = (await parseStringPromise(leaked.manifest)).manifest;
         leakedRoot.application[0].provider.push({ $: { 'android:name': 'tech.dongdongbh.mindwtr.pilot.ShareTestProvider', 'android:exported': 'true' } });
         assert.notDeepEqual(await problems(type, { ...leaked, manifest: new Builder().buildObject({ manifest: leakedRoot }) }), [], type);
+        const sender = (await parseStringPromise(leaked.manifest)).manifest;
+        sender.application[0].activity.push({ $: { 'android:name': 'tech.dongdongbh.mindwtr.pilot.ShareTestSender', 'android:exported': 'true' } });
+        assert.notDeepEqual(await problems(type, { ...leaked, manifest: new Builder().buildObject({ manifest: sender }) }), [], `${type} sender`);
     }
 });
 
