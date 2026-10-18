@@ -544,6 +544,9 @@ async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: Native
 }
 
 const IMPORT_OPERATIONS = new Set(['csv', 'todoist', 'ticktick', 'dgt', 'omnifocus']);
+/** The size refusals core words itself (decodeBinarySource, prepare); any other text is no capacity reason, whatever it says. */
+const CAPACITY_REFUSALS = new Set(['INVALID_INPUT: Recovery snapshot exceeds 128 MiB', 'INVALID_INPUT: Prepared backup plan exceeds 512 MiB',
+    ...['CSV', 'Todoist', 'TickTick', 'DGT', 'OmniFocus'].map((label) => `INVALID_INPUT: ${label} source exceeds 16 MiB`)]);
 /**
  * RN's failure toast for a restore, merge, snapshot restore or import that did not land ([operation]: core's backup document
  * mode), from the failure's text ([error]: `CODE: message`, or `TOO_LARGE` when the host refused a file or a plan by size):
@@ -557,7 +560,10 @@ export function buildNativeBackupDocumentFailure(operation: string, error: strin
     const title = imported ? t('settings.backupMobile.importFailed')
         : operation === 'merge' ? t('settings.mergeBackupFailed') : t('settings.backupMobile.restoreFailed');
     const words = /^[A-Z_]+: /u.test(error) ? error.slice(error.indexOf(': ') + 2) : error;
-    if (error === 'TOO_LARGE' || error.startsWith('TOO_LARGE: ')) {
+    // Core's own capacity refusals (a recovery snapshot past the backup cap, a source past 16 MiB, a plan past 512 MiB) are an
+    // import's size limit too, as iOS shows them; they read as an unreadable export before (D1c step 0).
+    const capacity = imported && CAPACITY_REFUSALS.has(error);
+    if (error === 'TOO_LARGE' || error.startsWith('TOO_LARGE: ') || capacity) {
         return { title, message: imported ? t('settings.importDiagnostics.limitExceeded') : t('settings.backupDiagnostics.tooLarge', { maxSizeMb: limitMb }) };
     }
     return { title, message: imported ? formatImportDiagnostic(createImportDiagnostic(words, 'error'), t) : words };

@@ -714,9 +714,9 @@ describe('an import\'s stored warnings hold codes and counts, never the file\'s 
 describe('RN\'s failure toast for a Data operation that did not land (D1b)', () => {
     const de = (key: string, params?: Record<string, number | string>) => formatI18nTemplate(getTranslator('de')(key), params ?? {});
     it('titles an import "Import failed" and words it through RN\'s formatThrownImportError, with no code prefix', () => {
-        const failure = buildNativeBackupDocumentFailure('todoist', 'INVALID_INPUT: Todoist source exceeds 16 MiB', de, 12);
+        const failure = buildNativeBackupDocumentFailure('todoist', 'INVALID_INPUT: Invalid backup document input', de, 12);
         expect(failure.title).toBe(de('settings.backupMobile.importFailed'));
-        expect(failure.message).toBe(formatImportDiagnostic(createImportDiagnostics(['Todoist source exceeds 16 MiB'], 'error')[0], de));
+        expect(failure.message).toBe(formatImportDiagnostic(createImportDiagnostics(['Invalid backup document input'], 'error')[0], de));
         expect(failure.message).not.toMatch(/^(Error|INVALID_INPUT)/u);
     });
     it('gives a size refusal core\'s limit text: an import\'s, or a backup\'s with the host limit', () => {
