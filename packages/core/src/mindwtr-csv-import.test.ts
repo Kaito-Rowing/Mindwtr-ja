@@ -9,6 +9,7 @@ import {
 import { createImportDiagnostics, formatImportDiagnostic } from './import-diagnostics';
 import { formatI18nTemplate, getTranslator } from './i18n';
 import { mockAppData } from './sync-test-utils';
+import { withQuickJsPushLimit } from './quickjs-test-utils';
 import { generateDeterministicUUID } from './uuid';
 
 const quoteCell = (cell: string): string => `"${cell.replace(/"/gu, '""')}"`;
@@ -52,6 +53,14 @@ describe('mindwtr csv import', () => {
         expect(formatted[0]).toBe('7 unknown column(s) were ignored. Locations (CSV records; header = row 1): row 1, column 3; row 1, column 4; row 1, column 5; row 1, column 6; row 1, column 7. 2 more location(s) not shown.');
         expect(formatted[1]).toBe('7 date value(s) could not be mapped and were omitted. Locations (CSV records; header = row 1): row 2, column 2; row 3, column 2; row 4, column 2; row 5, column 2; row 6, column 2. 2 more location(s) not shown.');
         expect(JSON.stringify([result.warnings, diagnostics, formatted])).not.toContain('private-');
+    });
+
+    it('imports one zipped CSV entry with more rows than a QuickJS call takes arguments', () => {
+        const rows = Array.from({ length: 70_000 }, (_, index) => [`Task ${index}`]);
+        const bytes = zipSync({ 'tasks.csv': strToU8(buildCsv(['Title'], rows)) });
+        const result = withQuickJsPushLimit(() => parseMindwtrCsvImportSource({ fileName: 'export.zip', bytes }));
+        expect(result.errors).toEqual([]);
+        expect(result.parsedData?.tasks).toHaveLength(70_000);
     });
 
     it('disambiguates ZIP CSV entries with numeric ordinals rather than source filenames', () => {

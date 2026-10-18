@@ -638,7 +638,8 @@ const mergeParsedData = (target: ParsedMindwtrCsvImportData, source: ParsedMindw
         sectionKeys.add(section.sourceKey);
         target.sections.push(section);
     });
-    target.tasks.push(...source.tasks);
+    // One push per task: QuickJS (native Android) refuses a call with more than 65535 arguments.
+    source.tasks.forEach((task) => target.tasks.push(task));
 };
 
 const dropDuplicateTasksAndUnusedContainers = (
