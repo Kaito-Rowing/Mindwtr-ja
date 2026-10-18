@@ -395,27 +395,18 @@ export const resolveSyncFileUri = async (
     return (await resolveSafSyncFile(uri))?.uri ?? uri;
 };
 
-const assertDirectoryWritable = async (
-    directoryUri: string,
-    existingFileUri?: string,
-    existingContent?: string | null,
-): Promise<void> => {
+/** The pick-time probe: File Sync writes by creating new files and renaming them, so a folder
+ *  is usable only if a new file can be created in it. A refused create refuses the folder; the
+ *  probe never writes into the existing sync file to prove anything. */
+const assertDirectoryWritable = async (directoryUri: string): Promise<void> => {
     if (!StorageAccessFramework?.createFileAsync || !StorageAccessFramework?.writeAsStringAsync) return;
     let testUri: string | null = null;
     try {
-        try {
-            testUri = await StorageAccessFramework.createFileAsync(
-                directoryUri,
-                `mindwtr-write-test-${Date.now()}`,
-                'text/plain'
-            );
-        } catch (error) {
-            if (existingFileUri) {
-                await StorageAccessFramework.writeAsStringAsync(existingFileUri, existingContent ?? '');
-                return;
-            }
-            throw error;
-        }
+        testUri = await StorageAccessFramework.createFileAsync(
+            directoryUri,
+            `mindwtr-write-test-${Date.now()}`,
+            'text/plain'
+        );
         try {
             await StorageAccessFramework.writeAsStringAsync(testUri, 'ok');
         } catch {
@@ -601,7 +592,7 @@ export const pickAndParseSyncFolder = async (options?: PickSyncFolderOptions): P
         }
         const fileUri = resolved.uri;
         const fileContent = resolved.exists ? await readFileText(fileUri) : null;
-        await assertDirectoryWritable(directoryUri, resolved.exists ? fileUri : undefined, fileContent ?? undefined);
+        await assertDirectoryWritable(directoryUri);
         if (!fileContent) return emptyPickResult(fileUri);
         const data = parseAppData(fileContent);
         return { ...data, __fileUri: fileUri, __icloud: isICloudUri(fileUri) };

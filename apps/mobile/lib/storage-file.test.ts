@@ -54,6 +54,10 @@ vi.mock('./saf-documents', () => ({
     return uris.map((uri) => ({ uri, name: uri.slice(uri.lastIndexOf('/') + 1), mime: null, size: null, lastModified: null }));
   }),
   statSafDocument: vi.fn(async () => null),
+  readSafDocument: vi.fn(async () => ({
+    bytes: new TextEncoder().encode(await fileSystemMock.StorageAccessFramework.readAsStringAsync()),
+    lengthVerified: true,
+  })),
 }));
 
 vi.mock('expo-document-picker', () => ({
@@ -196,6 +200,23 @@ describe('storage-file sync writes', () => {
 
     await expect(readSyncFile(syncFileUri)).rejects.toThrow('provider listing denied');
   }, 10_000);
+
+  it('refuses a folder where the write probe cannot create a file, and never rewrites data.json (B3)', async () => {
+    const treeUri = 'content://com.example.provider/tree/root%3AMindwtr';
+    const dataUri = `${treeUri}/document/root%3AMindwtr%2Fdata.json`;
+    const stored = JSON.stringify(appData({ weekStart: 'monday' }));
+    fileSystemMock.__setStoredText(stored);
+    fileSystemMock.StorageAccessFramework.requestDirectoryPermissionsAsync.mockResolvedValue({
+      granted: true,
+      directoryUri: treeUri,
+    });
+    fileSystemMock.StorageAccessFramework.readDirectoryAsync.mockResolvedValue([dataUri]);
+    fileSystemMock.StorageAccessFramework.createFileAsync.mockRejectedValue(new Error('the provider refused a new document'));
+
+    await expect(pickAndParseSyncFolder()).rejects.toThrow('the provider refused a new document');
+    expect(fileSystemMock.StorageAccessFramework.writeAsStringAsync).not.toHaveBeenCalled();
+    expect(fileSystemMock.__getStoredText()).toBe(stored);
+  });
 
   it('completes Android folder setup when the test-file content write fails after creation', async () => {
     const treeUri = 'content://com.chiller3.rsaf.documents/tree/remote%3AStaleCheck';
