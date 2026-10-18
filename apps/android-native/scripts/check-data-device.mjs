@@ -59,7 +59,7 @@ const shown = (nodes, tag) => {
 };
 import { cleanupOnExit } from './check-net-device.mjs';
 import { boundaryVerdict, MEASURE_SHAPES, proposeTransferLimit, rowBound } from './data-transfer-limit.mjs';
-import { importTasksFor, importTexts } from './data-measure-fixtures.mjs';
+import { IMPORT_TASK_BYTES_BY_KEY, importTasksFor, importTexts } from './data-measure-fixtures.mjs';
 
 const [serial] = process.argv.slice(2);
 if (!serial) {
@@ -865,14 +865,11 @@ const boundarySequence = async (shape, limitMiB, imports) => {
     } else measured.push({ shape, workload: 'undo', sizeMiB: limitMiB, boundary: true, outcome: 'its restore was not admitted', pass: false });
 
     // Each import (the first shape only: it runs on its own fresh install) as large as admitted: from 5 % past the limit, at
-    // the bytes per task its matrix rows grew the library by (step 0 run 6: DGT, OmniFocus and Mindwtr CSV about 0.7 KiB,
-    // Todoist 1 KiB), its file shrinks after each refusal. The refused attempt above would have left the admitted library
-    // scaled by the two files' task counts.
+    // the bytes per task step 0 run 6 measured for its importer, its file shrinks after each refusal. The refused attempt
+    // above would have left the admitted library scaled by the two files' task counts.
     for (const key of imports ? Object.keys(IMPORT_TITLES) : []) {
-        const grown = measured.filter((row) => row.workload === `import-${key}` && !row.boundary && row.outcome === 'done' && row.tasks);
-        const taskBytes = grown.length ? Math.min(...grown.map((row) => (row.libraryAfterMiB - row.libraryBeforeMiB) * MIB / row.tasks)) : undefined;
         await atAdmittedBoundary(limitMiB * 1.05, async (size) => {
-            const tasks = importTasksFor(size, taskBytes);
+            const tasks = importTasksFor(size, IMPORT_TASK_BYTES_BY_KEY[key]);
             const item = importFixtures(tasks).find((fixture) => fixture.key === key);
             await measureFreshInstall(limitMiB);
             const result = await measureRun(shape, item.workload, limitMiB, () => importFile(item.key, item.file),
@@ -978,19 +975,27 @@ const measure = async () => {
     // Run 5 (512 MiB native ceiling): rows passed every Data workload at 8 MiB and failed restore-over and Undo at 16; notes
     // passed at 16 but its Java heap passed 128 MiB there.
     const sizesOf = (shape) => (process.env[`D1_MEASURE_SIZES_${shape.toUpperCase()}`] ?? process.env.D1_MEASURE_SIZES ?? (shape === 'notes' ? '4,8,12,16' : '8,12,16')).split(',').map(Number);
-    for (const shape of shapes) {
-        for (const mib of sizesOf(shape)) if (!(await runSequence(shape, mib, { imports: shape === shapes[0] }))) break;
-    }
-    const proposal = proposeTransferLimit(measured, { shapes });
-    for (const [cell, bound] of Object.entries(proposal.bounds)) console.log(`bound ${cell}: ${bound} MiB`);
-    if (proposal.limitMiB === null || proposal.limitMiB < 1) {
-        console.log(proposal.limitMiB === null ? `T: none: the matrix misses ${proposal.missing.join(', ')}` : `T: none: the smallest bound is ${proposal.smallestMiB} MiB`);
-    } else {
-        console.log(`T candidate: ${proposal.limitMiB} MiB (half of the smallest bound, ${proposal.smallestMiB} MiB); boundary reruns at ${proposal.limitMiB} MiB`);
-        for (const shape of shapes) await boundarySequence(shape, proposal.limitMiB, shape === shapes[0]);
-        const verdict = boundaryVerdict(measured, proposal.limitMiB, { shapes });
-        console.log(verdict.established ? `T established: ${proposal.limitMiB} MiB`
-            : `T not established at ${proposal.limitMiB} MiB: failed ${verdict.failed.join(', ') || 'none'}; below its boundary ${verdict.belowBoundary.join(', ') || 'none'}; missing ${verdict.missing.join(', ') || 'none'}`);
+    const atLimit = async (limitMiB) => {
+        for (const shape of shapes) await boundarySequence(shape, limitMiB, shape === shapes[0]);
+        const verdict = boundaryVerdict(measured, limitMiB, { shapes });
+        console.log(verdict.established ? `T established: ${limitMiB} MiB`
+            : `T not established at ${limitMiB} MiB: failed ${verdict.failed.join(', ') || 'none'}; below its boundary ${verdict.belowBoundary.join(', ') || 'none'}; missing ${verdict.missing.join(', ') || 'none'}`);
+    };
+    // D1_MEASURE_LIMIT=<MiB>: only the boundary reruns, at that limit (an earlier run's matrix proposed it).
+    const given = Number(process.env.D1_MEASURE_LIMIT ?? '');
+    if (given > 0) await atLimit(given);
+    else {
+        for (const shape of shapes) {
+            for (const mib of sizesOf(shape)) if (!(await runSequence(shape, mib, { imports: shape === shapes[0] }))) break;
+        }
+        const proposal = proposeTransferLimit(measured, { shapes });
+        for (const [cell, bound] of Object.entries(proposal.bounds)) console.log(`bound ${cell}: ${bound} MiB`);
+        if (proposal.limitMiB === null || proposal.limitMiB < 1) {
+            console.log(proposal.limitMiB === null ? `T: none: the matrix misses ${proposal.missing.join(', ')}` : `T: none: the smallest bound is ${proposal.smallestMiB} MiB`);
+        } else {
+            console.log(`T candidate: ${proposal.limitMiB} MiB (half of the smallest bound, ${proposal.smallestMiB} MiB); boundary reruns at ${proposal.limitMiB} MiB`);
+            await atLimit(proposal.limitMiB);
+        }
     }
     setProp('transfer_limit_mb', '');
     writeFileSync(resolve(work, `measure-${run}.json`), JSON.stringify(measured, null, 2));

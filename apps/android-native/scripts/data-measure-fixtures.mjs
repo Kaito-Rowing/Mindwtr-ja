@@ -7,6 +7,8 @@ export const IMPORT_TEXT_CAP_BYTES = 8 * 1024 * 1024 - 64 * 1024;
 const MAX_ROWS = 100_000;
 /** The library bytes one imported task adds: step 0 run 5's Todoist file grew the library 101 MiB with its 99 998 tasks. */
 export const IMPORT_TASK_BYTES = 1024;
+/** The same, per importer: step 0 run 6's 49 152-task files on a fresh install (the library grew 31.3 to 49.3 MiB). */
+export const IMPORT_TASK_BYTES_BY_KEY = { todoist: 1050, ticktick: 900, dgt: 680, omnifocus: 670, 'mindwtr-csv': 710 };
 /**
  * The task count whose import grows the library by about [mib] MiB at [taskBytes] per task (step 0 run 6 sizes each import to
  * the limit's range).
