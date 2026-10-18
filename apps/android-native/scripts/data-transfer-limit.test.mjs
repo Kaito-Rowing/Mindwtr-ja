@@ -1,7 +1,7 @@
 // Pass D1c step 0 (design §8, code review P2): the transfer limit check-data-device.mjs proposes from its measured rows.
 import { describe, expect, it } from 'bun:test';
 import { boundaryVerdict, MEASURE_SHAPES, MEASURE_WORKLOADS, proposeTransferLimit, rowBound } from './data-transfer-limit.mjs';
-import { IMPORT_TEXT_CAP_BYTES, importTexts } from './data-measure-fixtures.mjs';
+import { IMPORT_TEXT_CAP_BYTES, importTasksFor, importTexts } from './data-measure-fixtures.mjs';
 
 const row = (shape, workload, fields) => ({ shape, workload, sourceMiB: 0, libraryBeforeMiB: 0, libraryAfterMiB: 0, pass: true, ...fields });
 /** Every workload and shape, each passing at [mib] (a file over nothing; an import leaving that library). */
@@ -42,6 +42,15 @@ describe('the step 0 transfer limit', () => {
         expect(rowBound(row('rows', 'import-mindwtr-csv', { sourceMiB: 8, libraryBeforeMiB: 40, libraryAfterMiB: 40 }))).toBe(40);
     });
 
+    // Step 0 run 6: an import starts on a fresh install, so its rows (measured once) count for every shape.
+    it('counts one shape\'s import rows for every shape', () => {
+        const rows = everyWorkload(64).filter((item) => !(item.shape === 'notes' && item.workload.startsWith('import-')));
+        expect(proposeTransferLimit(rows)).toMatchObject({ limitMiB: 32, missing: [] });
+        const capped = rows.map((item) => (item.workload === 'import-dgt' ? { ...item, libraryAfterMiB: 24 } : item));
+        expect(proposeTransferLimit(capped)).toMatchObject({ limitMiB: 12 });
+        expect(boundaryVerdict(rows.map((item) => ({ ...item, boundary: true })), 32)).toMatchObject({ established: true });
+    });
+
     it('is established only once every workload and shape passed again at its admitted boundary', () => {
         const boundary = everyWorkload(20).map((item) => ({ ...item, boundary: true }));
         expect(boundaryVerdict(boundary, 20)).toMatchObject({ established: true });
@@ -56,7 +65,8 @@ describe('the step 0 transfer limit', () => {
         const small = everyWorkload(2).map((item) => ({ ...item, boundary: true }));
         const verdict = boundaryVerdict(small, 32);
         expect(verdict.established).toBe(false);
-        expect(verdict.belowBoundary).toHaveLength(MEASURE_SHAPES.length * MEASURE_WORKLOADS.length);
+        const imports = MEASURE_WORKLOADS.filter((workload) => workload.startsWith('import-')).length;
+        expect(verdict.belowBoundary).toHaveLength(MEASURE_SHAPES.length * (MEASURE_WORKLOADS.length - imports) + imports);
         const proven = small.map((item) => ({ ...item, refusedAboveMiB: 2.2 }));
         expect(boundaryVerdict(proven, 32)).toMatchObject({ established: true });
         const loose = small.map((item) => ({ ...item, refusedAboveMiB: 4 }));
@@ -71,6 +81,17 @@ describe('the step 0 transfer limit', () => {
 
 // Code review 2 (new P2): each importer's step 0 file is built to core's caps by its encoded bytes.
 describe('the step 0 import fixtures', () => {
+    // Step 0 run 6: an import sized to the limit's range, not to core's caps (run 5's 100 000 Todoist tasks grew the library 101 MiB).
+    it('stop at the task count asked for', () => {
+        const tasks = importTasksFor(24);
+        expect(tasks).toBe(24_576);
+        for (const [key, entries] of Object.entries(importTexts('123456789012', tasks))) {
+            const rows = entries.reduce((sum, [, text]) => sum + (key === 'dgt' ? JSON.parse(text).TASK.length : text.trim().split('\n').length - 1), 0);
+            expect(rows, key).toBe(tasks);
+        }
+        expect(importTasksFor(1024)).toBe(99_999);
+    });
+
     it('keep every text within core\'s 8 MiB text cap, 16 MiB in all and 100 000 rows, filled close to the cap', () => {
         const texts = importTexts('123456789012');
         expect(Object.keys(texts).sort()).toEqual(['dgt', 'mindwtr-csv', 'omnifocus', 'ticktick', 'todoist']);

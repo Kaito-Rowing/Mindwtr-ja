@@ -29,8 +29,12 @@ const workloadBound = (rows) => {
     return bound;
 };
 
-const key = (row) => `${row.shape}/${row.workload}`;
-const cells = (shapes, workloads) => shapes.flatMap((shape) => workloads.map((workload) => `${shape}/${workload}`));
+/**
+ * A workload and shape. An import runs on its own fresh install (step 0 run 6), so the library's shape does not reach it: one
+ * import row counts for every shape.
+ */
+const key = (row) => (row.workload?.startsWith('import-') ? `*/${row.workload}` : `${row.shape}/${row.workload}`);
+const cells = (shapes, workloads) => [...new Set(shapes.flatMap((shape) => workloads.map((workload) => key({ shape, workload }))))];
 
 /**
  * Half of the smallest workload bound over the whole matrix (D1a's margin), or null while any workload or shape has no row.
