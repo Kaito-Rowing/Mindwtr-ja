@@ -31,13 +31,13 @@ import { probeWebdavSyncCompatibility, webdavGetSyncDocument, webdavHeadFile, we
 import { deleteDropboxFileVersioned, downloadDropboxAppData, DropboxFileNotFoundError, getDropboxAppDataMetadata, getDropboxFileMetadata, isDropboxUnauthorizedError, uploadDropboxAppData } from './dropbox';
 import { hasPendingSyncSideEffects, injectExternalCalendars as injectExternalCalendarsForSync, normalizeCloudUrl, normalizeWebdavUrl, persistExternalCalendars as persistExternalCalendarsForSync } from './sync-helpers';
 import { buildFastSyncScope, parseFastSyncState, serializeFastSyncState, type FastSyncState } from './sync-fast-sync';
-import { CLOUD_PROVIDER_DROPBOX, CLOUD_PROVIDER_SELF_HOSTED, applySyncedDataToStore, createAbortableFetch, getInMemoryAppDataSnapshot, prepareSyncedDataPublishPass, normalizeCloudProvider as normalizeCoreCloudProvider, type CloudProvider } from './sync-client-helpers';
+import { CLOUD_PROVIDER_DROPBOX, CLOUD_PROVIDER_SELF_HOSTED, applySyncedDataToStore, captureInMemoryAppDataSnapshot, createAbortableFetch, getInMemoryAppDataSnapshot, loadLeavesStorePass, prepareSyncedDataPublishPass, normalizeCloudProvider as normalizeCoreCloudProvider, type CloudProvider } from './sync-client-helpers';
 import { buildSyncPayloadSurfaceTraceExtra, buildSyncPayloadTraceExtra, isSyncPayloadTraceEnabled, SYNC_TRACE_EVENT_MESSAGES } from './sync-payload-trace';
 import { isLikelyOfflineSyncError, isRemoteSyncBackend, SYNC_FILE_NAME, SyncFileLockUnavailableError, type SyncBackend } from './sync-service-utils';
 import { summarizeTaskLifecycleCounts } from './task-utils';
 import { decodeUriSafe } from './async-utils';
 import { flushPendingSave, sameStoreData, storeDataOf, useTaskStore } from './store';
-import type { CooperativePass } from './cooperative';
+import { createSlicer, runSliced, type CooperativePass } from './cooperative';
 import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
 import { performSyncCycle } from './sync';
 import { isSecretConfigKey } from './sync-secret-storage';
@@ -937,7 +937,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
 
     private lastStep = 'init';
     /** The last save's publish when it swapped in a prepared state (sliced cycles, D9b W6): the store references it left. */
-    private lastPreparedPublish: { data: AppData; storeData: readonly unknown[]; loadCovered: boolean } | null = null;
+    private lastPreparedPublish: { data: AppData; storeData: readonly unknown[] } | null = null;
     private readonly syncDiagnosticStartedAt = Date.now();
     private syncDiagnosticPhaseStartedAt = this.syncDiagnosticStartedAt;
     private attachmentPrepareStartedAt = this.syncDiagnosticStartedAt;
@@ -1054,6 +1054,8 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           store: {
             getLastDataChangeAt: () => core.useTaskStore.getState().lastDataChangeAt,
             getInMemorySnapshot: () => core.getInMemoryAppDataSnapshot(),
+            // A sliced cycle takes the lists in one turn and copies them in slices (cloneAppDataPass).
+            captureInMemorySnapshot: () => captureInMemoryAppDataSnapshot(core.useTaskStore),
             flushPendingSave: () => core.flushPendingSave(),
             setUiError: (message) => core.useTaskStore.getState().setError(message),
             getSettings: () => core.useTaskStore.getState().settings,
@@ -1440,7 +1442,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
         applyDataToStore: (data, prepared) => {
           const swapped = applySyncedDataToStore(data, core.useTaskStore, prepared);
           this.lastPreparedPublish = swapped && prepared
-            ? { data, storeData: storeDataOf(core.useTaskStore.getState()), loadCovered: prepared.loadCovered }
+            ? { data, storeData: storeDataOf(core.useTaskStore.getState()) }
             : null;
           return swapped;
         },
@@ -2051,11 +2053,18 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           // still reaches the store through persistSyncStatus.
           const refreshStartedAt = Date.now();
           // D9b W6: the refresh is dropped when the last save swapped in a prepared publish of this document, the store
-          // has not moved since, and a load of the document would change nothing (prepareSyncedDataPublishPass).
+          // has not moved since (checked again after the sliced check), and a load of the document would change nothing.
           const published = this.lastPreparedPublish;
-          const refreshCovered = !info.localWriteSkipped && published !== null && published.loadCovered
-            && published.data === mergedData && !core.useTaskStore.getState().isLoading
+          const storeShowsPublish = () => published !== null && published.data === mergedData
+            && !core.useTaskStore.getState().isLoading
             && sameStoreData(storeDataOf(core.useTaskStore.getState()), published.storeData);
+          let refreshCovered = false;
+          if (!info.localWriteSkipped && host.sliceYield && storeShowsPublish()) {
+            const shown = core.useTaskStore.getState();
+            refreshCovered = await runSliced('sync:refreshCheck',
+              loadLeavesStorePass(mergedData, { tasks: shown._allTasks, projects: shown._allProjects }),
+              createSlicer(() => host.sliceYield!())) && storeShowsPublish();
+          }
           if (refreshCovered) {
             // The one store change the silent refresh makes even when its load changes nothing.
             core.useTaskStore.setState((state) => (state.error === null ? state : { error: null }));

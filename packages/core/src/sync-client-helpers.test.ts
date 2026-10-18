@@ -14,6 +14,7 @@ import {
     createAbortableFetch,
     ensureFreshLocalSyncSnapshot,
     getInMemoryAppDataSnapshot,
+    loadLeavesStorePass,
     prepareSyncedDataPublishPass,
     getInMemorySyncChangeFingerprint,
     normalizeCloudProvider,
@@ -150,10 +151,12 @@ describe('sync-client-helpers', () => {
         const prepared = runToEnd(prepareSyncedDataPublishPass(doc));
         expect(applySyncedDataToStore(doc, useTaskStore, prepared)).toBe(true);
         const published = storeDataOf(useTaskStore.getState());
+        const shown = useTaskStore.getState();
+        const leaves = runToEnd(loadLeavesStorePass(doc, { tasks: shown._allTasks, projects: shown._allProjects }));
         await useTaskStore.getState().fetchData({ silent: true, preloadedData: doc });
         await flushPendingSave();
 
-        expect(prepared.loadCovered).toBe(covered);
+        expect(leaves).toBe(covered);
         expect(sameStoreData(storeDataOf(useTaskStore.getState()), published)).toBe(covered);
     });
 

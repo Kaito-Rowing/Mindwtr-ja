@@ -52,6 +52,8 @@ async function openStore(guarded: boolean, receipts = false, extraTasks: Task[] 
     const options = guarded ? { rejectConcurrentWrites: true } : {};
     const adapter = receipts ? new NativeReceiptSqliteAdapter(client, options) : new SqliteAdapter(client, options);
     setStorageAdapter(adapter);
+    // A load never drops rows the store holds (its partial-snapshot guard): start each database on an empty store.
+    useTaskStore.setState({ _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [], settings: {} });
     await useTaskStore.getState().fetchData({ silent: true });
     return adapter;
 }
@@ -584,7 +586,9 @@ describe('a sliced cycle\'s prepared rows, prepared swap and refresh drop', () =
     });
 
     it('computes the publish in the gate when the store moved after the preparation without a new stamp or token', async () => {
-        const adapter = await openStore(true, false, [other]);
+        // More rows than one slice holds, so the publish's preparation yields after it has taken the store's references.
+        const filler = Array.from({ length: 80 }, (_, index) => task({ id: `filler-${index}`, title: `Filler ${index}` }));
+        const adapter = await openStore(true, false, [other, ...filler]);
         // The store shows a copy of 'other' that disk does not hold, at the same revision. A change during the
         // preparation (as a load would make: no stamp, no write) shows disk's row again.
         const diskOther = useTaskStore.getState()._tasksById.get('other')!;

@@ -2734,7 +2734,7 @@ describe('runSharedSyncCycle', () => {
         bundle.storage.prepareStorePublish = vi.fn((data: AppData) => (function* () {
             order.push('preparePublish');
             yield;
-            const publish = { data, against: [], update: {}, loadCovered: false };
+            const publish = { data, against: [], update: {} };
             prepared.push(publish);
             return publish;
         })());

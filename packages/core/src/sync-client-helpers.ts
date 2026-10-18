@@ -76,8 +76,8 @@ export const getInMemoryAppDataSnapshot = (): AppData => {
  * the store replaces and never changes in place. A sliced sync cycle copies them later, a few at a time (cloneAppDataPass),
  * and still holds one consistent state.
  */
-export const captureInMemoryAppDataSnapshot = (): AppData => {
-    const state = useTaskStore.getState();
+export const captureInMemoryAppDataSnapshot = (store: Pick<typeof useTaskStore, 'getState'> = useTaskStore): AppData => {
+    const state = store.getState();
     return {
         tasks: [...(state._allTasks ?? state.tasks ?? [])],
         projects: [...(state._allProjects ?? state.projects ?? [])],
@@ -96,11 +96,6 @@ export type PreparedStorePublish = {
     readonly against: readonly unknown[];
     /** Only what changed: the reconciled lists that differ from the store's, and the settings when they differ. */
     readonly update: Partial<TaskStore>;
-    /**
-     * True when a load of [data] (the end-of-cycle refresh, fetchData with it preloaded) would leave the store as this publish
-     * does: the load keeps every row this publish shows, and no load migration applies. Checked at preparation time.
-     */
-    readonly loadCovered: boolean;
 };
 
 /**
@@ -127,19 +122,20 @@ export function* prepareSyncedDataPublishPass(
     if (areas.items !== state._allAreas) update._allAreas = areas.items;
     if (people.items !== state._allPeople) update._allPeople = people.items;
     if (settings !== state.settings) update.settings = settings;
-    const loadCovered = yield* loadCoveredPass(next, { tasks: tasks.items, projects: projects.items });
-    return { data, against, update, loadCovered };
+    return { data, against, update };
 }
 
 /**
- * Would fetchData's load pipeline, run on [data] against a store that shows [shown], change the store? It mirrors fetchData
- * (store-settings.ts): it normalizes each task and project for load, keeps the store's row where the normalized one has the
- * same revision identity and the same Focus fields, and runs the load migrations on the normalized document.
+ * Would a load of [data] (fetchData with it preloaded, the end-of-cycle refresh) leave a store that shows [shown] as it is?
+ * A cooperative pass that mirrors fetchData (store-settings.ts): it normalizes each task and project for load, keeps the
+ * shown row where the normalized one has the same revision identity and the same Focus fields, and runs the load migrations
+ * on the normalized document. [shown] must be the store's lists for [data]'s rows, in [data]'s order (after its publish).
  */
-function* loadCoveredPass(
+export function* loadLeavesStorePass(
     data: AppData,
     shown: { tasks: readonly Task[]; projects: readonly Project[] },
 ): CooperativePass<boolean> {
+    if (shown.tasks.length !== data.tasks.length || shown.projects.length !== data.projects.length) return false;
     const nowIso = new Date().toISOString();
     const nowMs = Date.now();
     const tasks: Task[] = new Array(data.tasks.length);

@@ -539,6 +539,24 @@ describe('mobile sync service behind fake ports', () => {
     expect(saveData.mock.calls[0]?.[1]).toMatchObject({ token, onStale: expect.any(Function) });
   });
 
+  it('a slicing host takes the store snapshot in one read and copies it in slices, never through the deep clone (D9b §2)', async () => {
+    const deepClones = async (sliceYield?: () => Promise<void>) => {
+      const fake = createFakeHost({ values: WEBDAV_VALUES });
+      fake.host.sliceYield = sliceYield;
+      const read = emptyData();
+      fake.host.localData = { getData: async () => read, saveData: async () => undefined, readTokenOf: () => ({ epoch: 0, generation: 0 }) };
+      const deep = vi.fn(() => emptyData());
+      fake.host.core!.getInMemoryAppDataSnapshot = deep;
+      await createMobileSyncService(fake.host).performMobileSync();
+      expect(vi.mocked(fake.host.core!.performSyncCycle!)).toHaveBeenCalled();
+      return deep.mock.calls.length;
+    };
+
+    expect(await deepClones(async () => undefined)).toBe(0);
+    // React Native slices nothing and keeps the deep clone.
+    expect(await deepClones()).toBeGreaterThan(0);
+  });
+
   it('waits for a quiet period after the last edit before a follow-up on a slicing host (D9b W5)', async () => {
     const delays = async (sliceYield?: () => Promise<void>) => {
       const fake = createFakeHost({ values: WEBDAV_VALUES });
