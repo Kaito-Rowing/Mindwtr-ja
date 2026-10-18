@@ -16,7 +16,6 @@ import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import java.io.File
 import java.io.InputStream
-import java.util.concurrent.Executors
 
 /*
  * RN's system entry points (app/+native-intent.ts and hooks/root-layout/use-root-layout-external-capture.ts, with the share
@@ -115,13 +114,14 @@ class EntryRouter(private val shell: InboxViewModel, dir: File, private val stag
     private val queue = EntryQueue(dir)
     /** File shares being staged (one at a time, off the main thread); a staged one is read like any entry. */
     private val staging = mutableSetOf<String>()
-    private val stagingThread = Executors.newSingleThreadExecutor().also { thread ->
+    private val main = Handler(Looper.getMainLooper())
+    /** The staging thread and this router's main-thread jobs, all stopped by [close] (EntryThreads, JVM-tested). */
+    private val threads = EntryThreads({ delayMs, job -> main.postDelayed({ job() }, delayMs) }, { main.removeCallbacksAndMessages(null) }).also { threads ->
         // Staged files of an entry that left while the process was gone.
-        thread.execute { runCatching { stager.keepOnly(queue.all().map { it.id }.toSet()) } }
+        threads.background { runCatching { stager.keepOnly(queue.all().map { it.id }.toSet()) } }
     }
     /** Which entry core reads, when a failed read tries again, and when an entry leaves (EntryLifecycle.kt, JVM-tested). */
     private val lifecycle = EntryLifecycle(queue) { SystemClock.uptimeMillis() }
-    private val main = Handler(Looper.getMainLooper())
     /** The oldest waiting entry's id: MainActivity pumps again when it changes. */
     var head by mutableStateOf(lifecycle.head); private set
 
@@ -141,7 +141,7 @@ class EntryRouter(private val shell: InboxViewModel, dir: File, private val stag
     private fun stage(entry: EntryQueue.Entry) {
         if (!staging.add(entry.id)) return
         val uris = JSONObject(entry.input).optJSONArray("uris")?.let { list -> List(list.length()) { list.optString(it) } }.orEmpty()
-        stagingThread.execute {
+        threads.background {
             val failure = runCatching { stager.stage(entry.id, uris) }.exceptionOrNull()
             if (failure != null) {
                 // The tester's diagnostics log: the failure's class only (a message can name the shared file).
@@ -149,7 +149,7 @@ class EntryRouter(private val shell: InboxViewModel, dir: File, private val stag
                 shell.coreHost()?.logLine("Native file share staging failed releaseCheck=v1.3.7/native-share-files", context)
                     ?: Log.w(CoreHost.TAG, "Native file share staging failed $context")
             }
-            main.post {
+            threads.later {
                 staging.remove(entry.id)
                 // A staging that failed (the disk full) waits as a failed read does, then stages again; never a loop. Only the
                 // head entry's failure waits: a later one stages again when it is the head.
@@ -158,9 +158,9 @@ class EntryRouter(private val shell: InboxViewModel, dir: File, private val stag
         }
     }
 
-    /** The ViewModel is gone: no more staging (a relaunched router stages what is left). */
+    /** The ViewModel is gone: no more staging, retries or reads (a relaunched router stages what is left). */
     fun close() {
-        stagingThread.shutdownNow()
+        threads.close()
     }
 
     /** Something keeps the entry from opening now: the app is not ready, a command runs or is owed, or the user's work is open. */
@@ -216,7 +216,7 @@ class EntryRouter(private val shell: InboxViewModel, dir: File, private val stag
      */
     private fun failed(entry: EntryQueue.Entry, message: String?) {
         when (val outcome = lifecycle.failed(entry, message)) {
-            is EntryLifecycle.Failure.Retry -> main.postDelayed({ pump() }, outcome.delayMs)
+            is EntryLifecycle.Failure.Retry -> threads.later(outcome.delayMs) { pump() }
             is EntryLifecycle.Failure.Refused -> {
                 shell.showToast(null, outcome.notice, "warning")
                 lifecycle.dismissed(entry)

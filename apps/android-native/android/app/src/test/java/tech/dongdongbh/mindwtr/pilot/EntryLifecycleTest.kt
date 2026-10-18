@@ -7,6 +7,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 /**
  * EntryRouter's decisions (EntryLifecycle.kt), driven as the router drives them: which entry core reads, when a failed read
@@ -102,5 +105,37 @@ class EntryLifecycleTest {
         assertEquals("""{"n":2}""", second.input)
         restarted.opened(second)
         assertEquals(listOf("""{"n":3}"""), restartedQueue.all().map { it.input })
+    }
+
+    @Test fun aRetryWaitingWhenTheRouterClosesNeverStagesAgain() {
+        // A staging failed (the disk full) and its retry waits; then the ViewModel clears while the process lives on.
+        val posted = mutableListOf<() -> Unit>()
+        val threads = EntryThreads({ _, job -> posted += job }, { posted.clear() })
+        var staged = 0
+        threads.later(5_000) { threads.background { staged++ } }
+        val retry = posted.single()
+        threads.close()
+        assertTrue("close drops the waiting retry", posted.isEmpty())
+        // A retry the main thread took before close runs after it: it starts nothing (it threw RejectedExecutionException).
+        retry()
+        assertEquals(0, staged)
+    }
+
+    @Test fun aStagingThatEndsAfterTheRouterClosedNeverPumpsOrRetries() {
+        val posted = LinkedBlockingQueue<() -> Unit>()
+        val threads = EntryThreads({ _, job -> posted.add(job) }, { posted.clear() })
+        val copying = CountDownLatch(1)
+        var pumped = 0
+        threads.background {
+            copying.countDown()
+            runCatching { Thread.sleep(60_000) }
+            // The staging's completion: pump, which stages the next file share.
+            threads.later { pumped++; threads.background {} }
+        }
+        copying.await()
+        threads.close()
+        val completion = posted.poll(5, TimeUnit.SECONDS)!!
+        completion()
+        assertEquals(0, pumped)
     }
 }
