@@ -13,6 +13,8 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // ios-task-badge reuses releaseCheck, count, and enabled below.
+    'result',
     // windowless-sync: existing periodic timer timing and lifecycle gates only.
     'delayMs', 'latenessMs', 'runtimeActive', 'editorPause', 'minIntervalMs', 'success',
     // sync-field-merge reuses entity below; fields is a comma list of task/project field names, never values.

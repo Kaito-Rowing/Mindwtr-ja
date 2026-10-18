@@ -1542,6 +1542,10 @@ export const daOverrides: Record<string, string> = {
     'settings.notifications': 'Meddelelser',
     'settings.notificationsDesc': 'Aktiver påmindelser for opgaver med start- eller forfaldsdatoer.',
     'settings.notificationsEnable': 'Opgavepåmindelser',
+        'settings.appIconBadge': 'Badge på appikon',
+        'settings.appIconBadgeHint': 'Tæller opgaver på denne enhed, der forfalder i dag eller er forfaldne. Opdateres, når Mindwtr kører; antallet kan være forældet, mens appen er lukket.',
+        'settings.appIconBadgeDenied': 'Tillad badges for Mindwtr i iOS-indstillinger for at aktivere denne optælling.',
+        'settings.appIconBadgeError': 'Indstillingen for badge på appikonet kunne ikke opdateres. Prøv igen.',
     'settings.notificationsDisabled': 'Notifikationer deaktiveret',
     'settings.notificationsDisabledMessage':
         'Mindwtr kan ikke længere planlægge påmindelser, før meddelelsesadgang er gendannet.',
