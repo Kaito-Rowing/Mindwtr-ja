@@ -13,6 +13,7 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // ios-reminder-actions reuses releaseCheck, stage, action, reason, and appState below.
     // ios-task-badge reuses releaseCheck, count, and enabled below.
     'result',
     // windowless-sync: existing periodic timer timing and lifecycle gates only.

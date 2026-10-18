@@ -410,6 +410,13 @@ function attachNativeEventListeners(): void {
       logNotificationWarn('Notification event payload was unreadable');
       return;
     }
+    if (Platform.OS === 'ios') {
+      void logInfo('[Local Notifications] iOS reminder opened', {
+        scope: 'notifications',
+        extra: { releaseCheck: 'v1.3.7/ios-reminder-actions',
+          stage: notificationOpenHandler ? 'native-open-ready' : 'native-open-no-handler' },
+      });
+    }
     // Receipt evidence for #1028: every tap that reaches JS is logged, so a
     // dead action button with no line here means the tap died in the native
     // layer (receiver never ran, or the alarm row it looks up is gone).
@@ -444,6 +451,12 @@ function attachNativeEventListeners(): void {
   dismissSubscription?.remove();
   dismissSubscription = emitter.addListener('OnNotificationDismissed', (payload: unknown) => {
     const data = parseEventPayload(payload);
+    if (Platform.OS === 'ios') {
+      void logInfo('[Local Notifications] iOS reminder dismissed', {
+        scope: 'notifications',
+        extra: { releaseCheck: 'v1.3.7/ios-reminder-actions', stage: 'native-dismiss-received', action: 'dismiss' },
+      });
+    }
     logNotificationInfo('Notification dismissed event', {
       alarmKey: data?.alarmKey || data?.id || '',
       taskId: data?.taskId || '',
