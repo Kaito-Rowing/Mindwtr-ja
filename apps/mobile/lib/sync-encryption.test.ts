@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import * as nodeCrypto from 'node:crypto';
 import { argon2id } from '@noble/hashes/argon2.js';
 import type { AppData, SyncEncryptionRemotePort, SyncRemoteMutationFenceLease } from '@mindwtr/core';
@@ -212,8 +212,10 @@ import {
 } from '@mindwtr/core';
 import {
   FILE_SYNC_ABSENT_FINGERPRINT,
+  pickAndParseSyncFolder,
   readSyncFile,
   readSyncFileVersioned,
+  resolveSyncFileUri,
   writeSyncFile,
 } from './storage-file';
 import {
@@ -642,6 +644,53 @@ describe('SAF provider errors are never an empty folder or an absent file (B4)',
     );
 
     await expect(readSyncArtifactBytes(SAF_ENC_URI)).rejects.toThrow();
+  });
+});
+
+describe('File Sync never creates data.json before it publishes one (B2)', () => {
+  it('refuses to resolve the sync file when the folder listing fails, and creates nothing', async () => {
+    const { StorageAccessFramework } = await import('./file-system');
+    vi.mocked(StorageAccessFramework!.readDirectoryAsync!).mockRejectedValue(new Error('provider listing failed'));
+
+    await expect(resolveSyncFileUri('content://provider/tree/root', { createIfMissing: true }))
+      .rejects.toThrow('provider listing failed');
+    expect(StorageAccessFramework!.createFileAsync).not.toHaveBeenCalled();
+    expect(fs.files.size).toBe(0);
+  });
+
+  it('reads a deleted data.json as absent from the folder listing, not from a lookup that proves nothing', async () => {
+    const safDocuments = await import('./saf-documents');
+    // A vanished document's lookup answers no cursor, which SafDocumentsCore reports as an error.
+    vi.mocked(safDocuments.statSafDocument).mockRejectedValue(
+      new Error('SAF_DOCUMENT_UNAVAILABLE: the provider gave no answer for the document'),
+    );
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI)).resolves.toMatchObject({
+      fingerprint: FILE_SYNC_ABSENT_FINGERPRINT, source: 'empty',
+    });
+  });
+
+  it('picks an empty folder without creating data.json; the first sync creates it when it publishes', async () => {
+    const { Platform } = await import('react-native');
+    const previousOs = Platform.OS;
+    (Platform as { OS: string }).OS = 'android';
+    onTestFinished(() => { (Platform as { OS: string }).OS = previousOs; });
+    const { StorageAccessFramework } = await import('./file-system');
+    vi.mocked(StorageAccessFramework!.requestDirectoryPermissionsAsync!).mockResolvedValue({
+      granted: true, directoryUri: 'content://provider/tree/root',
+    } as never);
+
+    const picked = await pickAndParseSyncFolder();
+
+    expect(picked?.__fileUri).toBe(SAF_SYNC_URI);
+    expect([...fs.files.keys()].filter((uri) => uri.endsWith('data.json'))).toEqual([]);
+    expect(vi.mocked(StorageAccessFramework!.createFileAsync!).mock.calls.map((call) => call[1]))
+      .not.toContain('data.json');
+
+    const remote = await readSyncFileVersioned(picked!.__fileUri!);
+    expect(remote.fingerprint).toBe(FILE_SYNC_ABSENT_FINGERPRINT);
+    await writeSyncFile(picked!.__fileUri!, appData('first'), { expectedFingerprint: remote.fingerprint });
+    expect(textOf('content://provider/tree/root/document/root/data.json')).toContain('first');
   });
 });
 

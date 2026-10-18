@@ -184,23 +184,21 @@ const isICloudEvicted = (fileUri: string): boolean => {
     }
 };
 
+/** The folder's data.json (or legacy file) document URI, or null when a successful listing
+ *  found none. A listing failure propagates: "unreadable" is never "absent". */
 const listDirectoryForSyncFile = async (directoryUri: string): Promise<string | null> => {
-    try {
-        const entries = (await listSafChildren(directoryUri)).map((entry) => entry.uri);
-        const decoded: Array<{ entry: string; decoded: string }> = entries.map((entry: string) => ({
-            entry,
-            decoded: decodeUriSafe(entry),
-        }));
-        const matchEntry = decoded.find((item) =>
-            item.decoded.endsWith(`/${SYNC_FILE_NAME}`)
-            || item.decoded.endsWith(`:${SYNC_FILE_NAME}`)
-            || item.decoded.endsWith(`/${LEGACY_SYNC_FILE_NAME}`)
-            || item.decoded.endsWith(`:${LEGACY_SYNC_FILE_NAME}`)
-        );
-        return matchEntry?.entry ?? null;
-    } catch {
-        return null;
-    }
+    const entries = (await listSafChildren(directoryUri)).map((entry) => entry.uri);
+    const decoded: Array<{ entry: string; decoded: string }> = entries.map((entry: string) => ({
+        entry,
+        decoded: decodeUriSafe(entry),
+    }));
+    const matchEntry = decoded.find((item) =>
+        item.decoded.endsWith(`/${SYNC_FILE_NAME}`)
+        || item.decoded.endsWith(`:${SYNC_FILE_NAME}`)
+        || item.decoded.endsWith(`/${LEGACY_SYNC_FILE_NAME}`)
+        || item.decoded.endsWith(`:${LEGACY_SYNC_FILE_NAME}`)
+    );
+    return matchEntry?.entry ?? null;
 };
 
 function sanitizeJsonText(raw: string): string {
@@ -306,46 +304,50 @@ export const pickAndParseSyncFile = async (): Promise<PickResult | null> => {
     }
 };
 
-export const resolveSyncFileUri = async (
-    uri: string,
-    options?: { createIfMissing?: boolean }
-): Promise<string> => {
-    if (!uri.startsWith('content://')) return uri;
-    if (isLikelySyncFileUri(uri)) return uri;
+/** Whether the picked folder's listing holds this exact document. A listing failure throws. */
+const isListedInSafSyncFolder = async (documentUri: string): Promise<boolean> => {
+    const context = parseSafContext(documentUri);
+    if (!context) return false;
+    const folderUri = buildTreeDocumentUri(context, context.treeIdDecoded);
+    const target = decodeUriSafe(documentUri);
+    return (await listSafChildren(folderUri)).some((entry) => decodeUriSafe(entry.uri) === target);
+};
 
+type ResolvedSafSyncFile = { uri: string; exists: boolean };
+
+/** A SAF folder's sync document: the listed one, or (confirmed absent) the URI it will be
+ *  published under. Nothing is created here; the versioned write creates data.json when it
+ *  publishes, so a folder never holds an empty data.json that no one wrote. */
+const resolveSafSyncFile = async (uri: string): Promise<ResolvedSafSyncFile | null> => {
     const cached = syncUriResolutionCache.get(uri);
-    if (cached) return cached;
+    if (cached) return { uri: cached, exists: true };
 
     const context = parseSafContext(uri);
-    if (!context) return uri;
-    const createIfMissing = options?.createIfMissing ?? true;
+    if (!context) return null;
     const treeUri = `${context.prefix}/tree/${context.treeIdEncoded}`;
     const documentUri = buildTreeDocumentUri(context, context.treeIdDecoded);
-    const candidates = [documentUri, treeUri];
 
-    for (const candidate of candidates) {
+    for (const candidate of [documentUri, treeUri]) {
         const match = await listDirectoryForSyncFile(candidate);
         if (match) {
             syncUriResolutionCache.set(uri, match);
-            return match;
+            return { uri: match, exists: true };
         }
     }
+    void logInfo('File Sync folder holds no data.json yet; the first sync creates it', {
+        scope: 'sync', extra: { releaseCheck: 'v1.3.7/file-sync-saf-safety', check: 'create', outcome: 'deferred' },
+    });
+    return { uri: buildTreeDocumentUri(context, buildChildDocId(context.treeIdDecoded, SYNC_FILE_NAME)), exists: false };
+};
 
-    if (createIfMissing && StorageAccessFramework?.createFileAsync) {
-        for (const candidate of candidates) {
-            try {
-                const created = await StorageAccessFramework.createFileAsync(candidate, SYNC_FILE_NAME, 'application/json');
-                syncUriResolutionCache.set(uri, created);
-                return created;
-            } catch {
-                // Try the next candidate.
-            }
-        }
-    }
-
-    const fallback = buildTreeDocumentUri(context, buildChildDocId(context.treeIdDecoded, SYNC_FILE_NAME));
-    syncUriResolutionCache.set(uri, fallback);
-    return fallback;
+/** `createIfMissing` is accepted for the port's shape and never creates (see resolveSafSyncFile). */
+export const resolveSyncFileUri = async (
+    uri: string,
+    _options?: { createIfMissing?: boolean }
+): Promise<string> => {
+    if (!uri.startsWith('content://')) return uri;
+    if (isLikelySyncFileUri(uri)) return uri;
+    return (await resolveSafSyncFile(uri))?.uri ?? uri;
 };
 
 const assertDirectoryWritable = async (
@@ -548,18 +550,13 @@ export const pickAndParseSyncFolder = async (options?: PickSyncFolderOptions): P
         if (!permissions.granted) return null;
         const directoryUri = permissions.directoryUri;
         if (!directoryUri) return null;
-        let fileUri = await resolveSyncFileUri(directoryUri, { createIfMissing: true });
-        let fileContent: string | null = null;
-        if (fileUri) {
-            fileContent = await readFileText(fileUri);
+        const resolved = await resolveSafSyncFile(directoryUri);
+        if (!resolved) {
+            throw new Error('Unable to open the selected sync folder');
         }
-        await assertDirectoryWritable(directoryUri, fileUri ?? undefined, fileContent ?? undefined);
-        if (!fileUri) {
-            throw new Error('Unable to create sync file in selected folder');
-        }
-        if (fileContent === null) {
-            fileContent = await readFileText(fileUri);
-        }
+        const fileUri = resolved.uri;
+        const fileContent = resolved.exists ? await readFileText(fileUri) : null;
+        await assertDirectoryWritable(directoryUri, resolved.exists ? fileUri : undefined, fileContent ?? undefined);
         if (!fileContent) return emptyPickResult(fileUri);
         const data = parseAppData(fileContent);
         return { ...data, __fileUri: fileUri, __icloud: isICloudUri(fileUri) };
@@ -795,7 +792,11 @@ export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOpti
         let lastError: unknown = null;
         for (let attempt = 0; attempt < 4; attempt += 1) {
             try {
-                const fileContent = await readFileText(resolvedUri);
+                // A SAF sync file is absent only when the folder's listing (which succeeded, or
+                // threw) does not hold it: a lookup with no answer proves nothing. data.json is
+                // created only when the versioned write publishes it.
+                const absent = resolvedUri.startsWith('content://') && !(await isListedInSafSyncFolder(resolvedUri));
+                const fileContent = absent ? null : await readFileText(resolvedUri);
                 if (!fileContent) {
                     // "Nothing here" is also the exact shape of a folder a peer encrypted
                     // and whose plaintext original it then removed — take one look before
