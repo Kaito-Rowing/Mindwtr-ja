@@ -7,7 +7,7 @@ import {
     type ParsedTickTickImportData,
 } from './ticktick-import';
 import { mockAppData } from './sync-test-utils';
-import { withQuickJsPushLimit } from './quickjs-test-utils';
+import { withQuickJsArgumentLimit } from './quickjs-test-utils';
 import type { Area, Person, Project } from './types';
 
 const csvRow = (cells: string[]): string => cells
@@ -368,7 +368,7 @@ describe('ticktick import', () => {
         const rows = Array.from({ length: 70_000 }, (_, index) => ['', 'Inbox', `Task ${index}`, 'TEXT', '', '', 'N', '', '', '', '', '0', '0',
             '', '', '', '', '', '', '', '', '', `task-${index}`, '']);
         const bytes = zipSync({ 'backup.csv': strToU8(buildTickTickCsv(rows)) });
-        const result = withQuickJsPushLimit(() => parseTickTickImportSource({ fileName: 'ticktick.zip', bytes }));
+        const result = withQuickJsArgumentLimit(() => parseTickTickImportSource({ fileName: 'ticktick.zip', bytes }));
         expect(result.errors).toEqual([]);
         expect(result.parsedData?.tasks).toHaveLength(70_000);
     });

@@ -9,7 +9,7 @@ import {
 import { createImportDiagnostics, formatImportDiagnostic } from './import-diagnostics';
 import { formatI18nTemplate, getTranslator } from './i18n';
 import { mockAppData } from './sync-test-utils';
-import { withQuickJsPushLimit } from './quickjs-test-utils';
+import { withQuickJsArgumentLimit } from './quickjs-test-utils';
 import { generateDeterministicUUID } from './uuid';
 
 const quoteCell = (cell: string): string => `"${cell.replace(/"/gu, '""')}"`;
@@ -58,7 +58,7 @@ describe('mindwtr csv import', () => {
     it('imports one zipped CSV entry with more rows than a QuickJS call takes arguments', () => {
         const rows = Array.from({ length: 70_000 }, (_, index) => [`Task ${index}`]);
         const bytes = zipSync({ 'tasks.csv': strToU8(buildCsv(['Title'], rows)) });
-        const result = withQuickJsPushLimit(() => parseMindwtrCsvImportSource({ fileName: 'export.zip', bytes }));
+        const result = withQuickJsArgumentLimit(() => parseMindwtrCsvImportSource({ fileName: 'export.zip', bytes }));
         expect(result.errors).toEqual([]);
         expect(result.parsedData?.tasks).toHaveLength(70_000);
     });

@@ -134,12 +134,13 @@ export const findPendingAttachmentUploads = (data: AppData): PendingAttachmentUp
 
     for (const task of data.tasks) {
         if (task.deletedAt) continue;
-        pending.push(...collectPendingUploads('task', task.id, task.attachments));
+        // One push per upload: QuickJS (native Android) refuses a call with more than 65535 arguments.
+        for (const upload of collectPendingUploads('task', task.id, task.attachments)) pending.push(upload);
     }
 
     for (const project of data.projects) {
         if (project.deletedAt) continue;
-        pending.push(...collectPendingUploads('project', project.id, project.attachments));
+        for (const upload of collectPendingUploads('project', project.id, project.attachments)) pending.push(upload);
     }
 
     return pending;
