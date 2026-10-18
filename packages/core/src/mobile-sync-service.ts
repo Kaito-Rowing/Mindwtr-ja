@@ -2562,10 +2562,17 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
     }
   }
 
-  // On a slicing host: how long until edits have paused for FOLLOW_UP_QUIET_MS (0 elsewhere).
-  const quietWaitMs = () => (host.sliceYield
-    ? Math.max(0, FOLLOW_UP_QUIET_MS - (Date.now() - core.useTaskStore.getState().lastDataChangeAt))
-    : 0);
+  // On a slicing host: how long until edits have paused for FOLLOW_UP_QUIET_MS (0 elsewhere). Every follow-up waits, not
+  // only a stale-* one (D9b 4a review): the wait only bites while the user keeps editing. The timer's recheck waits again
+  // only for a newer edit, and each wait is capped: after the clock moves back, lastDataChangeAt stays ahead of now.
+  let quietMeasuredFrom: number | null = null;
+  const quietWaitMs = () => {
+    if (!host.sliceYield) return 0;
+    const lastEditAt = core.useTaskStore.getState().lastDataChangeAt;
+    if (lastEditAt === quietMeasuredFrom) return 0;
+    quietMeasuredFrom = lastEditAt;
+    return Math.min(FOLLOW_UP_QUIET_MS, Math.max(0, FOLLOW_UP_QUIET_MS - (Date.now() - lastEditAt)));
+  };
   const mobileSyncOrchestrator = createSyncOrchestrator<MobileSyncRequest | undefined, MobileSyncResult>({
     getFollowUpWaitMs: quietWaitMs,
     getFollowUpDelayMs: (lastCycleDurationMs, minimumDelayMs) => {

@@ -560,6 +560,22 @@ describe('mobile sync service behind fake ports', () => {
     expect(await delays()).toEqual([1_000]);
   });
 
+  it('caps the quiet period at 2 s when the clock moved back behind the last edit (D9b W5)', async () => {
+    const fake = createFakeHost({ values: WEBDAV_VALUES });
+    fake.host.sliceYield = async () => undefined;
+    const service = createMobileSyncService(fake.host);
+    vi.mocked(fake.host.core!.performSyncCycle!).mockImplementationOnce(async () => {
+      // The last edit was stamped an hour ahead of the clock now.
+      fake.store.lastDataChangeAt = Date.now() + 3_600_000;
+      service.abortMobileSync();
+      throw new Error('aborted');
+    });
+    await service.performMobileSync();
+    await service.waitForMobileSyncIdle();
+    const delays = fake.logs.filter((line) => line.message === 'Sync follow-up scheduled').map((line) => Number(line.extra?.delayMs));
+    expect(delays).toEqual([2_000]);
+  }, 10_000);
+
   it('refuses a slicing host without read tokens (D9b W3)', () => {
     const fake = createFakeHost({ values: WEBDAV_VALUES });
     fake.host.sliceYield = async () => undefined;
