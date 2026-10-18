@@ -37,6 +37,8 @@
 // sampled from before it starts, with the library measured before and after; then the limit data-transfer-limit.mjs proposes,
 // and every workload again at that limit, which must pass. With D1C_PART=deadlines it runs only the DL rows
 // (D1C_PART=deadlines-1 or deadlines-2: check-data-deadlines-device.mjs, check-data-deadlines2-device.mjs).
+// With D1C_PART=large-import (check-data-large-import-device.mjs) it runs only the LI rows: the largest TickTick and Mindwtr CSV
+// imports and their Undo.
 // It clears every debug property it sets, puts rotation back, and leaves the phone on its home screen.
 // Exit 0 = pass, 1 = fail, 2 = refused, 3 = stopped.
 import { execFileSync } from 'node:child_process';
@@ -728,6 +730,17 @@ const restoreNewestSnapshot = async () => {
     await tap(rows(nodes).find((row) => row['resource-id'].endsWith(newest)) ?? fail(`no row for the newest snapshot ${newest}`));
     await confirmQuestion(en['settings.backupMobile.restoreRecoverySnapshot']);
 };
+/**
+ * That Undo, and its toast: Restore complete, or a failure named with the toast's words. Step 0 run 5 waited for the success
+ * toast alone and dropped the wait's failure, so a refused Undo (its commit past the 15 min budget: "Restore failed") read as
+ * an Undo that never ran, and every later row ran on the import's library.
+ */
+const undoNewest = async () => {
+    await restoreNewestSnapshot();
+    const nodes = await waitFor('the Undo\'s toast', (current) => hasText(current, en['settings.backupMobile.restoreComplete'])
+        || hasText(current, en['settings.backupMobile.restoreFailed']), 900_000);
+    if (!hasText(nodes, en['settings.backupMobile.restoreComplete'])) fail(`the Undo failed: ${nodes.map((node) => node.text).filter(Boolean).join(' | ')}`);
+};
 /** An export's folder picker: it opens once the file is written, which takes minutes for a large library (step 0 run 3). */
 const exportToFolder = async (tag) => {
     await openData();
@@ -914,11 +927,8 @@ const runSequence = async (shape, mib, { imports }) => {
     for (const item of imports) {
         const imported = await measureRun(shape, item.workload, mib, () => importFile(item.key, item.file),
             (nodes) => hasText(nodes, en['settings.backupMobile.importComplete']) && !confirmButton(nodes), { sourceBytes: item.bytes, expandedBytes: item.expandedBytes, boundary });
-        // Undone, so the next importer meets the same library (not measured).
-        if (imported.row.outcome === 'done') {
-            await restoreNewestSnapshot();
-            await toastWith(en['settings.backupMobile.restoreComplete'], 900_000).catch(() => undefined);
-        }
+        // Undone, so the next importer meets the same library (not measured); an Undo that did not land stops the run.
+        if (imported.row.outcome === 'done') await undoNewest();
         if (!pid()) await launch();
     }
     await measureRun(shape, 'cold-start', mib, async () => { await device.stopApp(); device.launch(ACTIVITY); }, (nodes) => onInbox(nodes), { boundary });
@@ -926,6 +936,31 @@ const runSequence = async (shape, mib, { imports }) => {
     await measureRecoveryBoot(shape, mib, () => restoreFile(a2), { boundary });
     sh(`rm -f ${PHONE_DIR}/${a.name} ${PHONE_DIR}/${b.name}`);
     return true;
+};
+/**
+ * TickTick's and Mindwtr CSV's largest files (one ZIP entry of about 80k and 100k rows) on a fresh library at step 0's raised
+ * limit: each imports every row (QuickJS refused the one push that took them all, so step 0 read "No importable records"), the
+ * toast's recovery snapshot is the newest on disk and in Sync › Recovery snapshots, and its Undo brings the library back.
+ */
+const largeImports = async () => {
+    await measureFreshInstall();
+    const live = (label) => sqlite(pullDb(label), 'SELECT count(*) AS n FROM tasks WHERE deletedAt IS NULL')[0].n;
+    for (const item of importFixtures().filter(({ key }) => key === 'ticktick' || key === 'mindwtr-csv')) {
+        const before = live(`li-${item.key}-before`);
+        await importFile(item.key, item.file);
+        const toast = await waitFor(`the ${item.key} import's toast`, (current) => hasText(current, en['settings.backupMobile.importComplete'])
+            || hasText(current, en['settings.backupMobile.importFailed']), 900_000);
+        const words = toast.map((node) => node.text).filter(Boolean).join(' | ');
+        check(hasText(toast, en['settings.backupMobile.importComplete']), `(LI ${item.key}) the ${(item.expandedBytes / MIB).toFixed(1)} MiB entry imports: ${words}`);
+        const imported = Number(/Imported (\d+) task/.exec(words)?.[1] ?? NaN);
+        const snapshot = /data\.[\dT.-]+\.snapshot\.json/.exec(words)?.[0];
+        const after = live(`li-${item.key}-after`);
+        check(imported > 65_535 && after === before + imported, `(LI ${item.key}) every row is a live task: ${imported} imported, ${before} -> ${after}`);
+        check(snapshot && [...snapshots()].sort().at(-1) === snapshot, `(LI ${item.key}) the toast's recovery snapshot ${snapshot} is the newest on disk`);
+        await undoNewest();
+        const undone = live(`li-${item.key}-undo`);
+        check(undone === before, `(LI ${item.key}) the Undo brings the library back: ${after} -> ${undone} (before: ${before})`);
+    }
 };
 const measure = async () => {
     console.log(`heap limits: dalvik.vm.heapgrowthlimit=${sh('getprop dalvik.vm.heapgrowthlimit')} heapsize=${sh('getprop dalvik.vm.heapsize')}; ${sh('grep MemTotal /proc/meminfo')}`);
@@ -984,6 +1019,12 @@ try {
         sh('settings put system accelerometer_rotation 0');
         await deadlineRows(process.env.D1C_PART === 'deadlines-1' ? 1 : 2);
         console.log('Settings › Data deadline rows passed');
+        break steps;
+    }
+    if (process.env.D1C_PART === 'large-import') {
+        sh('settings put system accelerometer_rotation 0');
+        await largeImports();
+        console.log('Settings › Data large imports passed');
         break steps;
     }
     if (process.env.D1_MEASURE === '1') {
