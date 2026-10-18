@@ -201,12 +201,13 @@ class EntryRouter(private val shell: InboxViewModel, dir: File, private val stag
                     runtime.menuRead("captureModalOpen", JSONObject().put("params", modal.getJSONObject("params")).toString())
                 })
             } catch (failure: Throwable) {
-                ui { failed(entry, failure.message) }
+                ui(threads.guarded { failed(entry, failure.message) })
                 // A refused input shows its own notice; any other failure is the read's, with the screen's retry.
                 if (!entryRetryable(failure.message)) return@perform
                 throw failure
             }
-            ui { menu.whenIdle { opened(entry, reply, view) } }
+            // A closed router's answer opens nothing and keeps the entry and its staged files for the next router.
+            ui(threads.guarded { menu.whenIdle(threads.guarded { opened(entry, reply, view) }) })
         }
     }
 

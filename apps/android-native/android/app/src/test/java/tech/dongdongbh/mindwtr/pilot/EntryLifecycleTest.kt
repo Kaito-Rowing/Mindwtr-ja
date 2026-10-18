@@ -138,4 +138,29 @@ class EntryLifecycleTest {
         completion()
         assertEquals(0, pumped)
     }
+
+    @Test fun aCoreReadThatAnswersAfterTheRouterClosedLeavesTheShareForTheNextRouter() {
+        val file = "content://p/1"
+        val stager = SharedFileStager(File(folder.root, "staged"), object : SharedFileStager.Source {
+            override fun open(uri: String) = "pdf".byteInputStream()
+            override fun name(uri: String) = "Report.pdf"
+            override fun size(uri: String) = 3L
+            override fun mimeType(uri: String) = "application/pdf"
+            override fun authority(uri: String) = "p"
+            override fun ownProvider(authority: String) = false
+        })
+        val (queue, lifecycle) = process()
+        queue.add("""{"kind":"files","uris":["$file"]}""")
+        val read = lifecycle.next(blocked = false)!!
+        stager.stage(read.id, listOf(file))
+        // Core reads the staged share; the ViewModel clears before its answer opens (the router's opened(): the entry leaves,
+        // its files go), and the answer then arrives through the ViewModel's ui and Menu's whenIdle.
+        val threads = EntryThreads({ _, _ -> }, {})
+        val answer = threads.guarded { lifecycle.opened(read); stager.discard(read.id) }
+        threads.close()
+        answer()
+        val (_, next) = process()
+        assertEquals(read.id, next.next(blocked = false)?.id)
+        assertEquals(1, stager.staged(read.id)?.length())
+    }
 }

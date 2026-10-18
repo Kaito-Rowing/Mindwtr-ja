@@ -75,9 +75,10 @@ class EntryLifecycle(private val queue: EntryQueue, private val now: () -> Long)
 /**
  * EntryRouter's threads, apart from Android so JVM tests drive them: one background thread that stages file shares, and the
  * main thread's queue ([post] runs a job there after a delay; [cancelPosts] drops what waits). After [close] (the ViewModel is
- * gone, the process may live on) nothing starts: a waiting retry is dropped, and a staging that ends later never pumps or
- * schedules another retry (a stopped thread would throw on the main thread). [background], [close] and the jobs run on the
- * main thread; [later] may be called from either.
+ * gone, the process may live on) nothing starts: a waiting retry is dropped, a staging that ends later never pumps or
+ * schedules another retry (a stopped thread would throw on the main thread), and a core read that answers later neither opens
+ * nor removes its entry, so the next router opens it. [background], [close] and the jobs run on the main thread; [later] may
+ * be called from either.
  */
 class EntryThreads(private val post: (Long, () -> Unit) -> Unit, private val cancelPosts: () -> Unit) {
     private val worker = Executors.newSingleThreadExecutor()
@@ -87,7 +88,10 @@ class EntryThreads(private val post: (Long, () -> Unit) -> Unit, private val can
         if (!closed) worker.execute(job)
     }
 
-    fun later(delayMs: Long = 0, job: () -> Unit) = post(delayMs) { if (!closed) job() }
+    fun later(delayMs: Long = 0, job: () -> Unit) = post(delayMs, guarded(job))
+
+    /** [job] as a main-thread callback another handler runs (the ViewModel's ui, Menu's whenIdle): nothing once closed. */
+    fun guarded(job: () -> Unit): () -> Unit = { if (!closed) job() }
 
     fun close() {
         closed = true

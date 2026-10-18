@@ -3286,9 +3286,14 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // Closing stops staging and drops every main-thread job of the router (a retry, a staging's completion): EntryThreads, JVM-tested.
     assert.match(entryKt, /fun close\(\) \{\s+threads\.close\(\)\s+\}/);
     assert.match(entryKt, /EntryThreads\(\{ delayMs, job -> main\.postDelayed\(\{ job\(\) \}, delayMs\) \}, \{ main\.removeCallbacksAndMessages\(null\) \}\)/);
-    assert.doesNotMatch(code(entryKt), /main\.post\(|\.execute\(|Executors/, 'every router job goes through EntryThreads');
+    // The staging's completion, a core read's answer and its failure all run through EntryThreads; no other handler post.
+    assert.match(entryKt, /threads\.later \{\s+staging\.remove\(entry\.id\)/);
+    // (Focus's editor opens through whenIdle once the entry opened: it takes nothing from the queue.)
+    const routerJobs = code(entryKt).replace('{ delayMs, job -> main.postDelayed({ job() }, delayMs) }', '').replace('menu.whenIdle { openEditor(id, "view") }', '');
+    assert.doesNotMatch(routerJobs, /\bpost(Delayed)?\(|\bui \{|\bui\((?!threads\.guarded \{)|whenIdle \{|whenIdle\((?!threads\.guarded \{)|\.execute\(|Executors/, 'every router job goes through EntryThreads');
+    assert.match(source('EntryLifecycle.kt'), /fun later\(delayMs: Long = 0, job: \(\) -> Unit\) = post\(delayMs, guarded\(job\)\)\s+[^\n]*\s+fun guarded\(job: \(\) -> Unit\): \(\) -> Unit = \{ if \(!closed\) job\(\) \}/);
     assert.match(source('EntryLifecycle.kt'), /fun close\(\) \{\s+closed = true\s+cancelPosts\(\)\s+worker\.shutdownNow\(\)\s+\}/);
-    assert.match(readFileSync(resolve(app, 'android/app/src/test/java/tech/dongdongbh/mindwtr/pilot/EntryLifecycleTest.kt'), 'utf8'), /fun aStagingThatEndsAfterTheRouterClosedNeverPumpsOrRetries\(\)/);
+    assert.match(readFileSync(resolve(app, 'android/app/src/test/java/tech/dongdongbh/mindwtr/pilot/EntryLifecycleTest.kt'), 'utf8'), /fun aStagingThatEndsAfterTheRouterClosedNeverPumpsOrRetries\(\)[\s\S]*fun aCoreReadThatAnswersAfterTheRouterClosedLeavesTheShareForTheNextRouter\(\)/);
     // Only another app's content:// file is opened (a file:// URI or this app's own provider would attach the app's private files).
     assert.match(entryKt, /override fun ownProvider\(authority: String\): Boolean = context\.packageManager\.resolveContentProvider\(authority, 0\)\?\.packageName == context\.packageName\s+&& !\(BuildConfig\.DEBUG && authority == "\$\{context\.packageName\}\.sharetest"\)/);
     assert.match(entryKt, /JSONObject\(\)\.put\("requestId", entry\.id\)\.put\("files", staged\)/);
@@ -3298,7 +3303,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // An entry leaves the queue only after it opened, or when core refused its input; a failed read keeps it for a later try.
     assert.match(entryKt, /private val lifecycle = EntryLifecycle\(queue\) \{ SystemClock\.uptimeMillis\(\) \}/);
     assert.match(entryKt, /val entry = lifecycle\.next\(blocked\) \?: return/);
-    assert.match(entryKt, /\} catch \(failure: Throwable\) \{\s+ui \{ failed\(entry, failure\.message\) \}\s+\/\/[^\n]*\s+if \(!entryRetryable\(failure\.message\)\) return@perform\s+throw failure\s+\}\s+ui \{ menu\.whenIdle \{ opened\(entry, reply, view\) \} \}/);
+    assert.match(entryKt, /\} catch \(failure: Throwable\) \{\s+ui\(threads\.guarded \{ failed\(entry, failure\.message\) \}\)\s+\/\/[^\n]*\s+if \(!entryRetryable\(failure\.message\)\) return@perform\s+throw failure\s+\}\s+\/\/[^\n]*\s+ui\(threads\.guarded \{ menu\.whenIdle\(threads\.guarded \{ opened\(entry, reply, view\) \}\) \}\)/);
     assert.match(entryKt, /is EntryLifecycle\.Failure\.Retry -> threads\.later\(outcome\.delayMs\) \{ pump\(\) \}\s+is EntryLifecycle\.Failure\.Refused -> \{\s+shell\.showToast\(null, outcome\.notice, \"warning\"\)\s+lifecycle\.dismissed\(entry\)/, 'a refused entry shows its notice before it leaves');
     assert.match(entryKt, /if \(blocked\) \{\s+lifecycle\.deferred\(entry\)\s+return\s+\}\s+open\(reply, view\)\s+lifecycle\.opened\(entry\)/);
     assert.doesNotMatch(code(entryKt), /queue\.remove\(/, 'only EntryLifecycle takes an entry out of the queue');
