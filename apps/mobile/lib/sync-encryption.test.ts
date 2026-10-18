@@ -319,9 +319,20 @@ const seedEncrypted = async (data: AppData, key: SyncKeyMaterial = material, uri
   return sealed;
 };
 
+/** The cycle's write: read the document's version, then write against it (every File Sync
+ *  write is versioned; an unconditional write is refused). */
+const writeVersioned = async (
+  uri: string,
+  data: AppData,
+  options: { material?: SyncKeyMaterial | null } = {},
+): Promise<void> => {
+  const { fingerprint } = await readSyncFileVersioned(uri, options);
+  await writeSyncFile(uri, data, { ...options, expectedFingerprint: fingerprint });
+};
+
 describe('File Sync encryption — off state (backward-compat invariant #1)', () => {
   it('writes and reads plain data.json with no .enc artifact and no material', async () => {
-    await writeSyncFile(SYNC_URI, appData('plain'));
+    await writeVersioned(SYNC_URI, appData('plain'));
     expect(fs.files.has(SYNC_URI)).toBe(true);
     expect(fs.files.has(ENC_URI)).toBe(false);
     expect(textOf(SYNC_URI)).toBe(JSON.stringify(appData('plain'), null, 2));
@@ -329,10 +340,10 @@ describe('File Sync encryption — off state (backward-compat invariant #1)', ()
   });
 
   it('produces byte-identical output whether material is absent or explicitly null', async () => {
-    await writeSyncFile(SYNC_URI, appData('same'));
+    await writeVersioned(SYNC_URI, appData('same'));
     const withoutOption = fs.files.get(SYNC_URI)!;
     fs.files.clear();
-    await writeSyncFile(SYNC_URI, appData('same'), { material: null });
+    await writeVersioned(SYNC_URI, appData('same'), { material: null });
     expect(Buffer.from(fs.files.get(SYNC_URI)!)).toEqual(Buffer.from(withoutOption));
   });
 
@@ -344,7 +355,7 @@ describe('File Sync encryption — off state (backward-compat invariant #1)', ()
 
 describe('File Sync encryption — round trip', () => {
   it('writes data.json.enc, leaves data.json untouched, and reads back', async () => {
-    await writeSyncFile(SYNC_URI, appData('secret'), { material });
+    await writeVersioned(SYNC_URI, appData('secret'), { material });
     expect(fs.files.has(ENC_URI)).toBe(true);
     expect(fs.files.has(SYNC_URI)).toBe(false);
     expect(inspectSyncArtifact(fs.files.get(ENC_URI)!).kind).toBe('encrypted');
@@ -355,8 +366,8 @@ describe('File Sync encryption — round trip', () => {
   });
 
   it('rotates data.json.enc.bak only after the current artifact decrypts', async () => {
-    await writeSyncFile(SYNC_URI, appData('first'), { material });
-    await writeSyncFile(SYNC_URI, appData('second'), { material });
+    await writeVersioned(SYNC_URI, appData('first'), { material });
+    await writeVersioned(SYNC_URI, appData('second'), { material });
     const backup = fs.files.get(`${SYNC_DIR}/data.json.enc.bak`);
     expect(backup).toBeDefined();
     expect(inspectSyncArtifact(backup!).kind).toBe('encrypted');
@@ -393,7 +404,7 @@ describe('File Sync encryption — fail closed (decision #4)', () => {
     tampered[60] ^= 0xff;
     fs.files.set(ENC_URI, tampered);
 
-    await expect(writeSyncFile(SYNC_URI, appData('mine'), { material }))
+    await expect(writeVersioned(SYNC_URI, appData('mine'), { material }))
       .rejects.toBeInstanceOf(SyncEncryptionTerminalError);
     expect(Buffer.from(fs.files.get(ENC_URI)!)).toEqual(Buffer.from(tampered));
     expect(fs.files.has(`${SYNC_DIR}/data.json.enc.bak`)).toBe(false);
@@ -455,7 +466,7 @@ describe('File Sync encryption — no-key discovery (decisions #2 and #5)', () =
   });
 
   it('does not probe for .enc when the plaintext read succeeds', async () => {
-    await writeSyncFile(SYNC_URI, appData('plain'));
+    await writeVersioned(SYNC_URI, appData('plain'));
     const before = fs.files.size;
     await expect(readSyncFile(SYNC_URI)).resolves.toMatchObject({ tasks: [{ title: 'plain' }] });
     expect(fs.files.size).toBe(before);

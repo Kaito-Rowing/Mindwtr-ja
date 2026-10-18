@@ -43,7 +43,6 @@ import {
     createSyncPathBookmark,
     readBookmarkedSyncFileText,
     supportsBookmarkedSyncFileIO,
-    writeBookmarkedSyncFileText,
 } from './sync-path-bookmarks';
 
 // StorageAccessFramework is part of the legacy FileSystem module
@@ -211,21 +210,6 @@ function sanitizeJsonText(raw: string): string {
     text = text.replace(/\u0000+$/g, '').trim();
     return text;
 }
-
-const getUtf8ByteLength = (value: string): number => {
-    if (typeof TextEncoder === 'function') {
-        return new TextEncoder().encode(value).byteLength;
-    }
-    return unescape(encodeURIComponent(value)).length;
-};
-
-const padForNonTruncatingOverwrite = (content: string, previousContent: string | null): string => {
-    if (!previousContent) return content;
-    const previousBytes = getUtf8ByteLength(previousContent);
-    const nextBytes = getUtf8ByteLength(content);
-    if (nextBytes >= previousBytes) return content;
-    return `${content}${' '.repeat(previousBytes - nextBytes)}`;
-};
 
 function parseAppData(text: string): AppData {
     const sanitized = sanitizeJsonText(text);
@@ -1020,180 +1004,17 @@ const writeSyncFileVersioned = async (
     }
 };
 
-/**
- * Encrypted write. Mirrors the Rust backup-rotation gate (decision #4): the `.bak`
- * rotation is gated on the CURRENT artifact decrypting successfully, so bytes we cannot
- * read are never rotated away and never overwritten — the write aborts with a terminal
- * error instead. Verification after the write is decrypt+parse, not parse.
- */
-const writeEncryptedSyncFile = async (
-    resolvedUri: string,
-    content: string,
-    material: SyncKeyMaterial,
-): Promise<void> => {
-    const encLeaf = encryptedLeafNameFor(resolvedUri);
-    const encUri = await resolveSyncArtifactSiblingUri(resolvedUri, encLeaf, { createIfMissing: true });
-    if (!encUri) throw new Error('Unable to create the encrypted sync file in the selected folder');
-
-    const current = await readSyncArtifactBytes(encUri).catch(() => null);
-    if (current && current.length > 0) {
-        // Throws SyncEncryptionTerminalError on a wrong key or a corrupt container. Note
-        // what does NOT happen on that path: no rotation, no overwrite, no repair.
-        const previousPlaintext = await decryptRemoteArtifactOrThrow(current, material.key, mobileSyncCryptoPrimitives);
-        void previousPlaintext;
-        try {
-            const backupUri = await resolveSyncArtifactSiblingUri(
-                resolvedUri,
-                syncEncryptedArtifactName(BACKUP_FILE_NAME),
-                { createIfMissing: true },
-            );
-            if (backupUri) await writeSyncArtifactBytes(backupUri, current);
-        } catch (error) {
-            void logWarn('Encrypted sync backup rotation failed; continuing with the write', {
-                scope: 'sync',
-                extra: { error: error instanceof Error ? error.message : String(error) },
-            });
-        }
-    }
-
-    const sealed = await encryptSyncArtifact(
-        new TextEncoder().encode(content),
-        material,
-        mobileSyncCryptoPrimitives,
-    );
-    await writeSyncArtifactBytes(encUri, sealed);
-
-    const written = await readSyncArtifactBytes(encUri);
-    if (!written || written.length === 0) {
-        throw new Error('Sync file write verification failed: file is empty after write.');
-    }
-    const verified = await decryptRemoteArtifactOrThrow(written, material.key, mobileSyncCryptoPrimitives);
-    parseAppData(new TextDecoder().decode(verified));
-    void logInfo('Written encrypted sync file', { scope: 'sync', extra: { fileUri: encUri } });
-};
-
-// Write merged data back to sync file
+// Write merged data back to sync file. Every write is the versioned (CAS) write: core's cycle
+// always passes the fingerprint its read returned, and a write without one is refused rather
+// than overwriting whatever the folder holds now.
 export const writeSyncFile = async (fileUri: string, data: AppData, options?: SyncFileAccessOptions): Promise<void> => {
     try {
+        if (options?.expectedFingerprint === undefined) {
+            throw new Error('File Sync document version is unavailable; refusing an unconditional write');
+        }
         const content = JSON.stringify(data, null, 2);
-        const bookmark = options?.bookmark?.trim() || null;
         const resolvedUri = await resolveSyncFileUri(fileUri, { createIfMissing: true });
-
-        const material = options?.material ?? null;
-        if (options?.expectedFingerprint !== undefined) {
-            await writeSyncFileVersioned(resolvedUri, content, material, options.expectedFingerprint);
-            return;
-        }
-        if (material) {
-            await writeEncryptedSyncFile(resolvedUri, content, material);
-            return;
-        }
-
-        // Warn if writing to an iCloud-evicted target — the placeholder may get corrupted.
-        if (isICloudEvicted(resolvedUri)) {
-            void logWarn('Sync target is iCloud-evicted; writing directly to avoid corrupting placeholder.', { scope: 'sync' });
-        }
-
-        // SAF URIs (content://) require special handling on Android
-        if (resolvedUri.startsWith('content://') && StorageAccessFramework) {
-            const previousContent = await readFileText(resolvedUri).catch(() => null);
-            const paddedContent = padForNonTruncatingOverwrite(content, previousContent);
-            try {
-                await StorageAccessFramework.writeAsStringAsync(resolvedUri, paddedContent);
-            } catch (error) {
-                // expo's legacy SAF write refuses whenever the provider's
-                // metadata omits FLAG_SUPPORTS_WRITE — RSAF (rclone) omits it
-                // deliberately, so no delay ever helps (#1001). The new File
-                // API writes through contentResolver.openOutputStream with no
-                // writability pre-check: attempt the operation instead of
-                // trusting the metadata.
-                if (!isReadOnlyError(error)) throw error;
-                try {
-                    new ExpoFile(resolvedUri).write(paddedContent);
-                } catch (streamError) {
-                    void logWarn('SAF output-stream write failed; retrying the provider write once', {
-                        scope: 'sync',
-                        extra: { error: streamError instanceof Error ? streamError.message : String(streamError) },
-                    });
-                    await sleep(1000);
-                    await StorageAccessFramework.writeAsStringAsync(resolvedUri, paddedContent);
-                }
-            }
-            const writtenContent = await readFileText(resolvedUri);
-            if (!writtenContent) {
-                throw new Error('Sync file write verification failed: file is empty after write.');
-            }
-            parseAppData(writtenContent);
-            void logInfo('Written sync file via SAF', { scope: 'sync', extra: { fileUri: resolvedUri } });
-        } else {
-            // Best-effort backup before overwriting, for recovery.
-            const backupUri = resolvedUri.replace(/\/[^/]+$/, '/' + BACKUP_FILE_NAME);
-            try {
-                if (Platform.OS === 'ios' && resolvedUri.startsWith('file://')) {
-                    const src = new ExpoFile(resolvedUri);
-                    if (src.exists) {
-                        const dst = new ExpoFile(backupUri);
-                        if (dst.exists) dst.delete();
-                        src.copy(dst);
-                    }
-                } else {
-                    const info = await FileSystem.getInfoAsync(resolvedUri);
-                    if (info.exists) {
-                        await FileSystem.copyAsync({ from: resolvedUri, to: backupUri });
-                    }
-                }
-            } catch {
-                // Backup is best-effort; don't block the write.
-            }
-
-            if (bookmark && Platform.OS === 'ios' && supportsBookmarkedSyncFileIO()) {
-                try {
-                    await writeBookmarkedSyncFileText(bookmark, content);
-                    void logInfo('Written sync file via bookmarked scoped access', { scope: 'sync', extra: { fileUri: resolvedUri } });
-                    return;
-                } catch (error) {
-                    if (isReadOnlyError(error)) {
-                        throw new Error(READONLY_FOLDER_MESSAGE);
-                    }
-                    void logWarn('Bookmarked sync write failed; falling back to direct file access', {
-                        scope: 'sync',
-                        extra: { error: error instanceof Error ? error.message : String(error) },
-                    });
-                }
-            }
-
-            if (Platform.OS === 'ios' && resolvedUri.startsWith('file://')) {
-                try {
-                    writeWithModernFileApi(resolvedUri, content);
-                    void logInfo('Written sync file via modern iOS File API', { scope: 'sync', extra: { fileUri: resolvedUri } });
-                    return;
-                } catch (error) {
-                    void logWarn('Modern iOS sync write failed; falling back to legacy path', {
-                        scope: 'sync',
-                        extra: { error: error instanceof Error ? error.message : String(error) },
-                    });
-                }
-            }
-            // Atomic-ish write: write to tmp then rename over the target.
-            const tempUri = `${resolvedUri}.tmp`;
-            await FileSystem.writeAsStringAsync(tempUri, content);
-            try {
-                const existing = await FileSystem.getInfoAsync(resolvedUri);
-                if (existing.exists) {
-                    await FileSystem.deleteAsync(resolvedUri, { idempotent: true });
-                }
-                await FileSystem.moveAsync({ from: tempUri, to: resolvedUri });
-            } catch (moveErr) {
-                // Rename may fail on iCloud Drive virtual filesystem — fall back to direct copy.
-                void logWarn('Atomic rename failed; falling back to direct copy', {
-                    scope: 'sync',
-                    extra: { error: moveErr instanceof Error ? moveErr.message : String(moveErr) },
-                });
-                await FileSystem.copyAsync({ from: tempUri, to: resolvedUri });
-                await FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
-            }
-            void logInfo('Written sync file', { scope: 'sync', extra: { fileUri: resolvedUri } });
-        }
+        await writeSyncFileVersioned(resolvedUri, content, options?.material ?? null, options.expectedFingerprint);
     } catch (error) {
         void logError(error, { scope: 'sync', extra: { operation: 'write', message: 'Failed to write sync file' } });
         throw error;
