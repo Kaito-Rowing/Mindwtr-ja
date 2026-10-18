@@ -210,6 +210,9 @@ export const createNativeAttachments = (bindings: NativeAttachmentBindings, chan
         log: { sanitize: (message) => bindings.log.sanitize(message) },
         maxWebdavBufferedUploadBytes: bindings.maxWebdavBufferedUploadBytes,
         maxCloudBufferedUploadBytes: bindings.maxCloudBufferedUploadBytes,
+        // host-polyfills.js's fetch answers from HostIo.kt (Android) or NativeHTTPJobs.swift (iOS), which refuse a body over
+        // their ceiling while receiving it.
+        boundedWebdavResponses: true,
     });
 
     /** Sync's attachment passes (core's mobile sync service), as RN's lib/sync-service.ts binds them. */
