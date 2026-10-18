@@ -130,6 +130,7 @@ export function* prepareSyncedDataPublishPass(
  * A cooperative pass that mirrors fetchData (store-settings.ts): it normalizes each task and project for load, keeps the
  * shown row where the normalized one has the same revision identity and the same Focus fields, and runs the load migrations
  * on the normalized document. [shown] must be the store's lists for [data]'s rows, in [data]'s order (after its publish).
+ * It assumes the load reuses rows, which fetchData does not right after a recovery load (lastStoreLoadWasRecovery).
  */
 export function* loadLeavesStorePass(
     data: AppData,

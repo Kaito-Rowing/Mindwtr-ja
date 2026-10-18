@@ -612,6 +612,31 @@ describe('a sliced cycle\'s prepared rows, prepared swap and refresh drop', () =
         }
     });
 
+    // fetchData keeps no row object across a recovery load and the normal load after it (store-settings.ts reuseEntities).
+    it.each([false, true])('keeps the load-normalized rows after a recovery load, through a cycle and a later store save (sliced: %s)', async (sliced) => {
+        const adapter = await openStore(true, false, [task({ id: 'raw', title: 'Raw row' })]);
+        // A row the load normalizes without a new revision (an invalid time spent), then a recovery load: the raw rows.
+        await flushPendingSave();
+        const disk = await adapter.getData();
+        await adapter.saveData({ ...disk, tasks: disk.tasks.map((row) => (row.id === 'raw' ? { ...row, timeSpentMinutes: -5 } : row)) });
+        await useTaskStore.getState().fetchData({ silent: true, recoveryLoad: true });
+        expect(useTaskStore.getState()._tasksById.get('raw')?.timeSpentMinutes).toBe(-5);
+        const fake = createHost(adapter, winner(), sliced);
+        fake.put.mockImplementation(async () => ({ fingerprint: 'remote-after-put' }));
+        const service = createMobileSyncService(fake.host);
+        try {
+            expect((await runCycle(service)).success).toBe(true);
+        } finally {
+            service.__mobileSyncTestUtils.reset();
+        }
+        // A later store save writes every row the store shows.
+        await useTaskStore.getState().updateSettings({ theme: 'dark' });
+        await flushPendingSave();
+        const saved = (await adapter.getData()).tasks.find((row) => row.id === 'raw');
+        expect(saved?.timeSpentMinutes).toBeUndefined();
+        expect(useTaskStore.getState()._tasksById.get('raw')?.timeSpentMinutes).toBeUndefined();
+    });
+
     // A task done long ago, which the load's auto-archive migration archives, written as an old client would (no
     // pushCount, a legacy status casing), so it also needs normalizeTaskForLoad.
     const doneLongAgo = () => ({

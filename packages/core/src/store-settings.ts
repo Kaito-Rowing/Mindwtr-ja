@@ -403,6 +403,11 @@ type SettingsActionContext = {
 
 type SettingsActions = Pick<TaskStore, 'fetchData' | 'seedGettingStarted' | 'updateSettings' | 'commitPreparedGeneralPreference' | 'commitPreparedGtdWorkflow' | 'commitPreparedAppLock' | 'retryPreparedAppLockSnapshot' | 'commitPreparedNotificationSetting' | 'retryPreparedNotificationSettingSnapshot' | 'commitPreparedCalendarSubscriptionSetting' | 'commitPreparedCalendarSubscriptionAdd' | 'retryPreparedCalendarSubscriptionSettingSnapshot' | 'commitPreparedFocusSavedFilter' | 'commitPreparedSavedSearchWrite' | 'persistSnapshot' | 'getDerivedState' | 'getFocusedCount' | 'setHighlightTask'>;
 
+// Whether the store's last completed load was a recovery load (raw adapter rows). The next normal load then reuses no
+// row object (reuseEntities below), so it is not a no-op even for an unchanged document (D9b W6 refresh drop).
+let lastLoadWasRecovery = false;
+export const lastStoreLoadWasRecovery = (): boolean => lastLoadWasRecovery;
+
 export const createSettingsActions = ({
     set,
     get,
@@ -412,7 +417,7 @@ export const createSettingsActions = ({
     getSaveGeneration,
     getStorage,
 }: SettingsActionContext): SettingsActions => {
-    let lastLoadWasRecovery = false;
+    lastLoadWasRecovery = false;
     return {
     seedGettingStarted: createSeedGettingStartedAction(set, debouncedSave, flushPendingSave),
 

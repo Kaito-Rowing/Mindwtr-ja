@@ -36,7 +36,7 @@ import { buildSyncPayloadSurfaceTraceExtra, buildSyncPayloadTraceExtra, isSyncPa
 import { isLikelyOfflineSyncError, isRemoteSyncBackend, SYNC_FILE_NAME, SyncFileLockUnavailableError, type SyncBackend } from './sync-service-utils';
 import { summarizeTaskLifecycleCounts } from './task-utils';
 import { decodeUriSafe } from './async-utils';
-import { flushPendingSave, sameStoreData, storeDataOf, useTaskStore } from './store';
+import { flushPendingSave, lastStoreLoadWasRecovery, sameStoreData, storeDataOf, useTaskStore } from './store';
 import { createSlicer, runSliced, type CooperativePass } from './cooperative';
 import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
 import { performSyncCycle } from './sync';
@@ -2054,9 +2054,10 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           const refreshStartedAt = Date.now();
           // D9b W6: the refresh is dropped when the last save swapped in a prepared publish of this document, the store
           // has not moved since (checked again after the sliced check), and a load of the document would change nothing.
+          // After a recovery load the next load replaces every row object, so it is never dropped then.
           const published = this.lastPreparedPublish;
           const storeShowsPublish = () => published !== null && published.data === mergedData
-            && !core.useTaskStore.getState().isLoading
+            && !lastStoreLoadWasRecovery() && !core.useTaskStore.getState().isLoading
             && sameStoreData(storeDataOf(core.useTaskStore.getState()), published.storeData);
           let refreshCovered = false;
           if (!info.localWriteSkipped && host.sliceYield && storeShowsPublish()) {
