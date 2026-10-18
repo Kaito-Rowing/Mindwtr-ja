@@ -675,7 +675,8 @@ describe('WebDAV attachment pass', () => {
     });
 
     it('with encryption on and a stale recorded size, never records a plaintext remote copy', async () => {
-      // The recorded size predicts an encrypted length equal to the real plaintext's length (review P1).
+      // The recorded size predicts an encrypted length equal to the real plaintext's length; the length check against the
+      // local file's real size is what refuses this copy, and the encrypted-artifact check backs it up.
       const plaintext = new Uint8Array(encryptedSyncArtifactByteLength(LOCAL.byteLength)).fill(5);
       const server = unversionedServer('W/"weak"', plaintext);
       const { backends, memory, lines } = setupBounded({ core: server.core, crypto: defaultSyncCryptoPrimitives });

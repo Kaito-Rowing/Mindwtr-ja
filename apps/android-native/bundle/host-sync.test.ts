@@ -287,6 +287,7 @@ describe('explicit iOS foreground sync factory', () => {
             const options = captured.at(-1)![0];
             expect(options.maxCloudBufferedUploadBytes).toBe(platform === 'ios' ? 8 * 1024 * 1024 : undefined);
             expect(options.maxWebdavBufferedUploadBytes).toBe(platform === 'ios' ? 8 * 1024 * 1024 : undefined);
+            expect(options.boundedWebdavResponses).toBe(true);
         }
         expect(captured).toHaveLength(2);
     });
