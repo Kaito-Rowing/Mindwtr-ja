@@ -156,6 +156,8 @@ const createHarness = (config: HarnessConfig = {}) => {
         persistSyncStatus: vi.fn(async (updates) => {
             harness.statusUpdates.push(updates);
         }),
+        // A sliced run (a test that binds sliceYield) saves only with a token; this fake checks none.
+        readTokenOf: () => ({ epoch: 0, generation: 0 }),
         readFastSyncState: vi.fn(async (scope: string) => harness.fastStates.get(scope) ?? null),
         writeFastSyncState: vi.fn(async (state: FastSyncState) => {
             harness.fastStates.set(state.scope, state);
@@ -4867,11 +4869,37 @@ describe('sliced cycle write safety (D9b W1, W3)', () => {
         const bundle = await adapterHarness({ sliced: true, remote: remoteWithNewTask() });
         const read = bundle.storage.readPersistedLocal;
         bundle.storage.readPersistedLocal = vi.fn(async (options) => { bundle.harness.callOrder.push('read'); return read(options); });
+        // A store save pending since the cycle-start flush: the next flush writes its row through the same adapter.
+        const [row] = (await bundle.adapter.getData()).tasks;
+        let flushes = 0;
+        bundle.store.flushPendingSave = vi.fn(async () => {
+            bundle.harness.callOrder.push('flush');
+            flushes += 1;
+            if (flushes === 2) await bundle.adapter.saveTask(row);
+        });
 
-        expect((await bundle.run()).success).toBe(true);
+        const result = await bundle.run();
+
+        expect(result.success).toBe(true);
+        expect(result.skipped).toBeUndefined();
         // The cycle-start flush, then the one right before the read.
         const order = bundle.harness.callOrder;
         expect(order.slice(0, order.indexOf('read'))).toEqual(['flush', 'flush']);
+    });
+
+    it('a sliced cycle on a host without read tokens refuses its save as an error, never a requeue (fails closed)', async () => {
+        // Today's Android host-sync shape: no readTokenOf, and a saveData that ignores its options.
+        const bundle = await adapterHarness({ sliced: true, remote: remoteWithNewTask() });
+        bundle.storage.readTokenOf = undefined;
+        bundle.storage.persistLocal = vi.fn(async (data: AppData) => { await bundle.adapter.saveData(data); });
+
+        const result = await bundle.run();
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('no read token');
+        expect(bundle.storage.persistLocal).not.toHaveBeenCalled();
+        expect(bundle.hooks.requestFollowUp).not.toHaveBeenCalled();
+        expect((await bundle.adapter.getData()).tasks.map((task) => task.id)).toEqual(['t-local']);
     });
 
     it.each([true, false])('the offline hook\'s pre-sync save runs only on an unsliced cycle (sliced: %s)', async (sliced) => {

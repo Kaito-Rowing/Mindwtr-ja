@@ -1053,6 +1053,11 @@ class SharedSyncRunMachine {
      * [data] is a builder when the document must be read from the store inside the gate.
      */
     private async persistLocalDataWithTracking(data: AppData | (() => AppData)): Promise<AppData> {
+        if (this.slicedCycle && !this.state.localReadToken) {
+            // Fail closed, as an error and never a requeue: a host that loses the token shows as a failed sync, not a loop.
+            this.notifier.logWarning('Sliced sync save refused: no read token');
+            throw new Error('Sliced sync save refused: no read token');
+        }
         await this.assertRemoteMutationFenceHeld();
         return runSyncStoreSave(async (gateWaitMs) => {
             // Pending store saves land first; a command they carry moved the change stamp, which the

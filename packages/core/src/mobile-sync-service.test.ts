@@ -90,6 +90,7 @@ const createFakeHost = (options: FakeOptions = {}) => {
     localData: {
       getData: async () => emptyData(),
       saveData: async (data) => { saved.push(data); },
+      readTokenOf: () => ({ epoch: 0, generation: 0 }),
     },
     log: {
       info: (message, context) => { logs.push({ level: 'info', message, extra: context?.extra, force: context?.force }); },
@@ -557,6 +558,13 @@ describe('mobile sync service behind fake ports', () => {
     expect(sliced).toBeGreaterThanOrEqual(1_400);
     // React Native slices nothing and keeps its pacing.
     expect(await delays()).toEqual([1_000]);
+  });
+
+  it('refuses a slicing host without read tokens (D9b W3)', () => {
+    const fake = createFakeHost({ values: WEBDAV_VALUES });
+    fake.host.sliceYield = async () => undefined;
+    fake.host.localData = { getData: async () => emptyData(), saveData: async () => undefined };
+    expect(() => createMobileSyncService(fake.host)).toThrow('readTokenOf');
   });
 
   it('rechecks the quiet period when the follow-up timer fires: an edit during the wait pushes it back (D9b W5)', async () => {

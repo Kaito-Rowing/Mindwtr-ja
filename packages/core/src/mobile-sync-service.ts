@@ -495,6 +495,10 @@ export type MobileSyncServiceHost<Lease> = {
 };
 
 export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease>) => {
+  // D9b W3: a sliced cycle saves only on the adapter's read tokens; a host without them would save unchecked.
+  if (host.sliceYield && !host.localData.readTokenOf) {
+    throw new Error('A slicing sync host must bind localData.readTokenOf');
+  }
   const allowQueuedFollowUp = host.allowQueuedFollowUp !== false;
   // Only a new host/service after native journal recovery may resume sync.
   let fatalCleanupError: NativeAttachmentCleanupUnconfirmedError | null = null;
@@ -1423,7 +1427,8 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           await this.assertFileSyncLeaseHeld();
           await (options ? host.localData.saveData(data, options) : host.localData.saveData(data));
         },
-        readTokenOf: (data) => readTokens.get(data) ?? host.localData.readTokenOf?.(data),
+        // The adapter's own answer first (a read or a committed save); the map only covers the status-merged copy.
+        readTokenOf: (data) => host.localData.readTokenOf?.(data) ?? readTokens.get(data),
         // After the store shows the committed save: a lease lost now ends the cycle, never the publish.
         afterPersistLocal: () => this.assertFileSyncLeaseHeld(),
         // In the same gate hold as the save: a command never acts on a store older than the disk.
