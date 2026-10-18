@@ -3,6 +3,7 @@ import { getUsedTaskTokens } from './task-token-usage';
 import type { FocusTaskLists } from './focus-sections';
 import { compareSomedayTasks, compareWaitingTasks } from './menu-views-model';
 import { applyFilter, normalizeSavedFilters } from './saved-filters';
+import { logInfo } from './logger';
 import { sortTasksBy, sortTasksBySavedPreference } from './task-utils';
 import type { AppData, SavedFilter, Task, TaskSortBy } from './types';
 
@@ -95,6 +96,7 @@ export interface WidgetListContext {
     focusLists: FocusTaskLists;
     sortBy: TaskSortBy;
     prioritiesEnabled: boolean;
+    now?: Date;
     tr: Record<string, string>;
     tokenTaskIndex?: Map<string, Task[]>;
 }
@@ -125,7 +127,14 @@ function buildSavedFilterList(filter: SavedFilter, context: WidgetListContext): 
     const status = savedFilterStatus[filter.view];
     const pool = status ? activeTasks.filter((task) => task.status === status) : activeTasks;
     const projects = data.projects || [];
-    const matched = applyFilter(pool, filter.criteria, { projects, tokenMatchMode: 'all' });
+    const matched = applyFilter(pool, filter.criteria, { projects, tokenMatchMode: 'all', now: context.now });
+    if (filter.criteria.anyDateRange) {
+        logInfo('Task date filter projected for widget', {
+            scope: 'widget-lists',
+            category: 'unknown',
+            context: { releaseCheck: 'v1.3.7/task-date-filter', count: matched.length, outcome: 'projected' },
+        });
+    }
     const tasks = filter.sortBy && filter.sortBy !== 'default'
         ? sortTasksBySavedPreference(matched, filter.sortBy, {
             projects,

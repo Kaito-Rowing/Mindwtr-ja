@@ -138,6 +138,13 @@ struct FocusControlsPanel: View {
                     endInput(); model.openFocusPicker("projects")
                 }
             }
+            let taskDates = sheet.object("taskDates")
+            if !taskDates.isEmpty {
+                let dateOptions = taskDates.objects("options")
+                overviewRow(taskDates.text("label"), summary: dateOptions.filter { $0.flag("selected") }.map { $0.text("label") }.joined(separator: ", "),
+                            expanded: expanded.contains("taskDates"), id: "focus-filter-taskDates") { toggle("taskDates") }
+                if expanded.contains("taskDates") { options(dateOptions, prefix: "focus-filter-taskDates") }
+            }
             if sheet.object("visibility").flag("timeEstimate") && !sheet.objects("timeEstimates").isEmpty {
                 disclosure("timeEstimates", label: text.text("timeEstimate"))
             }

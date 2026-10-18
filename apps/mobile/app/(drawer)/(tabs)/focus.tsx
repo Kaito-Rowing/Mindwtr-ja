@@ -341,6 +341,7 @@ export default function FocusScreen() {
     t,
     visibility: metadataFilterVisibility,
     savedFilters: savedFocusFilters,
+    rawSavedFilters: settings?.savedFilters,
     retainTokens: tokenOptions,
     retainProjects: projectFilterOptionIds,
     getProjectLabel: getProjectFilterLabel,
@@ -1054,7 +1055,7 @@ export default function FocusScreen() {
     if (!activeSavedFilter) return [];
     return buildFocusAdvancedFilterChips({
       activeSavedFilter,
-      criteria: selections.criteria,
+      criteria: { ...selections.criteria, anyDateRange: undefined },
       areaById,
       t,
     }).map((chip) => ({

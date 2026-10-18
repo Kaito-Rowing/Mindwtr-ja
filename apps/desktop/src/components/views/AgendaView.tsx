@@ -498,9 +498,12 @@ export function AgendaView() {
         t,
         visibility: metadataFilterVisibility,
         savedFilters: savedFocusFilters,
+        rawSavedFilters: settings?.savedFilters,
         onClear: resetFocusSort,
     });
     const {
+        anyDateRange,
+        setAnyDateRange,
         activeSavedFilter,
         activeSavedFilterId,
         applySaved: applySavedSelections,
@@ -605,10 +608,15 @@ export function AgendaView() {
         // The pickers are tri-state here, so a chip's Remove maps back to the
         // hook action that clears that one value rather than to a criteria edit.
         buildSelectionChips(currentFilterCriteria, chipDeps).forEach((chip) => {
+            if (chip.id.startsWith('priority:') && filterSelections.chips.some((item) => item.id === 'preserved:priority')) return;
+            if (chip.id.startsWith('time:') && filterSelections.chips.some((item) => item.id === 'preserved:timeEstimates')) return;
             chips.push({ ...chip, onRemove: () => removeSelectionChip(chip.id) });
         });
+        filterSelections.chips.filter((chip) => chip.id === 'anyDateRange' || chip.id.startsWith('advanced:') || chip.id.startsWith('preserved:')).forEach((chip) => {
+            chips.push({ ...chip, onRemove: chip.onPress });
+        });
         const normalizedLocationFilter = locationFilter.trim();
-        if (normalizedLocationFilter && !activeSavedFilter) {
+        if (normalizedLocationFilter && !activeSavedFilter && !filterSelections.chips.some((chip) => chip.id.startsWith('advanced:location:'))) {
             chips.push({
                 id: `location:${normalizedLocationFilter}`,
                 label: `${resolveText('taskEdit.locationLabel', 'Location')}: ${normalizedLocationFilter}`,
@@ -618,7 +626,7 @@ export function AgendaView() {
         if (activeSavedFilter) {
             // Advanced criteria come from the saved filter, not from the pickers,
             // so they are built from its own criteria and removed through it.
-            chips.push(...buildAdvancedChips(effectiveFilterCriteria, chipDeps).map((chip) => ({
+            chips.push(...buildAdvancedChips({ ...effectiveFilterCriteria, anyDateRange: undefined }, chipDeps).map((chip) => ({
                 ...chip,
                 onRemove: () => removeAdvancedSavedFilterCriterion(chip.id.slice('advanced:'.length)),
             })));
@@ -629,6 +637,7 @@ export function AgendaView() {
         chipDeps,
         currentFilterCriteria,
         effectiveFilterCriteria,
+        filterSelections.chips,
         removeSelectionChip,
         removeAdvancedSavedFilterCriterion,
         resolveText,
@@ -1133,6 +1142,8 @@ export function AgendaView() {
 
             {shouldRenderFiltersPanel && (
                 <AgendaFiltersPanel
+                    anyDateRange={anyDateRange}
+                    onAnyDateRangeChange={setAnyDateRange}
                     allTokens={allTokens}
                     activeFilterChips={activeFilterChips}
                     canSaveFilter={canSaveFocusPerspective}

@@ -64,6 +64,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // ios-search-snapshot reuses releaseCheck and count below.
     // widget-context-selection reuses releaseCheck and count below.
     // widget-upcoming reuses releaseCheck, platform, and count below.
+    // task-date-filter reuses releaseCheck, count, and outcome below; no content or IDs.
     // ios-entity-link reuses releaseCheck, kind, and outcome below.
     // obsidian-inline-tag reuses releaseCheck and count below.
     // webdav-host-upload-limit and webdav-host-download-limit reuse releaseCheck, operation, and outcome below.

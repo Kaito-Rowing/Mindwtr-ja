@@ -2549,6 +2549,56 @@ describe('FocusScreen', () => {
     ))).toHaveLength(1);
   });
 
+  it('saves a rolling task date filter from the Focus sheet and reapplies it after relaunch', async () => {
+    storeState.updateSettings.mockResolvedValue(undefined);
+    storeState.tasks = [makeTask('dated', { dueDate: new Date().toISOString() })];
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<FocusScreen />); });
+    act(() => findButtonByLabel(tree, 'Filters').props.onPress());
+    act(() => findButtonByText(tree, 'filters.taskDates').props.onPress());
+    act(() => findButtonByText(tree, 'filters.datePreset.next_14_days').props.onPress());
+    act(() => findButtonByText(tree, 'Save', { last: true }).props.onPress());
+    const inputs = tree.root.findAllByType(TextInput);
+    act(() => inputs[inputs.length - 1].props.onChangeText('Fortnight'));
+    await act(async () => findButtonByText(tree, 'Save', { last: true }).props.onPress());
+    expect(storeState.updateSettings).toHaveBeenCalledWith({ savedFilters: [expect.objectContaining({
+      name: 'Fortnight', criteria: { anyDateRange: { preset: 'next_14_days' } },
+    })] });
+    const saved = storeState.updateSettings.mock.calls.at(-1)?.[0].savedFilters;
+    act(() => tree.unmount());
+    storeState.settings = { ...storeState.settings, savedFilters: JSON.parse(JSON.stringify(saved)) };
+    act(() => { tree = create(<FocusScreen />); });
+    act(() => findButtonByText(tree, 'Fortnight').props.onPress());
+    act(() => findButtonByLabel(tree, 'Filters').props.onPress());
+    act(() => findButtonByText(tree, 'filters.taskDates').props.onPress());
+    expect(findButtonByText(tree, 'filters.datePreset.next_14_days', { last: true }).props.accessibilityState).toEqual({ selected: true });
+    act(() => findButtonByText(tree, 'filters.anyTime', { last: true }).props.onPress());
+    expect(findButtonByText(tree, 'filters.anyTime', { last: true }).props.accessibilityState).toEqual({ selected: true });
+  });
+
+  it('saves only the date edit while preserving hidden metadata and unknown original criteria', async () => {
+    storeState.updateSettings.mockResolvedValue(undefined);
+    const criteria = { contexts: ['@desk'], priority: ['none', 'high'], timeEstimates: ['custom:45'],
+      locations: ['Office', 'Home'], dueDateRange: { preset: 'this_week' }, futureCriterion: 'keep' };
+    const original = { id: 'original-dates', name: 'Original', view: 'focus', criteria,
+      createdAt: '2026-04-01T00:00:00.000Z', updatedAt: '2026-04-01T00:00:00.000Z' };
+    storeState.settings = { appearance: {}, features: { priorities: false, timeEstimates: false }, savedFilters: [original] } as unknown as AppSettings;
+    storeState.tasks = [makeTask('desk', { contexts: ['@desk'] })];
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<FocusScreen />); });
+    act(() => findButtonByText(tree, 'Original').props.onPress());
+    act(() => findButtonByLabel(tree, 'Filters').props.onPress());
+    act(() => findButtonByText(tree, 'filters.taskDates').props.onPress());
+    act(() => findButtonByText(tree, 'filters.datePreset.next_7_days').props.onPress());
+    act(() => findButtonByText(tree, 'Save', { last: true }).props.onPress());
+    const inputs = tree.root.findAllByType(TextInput);
+    act(() => inputs[inputs.length - 1].props.onChangeText('Original with dates'));
+    await act(async () => findButtonByText(tree, 'Save', { last: true }).props.onPress());
+    expect(storeState.updateSettings).toHaveBeenCalledWith({ savedFilters: [original, expect.objectContaining({
+      name: 'Original with dates', criteria: { ...criteria, anyDateRange: { preset: 'next_7_days' } },
+    })] });
+  });
+
   it('saves the current Focus filter from the existing filter sheet', async () => {
     storeState.updateSettings.mockResolvedValue(undefined);
     storeState.tasks = [

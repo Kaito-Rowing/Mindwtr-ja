@@ -1284,7 +1284,7 @@ export function createNativeHostContract(options: {
             state: model.filter.state,
             activeSavedFilter: model.filter.activeSavedFilter,
             effectiveSortBy: model.perspective.effectiveSortBy,
-        }, edit, model.savedFilters);
+        }, edit, model.savedFilters, useTaskStore.getState().settings.savedFilters);
         return next ? { controls: next } : null;
     };
 

@@ -122,6 +122,13 @@ struct ListFilterControls: View {
                         onOpenPicker("projects")
                     }
                 }
+                let taskDates = filters.object("taskDates")
+                if !taskDates.isEmpty {
+                    let dateOptions = taskDates.objects("options")
+                    overviewRow(taskDates.text("label"), summary: summary(dateOptions.filter { $0.flag("selected") }.map { $0.text("label") }),
+                                expanded: expanded.contains("taskDates"), id: prefix + "-filter-taskDates") { toggle("taskDates") }
+                    if expanded.contains("taskDates") { optionChips(dateOptions, id: prefix + "-filter-taskDates") }
+                }
                 if filters.object("visibility").flag("timeEstimate") && !filters.objects("timeEstimates").isEmpty {
                     disclosure("timeEstimates", title: localized("filters.timeEstimate"))
                 }

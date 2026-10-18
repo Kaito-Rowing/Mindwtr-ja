@@ -310,7 +310,7 @@ export type FilterPriority = 'none' | TaskPriority;
 export type MultiValueFilterMatchMode = 'any' | 'all';
 
 export type DateRange =
-    | { preset: 'today' | 'this_week' | 'this_month' | 'overdue' | 'no_date' }
+    | { preset: 'today' | 'this_week' | 'this_month' | 'overdue' | 'no_date' | 'next_7_days' | 'next_14_days' | 'next_30_days' | 'upcoming' }
     | { from?: string; to?: string };
 
 export interface FilterCriteria {
@@ -328,6 +328,8 @@ export interface FilterCriteria {
     priority?: FilterPriority[];
     dueDateRange?: DateRange;
     startDateRange?: DateRange;
+    /** Match any task start, due, or review date; combined with other criteria using AND. */
+    anyDateRange?: DateRange;
     statuses?: TaskStatus[];
     assignedTo?: string[];
     locations?: string[];

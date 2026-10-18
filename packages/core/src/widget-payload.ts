@@ -613,7 +613,7 @@ export function createWidgetPayloadProjection(
         .filter((section) => section.key === 'focus' || section.key === 'schedule');
     const inboxCount = activeTasks.filter((task) => task.status === 'inbox').length;
     const dateLabel = formatDateLabel(now, language, 'long');
-    const listContext = { data, activeTasks, focusLists: lists, sortBy: widgetSort, prioritiesEnabled, tr,
+    const listContext = { data, activeTasks, now, focusLists: lists, sortBy: widgetSort, prioritiesEnabled, tr,
         tokenTaskIndex: options?.includeTokenLists || options?.listIds?.some((id) => id.startsWith('context:') || id.startsWith('tag:'))
             ? buildWidgetTokenTaskIndex(activeTasks) : undefined };
     const listTitles = widgetListTitles(tr);

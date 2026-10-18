@@ -3274,6 +3274,23 @@ describeSqlite('SqliteAdapter keeps saved filters as stored', () => {
         db.close();
     });
 
+    it('retains rolling task date criteria through settings JSON, table recovery, and a second save', async () => {
+        const filters = ['today', 'next_7_days', 'next_14_days', 'next_30_days', 'upcoming'].map((preset) => ({
+            ...older, id: `date-${preset}`, criteria: { anyDateRange: { preset } },
+        })) as NonNullable<AppData['settings']['savedFilters']>;
+        const adapter = new SqliteAdapter(createClient(db));
+        await adapter.saveData(doc(filters));
+        const first = await new SqliteAdapter(createClient(db)).getData();
+        expect(first.settings.savedFilters).toEqual(filters);
+        const row = JSON.parse(getSql<{ data: string }>(db, 'SELECT data FROM settings WHERE id = 1')!.data);
+        delete row.savedFilters;
+        runSql(db, 'UPDATE settings SET data = ? WHERE id = 1', [JSON.stringify(row)]);
+        const recovered = await new SqliteAdapter(createClient(db)).getData();
+        expect(recovered.settings.savedFilters).toEqual(filters);
+        await adapter.saveData(recovered);
+        expect((await new SqliteAdapter(createClient(db)).getData()).settings.savedFilters).toEqual(filters);
+    });
+
     it('saves and loads every field, unknown view and value, and the stored order', async () => {
         const adapter = new SqliteAdapter(createClient(db));
         await adapter.saveData(doc(stored));

@@ -284,7 +284,7 @@ export function buildFocusAdvancedFilterChips(input: {
         getAreaLabel: (areaId) => input.areaById.get(areaId)?.name,
         resolveText: (key, fallback) => tFallback(input.t, key, fallback),
         ...(input.formatDate ? { formatDate: input.formatDate } : {}),
-    }).map((chip) => ({ id: `advanced:${chip.id}`, criterionId: chip.id, label: chip.label }));
+    }).filter((chip) => chip.id !== 'anyDateRange').map((chip) => ({ id: `advanced:${chip.id}`, criterionId: chip.id, label: chip.label }));
 }
 
 /**
@@ -410,6 +410,8 @@ export type FocusControlState = {
     filters: ListFilterState;
     /** The applied saved filter; picker changes, sort and grouping detach it. */
     savedFilterId: string | null;
+    /** Advanced criteria retained when a task-date edit detaches a saved filter. */
+    preservedCriteria?: FilterCriteria;
     /** The screen's own sort; an applied saved filter's sort wins while applied. */
     sortBy: SortField;
 };
@@ -454,7 +456,7 @@ export function resolveFocusFilterState(
     const resolved = resolveListFilterState(input.filters, options);
     const { state } = resolved;
     const activeSavedFilter = options.savedFilters.find((filter) => filter.id === input.savedFilterId) ?? null;
-    const currentCriteria = criteriaFromSelections({
+    const currentCriteria = { ...criteriaFromSelections({
         tokens: state.tokens,
         excludedTokens: state.excludedTokens,
         projects: state.projects,
@@ -464,7 +466,8 @@ export function resolveFocusFilterState(
         timeEstimates: visibility.timeEstimate ? state.timeEstimates : [],
         contextMatchMode: state.contextMatchMode,
         tagMatchMode: state.tagMatchMode,
-    });
+        anyDateRange: state.anyDateRange,
+    }), ...input.preservedCriteria };
     // An applied saved filter can carry criteria no picker can express, so it
     // filters from its own criteria, still gated by what this view can show.
     const criteria: FilterCriteria = {
@@ -478,7 +481,7 @@ export function resolveFocusFilterState(
     const hasCurrentCriteria = hasActiveFilterCriteria(currentCriteria);
     const savedFilterId = activeSavedFilter ? activeSavedFilter.id : null;
     return {
-        state: { filters: state, savedFilterId, sortBy: input.sortBy },
+        state: { filters: state, savedFilterId, sortBy: input.sortBy, ...(input.preservedCriteria ? { preservedCriteria: input.preservedCriteria } : {}) },
         activeSavedFilter,
         criteria,
         currentCriteria,
@@ -499,14 +502,16 @@ export type FocusControlEdit =
     /** A View options Sort chip. */
     | { type: 'sort'; sortBy: SortField }
     /** An unselected saved filter chip. */
-    | { type: 'applySavedFilter'; id: string };
+    | { type: 'applySavedFilter'; id: string }
+    | { type: 'removePreservedCriterion'; criterionId: string };
 
 /** Applying a saved filter: its criteria become the selections, its sort the screen's sort. */
 export function applyFocusSavedFilter(state: FocusControlState, filter: SavedFilter): FocusControlState {
     const selections = selectionsFromCriteria(filter.criteria);
+    const { anyDateRange: _previousDate, ...filters } = state.filters;
     return {
         filters: {
-            ...state.filters,
+            ...filters,
             tokens: selections.tokens,
             excludedTokens: selections.excludedTokens,
             projects: selections.projects,
@@ -516,6 +521,7 @@ export function applyFocusSavedFilter(state: FocusControlState, filter: SavedFil
             location: selections.locations[0] ?? '',
             contextMatchMode: selections.contextMatchMode,
             tagMatchMode: selections.tagMatchMode,
+            ...(selections.anyDateRange ? { anyDateRange: selections.anyDateRange } : {}),
         },
         savedFilterId: filter.id,
         sortBy: filter.sortBy ?? DEFAULT_FOCUS_SORT_BY,
@@ -531,22 +537,55 @@ export function applyFocusControlEdit(
     resolved: Pick<ResolvedFocusFilter, 'state' | 'activeSavedFilter'> & { effectiveSortBy: SortField },
     edit: FocusControlEdit,
     savedFilters: readonly SavedFilter[],
+    rawSavedFilters: readonly SavedFilter[] = savedFilters,
 ): FocusControlState | null {
     const { state } = resolved;
     switch (edit.type) {
-        case 'filter':
+        case 'filter': {
             if (edit.edit.type === 'clear') return DEFAULT_FOCUS_CONTROL_STATE;
+            const preserved = { ...(edit.edit.type === 'setAnyDateRange' && resolved.activeSavedFilter
+                ? rawSavedFilters.find((filter) => filter.id === resolved.activeSavedFilter!.id)?.criteria ?? resolved.activeSavedFilter.criteria
+                : state.preservedCriteria) };
+            const forget = (...fields: (keyof FilterCriteria)[]) => { fields.forEach((field) => { delete preserved[field]; }); };
+            switch (edit.edit.type) {
+                case 'setAnyDateRange': forget('anyDateRange'); break;
+                case 'removeToken':
+                case 'toggleToken': forget('contexts', 'tags', 'excludedContexts', 'excludedTags'); break;
+                case 'toggleProject': forget('projects'); break;
+                case 'togglePriority': forget('priority'); break;
+                case 'toggleEnergyLevel': forget('energy'); break;
+                case 'toggleTimeEstimate': forget('timeEstimates', 'timeEstimateRange'); break;
+                case 'setLocation': forget('locations'); break;
+                case 'setMatchMode': forget(edit.edit.kind === 'context' ? 'contextMatchMode' : 'tagMatchMode'); break;
+            }
             return {
                 ...state,
                 filters: applyListFilterEdit(state.filters, edit.edit),
                 savedFilterId: edit.edit.type === 'setSearch' ? state.savedFilterId : null,
+                ...(state.preservedCriteria || (edit.edit.type === 'setAnyDateRange' && resolved.activeSavedFilter)
+                    ? { preservedCriteria: preserved } : {}),
             };
+        }
         case 'sort': {
             const plan = planFocusSortChange(edit.sortBy, {
                 effectiveSortBy: resolved.effectiveSortBy,
                 hasActiveSavedFilter: resolved.activeSavedFilter !== null,
             });
             return plan ? { ...state, savedFilterId: null, sortBy: plan.sortBy } : state;
+        }
+        case 'removePreservedCriterion': {
+            const preservedCriteria = { ...state.preservedCriteria };
+            const filters = { ...state.filters };
+            switch (edit.criterionId) {
+                case 'priority': delete preservedCriteria.priority; filters.priorities = []; break;
+                case 'energy': delete preservedCriteria.energy; filters.energyLevels = []; break;
+                case 'timeEstimates': delete preservedCriteria.timeEstimates; filters.timeEstimates = []; break;
+                case 'projects': delete preservedCriteria.projects; filters.projects = []; break;
+                default:
+                    if (edit.criterionId.startsWith('location:')) filters.location = '';
+                    return { ...state, filters, preservedCriteria: removeAdvancedFilterCriteriaChip(preservedCriteria, edit.criterionId) };
+            }
+            return { ...state, filters, preservedCriteria };
         }
         case 'applySavedFilter': {
             const filter = savedFilters.find((entry) => entry.id === edit.id);

@@ -687,6 +687,10 @@ private fun FilterSheet(model: InboxViewModel, view: JSONObject, open: JSONObjec
                             val chosen = projects.chosenLabels().joinToString(", ")
                             OverviewRow(t("filters.projects"), chosen.ifEmpty { all }, all, null) { dialogPage("projects") }
                         }
+                        filters.optJSONObject("taskDates")?.let { dates ->
+                            Disclosure(dates.getString("label"), dates.menuObjects("options"), all, open.optBoolean("taskDates"), idle,
+                                { toggleDisclosure("taskDates") }) { filterEdit(it) }
+                        }
                         val estimates = filters.menuObjects("timeEstimates")
                         if (visibility.optBoolean("timeEstimate") && estimates.isNotEmpty()) {
                             Disclosure(t("filters.timeEstimate"), estimates, all, open.optBoolean("time"), idle, { toggleDisclosure("time") }) { filterEdit(it) }

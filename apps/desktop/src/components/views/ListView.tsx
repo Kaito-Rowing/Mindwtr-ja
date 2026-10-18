@@ -240,6 +240,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         removeFilterChip,
         clearFilters,
         setFiltersOpen,
+        setListFilters,
     } = useListFilterControls();
     const showToast = useUiStore((state) => state.showToast);
     const resolveText = useCallback((key: string, fallback: string) => {
@@ -1440,6 +1441,8 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
 
                     {showFilters && (showFiltersPanel || hasFilterChips) && !isProcessing && (
                         <ListFiltersPanel
+                            anyDateRange={listFilterCriteria.anyDateRange}
+                            onAnyDateRangeChange={(value) => setListFilters({ criteria: { ...listFilterCriteria, anyDateRange: value } })}
                             t={t}
                             activeFilterChips={activeFilterChips}
                             hasFilters={hasFilterChips}

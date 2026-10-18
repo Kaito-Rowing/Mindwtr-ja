@@ -123,6 +123,48 @@ describe('native host contract: Focus controls', () => {
         }
     });
 
+    it('round trips task-date options, widget criteria, preserved advanced chips and clear', async () => {
+        freezeClock();
+        const host = await openHost('base');
+        const saved = { id: 'date-filter', name: 'Dates', view: 'focus' as const,
+            criteria: { anyDateRange: { preset: 'next_7_days' as const }, dueDateRange: { preset: 'today' as const }, statuses: ['next' as const], futureDateRule: { keep: true },
+                priority: ['none' as const], timeEstimates: ['custom:45'], locations: ['Office', 'Home'] },
+            createdAt: fixture.now, updatedAt: fixture.now };
+        useTaskStore.setState((state) => ({ settings: { ...state.settings, savedFilters: [saved] } }));
+        const applied = value(host.getFocus({ limit: 100, controlEdit: { type: 'applySavedFilter', id: saved.id } }));
+        const options = applied.controls.filterSheet.taskDates.options;
+        expect(options.map((option) => option.value)).toEqual(['', 'today', 'next_7_days', 'next_14_days', 'next_30_days', 'upcoming']);
+        expect(options.find((option) => option.selected)?.value).toBe('next_7_days');
+        expect(applied.controls.widgetFilter.criteria).toMatchObject({ anyDateRange: { preset: 'next_7_days' }, dueDateRange: { preset: 'today' } });
+        expect(applied.controls.filterSheet.advancedChips.map((chip) => chip.criterionId)).not.toContain('anyDateRange');
+        const next30 = options.find((option) => option.value === 'next_30_days')!;
+        const edited = value(host.getFocus({ limit: 100, controls: applied.controls.state, controlEdit: next30.edit }));
+        expect(edited.controls.state.savedFilterId).toBeNull();
+        expect(edited.controls.widgetFilter.criteria).toEqual({ ...saved.criteria, anyDateRange: { preset: 'next_30_days' } });
+        expect(edited.controls.filterSheet.chips.map((chip) => chip.id)).toEqual(expect.arrayContaining([
+            'preserved:priority', 'preserved:timeEstimates', 'preserved:location:Office', 'preserved:location:Home',
+        ]));
+        const basicRemoved = value(host.getFocus({ limit: 100, controls: edited.controls.state,
+            controlEdit: edited.controls.filterSheet.chips.find((chip) => chip.id === 'preserved:priority')!.edit }));
+        expect(basicRemoved.controls.widgetFilter.criteria.priority).toBeUndefined();
+        const malformed = value(host.getFocus({ limit: 100, controls: { ...DEFAULT_FOCUS_CONTROL_STATE,
+            preservedCriteria: { dueDateRange: { preset: 42 } as never } } }));
+        expect(malformed.controls.filterSheet.chips).toEqual([]);
+        const preserved = edited.controls.filterSheet.chips.find((chip) => chip.id === 'preserved:dueDateRange')!;
+        expect(preserved).toBeDefined();
+        const removed = value(host.getFocus({ limit: 100, controls: edited.controls.state, controlEdit: preserved.edit }));
+        expect(removed.controls.widgetFilter.criteria.dueDateRange).toBeUndefined();
+        expect(removed.controls.widgetFilter.criteria.statuses).toEqual(['next']);
+        const noDate = value(host.getFocus({ limit: 100, controls: removed.controls.state,
+            controlEdit: removed.controls.filterSheet.taskDates.options[0].edit }));
+        expect(noDate.controls.widgetFilter.criteria).toEqual({ ...saved.criteria, anyDateRange: undefined, dueDateRange: undefined });
+        const cleared = value(host.getFocus({ limit: 100, controls: noDate.controls.state, controlEdit: noDate.controls.filterSheet.clear.edit }));
+        expect(cleared.controls.state).toEqual(DEFAULT_FOCUS_CONTROL_STATE);
+        expect(cleared.controls.widgetFilter.criteria).toEqual({});
+        expect(host.getFocus({ limit: 100, controls: withFilters({ anyDateRange: { preset: 'invalid' } as never }) }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
     it('groups Next actions as RN does, and pages the rows with their headings under one revision', async () => {
         freezeClock();
         const host = await openHost('base');
