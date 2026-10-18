@@ -542,7 +542,14 @@ describe('native host contract', () => {
         };
 
         const expectMobileParity = (value: ReturnType<typeof detail>, scenario: string) => {
-            const mobile = projectParity.mobileSnapshot[scenario];
+            // #1401 corrects the Reference pile's title order without rewriting
+            // the historical mobile capture used by the other parity scenarios.
+            const mobile = projectParity.mobileSnapshot[scenario].map((item) => {
+                if (scenario !== 'live-sorted-title') return item;
+                if (item.id === 'live-ref') return { ...item, id: 'loose-ref-tag' };
+                if (item.id === 'loose-ref-tag') return { ...item, id: 'live-ref' };
+                return item;
+            });
             expect(value.total).toBe(mobile.length);
             expect(value.items.map((item) => (item.type === 'section'
                 ? { type: 'section', id: item.id, count: item.count, muted: item.muted }
