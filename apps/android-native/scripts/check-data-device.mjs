@@ -864,12 +864,15 @@ const boundarySequence = async (shape, limitMiB, imports) => {
             (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']) && !confirmButton(nodes), options);
     } else measured.push({ shape, workload: 'undo', sizeMiB: limitMiB, boundary: true, outcome: 'its restore was not admitted', pass: false });
 
-    // Each import (the first shape only: it runs on its own fresh install) as large as admitted: from about 15 % past the
-    // limit, its file shrinks after each refusal. The refused attempt above would have left the admitted library scaled by
-    // the two files' task counts.
+    // Each import (the first shape only: it runs on its own fresh install) as large as admitted: from 5 % past the limit, at
+    // the bytes per task its matrix rows grew the library by (step 0 run 6: DGT, OmniFocus and Mindwtr CSV about 0.7 KiB,
+    // Todoist 1 KiB), its file shrinks after each refusal. The refused attempt above would have left the admitted library
+    // scaled by the two files' task counts.
     for (const key of imports ? Object.keys(IMPORT_TITLES) : []) {
-        await atAdmittedBoundary(Math.ceil(limitMiB * 1.15), async (size) => {
-            const tasks = importTasksFor(size);
+        const grown = measured.filter((row) => row.workload === `import-${key}` && !row.boundary && row.outcome === 'done' && row.tasks);
+        const taskBytes = grown.length ? Math.min(...grown.map((row) => (row.libraryAfterMiB - row.libraryBeforeMiB) * MIB / row.tasks)) : undefined;
+        await atAdmittedBoundary(limitMiB * 1.05, async (size) => {
+            const tasks = importTasksFor(size, taskBytes);
             const item = importFixtures(tasks).find((fixture) => fixture.key === key);
             await measureFreshInstall(limitMiB);
             const result = await measureRun(shape, item.workload, limitMiB, () => importFile(item.key, item.file),
@@ -928,10 +931,12 @@ const runSequence = async (shape, mib, { imports }) => {
     // its file grown to about the library this size's other rows reach (IMPORT_SCALE). The first shape only: the library's
     // shape does not reach an import on an empty library.
     if (imports) {
-        for (const item of importFixtures(importTasksFor(IMPORT_SCALE * mib))) {
+        const tasks = importTasksFor(IMPORT_SCALE * mib);
+        for (const item of importFixtures(tasks)) {
             await measureFreshInstall();
-            await measureRun(shape, item.workload, mib, () => importFile(item.key, item.file),
+            const { row } = await measureRun(shape, item.workload, mib, () => importFile(item.key, item.file),
                 (nodes) => hasText(nodes, en['settings.backupMobile.importComplete']) && !confirmButton(nodes), { sourceBytes: item.bytes, expandedBytes: item.expandedBytes, boundary });
+            row.tasks = tasks;
         }
     }
     return true;

@@ -7,8 +7,11 @@ export const IMPORT_TEXT_CAP_BYTES = 8 * 1024 * 1024 - 64 * 1024;
 const MAX_ROWS = 100_000;
 /** The library bytes one imported task adds: step 0 run 5's Todoist file grew the library 101 MiB with its 99 998 tasks. */
 export const IMPORT_TASK_BYTES = 1024;
-/** The task count whose import grows the library by about [mib] MiB (step 0 run 6 sizes each import to the limit's range). */
-export const importTasksFor = (mib) => Math.max(1, Math.min(MAX_ROWS - 1, Math.round(mib * 1024 * 1024 / IMPORT_TASK_BYTES)));
+/**
+ * The task count whose import grows the library by about [mib] MiB at [taskBytes] per task (step 0 run 6 sizes each import to
+ * the limit's range).
+ */
+export const importTasksFor = (mib, taskBytes = IMPORT_TASK_BYTES) => Math.max(1, Math.min(MAX_ROWS - 1, Math.round(mib * 1024 * 1024 / taskBytes)));
 
 /** [header] then rows from [line] until the next row would pass [budget] bytes or [maxRows] rows; joined with "\n". */
 const fill = (header, line, budget = IMPORT_TEXT_CAP_BYTES, maxRows = MAX_ROWS - 1) => {
