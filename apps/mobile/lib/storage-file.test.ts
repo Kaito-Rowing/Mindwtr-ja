@@ -40,6 +40,16 @@ const fileSystemMock = vi.hoisted(() => {
 
 vi.mock('./file-system', () => fileSystemMock);
 
+// SafDocumentsCore.kt's listing and lookup through the expo SAF mock's folder, so a test that
+// fails expo's listing fails this one too.
+vi.mock('./saf-documents', () => ({
+  listSafChildren: vi.fn(async (dir: string) => {
+    const uris: string[] = await fileSystemMock.StorageAccessFramework.readDirectoryAsync(dir);
+    return uris.map((uri) => ({ uri, name: uri.slice(uri.lastIndexOf('/') + 1), mime: null, size: null, lastModified: null }));
+  }),
+  statSafDocument: vi.fn(async () => null),
+}));
+
 vi.mock('expo-document-picker', () => ({
   getDocumentAsync: vi.fn(),
 }));

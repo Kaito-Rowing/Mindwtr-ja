@@ -11,12 +11,40 @@ import expo.modules.kotlin.modules.ModuleDefinition
 private class TransitionRenameUnavailableException(message: String, cause: Throwable? = null) :
   CodedException(message, cause)
 
+private class SafDocumentCallException(message: String, cause: Throwable? = null) : CodedException(message, cause)
+
+private fun SafDocumentRow.toMap(): Map<String, Any?> = mapOf(
+  "uri" to uri,
+  "name" to name,
+  "mime" to mime,
+  "size" to size?.toDouble(),
+  "lastModified" to lastModified?.toDouble(),
+)
+
 class SyncFileTransitionCasModule : Module() {
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
+  private val documents: SafDocumentsCore
+    get() = SafDocumentsCore(AndroidSafDocumentProvider(context))
+
+  private fun <T> documentCall(call: () -> T): T = try {
+    call()
+  } catch (error: SafDocumentUnavailableException) {
+    throw SafDocumentCallException(error.message ?: SafDocumentsCore.UNAVAILABLE, error.cause)
+  }
+
   override fun definition() = ModuleDefinition {
     Name("SyncFileTransitionCas")
+
+    // File Sync's folder listing and document lookup (SafDocumentsCore): a provider failure rejects, never reads as empty.
+    AsyncFunction("listChildrenAsync") { uriValue: String ->
+      documentCall { documents.listChildren(uriValue).map { it.toMap() } }
+    }
+
+    AsyncFunction("statAsync") { uriValue: String ->
+      documentCall { documents.stat(uriValue)?.toMap() }
+    }
 
     AsyncFunction("renameDocumentAsync") { uriValue: String, displayName: String ->
       val uri = Uri.parse(uriValue)

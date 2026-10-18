@@ -156,6 +156,26 @@ vi.mock('./sync-file-transition-cas', () => ({
     return { uri: target, name };
   }),
 }));
+// SafDocumentsCore.kt's listing and lookup, served from the same in-memory folder through the
+// expo SAF mocks above, so a test that makes expo's listing fail fails this one too. The B4
+// tests below replace them directly: androidx swallowed a provider error that these surface.
+const safDocumentsFake = vi.hoisted(() => ({
+  list: async (dir: string) => {
+    const { StorageAccessFramework } = await import('./file-system');
+    const uris: string[] = await StorageAccessFramework!.readDirectoryAsync!(dir);
+    return uris.map((uri) => ({
+      uri, name: uri.slice(uri.lastIndexOf('/') + 1), mime: null, size: fs.files.get(uri)?.length ?? null, lastModified: null,
+    }));
+  },
+  stat: async (uri: string) => {
+    const bytes = fs.files.get(uri);
+    return bytes ? { uri, name: uri.slice(uri.lastIndexOf('/') + 1), mime: null, size: bytes.length, lastModified: null } : null;
+  },
+}));
+vi.mock('./saf-documents', () => ({
+  listSafChildren: vi.fn(safDocumentsFake.list),
+  statSafDocument: vi.fn(safDocumentsFake.stat),
+}));
 vi.mock('./sync-path-bookmarks', () => ({
   createSyncPathBookmark: vi.fn(async () => null),
   readBookmarkedSyncFileText: vi.fn(async () => null),
@@ -304,6 +324,13 @@ beforeEach(async () => {
   vi.mocked(fileSystem.StorageAccessFramework!.readDirectoryAsync!)
     .mockImplementation(async (dir: string) => childUrisOf(dir));
   vi.mocked(fileSystem.readAsStringAsync).mockImplementation(readStored);
+  vi.mocked(fileSystem.getInfoAsync).mockImplementation(async (uri: string) => ({
+    exists: fs.files.has(uri) || childUrisOf(uri).length > 0,
+    size: fs.files.get(uri)?.length ?? 0,
+  }) as never);
+  const safDocuments = await import('./saf-documents');
+  vi.mocked(safDocuments.listSafChildren).mockImplementation(safDocumentsFake.list);
+  vi.mocked(safDocuments.statSafDocument).mockImplementation(safDocumentsFake.stat);
 });
 
 afterEach(() => {
@@ -571,6 +598,50 @@ describe('ordinary File Sync document CAS', () => {
       expectedFingerprint: baseline.fingerprint,
     })).rejects.toBeInstanceOf(SyncEncryptionRemoteConflictError);
     expect(fs.files.get(canonicalUri)).toEqual(peer);
+  });
+});
+
+describe('SAF provider errors are never an empty folder or an absent file (B4)', () => {
+  it('fails a keyed read when the provider cannot list the folder, though androidx would list it empty', async () => {
+    await seedEncrypted(appData('peer'), material, SAF_ENC_URI);
+    const { StorageAccessFramework } = await import('./file-system');
+    // androidx's TreeDocumentFile.listFiles logs the query error and returns no children.
+    vi.mocked(StorageAccessFramework!.readDirectoryAsync!).mockResolvedValue([]);
+    const safDocuments = await import('./saf-documents');
+    vi.mocked(safDocuments.listSafChildren).mockRejectedValue(
+      new Error('SAF_DOCUMENT_UNAVAILABLE: the provider could not list the folder'),
+    );
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI, { material })).rejects.toThrow('SAF_DOCUMENT_UNAVAILABLE');
+    expect(fs.files.get(SAF_ENC_URI)).toBeDefined();
+  });
+
+  it('reads an empty encrypted folder as empty, finding the plaintext sibling by listing, not by a lookup of a missing file', async () => {
+    const safDocuments = await import('./saf-documents');
+    // A document that does not exist answers no cursor, which SafDocumentsCore reports as an error.
+    vi.mocked(safDocuments.statSafDocument).mockImplementation(async (uri: string) => {
+      if (!fs.files.has(uri)) throw new Error('SAF_DOCUMENT_UNAVAILABLE: the provider gave no answer for the document');
+      return { uri, name: uri.slice(uri.lastIndexOf('/') + 1), mime: null, size: fs.files.get(uri)!.length, lastModified: null };
+    });
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI, { material })).resolves.toMatchObject({
+      fingerprint: FILE_SYNC_ABSENT_FINGERPRINT, source: 'empty',
+    });
+  });
+
+  it('fails a byte read when the provider cannot describe the document, though androidx would call it absent', async () => {
+    await seedEncrypted(appData('peer'), material, SAF_ENC_URI);
+    const fileSystem = await import('./file-system');
+    vi.mocked(fileSystem.StorageAccessFramework!.readAsStringAsync!).mockRejectedValue(new Error('Permission Denial'));
+    vi.mocked(fileSystem.readAsStringAsync).mockRejectedValue(new Error('Permission Denial'));
+    // DocumentFile.exists catches the SecurityException and answers false.
+    vi.mocked(fileSystem.getInfoAsync).mockResolvedValue({ exists: false } as never);
+    const safDocuments = await import('./saf-documents');
+    vi.mocked(safDocuments.statSafDocument).mockRejectedValue(
+      new Error('SAF_DOCUMENT_UNAVAILABLE: the provider could not describe the document'),
+    );
+
+    await expect(readSyncArtifactBytes(SAF_ENC_URI)).rejects.toThrow();
   });
 });
 

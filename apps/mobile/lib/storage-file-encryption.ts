@@ -34,6 +34,7 @@ import {
 import { logWarn } from './app-log';
 import { base64ToBytes, bytesToBase64 } from './attachment-sync-utils';
 import * as FileSystem from './file-system';
+import { listSafChildren, statSafDocument } from './saf-documents';
 import { renameSafTransitionDocument } from './sync-file-transition-cas';
 
 const StorageAccessFramework = FileSystem.StorageAccessFramework;
@@ -72,6 +73,13 @@ export const readSyncArtifactBytes = async (uri: string): Promise<Uint8Array | n
         if (!file.exists) return null;
         return await file.bytes();
     } catch (error) {
+        if (isSaf(uri)) {
+            // A failed SAF read is absence only when the provider says the document is gone
+            // (SafDocumentsCore.stat). Any other failure, including one the lookup itself
+            // hits, propagates: an unreadable generation is never "missing".
+            if (!(await statSafDocument(uri))) return null;
+            throw error;
+        }
         // The modern File API is unavailable on some legacy paths; the legacy Base64 read
         // is the same fallback ladder readFileText uses for text.
         try {
@@ -79,12 +87,7 @@ export const readSyncArtifactBytes = async (uri: string): Promise<Uint8Array | n
             if (!info.exists) return null;
             const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
             return base64 ? base64ToBytes(base64) : new Uint8Array(0);
-        } catch (fallbackError) {
-            // A failed SAF read is absence only when the explicit info probe above confirms
-            // `exists: false`. If both read ladders fail, propagate that provider error:
-            // treating an unreadable opposite encryption generation as missing can license
-            // an ordinary sync write beside (or over) peer bytes.
-            if (isSaf(uri)) throw fallbackError;
+        } catch {
             throw error;
         }
     }
@@ -230,12 +233,10 @@ type DirectoryHandle = {
 
 const openSafDirectory = async (dirUri: string): Promise<DirectoryHandle> => {
     const entries = new Map<string, string>();
+    const listUris = async (): Promise<string[]> => (await listSafChildren(dirUri)).map((entry) => entry.uri);
     const refresh = async (): Promise<void> => {
-        if (!StorageAccessFramework?.readDirectoryAsync) {
-            throw new Error('This Android build cannot enumerate SAF transition files.');
-        }
         const next = new Map<string, string>();
-        for (const entry of await StorageAccessFramework.readDirectoryAsync(dirUri)) {
+        for (const entry of await listUris()) {
             const name = getLeafName(entry);
             if (name && !next.has(name)) next.set(name, entry);
         }
@@ -244,9 +245,7 @@ const openSafDirectory = async (dirUri: string): Promise<DirectoryHandle> => {
     };
     await refresh();
     const listExact = async (name: string): Promise<string[]> => {
-        if (!StorageAccessFramework?.readDirectoryAsync) return [];
-        const matches = (await StorageAccessFramework.readDirectoryAsync(dirUri))
-            .filter((entry) => getLeafName(entry) === name);
+        const matches = (await listUris()).filter((entry) => getLeafName(entry) === name);
         if (matches.length === 1) entries.set(name, matches[0]);
         else entries.delete(name);
         return matches;
@@ -256,8 +255,8 @@ const openSafDirectory = async (dirUri: string): Promise<DirectoryHandle> => {
         refresh,
         resolve: async (name, options) => {
             let existing = entries.get(name);
-            if (!existing && StorageAccessFramework?.readDirectoryAsync) {
-                for (const entry of await StorageAccessFramework.readDirectoryAsync(dirUri)) {
+            if (!existing) {
+                for (const entry of await listUris()) {
                     if (getLeafName(entry) === name) {
                         existing = entry;
                         entries.set(name, entry);

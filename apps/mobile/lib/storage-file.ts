@@ -33,6 +33,7 @@ import {
     SyncEncryptionNoKeyError,
     syncEncryptionLocalState,
 } from './sync-encryption-state';
+import { listSafChildren } from './saf-documents';
 import {
     createFileSyncEncryptionRemotePort,
     readSyncArtifactBytes,
@@ -184,9 +185,8 @@ const isICloudEvicted = (fileUri: string): boolean => {
 };
 
 const listDirectoryForSyncFile = async (directoryUri: string): Promise<string | null> => {
-    if (!StorageAccessFramework?.readDirectoryAsync) return null;
     try {
-        const entries = await StorageAccessFramework.readDirectoryAsync(directoryUri);
+        const entries = (await listSafChildren(directoryUri)).map((entry) => entry.uri);
         const decoded: Array<{ entry: string; decoded: string }> = entries.map((entry: string) => ({
             entry,
             decoded: decodeUriSafe(entry),
@@ -671,7 +671,11 @@ const readEncryptedSyncFile = async (
         // A provider failure here is not proof that the plaintext generation is absent.
         // Propagate it so the keyed cycle cannot recreate `.enc` from local data while a
         // peer-restored plaintext document is merely unreadable.
-        const plain = await readSyncArtifactBytes(resolvedUri);
+        // Found by the folder listing: a lookup of a file that is not there proves nothing.
+        const plainUri = await resolveSyncArtifactSiblingUri(resolvedUri, getUriLeafName(resolvedUri) || SYNC_FILE_NAME, {
+            createIfMissing: false,
+        });
+        const plain = plainUri ? await readSyncArtifactBytes(plainUri) : null;
         if (isPlaintextSyncArtifact(plain)) {
             logSyncFileRead({
                 artifact: getUriLeafName(resolvedUri),

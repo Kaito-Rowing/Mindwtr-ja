@@ -79,6 +79,7 @@ test("native CI generates clean projects and compiles Android and iOS sources", 
   expect(androidJob).toContain("name: Run Android native recovery and system bar tests");
   expect(androidJob).toContain(":attachment-file-installer:testDebugUnitTest");
   expect(androidJob).toContain(":sync-file-lock:testDebugUnitTest");
+  expect(androidJob).toContain(":sync-file-transition-cas:testDebugUnitTest");
   expect(androidJob).toContain(":system-bars:testDebugUnitTest");
 
   expect(workflow).toContain("name: iOS Swift compile");
