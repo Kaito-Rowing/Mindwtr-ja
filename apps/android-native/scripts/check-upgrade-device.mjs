@@ -246,6 +246,8 @@ const snapshot = () => new Map(runAs(
 // process start: the same library's state, never user data.
 const PLATFORM_STATE = new Set(['files/profileInstalled', 'shared_prefs/android.app.ActivityThread.IDS.xml']);
 const isPlatformState = (path) => PLATFORM_STATE.has(path) || /^no_backup\/androidx\.work\.workdb(-wal|-shm|-journal)?$/.test(path);
+// The app's diagnostics log (RN's and native's): release-check lines are forced, so any boot may append to it. Never user data.
+const isLog = (path) => /^files\/logs\/mindwtr\.log(\.\d+)?$/.test(path);
 // The native app's reminder ledger (Reminders.kt ReminderLedger): its own new file, written once it holds an alarm; RN never has
 // it. Allowed only as a new file whose every entry is an alarm id armed or fired at a time (checkLedger reads it).
 const LEDGER = 'shared_prefs/mindwtr_reminder_ledger.xml';
@@ -266,9 +268,9 @@ const checkOwedUploads = (label, after) => {
     check(/<int name="owedUploads" value="\d+" \/>/.test(text) && other === '', `(${label}) the native owed-upload count file holds only its count`);
 };
 const differences = (before, after, { changedOk = () => false, newOk = () => false } = {}) => [
-    ...[...before].filter(([path, hash]) => !isPlatformState(path) && !changedOk(path) && after.get(path) !== hash)
+    ...[...before].filter(([path, hash]) => !isPlatformState(path) && !isLog(path) && !changedOk(path) && after.get(path) !== hash)
         .map(([path]) => `${after.has(path) ? 'changed' : 'removed'} ${path}`),
-    ...[...after.keys()].filter((path) => !before.has(path) && !isPlatformState(path) && !newOk(path) && path !== LEDGER && path !== OWED_UPLOADS).map((path) => `new ${path}`),
+    ...[...after.keys()].filter((path) => !before.has(path) && !isPlatformState(path) && !isLog(path) && !newOk(path) && path !== LEDGER && path !== OWED_UPLOADS).map((path) => `new ${path}`),
 ];
 const isDatabase = (path) => /^files\/SQLite\/mindwtr\.db(-wal|-shm)?$/.test(path);
 
