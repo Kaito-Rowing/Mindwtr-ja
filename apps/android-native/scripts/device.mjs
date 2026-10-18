@@ -147,7 +147,9 @@ export const taskRows = (nodes) => {
     const [, top, , bottom] = list ? box(list) : [0, 0, 0, Infinity];
     return nodes.filter((node) => /(^|\/)task-row$/.test(node['resource-id'] ?? '')).filter((node) => {
         const [, t, , b] = box(node);
-        return t >= top && b <= bottom;
+        // The first row's title line box (RN's full line height) can stand a few px above the list's top while the row
+        // shows whole (History › Done: title at 378, list at 381), so the top gets 8 px of slack.
+        return t >= top - 8 && b <= bottom;
     });
 };
 export const taskRow = (nodes, title) => taskRows(nodes).find((node) => node.text === title);
