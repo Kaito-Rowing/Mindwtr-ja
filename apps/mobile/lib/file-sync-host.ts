@@ -3,6 +3,7 @@ import {
     base64ToBytes,
     bytesToBase64,
     createMobileFileSync,
+    fileSyncErrorCode,
     sleep,
     type MobileFileSync,
     type MobileFileSyncFullHost,
@@ -68,7 +69,7 @@ const mobileFileSyncHost: MobileFileSyncFullHost = {
                 } catch (streamError) {
                     void logWarn('SAF encrypted output-stream write failed; retrying the provider write once', {
                         scope: 'sync',
-                        extra: { error: streamError instanceof Error ? streamError.message : String(streamError) },
+                        extra: { error: fileSyncErrorCode(streamError) },
                     });
                     await sleep(1000);
                     await StorageAccessFramework.writeAsStringAsync(uri, base64, {

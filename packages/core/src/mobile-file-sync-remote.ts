@@ -32,6 +32,13 @@ import { LEGACY_SYNC_FILE_NAME, SYNC_FILE_NAME } from './sync-service-utils';
 
 export const SYNC_FILE_TRANSITION_CAS_UNAVAILABLE = 'SYNC_FILE_TRANSITION_CAS_UNAVAILABLE';
 
+/** A File Sync log context's `error`: the error's leading code (`SAF_DOCUMENT_UNAVAILABLE`, `SYNC_FILE_LOCK_BUSY`) or its
+ *  name, never its text. Provider and file-system messages quote the document's URI or path, which names the user's files. */
+export const fileSyncErrorCode = (error: unknown): string => {
+    const message = error instanceof Error ? error.message : String(error);
+    return /^([A-Z][A-Z0-9_]{2,}):/.exec(message)?.[1] ?? (error instanceof Error ? error.name : typeof error);
+};
+
 /** One SAF document as its provider describes it: its tree document URI and display name. */
 export type MobileFileSyncSafEntry = {
     uri: string;
@@ -378,7 +385,7 @@ export const createMobileFileSyncRemote = (host: MobileFileSyncHost) => {
                     } catch (error) {
                         host.log.warn('SAF provider renamed a transition scratch on create; repair failed', {
                             scope: 'sync',
-                            extra: { requested: name, created: createdName, error: error instanceof Error ? error.message : String(error) },
+                            extra: { requested: name, created: createdName, error: fileSyncErrorCode(error) },
                         });
                         await deleteSyncArtifact(created).catch(() => undefined);
                         throw new SyncEncryptionRemoteConflictError(`${name} was created or renamed by another writer`);

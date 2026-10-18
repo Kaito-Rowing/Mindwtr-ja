@@ -8,6 +8,7 @@
 import { decodeUriSafe, sleep } from './async-utils';
 import {
     createMobileFileSyncRemote,
+    fileSyncErrorCode,
     type MobileFileSyncHost,
     type MobileFileSyncSafPort,
 } from './mobile-file-sync-remote';
@@ -301,7 +302,8 @@ export const createMobileFileSync = (host: MobileFileSyncFullHost) => {
 
         const text = await host.path.readText(fileUri);
         if (text === null) {
-            host.log.info('Sync file does not exist', { scope: 'sync', extra: { fileUri } });
+            // No path in the context: a sync folder's path can name the user or their files.
+            host.log.info('Sync file does not exist', { scope: 'sync' });
         }
         return text;
     }
@@ -597,7 +599,7 @@ export const createMobileFileSync = (host: MobileFileSyncFullHost) => {
                 } catch (error) {
                     host.log.warn('Bookmarked sync read failed; falling back to direct file access', {
                         scope: 'sync',
-                        extra: { error: error instanceof Error ? error.message : String(error) },
+                        extra: { error: fileSyncErrorCode(error) },
                     });
                 }
                 if (typeof fileContent === 'string') {
@@ -883,7 +885,7 @@ export const createMobileFileSync = (host: MobileFileSyncFullHost) => {
             } catch (error) {
                 host.log.warn('File Sync backup rotation skipped; continuing with the atomic write', {
                     scope: 'sync',
-                    extra: { error: error instanceof Error ? error.message : String(error) },
+                    extra: { error: fileSyncErrorCode(error) },
                 });
             }
         }

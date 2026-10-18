@@ -196,6 +196,11 @@ describe('storage-file sync writes', () => {
     await writeSyncArtifactBytes(syncFileUri, bytes);
 
     expect(fileSystemMock.StorageAccessFramework.writeAsStringAsync).toHaveBeenCalledTimes(2);
+    // The stream error quotes the document's URI; the log line keeps only the error's name.
+    const { logWarn } = await import('./app-log');
+    const retry = vi.mocked(logWarn).mock.calls.find(([message]) => message.startsWith('SAF encrypted output-stream write failed'));
+    expect(retry?.[1]).toEqual({ scope: 'sync', extra: { error: 'Error' } });
+    expect(JSON.stringify(vi.mocked(logWarn).mock.calls)).not.toContain('primary%3AMindwtr');
   }, 10_000);
 
   it('fails closed when the encrypted-sibling discovery listing is unavailable', async () => {
