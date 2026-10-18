@@ -106,7 +106,11 @@ const share = async ({ action = 'SEND', type = '*/*', uris, raw = [], subject, t
     const before = fromApp ? prepared() : 0;
     const extras = [`--es action android.intent.action.${action}`, `--es type '${type}'`, `--esal uris ${[...uris.map((uri) => `${PROVIDER}/${uri}`), ...raw].join(',')}`,
         ...(subject ? [`--es subject '${subject}'`] : []), ...(text ? [`--es text '${text}'`] : [])];
-    sh(`am start -W -n ${SENDER} ${extras.join(' ')}`);
+    // An app that sends a file:// URI dies of FileUriExposedException before the share leaves it, so the shell sends that one.
+    const fileUri = uris.length === 0 && raw.length === 1 && raw[0].startsWith('file://') ? raw[0] : null;
+    sh(fileUri
+        ? `am start -W -a android.intent.action.${action} -t '${type}' --eu android.intent.extra.STREAM '${fileUri}' -n ${PKG}/${PKG}.MainActivity`
+        : `am start -W -n ${SENDER} ${extras.join(' ')}`);
     const deadline = Date.now() + timeoutMs;
     while (prepared() === before) {
         if (Date.now() > deadline) fail(`core never prepared the share for ${description}`);
