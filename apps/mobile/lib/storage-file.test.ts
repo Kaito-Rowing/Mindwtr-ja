@@ -4,7 +4,13 @@ import { Directory } from 'expo-file-system';
 import * as DocumentPicker from 'expo-document-picker';
 import { Platform } from 'react-native';
 
-import { pickAndParseSyncFolder, readSyncFile, writeSyncFile } from './storage-file';
+import {
+  FileSyncRetainedGenerationError,
+  pickAndParseSyncFolder,
+  readSyncFile,
+  readSyncFileVersioned,
+  writeSyncFile,
+} from './storage-file';
 import { writeSyncArtifactBytes } from './storage-file-encryption';
 
 const fileSystemMock = vi.hoisted(() => {
@@ -265,6 +271,19 @@ describe('iOS sync file bookmarks', () => {
 
     const accepted = await pickAndParseSyncFolder({ confirmFileFallback: async () => true });
     expect(accepted?.__fileUri).toBe('file:///owncloud/Mindwtr/backup.json');
+  });
+
+  it('stops instead of repairing from data.json.bak when iCloud has offloaded data.json (B5 guard)', async () => {
+    const dir = 'file:///icloud/Mindwtr';
+    expoFilesMock.set(`${dir}/.data.json.icloud`, '');
+    expoFilesMock.set(`${dir}/data.json.bak`, JSON.stringify(appData({ weekStart: 'sunday' })));
+    fileSystemMock.readDirectoryAsync.mockResolvedValue(['.data.json.icloud', 'data.json.bak']);
+    fileSystemMock.getInfoAsync.mockImplementation(async (uri: string) => (
+      uri.endsWith('/data.json.bak') ? { exists: true, size: 40 } : { exists: false }
+    ));
+
+    await expect(readSyncFileVersioned(`${dir}/data.json`)).rejects.toBeInstanceOf(FileSyncRetainedGenerationError);
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: false });
   });
 
   it('reads the sync file through the bookmarked native path when available', async () => {

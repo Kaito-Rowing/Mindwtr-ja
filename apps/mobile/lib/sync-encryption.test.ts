@@ -218,6 +218,7 @@ import {
 } from '@mindwtr/core';
 import {
   FILE_SYNC_ABSENT_FINGERPRINT,
+  FileSyncRetainedGenerationError,
   FileSyncUnverifiedReadError,
   pickAndParseSyncFolder,
   readSyncFile,
@@ -818,6 +819,87 @@ describe('File Sync reads are whole or refused, and an unproven read never repai
     });
 
     await expect(readSyncFileVersioned(SAF_CANONICAL)).rejects.toThrow('Permission Denial');
+  });
+});
+
+describe('a missing or broken sync file next to an earlier copy stops the sync (B5 guard)', () => {
+  const plain = (title: string) => new TextEncoder().encode(JSON.stringify(appData(title), null, 2));
+  const SAF_DIR = 'content://provider/tree/root/document/root';
+
+  it('refuses an empty data.json next to a good data.json.bak and writes nothing', async () => {
+    fs.files.set(SYNC_URI, new Uint8Array(0));
+    fs.files.set(`${SYNC_DIR}/data.json.bak`, plain('remote-only'));
+    const before = new Map(fs.files);
+
+    await expect(readSyncFileVersioned(SYNC_URI)).rejects.toBeInstanceOf(FileSyncRetainedGenerationError);
+    expect(new Map(fs.files)).toEqual(before);
+  });
+
+  it('refuses an absent data.json.enc next to a good data.json.enc.bak on a keyed device', async () => {
+    await seedEncrypted(appData('remote-only'), material, `${SYNC_DIR}/data.json.enc.bak`);
+
+    await expect(readSyncFileVersioned(SYNC_URI, { material })).rejects.toBeInstanceOf(FileSyncRetainedGenerationError);
+  });
+
+  it.each(['data.json.bak.previous', 'data.json.enc.bak.previous', 'data.json.previous.tmp', 'mindwtr-sync.json.bak'])(
+    'refuses an empty data.json next to a retained %s', async (retained) => {
+      fs.files.set(SYNC_URI, new Uint8Array(0));
+      fs.files.set(`${SYNC_DIR}/${retained}`, plain('remote-only'));
+
+      await expect(readSyncFileVersioned(SYNC_URI)).rejects.toBeInstanceOf(FileSyncRetainedGenerationError);
+    },
+  );
+
+  it('refuses an absent data.json next to a valid quarantine left by an interrupted write', async () => {
+    fs.files.set(`${SAF_DIR}/.mindwtr-et-q-abc-1-x`, plain('remote-only'));
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI)).rejects.toBeInstanceOf(FileSyncRetainedGenerationError);
+    expect(fs.files.has(`${SAF_DIR}/data.json`)).toBe(false);
+  });
+
+  it('refuses an absent data.json next to a non-empty in-progress stage', async () => {
+    fs.files.set(`${SAF_DIR}/.mindwtr-et-s-abc-1-x`, plain('first-publication'));
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI)).rejects.toBeInstanceOf(FileSyncRetainedGenerationError);
+  });
+
+  it('is not blocked by a zero-byte stage or a zero-byte backup, and never deletes them', async () => {
+    fs.files.set(`${SAF_DIR}/.mindwtr-et-s-abc-1-x`, new Uint8Array(0));
+    fs.files.set(`${SAF_DIR}/data.json.bak`, new Uint8Array(0));
+
+    await expect(readSyncFileVersioned(SAF_SYNC_URI)).resolves.toMatchObject({ source: 'empty', needsRepair: true });
+    expect(fs.files.has(`${SAF_DIR}/.mindwtr-et-s-abc-1-x`)).toBe(true);
+  });
+
+  it('keeps the typed decrypt error for a broken data.json.enc next to a good backup', async () => {
+    const sealed = await seedEncrypted(appData('peer'));
+    const tampered = new Uint8Array(sealed);
+    tampered[tampered.length - 1] ^= 0xff;
+    fs.files.set(ENC_URI, tampered);
+    await seedEncrypted(appData('remote-only'), material, `${SYNC_DIR}/data.json.enc.bak`);
+
+    await expect(readSyncFileVersioned(SYNC_URI, { material })).rejects.toBeInstanceOf(SyncEncryptionTerminalError);
+  });
+
+  it('keeps the no-key discovery for a keyless device joining an encrypted folder with a backup', async () => {
+    await seedEncrypted(appData('peer'));
+    await seedEncrypted(appData('older'), material, `${SYNC_DIR}/data.json.enc.bak`);
+
+    await expect(readSyncFileVersioned(SYNC_URI)).rejects.toBeInstanceOf(SyncEncryptionNoKeyError);
+  });
+
+  it('keeps the remote-plaintext refusal for a keyed device whose peer disabled encryption', async () => {
+    fs.files.set(SYNC_URI, plain('peer-disabled'));
+    fs.files.set(`${SYNC_DIR}/data.json.bak`, plain('older'));
+
+    await expect(readSyncFileVersioned(SYNC_URI, { material })).rejects.toBeInstanceOf(SyncEncryptionRemotePlaintextError);
+  });
+
+  it('leaves a healthy data.json with backups unchanged', async () => {
+    fs.files.set(SYNC_URI, plain('current'));
+    fs.files.set(`${SYNC_DIR}/data.json.bak`, plain('older'));
+
+    await expect(readSyncFileVersioned(SYNC_URI)).resolves.toMatchObject({ source: 'primary' });
   });
 });
 

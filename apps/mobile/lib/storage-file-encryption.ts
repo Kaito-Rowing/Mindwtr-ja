@@ -442,6 +442,57 @@ const isSyncDocumentName = (name: string): boolean => {
     return base === SYNC_FILE_NAME || base === LEGACY_SYNC_FILE_NAME || isSeedBackupDocumentName(name);
 };
 
+const CANONICAL_SYNC_DOCUMENT_NAMES = new Set<string>([
+    SYNC_FILE_NAME,
+    `${SYNC_FILE_NAME}.enc`,
+    LEGACY_SYNC_FILE_NAME,
+    `${LEGACY_SYNC_FILE_NAME}.enc`,
+]);
+
+/** A copy an interrupted write, a backup rotation or a peer's tool can leave beside the sync
+ *  file: transition scratch (quarantine, stage), `.bak`, `.previous`, `.tmp`. Dated seed backups
+ *  are whole exports, not interrupted writes, so they are not counted. */
+const isRetainedGenerationName = (name: string): boolean => {
+    if (isTransitionScratchName(name)) return true;
+    if (CANONICAL_SYNC_DOCUMENT_NAMES.has(name) || isSeedBackupDocumentName(name)) return false;
+    // Any chain of managed suffixes on a sync document name: `data.json.bak`,
+    // `data.json.enc.bak.previous`, `data.json.previous.tmp`, ...
+    let base = name;
+    let stripped = false;
+    for (let match = RETAINED_SUFFIX.exec(base); match; match = RETAINED_SUFFIX.exec(base)) {
+        base = base.slice(0, -match[0].length);
+        stripped = true;
+    }
+    return stripped && (base === SYNC_FILE_NAME || base === LEGACY_SYNC_FILE_NAME);
+};
+const RETAINED_SUFFIX = /\.(?:enc|bak|tmp|previous)$/;
+
+/**
+ * The retained generations in the sync folder that are not provably empty (an unknown size
+ * counts as not empty). B5's guard: while one exists, a missing or broken sync file is never
+ * repaired from local data, because that copy may hold rows nothing else has. Nothing is read,
+ * moved or deleted here; recovering such a copy is a later pass.
+ */
+export const listBlockingRetainedGenerations = async (syncFileUri: string): Promise<string[]> => {
+    const target = await resolveFileSyncEncryptionTarget(syncFileUri);
+    if (!target) return [];
+    if (isSaf(target.dirUri)) {
+        return (await listSafChildren(target.dirUri))
+            .filter((entry) => isRetainedGenerationName(getLeafName(entry.uri)) && entry.size !== 0)
+            .map((entry) => getLeafName(entry.uri));
+    }
+    const normalized = target.dirUri.endsWith('/') ? target.dirUri : `${target.dirUri}/`;
+    const blocking: string[] = [];
+    for (const name of await FileSystem.readDirectoryAsync(normalized)) {
+        if (!isRetainedGenerationName(name)) continue;
+        const info = await FileSystem.getInfoAsync(`${normalized}${name}`) as { exists?: boolean; size?: number };
+        if (info.exists === false) continue;
+        if (typeof info.size === 'number' && info.size === 0) continue;
+        blocking.push(name);
+    }
+    return blocking;
+};
+
 const FIXED_SYNC_DOCUMENT_NAMES = [
     SYNC_FILE_NAME,
     `${SYNC_FILE_NAME}.enc`,

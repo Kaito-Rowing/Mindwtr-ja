@@ -37,6 +37,7 @@ import { listSafChildren, readSafDocument } from './saf-documents';
 import {
     createFileSyncEncryptionRemotePort,
     isUnverifiedLengthRead,
+    listBlockingRetainedGenerations,
     readSyncArtifactBytes,
     resolveSyncArtifactSiblingUri,
     writeSyncArtifactBytes,
@@ -256,6 +257,17 @@ export class FileSyncUnverifiedReadError extends Error {
     constructor() {
         super('File Sync read conflict: the sync file could not be proven complete and did not parse; nothing was written');
         this.name = 'FileSyncUnverifiedReadError';
+    }
+}
+
+/** The sync file is missing or broken while an earlier copy of it (a quarantine, stage, backup,
+ *  `.previous` or `.tmp` that is not empty) sits beside it: that copy may hold rows nothing else
+ *  has, so the cycle stops instead of repairing the folder from local data. Nothing is written,
+ *  moved or deleted. "conflict" in the text classifies it as a sync conflict. */
+export class FileSyncRetainedGenerationError extends Error {
+    constructor(public readonly retained: number) {
+        super('File Sync conflict: the sync file is missing or damaged while an earlier copy of it is in the sync folder; nothing was written');
+        this.name = 'FileSyncRetainedGenerationError';
     }
 }
 
@@ -776,7 +788,15 @@ const readEncryptedSyncFile = async (
 };
 
 // Read sync file from a stored path
-export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOptions): Promise<AppData | null> => {
+export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOptions): Promise<AppData | null> =>
+    (await readSyncFileDetailed(fileUri, options)).data;
+
+/** readSyncFile, saying whether the data came from a backup instead of the sync file itself. */
+const readSyncFileDetailed = async (
+    fileUri: string,
+    options?: SyncFileAccessOptions,
+): Promise<{ data: AppData | null; fromBackup: boolean }> => {
+    const fromSyncFile = (data: AppData | null) => ({ data, fromBackup: false });
     try {
         const material = options?.material ?? null;
         if (material) {
@@ -785,7 +805,7 @@ export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOpti
             // use the byte path against the already-bookmark-resolved URI, which is the
             // same access route the plaintext path falls back to when bookmarked IO fails.
             const resolvedEncryptedUri = await resolveSyncFileUri(fileUri, { createIfMissing: false });
-            return await readEncryptedSyncFile(resolvedEncryptedUri, material, options?.locationScope);
+            return fromSyncFile(await readEncryptedSyncFile(resolvedEncryptedUri, material, options?.locationScope));
         }
 
         const bookmark = options?.bookmark?.trim() || null;
@@ -800,8 +820,8 @@ export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOpti
                 });
             }
             if (typeof fileContent === 'string') {
-                if (!fileContent) return null;
-                return parseAppData(fileContent);
+                if (!fileContent) return fromSyncFile(null);
+                return fromSyncFile(parseAppData(fileContent));
             }
             if (fileContent === null) {
                 void logWarn('Bookmarked sync read returned no content; falling back to direct file access', {
@@ -824,7 +844,7 @@ export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOpti
                 const backupContent = await readFileText(backupUri);
                 if (backupContent) {
                     void logInfo('Using backup file while primary is iCloud-evicted', { scope: 'sync' });
-                    return parseAppData(backupContent);
+                    return { data: parseAppData(backupContent), fromBackup: true };
                 }
             } catch {
                 // Backup also unavailable.
@@ -854,10 +874,10 @@ export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOpti
                         throw new SyncEncryptionNoKeyError();
                     }
                     if (read && !read.lengthVerified) throw new FileSyncUnverifiedReadError();
-                    return null;
+                    return fromSyncFile(null);
                 }
                 try {
-                    return parseAppData(fileContent);
+                    return fromSyncFile(parseAppData(fileContent));
                 } catch (parseError) {
                     if (read && !read.lengthVerified) {
                         const rawBytes = new TextEncoder().encode(fileContent);
@@ -904,7 +924,7 @@ export const readSyncFile = async (fileUri: string, options?: SyncFileAccessOpti
         if (error instanceof SyncFileDocumentParseError) {
             void logWarn('[Sync] Invalid JSON in sync file. Using local data and repairing file.', { scope: 'sync' });
             void logInfo('Invalid JSON in sync file; using local data.', { scope: 'sync', extra: { operation: 'read' } });
-            return null;
+            return fromSyncFile(null);
         }
         void logError(error, { scope: 'sync', extra: { operation: 'read', message: 'Failed to read sync file' } });
         throw error;
@@ -1017,7 +1037,19 @@ export const readSyncFileVersioned = async (
         throw new FileSyncUnverifiedReadError();
     }
 
-    const recovered = await readSyncFile(fileUri, options);
+    const { data: recovered, fromBackup } = await readSyncFileDetailed(fileUri, options);
+    if (!recovered || fromBackup) {
+        // B5 guard, after every typed encryption check above and in the reader: a missing or
+        // broken sync file is repaired only when no earlier copy of it could hold other rows.
+        const retained = await listBlockingRetainedGenerations(resolvedUri);
+        if (retained.length > 0) {
+            void logWarn('File Sync stopped: an earlier copy of the sync file is in the folder', {
+                scope: 'sync',
+                extra: { releaseCheck: 'v1.3.7/file-sync-saf-safety', check: 'retained', outcome: 'refused', count: retained.length },
+            });
+            throw new FileSyncRetainedGenerationError(retained.length);
+        }
+    }
     return {
         data: recovered ?? emptyRemoteAppData(),
         fingerprint: snapshot.version ?? FILE_SYNC_ABSENT_FINGERPRINT,
