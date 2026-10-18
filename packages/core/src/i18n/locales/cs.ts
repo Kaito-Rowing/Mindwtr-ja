@@ -1196,6 +1196,7 @@ export const csOverrides: Record<string, string> = {
         'settings.allowInsecureHttpHint': 'Používejte jen v důvěryhodných sítích. Data se posílají nešifrovaně.',
         'settings.cleartextSyncWarningWebdav': 'Synchronizace WebDAV používá HTTP. Data nejsou šifrována; používejte ji pouze v důvěryhodné síti.',
         'settings.cleartextSyncWarningCloud': 'Synchronizace s vlastním serverem používá HTTP. Data nejsou šifrována; používejte ji pouze v důvěryhodné síti.',
+        'settings.cleartextSyncDismiss': 'Skrýt pro tento cíl synchronizace',
         'settings.webdavBrowserStorageWarning': 'Hesla WebDAV se ukládají do úložiště prohlížeče. Používejte jen na důvěryhodných zařízeních.',
         'settings.cloudUrl': 'URL vlastního serveru',
         'settings.cloudUrlPlaceholder': 'https://example.com',

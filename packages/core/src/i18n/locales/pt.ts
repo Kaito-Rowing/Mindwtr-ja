@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ptOverrides: Record<string, string> = {
+    'settings.cleartextSyncDismiss': 'Dispensar para este destino de sincronização',
     "projects.convertBlocked.destination-section-sequence": "Escolha um projeto de destino definido como Sequencial → Dentro das seções. A nova seção mantém a sequência das tarefas; as outras seções continuam de forma independente.",
     'timeline.moveTaskDates': "Mover datas da tarefa",
     'timeline.moveProjectDates': "Mover datas do projeto",

@@ -1420,6 +1420,7 @@ export const huOverrides: Record<string, string> = {
     'settings.allowInsecureHttpHint': 'Csak megbízható hálózatokon használja. Az adatok titkosítás nélkül kerülnek elküldésre.',
     'settings.cleartextSyncWarningWebdav': 'A WebDAV szinkronizálás HTTP-t használ. Az adatok titkosítatlanok; csak megbízható hálózaton használja.',
     'settings.cleartextSyncWarningCloud': 'Az önállóan üzemeltetett szinkronizálás HTTP-t használ. Az adatok titkosítatlanok; csak megbízható hálózaton használja.',
+    'settings.cleartextSyncDismiss': 'Elrejtés ennél a szinkronizálási célnál',
     'settings.webdavBrowserStorageWarning': 'A WebDAV jelszavak a böngésző tárolójában vannak elmentve. Csak megbízható eszközökön használja.',
     'settings.cloudUrl': 'Önállóan üzemeltetett URL',
     'settings.cloudUrlPlaceholder': 'https://example.com',

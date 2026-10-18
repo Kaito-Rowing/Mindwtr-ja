@@ -1499,6 +1499,7 @@ export const daOverrides: Record<string, string> = {
         'WebDAV-synkronisering bruger HTTP. Dataene er ukrypterede; brug kun dette på et netværk, du har tillid til.',
     'settings.cleartextSyncWarningCloud':
         'Selvhostet synkronisering bruger HTTP. Data er ukrypteret; brug det kun på et betroet netværk.',
+    'settings.cleartextSyncDismiss': 'Skjul for denne synkroniseringsdestination',
     'settings.webdavBrowserStorageWarning':
         'WebDAV-adgangskoder gemmes i browserlageret. Brug kun på pålidelige enheder.',
     'settings.cloudUrl': 'Selvhostet URL',

@@ -534,6 +534,8 @@ export const SETTINGS_LABEL_KEYS = [
     'webdavHint',
     'allowInsecureHttp',
     'allowInsecureHttpHint',
+    'cleartextSyncWarningWebdav',
+    'cleartextSyncWarningCloud',
     'invalidUrlHttp',
     'cloudUrl',
     'cloudToken',

@@ -1402,6 +1402,7 @@ export const zhHans: Record<string, string> = {
         'settings.allowInsecureHttpHint': '请仅在可信网络中使用。数据将以未加密方式传输。',
         'settings.cleartextSyncWarningWebdav': 'WebDAV 同步正在使用 HTTP。数据未加密；请仅在受信任的网络上使用。',
         'settings.cleartextSyncWarningCloud': '自托管同步正在使用 HTTP。数据未加密；请仅在受信任的网络上使用。',
+        'settings.cleartextSyncDismiss': '对此同步目标不再显示',
         'settings.webdavBrowserStorageWarning': 'Web 提示：WebDAV 密码会保存在浏览器本地存储中，请仅在可信设备使用。',
         'settings.cloudUrl': '自托管地址',
         'settings.cloudUrlPlaceholder': 'https://example.com',

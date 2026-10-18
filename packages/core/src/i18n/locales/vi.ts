@@ -1234,6 +1234,7 @@ export const viOverrides: Record<string, string> = {
         'settings.allowInsecureHttpHint': 'Chỉ dùng trên mạng đáng tin cậy. Dữ liệu sẽ được gửi không mã hóa.',
         'settings.cleartextSyncWarningWebdav': 'Đồng bộ WebDAV đang dùng HTTP. Dữ liệu không được mã hóa; chỉ dùng trên mạng mà bạn tin cậy.',
         'settings.cleartextSyncWarningCloud': 'Đồng bộ tự lưu trữ đang dùng HTTP. Dữ liệu không được mã hóa; chỉ dùng trên mạng mà bạn tin cậy.',
+        'settings.cleartextSyncDismiss': 'Ẩn cho đích đồng bộ này',
         'settings.webdavBrowserStorageWarning': 'Mật khẩu WebDAV được lưu trong bộ nhớ trình duyệt. Chỉ dùng trên thiết bị đáng tin cậy.',
         'settings.cloudUrl': 'URL tự lưu trữ',
         'settings.cloudUrlPlaceholder': 'https://example.com',

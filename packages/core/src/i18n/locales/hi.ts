@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const hiOverrides: Record<string, string> = {
+    'settings.cleartextSyncDismiss': 'इस सिंक गंतव्य के लिए खारिज करें',
     'settings.importDiagnostics.unknownColumns': "{{count}} अज्ञात स्तंभों को अनदेखा किया गया।",
     'settings.importDiagnostics.csvLocation': "पंक्ति {{row}}, स्तंभ {{column}}",
     'settings.importDiagnostics.csvArchiveLocation': "CSV प्रविष्टि {{entry}}, पंक्ति {{row}}, स्तंभ {{column}}",

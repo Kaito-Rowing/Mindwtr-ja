@@ -1346,6 +1346,7 @@ export const koOverrides: Record<string, string> = {
         'settings.allowInsecureHttpHint': '신뢰할 수 있는 네트워크에서만 사용하세요. 데이터가 암호화되지 않은 상태로 전송됩니다.',
         'settings.cleartextSyncWarningWebdav': 'WebDAV 동기화가 HTTP를 사용 중입니다. 데이터가 암호화되지 않으므로 신뢰할 수 있는 네트워크에서만 사용하세요.',
         'settings.cleartextSyncWarningCloud': '자체 호스팅 동기화가 HTTP를 사용 중입니다. 데이터가 암호화되지 않으므로 신뢰할 수 있는 네트워크에서만 사용하세요.',
+        'settings.cleartextSyncDismiss': '이 동기화 대상에 대해 숨기기',
         'settings.webdavBrowserStorageWarning': 'WebDAV 비밀번호는 브라우저 저장소에 저장됩니다. 신뢰할 수 있는 기기에서만 사용하세요.',
         'settings.cloudUrl': '자체 호스팅 URL',
         'settings.cloudUrlPlaceholder': 'https://example.com',

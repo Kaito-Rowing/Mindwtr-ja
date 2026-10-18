@@ -1420,6 +1420,7 @@ export const esOverrides: Record<string, string> = {
 'settings.allowInsecureHttpHint': "Usa esto solo en redes de confianza. Los datos se enviarán sin cifrar.",
 'settings.cleartextSyncWarningWebdav': "La sincronización WebDAV usa HTTP. Los datos no están cifrados; úsala solo en una red de confianza.",
 'settings.cleartextSyncWarningCloud': "La sincronización con tu propio servidor usa HTTP. Los datos no están cifrados; úsala solo en una red de confianza.",
+'settings.cleartextSyncDismiss': 'Ocultar para este destino de sincronización',
 'settings.webdavBrowserStorageWarning': "Las contraseñas de WebDAV se guardan en el almacenamiento del navegador. Usa solo dispositivos de confianza.",
 'settings.cloudUrl': "URL del servidor autoalojado",
 'settings.cloudUrlPlaceholder': "https://example.com",

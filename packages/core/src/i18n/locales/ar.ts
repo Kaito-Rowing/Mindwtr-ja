@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const arOverrides: Record<string, string> = {
+    'settings.cleartextSyncDismiss': 'إخفاء لوجهة المزامنة هذه',
     'settings.importDiagnostics.unknownColumns': "تم تجاهل {{count}} من الأعمدة غير المعروفة.",
     'settings.importDiagnostics.csvLocation': "الصف {{row}}، العمود {{column}}",
     'settings.importDiagnostics.csvArchiveLocation': "إدخال CSV {{entry}}، الصف {{row}}، العمود {{column}}",

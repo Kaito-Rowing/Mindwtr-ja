@@ -2186,6 +2186,7 @@ export const deOverrides: Record<string, string> = {
         'settings.captureSettings': 'Erfassungs-Standardwerte',
         'settings.catppuccinMacchiato': 'Catppuccin Macchiato',
         'settings.cleartextSyncWarningCloud': 'Die selbst gehostete Synchronisierung verwendet HTTP. Daten sind unverschlüsselt; nutze sie nur in einem vertrauenswürdigen Netzwerk.',
+        'settings.cleartextSyncDismiss': 'Für dieses Synchronisierungsziel ausblenden',
         'settings.cleartextSyncWarningWebdav': 'Die WebDAV-Synchronisierung verwendet HTTP. Daten sind unverschlüsselt; nutze sie nur in einem vertrauenswürdigen Netzwerk.',
         'settings.closeBehavior': 'Verhalten beim Fensterschließen',
         'settings.cloudBaseUrlHint': 'Verwende die Basis-URL. Mindwtr hängt /v1/data automatisch an.',

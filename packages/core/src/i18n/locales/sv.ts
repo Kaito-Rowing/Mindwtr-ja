@@ -1439,6 +1439,7 @@ export const svOverrides: Record<string, string> = {
         'settings.allowInsecureHttpHint': 'Använd bara det här på betrodda nätverk. Data skickas okrypterat.',
         'settings.cleartextSyncWarningWebdav': 'WebDAV-synken använder HTTP. Data är okrypterad; använd det bara på ett betrott nätverk.',
         'settings.cleartextSyncWarningCloud': 'Den egna serverns synk använder HTTP. Data är okrypterad; använd det bara på ett betrott nätverk.',
+        'settings.cleartextSyncDismiss': 'Dölj för detta synkroniseringsmål',
         'settings.webdavBrowserStorageWarning': 'WebDAV-lösenord lagras i webbläsarens lagring. Använd endast på betrodda enheter.',
         'settings.cloudUrl': 'URL till egen server',
         'settings.cloudUrlPlaceholder': 'https://example.com',

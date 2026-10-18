@@ -1444,6 +1444,7 @@ export const faOverrides: Record<string, string> = {
         'settings.allowInsecureHttpHint': 'فقط در شبکه‌های مورد اعتماد از این استفاده کنید. داده به‌صورت رمزنگاری‌نشده ارسال می‌شود.',
         'settings.cleartextSyncWarningWebdav': 'همگام‌سازی WebDAV از HTTP استفاده می‌کند. داده رمزنگاری‌نشده است؛ فقط در شبکه مورد اعتماد استفاده کنید.',
         'settings.cleartextSyncWarningCloud': 'همگام‌سازی میزبانی‌شده شخصی از HTTP استفاده می‌کند. داده رمزنگاری‌نشده است؛ فقط در شبکه مورد اعتماد استفاده کنید.',
+        'settings.cleartextSyncDismiss': 'بستن برای این مقصد همگام‌سازی',
         'settings.webdavBrowserStorageWarning': 'رمزهای WebDAV در حافظه مرورگر ذخیره می‌شوند. فقط در دستگاه‌های مورد اعتماد استفاده کنید.',
         'settings.cloudUrl': 'آدرس میزبانی شخصی',
         'settings.cloudUrlPlaceholder': 'https://example.com',

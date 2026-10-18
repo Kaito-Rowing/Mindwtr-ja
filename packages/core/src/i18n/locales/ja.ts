@@ -1474,6 +1474,7 @@ export const jaOverrides: Record<string, string> = {
         'settings.allowInsecureHttpHint': '信頼できるネットワークでのみ使ってください。データが暗号化されずに送信されます。',
         'settings.cleartextSyncWarningWebdav': 'WebDAV 同期が HTTP を使っています。データは暗号化されません。信頼できるネットワークでのみ使ってください。',
         'settings.cleartextSyncWarningCloud': 'セルフホスト同期が HTTP を使っています。データは暗号化されません。信頼できるネットワークでのみ使ってください。',
+        'settings.cleartextSyncDismiss': 'この同期先では非表示にする',
         'settings.webdavBrowserStorageWarning': 'WebDAV のパスワードはブラウザのストレージに保存されます。信頼できる端末でのみ使ってください。',
         'settings.cloudUrl': 'セルフホストの URL',
         'settings.cloudUrlPlaceholder': 'https://example.com',

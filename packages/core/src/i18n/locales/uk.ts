@@ -1421,6 +1421,7 @@ export const ukOverrides: Record<string, string> = {
     "settings.allowInsecureHttpHint": "Використовуйте це лише в надійних мережах. Дані надсилатимуться незашифрованими.",
     "settings.cleartextSyncWarningWebdav": "Синхронізація WebDAV використовує HTTP. Дані незашифровані; використовуйте його лише в надійній мережі.",
     "settings.cleartextSyncWarningCloud": "Власна синхронізація використовує HTTP. Дані незашифровані; використовуйте його лише в надійній мережі.",
+    'settings.cleartextSyncDismiss': 'Приховати для цієї адреси синхронізації',
     "settings.webdavBrowserStorageWarning": "Паролі WebDAV зберігаються в сховищі браузера. Використовуйте лише на перевірених пристроях.",
     "settings.cloudUrl": "Власна URL-адреса",
     "settings.cloudUrlPlaceholder": "https://example.com",
