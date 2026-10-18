@@ -161,8 +161,9 @@ try {
     makeFile(name(8, 'pdf'), randomBytes(100));
     makeFile(name(10, 'pdf'), randomBytes(100));
     makeFile(name(13, 'pdf'), randomBytes(2_000));
-    sh(`mkdir -p ${pushed}`);
-    execFileSync(adbBin, ['-s', serial, 'push', resolve(work, 'files', '.'), pushed], { stdio: 'ignore' });
+    // adb nests a pushed folder inside a target that exists, so the target must not exist yet.
+    sh(`rm -rf ${pushed}`);
+    execFileSync(adbBin, ['-s', serial, 'push', resolve(work, 'files'), pushed], { stdio: 'ignore' });
     runAs(`mkdir -p files/share-test && cp ${pushed}/* files/share-test/`);
     device.launch(ACTIVITY);
     requireAppFront();
