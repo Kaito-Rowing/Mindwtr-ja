@@ -1053,6 +1053,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -1320,6 +1324,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -1572,6 +1580,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone"
@@ -1841,6 +1853,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone, @office"
@@ -2133,6 +2149,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@phone, @office"
       ],
@@ -2424,6 +2444,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@phone, @office, #work"
       ],
@@ -2703,6 +2727,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone, @office, #work, #home"
@@ -3026,6 +3054,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@phone, @office, #work, #home"
       ],
@@ -3317,6 +3349,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@office, #work, #home, Excluded: @phone"
@@ -3617,6 +3653,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@office, #work, #home, Excluded: @phone"
@@ -3937,6 +3977,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@office, #work, #home, Excluded: @phone"
@@ -4270,6 +4314,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@office, #work, #home, Excluded: @phone"
@@ -4623,6 +4671,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@office, #work, #home, Excluded: @phone"
@@ -4996,6 +5048,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@office, #work, #home, Excluded: @phone"
@@ -5389,6 +5445,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@office, #work, #home, Excluded: @phone"
@@ -5793,6 +5853,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@office, #work, #home, Excluded: @phone"
       ],
@@ -6176,6 +6240,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@office, #work, #home"
       ],
@@ -6539,6 +6607,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@office, #work, #home"
       ],
@@ -6883,6 +6955,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@office, #work, #home"
@@ -7244,6 +7320,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -7511,6 +7591,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -7756,6 +7840,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "#garden"
       ],
@@ -8000,6 +8088,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "#garden"
@@ -8304,6 +8396,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -8568,6 +8664,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -8834,6 +8934,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -9098,6 +9202,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -9364,6 +9472,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -9629,6 +9741,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -9893,6 +10009,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -10163,6 +10283,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -10453,6 +10577,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -10762,6 +10890,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -11091,6 +11223,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -11441,6 +11577,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -11810,6 +11950,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -12199,6 +12343,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -12605,6 +12753,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -13016,6 +13168,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -13263,6 +13419,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -13509,6 +13669,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -13777,6 +13941,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -14008,6 +14176,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -14295,6 +14467,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -14561,6 +14737,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -14825,6 +15005,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone"
@@ -15131,6 +15315,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -15393,6 +15581,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -15623,6 +15815,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@office"
@@ -15911,6 +16107,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -16159,6 +16359,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@phone"
       ],
@@ -16391,6 +16595,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -16711,6 +16919,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -16947,6 +17159,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -17238,6 +17454,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -17505,6 +17725,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -17752,6 +17976,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone"
@@ -18021,6 +18249,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone, @office"
@@ -18302,6 +18534,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@phone"
       ],
@@ -18575,6 +18811,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@phone"
       ],
@@ -18842,6 +19082,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone"
@@ -19118,6 +19362,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone"
@@ -19427,6 +19675,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -19679,6 +19931,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone"
@@ -19949,6 +20205,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@phone"
       ],
@@ -20213,6 +20473,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone, #work"
@@ -20518,6 +20782,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@phone, Excluded: #work"
       ],
@@ -20822,6 +21090,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone, Excluded: #work"
@@ -21685,6 +21957,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "@phone, Excluded: #work"
       ],
@@ -22109,6 +22385,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -22478,6 +22758,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -22742,6 +23026,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -23257,6 +23545,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -23616,6 +23908,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -23828,6 +24124,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -24095,6 +24395,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -24464,6 +24768,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -24885,6 +25193,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -25330,6 +25642,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -25839,6 +26155,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -26086,6 +26406,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone"
@@ -26354,6 +26678,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone"
@@ -26701,6 +27029,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@phone"
@@ -27157,6 +27489,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -27340,6 +27676,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -27574,6 +27914,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -27818,6 +28162,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -28068,6 +28416,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"
@@ -28409,6 +28761,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -28687,6 +29043,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "@office"
@@ -28998,6 +29358,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -29288,6 +29652,10 @@
      },
      "rows": [
       [
+       "Task dates",
+       "Any time"
+      ],
+      [
        "Contexts & tags",
        "All"
       ],
@@ -29508,6 +29876,10 @@
       }
      },
      "rows": [
+      [
+       "Task dates",
+       "Any time"
+      ],
       [
        "Contexts & tags",
        "All"

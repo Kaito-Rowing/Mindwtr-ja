@@ -128,6 +128,13 @@ struct FocusControlsPanel: View {
     private var overview: some View {
         VStack(alignment: .leading, spacing: 12) {
             activeChips
+            let taskDates = sheet.object("taskDates")
+            if !taskDates.isEmpty {
+                let dateOptions = taskDates.objects("options")
+                overviewRow(taskDates.text("label"), summary: dateOptions.filter { $0.flag("selected") }.map { $0.text("label") }.joined(separator: ", "),
+                            expanded: expanded.contains("taskDates"), id: "focus-filter-taskDates") { toggle("taskDates") }
+                if expanded.contains("taskDates") { options(dateOptions, prefix: "focus-filter-taskDates") }
+            }
             if sheet.object("tokens").number("total") > 0 {
                 overviewRow(text.text("contexts"), summary: sheet.object("summaries").text("tokens"), id: "focus-filter-tokens") {
                     endInput(); model.openFocusPicker("tokens")
@@ -137,13 +144,6 @@ struct FocusControlsPanel: View {
                 overviewRow(text.text("projects"), summary: sheet.object("summaries").text("projects"), id: "focus-filter-projects") {
                     endInput(); model.openFocusPicker("projects")
                 }
-            }
-            let taskDates = sheet.object("taskDates")
-            if !taskDates.isEmpty {
-                let dateOptions = taskDates.objects("options")
-                overviewRow(taskDates.text("label"), summary: dateOptions.filter { $0.flag("selected") }.map { $0.text("label") }.joined(separator: ", "),
-                            expanded: expanded.contains("taskDates"), id: "focus-filter-taskDates") { toggle("taskDates") }
-                if expanded.contains("taskDates") { options(dateOptions, prefix: "focus-filter-taskDates") }
             }
             if sheet.object("visibility").flag("timeEstimate") && !sheet.objects("timeEstimates").isEmpty {
                 disclosure("timeEstimates", label: text.text("timeEstimate"))

@@ -499,12 +499,12 @@ private fun FocusFilterSheet(model: InboxViewModel, controls: JSONObject, open: 
                     }
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (sheet.getJSONObject("tokens").getInt("total") > 0) OverviewRow(text.getString("contexts"), summaries.getString("tokens"), all, null) { page("tokens") }
-                    if (sheet.getJSONObject("projects").getInt("total") > 0) OverviewRow(text.getString("projects"), summaries.getString("projects"), all, null) { page("projects") }
                     sheet.optJSONObject("taskDates")?.let { dates ->
                         Disclosure(dates.getString("label"), dates.menuObjects("options"), all, open.optBoolean("taskDates"), idle,
                             { toggle("taskDates") }) { edit(it) }
                     }
+                    if (sheet.getJSONObject("tokens").getInt("total") > 0) OverviewRow(text.getString("contexts"), summaries.getString("tokens"), all, null) { page("tokens") }
+                    if (sheet.getJSONObject("projects").getInt("total") > 0) OverviewRow(text.getString("projects"), summaries.getString("projects"), all, null) { page("projects") }
                     val estimates = sheet.menuObjects("timeEstimates")
                     if (visibility.optBoolean("timeEstimate") && estimates.isNotEmpty()) {
                         Disclosure(text.getString("timeEstimate"), estimates, all, open.optBoolean("time"), idle, { toggle("time") }, summaries.getString("timeEstimates")) { edit(it) }

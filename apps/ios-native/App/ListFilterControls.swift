@@ -110,6 +110,13 @@ struct ListFilterControls: View {
                     .accessibilityIdentifier(prefix + "-include-archived-projects")
             }
             VStack(alignment: .leading, spacing: 8) {
+                let taskDates = filters.object("taskDates")
+                if !taskDates.isEmpty {
+                    let dateOptions = taskDates.objects("options")
+                    overviewRow(taskDates.text("label"), summary: summary(dateOptions.filter { $0.flag("selected") }.map { $0.text("label") }),
+                                expanded: expanded.contains("taskDates"), id: prefix + "-filter-taskDates") { toggle("taskDates") }
+                    if expanded.contains("taskDates") { optionChips(dateOptions, id: prefix + "-filter-taskDates") }
+                }
                 if filters.object("tokens").number("total") > 0 {
                     overviewRow(localized("filters.contexts"), summary: tokenSummary, id: prefix + "-filter-tokens") {
                         focusedField = nil
@@ -121,13 +128,6 @@ struct ListFilterControls: View {
                         focusedField = nil
                         onOpenPicker("projects")
                     }
-                }
-                let taskDates = filters.object("taskDates")
-                if !taskDates.isEmpty {
-                    let dateOptions = taskDates.objects("options")
-                    overviewRow(taskDates.text("label"), summary: summary(dateOptions.filter { $0.flag("selected") }.map { $0.text("label") }),
-                                expanded: expanded.contains("taskDates"), id: prefix + "-filter-taskDates") { toggle("taskDates") }
-                    if expanded.contains("taskDates") { optionChips(dateOptions, id: prefix + "-filter-taskDates") }
                 }
                 if filters.object("visibility").flag("timeEstimate") && !filters.objects("timeEstimates").isEmpty {
                     disclosure("timeEstimates", title: localized("filters.timeEstimate"))

@@ -195,6 +195,8 @@ const sheetRows = (
     const all = tf('common.all', 'All');
     const join = (values: string[]) => (values.length > 0 ? values.join(', ') : all);
     const rows: string[][] = [];
+    const range = filters.anyDateRange;
+    rows.push([tf('filters.taskDates', 'Task dates'), range && 'preset' in range ? t(`filters.datePreset.${range.preset}`) : tf('filters.anyTime', 'Any time')]);
     if (options.tokens.length > 0) {
         rows.push([tf('filters.contexts', 'Contexts & tags'), join([...filters.tokens, ...filters.excludedTokens.map((token) => `${tf('filters.excluded', 'Excluded')}: ${token}`)])]);
     }
@@ -515,6 +517,8 @@ export function createContractFocusDriver(host: Host, t: Translate) {
                     visibility: sheet.visibility,
                 },
                 rows: [
+                    // The native sheets summarize Task dates as their Disclosure does: the chosen option, else All.
+                    [sheet.taskDates.label, sheet.taskDates.options.filter((option) => option.selected).map((option) => option.label).join(', ') || sheet.text.all],
                     ...(sheet.tokens.total > 0 ? [[sheet.text.contexts, sheet.summaries.tokens]] : []),
                     ...(sheet.projects.total > 0 ? [[sheet.text.projects, sheet.summaries.projects]] : []),
                     ...(sheet.visibility.timeEstimate && sheet.timeEstimates.length > 0 ? [[sheet.text.timeEstimate, sheet.summaries.timeEstimates]] : []),

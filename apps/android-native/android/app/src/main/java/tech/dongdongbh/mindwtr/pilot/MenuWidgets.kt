@@ -677,6 +677,10 @@ private fun FilterSheet(model: InboxViewModel, view: JSONObject, open: JSONObjec
                         }
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        filters.optJSONObject("taskDates")?.let { dates ->
+                            Disclosure(dates.getString("label"), dates.menuObjects("options"), all, open.optBoolean("taskDates"), idle,
+                                { toggleDisclosure("taskDates") }) { filterEdit(it) }
+                        }
                         val tokens = shown.collection("tokens")
                         if (tokens.isNotEmpty() || shown.collectionTotal("tokens") > 0) {
                             val picked = state.optJSONArray("tokens").strings() + state.optJSONArray("excludedTokens").strings().map { "$excluded: $it" }
@@ -686,10 +690,6 @@ private fun FilterSheet(model: InboxViewModel, view: JSONObject, open: JSONObjec
                         if (projects.isNotEmpty()) {
                             val chosen = projects.chosenLabels().joinToString(", ")
                             OverviewRow(t("filters.projects"), chosen.ifEmpty { all }, all, null) { dialogPage("projects") }
-                        }
-                        filters.optJSONObject("taskDates")?.let { dates ->
-                            Disclosure(dates.getString("label"), dates.menuObjects("options"), all, open.optBoolean("taskDates"), idle,
-                                { toggleDisclosure("taskDates") }) { filterEdit(it) }
                         }
                         val estimates = filters.menuObjects("timeEstimates")
                         if (visibility.optBoolean("timeEstimate") && estimates.isNotEmpty()) {
