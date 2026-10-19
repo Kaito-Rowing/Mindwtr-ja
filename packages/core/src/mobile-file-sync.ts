@@ -713,7 +713,8 @@ export const createMobileFileSync = (host: MobileFileSyncFullHost) => {
                 host.log.info('Invalid JSON in sync file; using local data.', { scope: 'sync', extra: { operation: 'read' } });
                 return fromSyncFile(null);
             }
-            host.log.error(error, { scope: 'sync', extra: { operation: 'read', message: 'Failed to read sync file' } });
+            // The error line keeps the code only: the diagnostics builder logs a message and stack, which here quote the path.
+            host.log.error(new Error(fileSyncErrorCode(error)), { scope: 'sync', extra: { operation: 'read', message: 'Failed to read sync file' } });
             throw error;
         }
     };
@@ -925,7 +926,7 @@ export const createMobileFileSync = (host: MobileFileSyncFullHost) => {
             const resolvedUri = await resolveSyncFileUri(fileUri, { createIfMissing: true });
             await writeSyncFileVersioned(resolvedUri, content, options?.material ?? null, options.expectedFingerprint);
         } catch (error) {
-            host.log.error(error, { scope: 'sync', extra: { operation: 'write', message: 'Failed to write sync file' } });
+            host.log.error(new Error(fileSyncErrorCode(error)), { scope: 'sync', extra: { operation: 'write', message: 'Failed to write sync file' } });
             throw error;
         }
     };

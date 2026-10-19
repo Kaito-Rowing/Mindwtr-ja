@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FILE_SYNC_ABSENT_FINGERPRINT, createMobileFileSync, type MobileFileSyncFullHost } from './mobile-file-sync';
+import { fileSyncErrorCode } from './mobile-file-sync-remote';
 import type { AppData } from './types';
 
 // File Sync's log contexts never carry the sync folder's path or a document URI: a provider's or the file system's error text
@@ -23,13 +24,18 @@ const fakeHost = (overrides: Partial<MobileFileSyncFullHost>) => {
         log: {
             info: (message: string, context: unknown) => logged.push({ level: 'info', message, context }),
             warn: (message: string, context: unknown) => logged.push({ level: 'warn', message, context }),
-            error: (error: unknown, context: unknown) => logged.push({ level: 'error', message: String(error), context }),
+            // The diagnostics builder logs an error line's message and stack: both count as logged text.
+            error: (error: unknown, context: unknown) => logged.push({
+                level: 'error',
+                message: error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error),
+                context,
+            }),
         },
         encryption: { localState: {}, flush: async () => undefined, logEvent: () => undefined },
         crypto: {},
         ...overrides,
     } as unknown as MobileFileSyncFullHost;
-    return { host, logged, contexts: () => JSON.stringify(logged.map((entry) => entry.context)) };
+    return { host, logged, contexts: () => JSON.stringify(logged.map((entry) => entry.context)), all: () => JSON.stringify(logged) };
 };
 
 /** A plain folder in memory; [refuse] makes one file name fail with an error that quotes its path. */
@@ -131,5 +137,39 @@ describe('File Sync log contexts', () => {
         expect(logged.find((entry) => entry.message.endsWith('repair failed'))?.context)
             .toMatchObject({ scope: 'sync', extra: { error: 'SAF_DOCUMENT_UNAVAILABLE' } });
         expect(contexts()).not.toContain(PRIVATE);
+    });
+
+    it('log a failed sync file read by its error code, in the error line\'s message and stack too', async () => {
+        const folder = pathFolder();
+        folder.port.readText = async (uri: string) => { throw new Error(`EACCES: permission denied, open '${uri}'`); };
+        folder.port.readBytes = async (uri: string) => { throw new Error(`EACCES: permission denied, open '${uri}'`); };
+        const { host, logged, all } = fakeHost({ path: folder.port });
+
+        await expect(createMobileFileSync(host).readSyncFile(`${PATH_DIR}/data.json`)).rejects.toThrow(PRIVATE);
+
+        expect(logged.find((entry) => entry.level === 'error')?.message.split('\n')[0]).toBe('EACCES');
+        expect(all()).not.toContain(PRIVATE);
+    });
+
+    it('log a failed sync file write by its error code, in the error line\'s message and stack too', async () => {
+        const folder = pathFolder((name) => name.startsWith('.mindwtr-et-s-'));
+        const { host, logged, all } = fakeHost({ path: folder.port });
+
+        await expect(createMobileFileSync(host).writeSyncFile(`${PATH_DIR}/data.json`, data, { expectedFingerprint: FILE_SYNC_ABSENT_FINGERPRINT }))
+            .rejects.toThrow(PRIVATE);
+
+        expect(logged.find((entry) => entry.level === 'error')?.message.split('\n')[0]).toBe('EACCES');
+        expect(all()).not.toContain(PRIVATE);
+    });
+});
+
+describe('fileSyncErrorCode', () => {
+    it('answers a leading code, else a plain error name, never text', () => {
+        expect(fileSyncErrorCode(new Error('SAF_DOCUMENT_UNAVAILABLE: content://x/private'))).toBe('SAF_DOCUMENT_UNAVAILABLE');
+        expect(fileSyncErrorCode(new TypeError(`bad ${PATH_DIR}`))).toBe('TypeError');
+        const named = new Error('x');
+        named.name = `${PATH_DIR}/data.json`;
+        expect(fileSyncErrorCode(named)).toBe('Error');
+        expect(fileSyncErrorCode(`${PATH_DIR}/data.json`)).toBe('string');
     });
 });

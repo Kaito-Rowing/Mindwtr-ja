@@ -32,11 +32,14 @@ import { LEGACY_SYNC_FILE_NAME, SYNC_FILE_NAME } from './sync-service-utils';
 
 export const SYNC_FILE_TRANSITION_CAS_UNAVAILABLE = 'SYNC_FILE_TRANSITION_CAS_UNAVAILABLE';
 
-/** A File Sync log context's `error`: the error's leading code (`SAF_DOCUMENT_UNAVAILABLE`, `SYNC_FILE_LOCK_BUSY`) or its
+/** A File Sync log line's error: the error's leading code (`SAF_DOCUMENT_UNAVAILABLE`, `SYNC_FILE_LOCK_BUSY`) or its plain
  *  name, never its text. Provider and file-system messages quote the document's URI or path, which names the user's files. */
 export const fileSyncErrorCode = (error: unknown): string => {
     const message = error instanceof Error ? error.message : String(error);
-    return /^([A-Z][A-Z0-9_]{2,}):/.exec(message)?.[1] ?? (error instanceof Error ? error.name : typeof error);
+    const code = /^([A-Z][A-Z0-9_]{2,}):/.exec(message)?.[1];
+    if (code) return code;
+    if (!(error instanceof Error)) return typeof error;
+    return /^[A-Za-z][A-Za-z0-9_]*$/.test(error.name) ? error.name : 'Error';
 };
 
 /** One SAF document as its provider describes it: its tree document URI and display name. */

@@ -4,6 +4,7 @@ import * as FileSystem from './file-system';
 import { Directory as ExpoDirectory, File as ExpoFile } from 'expo-file-system';
 import {
     AppData,
+    fileSyncErrorCode,
     LEGACY_SYNC_FILE_NAME,
     SYNC_FILE_NAME,
     type FileSyncReadResult,
@@ -302,13 +303,13 @@ export const exportData = async (data: AppData): Promise<void> => {
                     );
 
                     await StorageAccessFramework.writeAsStringAsync(fileUri, jsonContent);
-                    void logInfo('Export saved via SAF', { scope: 'sync', extra: { fileUri } });
+                    void logInfo('Export saved via SAF', { scope: 'sync' });
                     return;
                 }
             } catch (safError) {
                 void logWarn('Export SAF unavailable; falling back to share', {
                     scope: 'sync',
-                    extra: { error: safError instanceof Error ? safError.message : String(safError) },
+                    extra: { error: fileSyncErrorCode(safError) },
                 });
             }
         } else {
@@ -323,7 +324,7 @@ export const exportData = async (data: AppData): Promise<void> => {
 
         // Fallback: Use cache + share sheet
         const fileUri = FileSystem.cacheDirectory + filename;
-        void logInfo('Export writing backup to cache before share', { scope: 'sync', extra: { fileUri } });
+        void logInfo('Export writing backup to cache before share', { scope: 'sync' });
         await FileSystem.writeAsStringAsync(fileUri, jsonContent);
 
         const sharingAvailable = await Sharing.isAvailableAsync();
