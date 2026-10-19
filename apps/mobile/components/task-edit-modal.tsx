@@ -2,6 +2,7 @@ import { TaskProjectConversionModal } from './task-edit/TaskProjectConversionMod
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TextInput, Modal, Animated, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { NavigationContext } from '@react-navigation/native';
 import { Task,
     TaskEditorFieldId,
     useTaskStore,
@@ -300,6 +301,7 @@ function TaskEditModalInner({
         descriptionDraftRef,
         editTab,
         isAIWorking,
+        isDirtyRef,
         isContextInputFocused,
         isTagInputFocused,
         pendingDueDate,
@@ -416,8 +418,8 @@ function TaskEditModalInner({
     resetCopilotStateRef.current = resetCopilotState;
 
     const {
-        addFileAttachment,
-        addImageAttachment,
+        addFileAttachment: pickFileAttachment,
+        addImageAttachment: pickImageAttachment,
         audioAttachment,
         audioLoading,
         audioTranscribing,
@@ -456,6 +458,17 @@ function TaskEditModalInner({
         visible,
     });
     settleAttachmentDraftRef.current = settleDraftAttachments;
+    const pendingAttachmentImportsRef = useRef(0);
+    const addFileAttachment = useCallback(async () => {
+        pendingAttachmentImportsRef.current += 1;
+        try { await pickFileAttachment(); }
+        finally { pendingAttachmentImportsRef.current -= 1; }
+    }, [pickFileAttachment]);
+    const addImageAttachment = useCallback(async () => {
+        pendingAttachmentImportsRef.current += 1;
+        try { await pickImageAttachment(); }
+        finally { pendingAttachmentImportsRef.current -= 1; }
+    }, [pickImageAttachment]);
 
     const {
         contextTokenSuggestions,
@@ -1123,6 +1136,26 @@ function TaskEditModalInner({
         || descriptionEditor.isDescriptionInputFocused
         || isContextInputFocused
         || isTagInputFocused;
+
+    const navigation = React.useContext(NavigationContext);
+    const navigationBlurRef = useRef(() => {});
+    navigationBlurRef.current = () => {
+        if (!visible) return;
+        if (!readOnly && (isDirtyRef.current || draftLifecycle.hasPendingChanges()
+            || pendingAttachmentImportsRef.current > 0 || isAIWorking || audioLoading || audioTranscribing
+            || audioModalVisible || linkModalVisible || imagePreviewAttachment || aiModal
+            || showDatePicker || showAreaPicker || showProjectPicker || showSectionPicker
+            || customRecurrenceVisible || waitingAssignmentModalVisible || completedAtPickerVisible
+            || projectConversionOpen || descriptionEditor.descriptionExpanded)) return;
+        if (readOnly) onClose();
+        else draftLifecycle.discard();
+        void logInfo('Mobile task editor dismissed on navigation', {
+            scope: 'task-edit',
+            extra: { releaseCheck: 'v1.3.7/mobile-editor-navigation', outcome: 'closed-clean' },
+        });
+    };
+    // Blurred screens can freeze before another render; subscribe to the owner route directly.
+    useEffect(() => navigation?.addListener('blur', () => navigationBlurRef.current()), [navigation]);
 
     if (!task) return null;
 
