@@ -153,6 +153,23 @@ describe('a restore, a sync\'s attachment cleanup, then the restore\'s Undo', ()
         expect(deleted).toEqual([FILE_URI]);
     });
 
+    it('a snapshot restore (no Undo of its own) keeps the earlier restore\'s hold', async () => {
+        const library = libraryWith(attachment);
+        const adapter = await open(library);
+        const replaceId = '11111111-1111-4111-8111-111111111111';
+        const replaced = await prepareNativeBackupDocument(adapter, { requestId: replaceId, mode: 'replace', snapshotName: NAME,
+            text: serializeBackupData(libraryWith({ ...attachment, deletedAt: AT, updatedAt: AT }, { rev: 2 })), metadata: clone(metadata) });
+        await commitNativeBackupDocument(adapter, reference(replaceId, 'a'), replaced.planJSON, NAME);
+        // The snapshot restore's own baseline has the attachment deleted: had it taken the hold, the file would go.
+        const restoreId = '44444444-4444-4444-8444-444444444444';
+        const restored = await prepareNativeBackupDocument(adapter, { requestId: restoreId, mode: 'restore', snapshotName: NAME,
+            text: serializeBackupData({ ...clone(library), tasks: [task('other', { rev: 3 })] }), metadata: clone(metadata) });
+        await commitNativeBackupDocument(adapter, reference(restoreId, 'd'), restored.planJSON, NAME);
+        const deleted: string[] = [];
+        await runAttachmentCleanupLifecycle({ appData: libraryWith({ ...attachment, deletedAt: AT }), deleteLocalAttachment: collectDeletes(deleted) });
+        expect(deleted).toEqual([]);
+    });
+
     it('keeps a held remote copy queued for deletion instead of deleting or dropping it', async () => {
         const adapter = await open(libraryWith(attachment));
         const replaceId = '11111111-1111-4111-8111-111111111111';
