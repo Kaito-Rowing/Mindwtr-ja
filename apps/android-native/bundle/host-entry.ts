@@ -1891,7 +1891,7 @@ const iosReminderEffects = createIosReminderMethods({
     },
     read: () => keyValue.multiGet([REMINDER_ALARM_MAP_STORAGE_KEY, NATIVE_REMINDER_STATE_STORAGE_KEY]),
     plan: (input) => contract.planReminderAlarms(input),
-    acknowledged: async (mode, scheduled, cancelled, collapsed, rearmed) => {
+    acknowledged: async (mode, scheduled, cancelled, collapsed, rearmed, zoned) => {
         await diagnosticsLog.append({ ts: new Date().toISOString(), level: 'info', scope: 'native-ios',
             message: 'Native iOS reminders reconciled',
             context: { releaseCheck: 'v1.3.5/ios-reminder-apply', outcome: 'confirmed', mode,
@@ -1904,6 +1904,10 @@ const iosReminderEffects = createIosReminderMethods({
         if (rearmed > 0) await diagnosticsLog.append({ ts: new Date().toISOString(), level: 'info', scope: 'native-ios',
             message: 'Native iOS missing Snoozes recovered',
             context: { releaseCheck: 'v1.3.5/ios-reminder-snooze-recovery', count: String(rearmed) },
+        }, { force: true });
+        if (zoned > 0) await diagnosticsLog.append({ ts: new Date().toISOString(), level: 'info', scope: 'native-ios',
+            message: 'Native iOS time-zoned repeating reminders admitted',
+            context: { releaseCheck: 'v1.3.7/ios-reminder-time-zone', count: String(zoned) },
         }, { force: true });
     },
     observation: {
