@@ -6735,14 +6735,15 @@ export function createNativeSync() {
             const state = await make(f); let reads = 0, entered = 0;
             const owner = { id: 'alias-generation-change' };
             Object.defineProperty(owner, 'attachments', { get() {
-                if (++reads === 2) state.persistenceStatus.generation++;
+                // Core matches the container alias in its first comparison pass (6f47ea57e).
+                if (++reads === 1) state.persistenceStatus.generation++;
                 return [{ kind: 'file', uri: aliasURI }];
             } });
             state.ownerProjects.push(owner);
             const callback = () => { entered++; return '{"outcome":"referenced"}'; };
             assert.throws(() => state.MindwtrHost.attachmentFileEditSaveRetire(input(f), callback, callback, callback),
                 /NOT_READY: Attachment Save requires settled native storage/);
-            assert(reads >= 2, 'mutation occurs during the sibling-alias reference comparison');
+            assert(reads >= 1, 'mutation occurs during the sibling-alias reference comparison');
             assert.equal(entered, 0, 'alias comparison never releases the captured generation fence');
         });
     }
@@ -7188,14 +7189,15 @@ export function createNativeSync() {
         await checkRelocation276(async () => {
             reset276(); let reads = 0, entered = 0; const owner = {};
             Object.defineProperty(owner, 'attachments', { get() {
-                if (++reads === 4) relocated.state.persistenceStatus.generation++;
+                // Core matches the container alias in one pass (6f47ea57e), so three reads remain; mutate on the last.
+                if (++reads === 3) relocated.state.persistenceStatus.generation++;
                 return [{ kind: 'file', uri: refs276[3] }];
             } });
             relocated.state.ownerProjects.push(owner);
             const callback = () => { entered++; return '{"outcome":"referenced"}'; };
             assert.throws(() => relocated.state.MindwtrHost.attachmentFileEditSaveRetire(JSON.stringify({ version: 2,
                 envelopeJSON: raw276, candidateIndex: index276, currentURI: current276 }), callback, callback, callback), /NOT_READY/);
-            assert(reads >= 4, 'old/current and both alias spellings share the same generation fence'); assert.equal(entered, 0);
+            assert(reads >= 3, 'old/current and both alias spellings share the same generation fence'); assert.equal(entered, 0);
         });
         await checkRelocation276(async () => {
             reset276(); const valid = { version: 2, envelopeJSON: raw276, candidateIndex: index276, currentURI: current276 };
@@ -7483,7 +7485,8 @@ export function createNativeSync() {
         ['deleted owner', [{ deletedAt: 'at', attachments: [{ kind: 'file', uri: TARGET }] }], 'removed'],
         ['deleted attachment', [{ attachments: [{ kind: 'file', uri: TARGET, deletedAt: 'at' }] }], 'removed'],
         ['link is not a file owner', [{ attachments: [{ kind: 'link', uri: TARGET }] }], 'removed'],
-        ['URI exact spelling', [{ attachments: [{ kind: 'file', uri: TARGET.replace('café', 'caf%C3%A9') }] }], 'removed'],
+        // An equivalent percent-encoded spelling is the same file and keeps it (6f47ea57e).
+        ['URI equivalent spelling', [{ attachments: [{ kind: 'file', uri: TARGET.replace('café', 'caf%C3%A9') }] }], 'referenced'],
     ]) await check(name, () => {
         state.lastLoaded.tasks = owners;
         assert.equal(call(state), JSON.stringify({ outcome: expected }));
@@ -7517,13 +7520,14 @@ export function createNativeSync() {
             let reads = 0, entered = 0;
             const owner = {};
             Object.defineProperty(owner, 'attachments', { get() {
-                if (++reads === 2) local.persistenceStatus.generation++;
+                // Core matches the container alias in its first comparison pass (6f47ea57e).
+                if (++reads === 1) local.persistenceStatus.generation++;
                 return [{ kind: 'file', uri: aliasURI }];
             } });
             local.ownerProjects.push(owner);
             const callback = () => { entered++; return '{"outcome":"referenced"}'; };
             assert.throws(() => call(local, json, callback, callback), (error) => error.message === unready);
-            assert(reads >= 2, 'mutation occurs during the sibling-alias reference comparison');
+            assert(reads >= 1, 'mutation occurs during the sibling-alias reference comparison');
             assert.equal(entered, 0, 'all alias checks retain the same captured generation');
         });
     }
