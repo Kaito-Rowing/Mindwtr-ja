@@ -1070,15 +1070,19 @@ struct InboxScreen: View {
                 } label: {
                     let selected = field == "filters" && model.inbox.object("toolbar").object(field).flag("selected")
                     let count = model.inbox.object("toolbar").object(field).text("countLabel")
-                    Group {
-                        if field == "filters" && !count.isEmpty { Text(count).rnFont(12, .semibold) }
-                        else { AppIcon(name: icon, size: 16) }
+                    // RN TaskListHeader: the active-filter count sits beside the icon and the circle grows into a pill.
+                    let counted = field == "filters" && !count.isEmpty
+                    HStack(spacing: 5) {
+                        AppIcon(name: icon, size: 16)
+                        if counted { Text(count).rnFont(13, .bold) }
                     }
                     .foregroundStyle(selected ? palette.tint : palette.secondary)
-                    .frame(width: 32, height: 32)
-                    .background(palette.filter, in: Circle())
-                    .overlay(Circle().stroke(selected ? palette.tint : palette.border, lineWidth: 1))
-                    .frame(width: 44, height: 44)
+                    .padding(.horizontal, counted ? 9 : 0)
+                    .frame(minWidth: 32, minHeight: 32)
+                    .background(palette.filter, in: Capsule())
+                    .overlay(Capsule().stroke(selected ? palette.tint : palette.border, lineWidth: 1))
+                    .padding(.horizontal, counted ? 6 : 0)
+                    .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain).disabled(field == "sort" ? !model.inboxSortEnabled : field == "group" ? !model.inboxGroupEnabled : !model.inboxFiltersEnabled)
                 .accessibilityLabel(model.inbox.object("toolbar").object(field).text("accessibilityLabel"))
