@@ -799,13 +799,13 @@ const measureRecoveryBoot = async (shape, mib, stopped, options) => {
 
 /**
  * The largest run the app admits at the limit (code review 2 #4): [attempt] at [startMiB], then 10 % smaller after each size
- * refusal, at most 8 times. The admitted row carries the refused attempt above it ([refusedAboveMiB], by [aboveOf]), so its
+ * refusal, at most 12 times. The admitted row carries the refused attempt above it ([refusedAboveMiB], by [aboveOf]), so its
  * bytes prove it is the boundary.
  */
 const atAdmittedBoundary = async (startMiB, attempt, aboveOf = (refusedRow) => rowBound(refusedRow)) => {
     let size = startMiB;
     let refusedRow = null;
-    for (let tries = 0; tries < 8 && size >= 0.5; tries += 1) {
+    for (let tries = 0; tries < 12 && size >= 0.5; tries += 1) {
         const result = await attempt(size);
         if (!result) return null;
         if (!result.row.refused) {
@@ -821,8 +821,8 @@ const atAdmittedBoundary = async (startMiB, attempt, aboveOf = (refusedRow) => r
 /**
  * Every workload again at the proposed limit [limitMiB] (transfer_limit_mb), each at its own admitted boundary, sized by the
  * library on the phone: a fresh restore as large as admitted (then its Undo, stopped before its send, for the recovery boot;
- * then the same restore again for the exports, the capture and the start, which read that library); a merge and a second
- * restore filling what a half-full library leaves, and that restore's Undo; with [imports], each import as large as admitted
+ * then the same restore again on a fresh install for the exports, the capture and the start, which read that library); a
+ * merge and, on its own install, a second restore filling what a quarter-full library leaves, and that restore's Undo; with [imports], each import as large as admitted
  * on a fresh install.
  */
 const boundarySequence = async (shape, limitMiB, imports) => {
@@ -839,6 +839,8 @@ const boundarySequence = async (shape, limitMiB, imports) => {
     push(filled);
     // The Undo of that restore, stopped before its send: the start reads the full library, then replays the Undo.
     await measureRecoveryBoot(shape, limitMiB, restoreNewestSnapshot, options);
+    // A fresh install again: the Undo left the restore's rows as tombstones, and that library plus the file passes the limit.
+    await measureFreshInstall(limitMiB);
     await restoreFile(filled);
     await toastWith(en['settings.backupMobile.restoreComplete'], 900_000);
     setProp('export_tree', TREE);
@@ -853,9 +855,11 @@ const boundarySequence = async (shape, limitMiB, imports) => {
     await measureRun(shape, 'capture', limitMiB, () => captureLines([`d1mbcap1${run}`, `d1mbcap2${run}`]), () => rowsLike('mb-capture', 'd1mbcap1') === 1, options);
     await measureRun(shape, 'cold-start', limitMiB, async () => { await device.stopApp(); device.launch(ACTIVITY); }, (nodes) => onInbox(nodes), options);
 
-    // A half-full library, then a merge and a second restore each as large as admitted over it, and that restore's Undo.
+    // A quarter-full library, then a merge and a second restore each as large as admitted over it, and that restore's Undo.
+    // Core admits an operation over a library only when its recovery snapshot (the library's JSON) and the library it leaves
+    // fit the limit together, so a half-full library (step 0 run 6: 9 MiB, its JSON 7.7) admits no merge or restore at 15 MiB.
     await measureFreshInstall(limitMiB);
-    const base = measureFixture(`d1-mb-${shape}-base-${run}.json`, Math.max(1, Math.floor(limitMiB / 2)), shape, 'd1mh');
+    const base = measureFixture(`d1-mb-${shape}-base-${run}.json`, Math.max(1, Math.floor(limitMiB / 4)), shape, 'd1mh');
     push(base);
     await restoreFile(base);
     await toastWith(en['settings.backupMobile.restoreComplete'], 900_000);
@@ -868,6 +872,10 @@ const boundarySequence = async (shape, limitMiB, imports) => {
             await answerQuestion();
         }, (nodes) => hasText(nodes, en['settings.mergeBackup']) && !confirmButton(nodes), { ...options, sourceBytes: bytesOf(file) });
     });
+    // On its own half-full library: the merge's result passed the limit (S + L admits it, and the merge grows L by more than S).
+    await measureFreshInstall(limitMiB);
+    await restoreFile(base);
+    await toastWith(en['settings.backupMobile.restoreComplete'], 900_000);
     const over = await atAdmittedBoundary(room(), restoreAt('restore-over', 'd1mo'));
     if (over) {
         await measureRun(shape, 'undo', limitMiB, restoreNewestSnapshot,
