@@ -1013,6 +1013,42 @@ describe('ProjectDetailModal task sorting', () => {
         expect(onOpenOrganize).toHaveBeenCalledTimes(1);
     });
 
+    it('leaves task selection on Android Back before closing the project (#1415)', () => {
+        const onClose = vi.fn();
+        const onExitSelectionMode = vi.fn();
+        let tree!: ReturnType<typeof create>;
+
+        act(() => {
+            tree = create(<ProjectDetailModal {...createProjectDetailModalProps({ onClose })} />);
+        });
+        const modal = () => tree.root.findAll((node) => typeof node.props.onRequestClose === 'function' && node.props.allowSwipeDismissal)[0];
+        const taskListProps = taskListPropsSpy.mock.calls.at(-1)?.[0];
+
+        act(() => {
+            taskListProps.onBulkBarPropsChange({
+                bulkActionLabel: '',
+                bulkActionLoading: false,
+                handleBatchDelete: vi.fn(),
+                handleBatchMove: vi.fn(),
+                hasSelection: true,
+                onExitSelectionMode,
+                onOpenTagModal: vi.fn(),
+                onToggleRangeSelectMode: vi.fn(),
+                rangeSelectMode: false,
+                selectedCount: 1,
+                t: translate,
+                themeColors,
+            });
+        });
+        act(() => { modal().props.onRequestClose(); });
+        expect(onExitSelectionMode).toHaveBeenCalledTimes(1);
+        expect(onClose).not.toHaveBeenCalled();
+
+        act(() => { taskListProps.onBulkBarPropsChange(null); });
+        act(() => { modal().props.onRequestClose(); });
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
     it('reflects active filters as a direct compact Filters count', () => {
         let tree!: ReturnType<typeof create>;
 

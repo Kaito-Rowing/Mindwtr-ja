@@ -788,6 +788,15 @@ export function ProjectDetailModal({
         projectTaskBulkBarPropsRef.current = props;
         setProjectTaskBulkBarProps(props);
     }, []);
+    // The Modal takes Android Back before the task list's listener: leave selection mode first (#1415).
+    const handleRequestClose = React.useCallback(() => {
+        const bulkBar = projectTaskBulkBarPropsRef.current;
+        if (bulkBar) {
+            bulkBar.onExitSelectionMode();
+            return;
+        }
+        onClose();
+    }, [onClose]);
     const handleProjectListScroll = React.useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
         projectDetailScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
     }, []);
@@ -1669,7 +1678,7 @@ export function ProjectDetailModal({
             presentationStyle={presentationStyle}
             transparent={false}
             allowSwipeDismissal
-            onRequestClose={onClose}
+            onRequestClose={handleRequestClose}
             onDismiss={onDismiss}
         >
             {/* Android Modal content needs its own gesture root; the screen root does not cover Modal.

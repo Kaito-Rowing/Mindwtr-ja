@@ -336,6 +336,8 @@ const textOf = (node: ReactTestInstance): string[] => {
 const textsIn = (node: ReactTestInstance): string[] => node.findAll((child) => String(child.type) === 'Text')
   .map((child) => textOf(child).join(''));
 const hostsOf = (root: ReactTestInstance, type: string) => root.findAll((node) => String(node.type) === type);
+// A bulk button's name: its text, or the accessibility label of an icon-only button (the X exit).
+const buttonName = (node: ReactTestInstance): string | undefined => textsIn(node)[0] ?? node.props.accessibilityLabel;
 
 function observe(root: ReactTestInstance, seen: { alerts: number; toasts: number; writes: number }) {
   const chipRow = hostsOf(root, 'ScrollView').find((node) => node.props.horizontal && node.props.style !== undefined);
@@ -353,7 +355,7 @@ function observe(root: ReactTestInstance, seen: { alerts: number; toasts: number
   const empty = rows.length === 0 && emptyIcon ? [String(emptyIcon.type), ...textsIn(flatList)] : null;
   const bulkButtons = hostsOf(root, 'TouchableOpacity');
   const bulk = bulkButtons.length > 0
-    ? bulkButtons.map((node) => [textsIn(node)[0], node.props.disabled === true])
+    ? bulkButtons.map((node) => [buttonName(node), node.props.disabled === true])
     : null;
   const pickerNode = hostsOf(root, 'TokenPickerModal')[0];
   const picker = pickerNode?.props.visible
@@ -430,7 +432,7 @@ async function perform(root: ReactTestInstance, action: Action) {
     return;
   }
   if (kind === 'bulk') {
-    const button = hostsOf(root, 'TouchableOpacity').filter((node) => textsIn(node)[0] === action[1])[action[2] ?? 0];
+    const button = hostsOf(root, 'TouchableOpacity').filter((node) => buttonName(node) === action[1])[action[2] ?? 0];
     if (!button) throw new Error(`No bulk button ${action[1]}`);
     await act(async () => { await button.props.onPress(); });
     return;

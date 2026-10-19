@@ -106,6 +106,7 @@ vi.mock('react-native-gesture-handler', () => ({
 vi.mock('lucide-react-native', () => ({
   CheckCircle2: (props: any) => React.createElement('CheckCircle2', props),
   Tag: (props: any) => React.createElement('Tag', props),
+  X: (props: any) => React.createElement('X', props),
 }));
 
 vi.mock('react-native', async (importOriginal) => {
@@ -237,6 +238,30 @@ describe('ContextsView', () => {
     } finally {
       storeState.batchUpdateTasks = original;
       setTasks([]);
+    }
+  });
+
+  // Same exit as the task lists' bulk bar: an X icon button, not a "Done" text that reads like the task status (#1415).
+  it('exits selection with the X icon button labelled bulk.exitSelect', async () => {
+    storeState.tasks = [makeTask('task-1', 'First')];
+    storeState._tasksById = new Map(storeState.tasks.map((task) => [task.id, task]));
+    let tree!: ReactTestRenderer;
+    try {
+      await act(async () => { tree = create(<ContextsView />); });
+      const row = () => tree.root.find((node) => (node.type as unknown) === 'SwipeableTaskItem');
+      await act(async () => { row().props.actions.toggleSelect(row().props.task); });
+      expect(row().props.selectionMode).toBe(true);
+
+      const exit = tree.root.findAllByType(TouchableOpacity).find((node) => node.props.accessibilityLabel === 'bulk.exitSelect')!;
+      expect(exit.props.accessibilityRole).toBe('button');
+      expect(exit.findAll((node) => (node.type as unknown) === 'X')).toHaveLength(1);
+      expect(exit.findAll((node) => (node.type as unknown) === 'Text')).toHaveLength(0);
+
+      await act(async () => { exit.props.onPress(); });
+      expect(row().props.selectionMode).toBe(false);
+    } finally {
+      storeState.tasks = [];
+      storeState._tasksById = new Map();
     }
   });
 
