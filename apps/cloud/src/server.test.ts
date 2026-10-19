@@ -2074,6 +2074,29 @@ describe('cloud server api', () => {
         expect(await captureResponse.json()).toEqual({ error: 'Payload too large: the limit is 2000000 bytes' });
     });
 
+    test('a refusal that leaves the body unread tells the client to close the connection', async () => {
+        // A 413 answered from Content-Length leaves the body on the socket. A keep-alive client that
+        // reuses the connection sends its next request after those bytes (CI saw 431 for the capture above).
+        const { hostname, port } = new URL(baseUrl);
+        const body = JSON.stringify({ title: 'Too big', description: 'x'.repeat(3_000_000) });
+        const head = await new Promise<string>((resolve, reject) => {
+            const socket = connect(Number(port), hostname);
+            let received = '';
+            const timer = setTimeout(() => { socket.destroy(); reject(new Error('no response')); }, 3_000);
+            socket.on('data', (chunk) => {
+                received += chunk.toString('latin1');
+                const end = received.indexOf('\r\n\r\n');
+                if (end >= 0) { clearTimeout(timer); socket.destroy(); resolve(received.slice(0, end)); }
+            });
+            socket.on('error', reject);
+            socket.write(`POST /v1/tasks HTTP/1.1\r\nHost: ${hostname}\r\nAuthorization: ${authHeaders.Authorization}\r\n`
+                + `Content-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n`);
+            socket.write(body);
+        });
+        expect(head.split('\r\n')[0]).toBe('HTTP/1.1 413 Payload Too Large');
+        expect(head.toLowerCase().split('\r\n')).toContain('connection: close');
+    });
+
     test('uses the configured sync document limit for the data write only', async () => {
         stopServer?.();
         const isolatedServer = await startCloudServer({

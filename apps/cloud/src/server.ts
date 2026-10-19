@@ -1898,6 +1898,9 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                     }
                 })();
                 attachRequestId(response, requestId);
+                // A refusal that left the body unread (or stopped reading it) closes the connection, so a
+                // keep-alive client's next request is never parsed from the leftover body bytes.
+                if (req.body && (!req.bodyUsed || response.status === 413)) response.headers.set('Connection', 'close');
                 const completion: CloudRequestCompletion = {
                     requestId,
                     method: req.method,
