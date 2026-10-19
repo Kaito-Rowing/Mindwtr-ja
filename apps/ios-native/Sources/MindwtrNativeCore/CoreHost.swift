@@ -26519,6 +26519,17 @@ private final class Engine: @unchecked Sendable {
                 })
         } catch { throw Self.projectFileAddFailure }
     }
+    /// Keep-only reference identity, as core `normalizeAttachmentCleanupUri`: one file's
+    /// percent-encoded and plain spellings, and `/private/var` vs `/var`, compare equal.
+    /// Never use it as a file-operation path.
+    static func attachmentReferenceIdentity(_ uri: String) -> String? {
+        let lower = uri.lowercased()
+        if lower.hasPrefix("http://") || lower.hasPrefix("https://") || uri.hasPrefix("content://") { return nil }
+        var path = (lower.hasPrefix("file://") ? String(uri.dropFirst("file://".count)) : uri).replacingOccurrences(of: "\\", with: "/")
+        path = path.removingPercentEncoding ?? path
+        if path.hasPrefix("/private/var/") { path.removeFirst("/private".count) }
+        return path
+    }
     private func durableAttachmentReferenceRetirement(targetURI: String, cancellation: NativeAttachmentCancellation,
                                                       retainDurableReference: Bool = false,
                                                       requireOwner: () throws -> Void, retire: () throws -> String) throws -> String {
@@ -26534,10 +26545,8 @@ private final class Engine: @unchecked Sendable {
             let raw = try db.execute("SELECT attachments FROM tasks UNION ALL SELECT attachments FROM projects")
             guard raw.utf8.count <= Self.ownedSaveMaximumBytes + 4_000_000,
                   let rows = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [[String: Any]], rows.count == count.intValue else { throw Self.ownedDiscardFailure }
-            var spellings = [targetURI]
-            if targetURI.hasPrefix("file:///private/var/") { spellings.append("file:///var/" + String(targetURI.dropFirst("file:///private/var/".count))) }
-            else if targetURI.hasPrefix("file:///var/") { spellings.append("file:///private/var/" + String(targetURI.dropFirst("file:///var/".count))) }
-            var referenced = false
+            guard let targetIdentity = Self.attachmentReferenceIdentity(targetURI) else { throw Self.ownedDiscardFailure }
+            var referenced = false, respelled = false
             for row in rows {
                 guard Set(row.keys) == Set(["attachments"]), let value = row["attachments"] else { throw Self.ownedDiscardFailure }
                 if value is NSNull { continue }
@@ -26548,11 +26557,14 @@ private final class Engine: @unchecked Sendable {
                     if kind == "file" {
                         guard let uri = attachment["uri"] as? String, uri.utf8.count <= 16 * 1024 else { throw Self.ownedDiscardFailure }
                         // Deleted parents/tombstones also keep conservatively.
-                        if spellings.contains(where: { Self.ownedEqual($0, uri) }) { referenced = true }
+                        if Self.attachmentReferenceIdentity(uri).map({ Self.ownedEqual($0, targetIdentity) }) == true {
+                            referenced = true; respelled = respelled || !Self.ownedEqual(uri, targetURI)
+                        }
                     }
                 }
             }
             try requireOwner(); try cancellation.check()
+            if respelled { NSLog("Native iOS durable attachment reference matched another spelling releaseCheck=v1.3.7/ios-reference-spelling outcome=kept") }
             if referenced {
                 guard retainDurableReference else { throw Self.ownedDiscardFailure }
                 _ = try db.execute("ROLLBACK"); locked = false
