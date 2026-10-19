@@ -120,7 +120,6 @@ final class HostIOFaults {
     var commandDiagnostic: ((String) -> Void)?
     var configureDeviceStorage: ((NativeDeviceKV) -> Void)?
     var httpConfiguration: URLSessionConfiguration?
-    var httpLoopbackOrigin: URL?
     var httpTimeout: TimeInterval?
     var httpByteLimit: Int?
     var configureHTTPJobs: ((NativeHTTPJobs) -> Void)?
