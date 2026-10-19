@@ -61,7 +61,10 @@ final class NativePomodoroHostTests: XCTestCase {
         let initial = host(); _ = try await initial.start()
         _ = try await initial.writePomodoroTransition(requestJSON: request("initialize")); await initial.close()
         var settings = try object(XCTUnwrap(rows("SELECT data FROM settings WHERE id=1").first?["data"] as? String))
-        settings["deviceId"] = device; try rows("UPDATE settings SET data=? WHERE id=1", [json(settings)])
+        settings["deviceId"] = device
+        // The fixed `at` date ages past the default 7-day auto-archive, which then archives a done fixture on boot; 0 turns it off.
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]; gtd["autoArchiveDays"] = 0; settings["gtd"] = gtd
+        try rows("UPDATE settings SET data=? WHERE id=1", [json(settings)])
         try rows("INSERT INTO tasks(id,title,status,contexts,tags,createdAt,updatedAt,rev,revBy,timeSpentMinutes,isFocusedToday,pushCount,showFutureRecurrence,suppressMindwtrReminders) VALUES ('task','PRIVATE',?,'[]','[]',?,?,1,?,?,0,0,0,0)", [status, at, at, device, minutes])
         var state = try object(XCTUnwrap(rows("SELECT state_json FROM native_pomodoro_session").first?["state_json"] as? String))
         var session = try XCTUnwrap(state["session"] as? [String: Any]), timer = try XCTUnwrap(session["timerState"] as? [String: Any])
