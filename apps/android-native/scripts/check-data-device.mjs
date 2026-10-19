@@ -680,6 +680,12 @@ const answerQuestion = async () => {
         || current.some((node) => /failed|too large/i.test(node.text ?? '')), 900_000);
     if (confirmButton(asked)) await tap(confirmButton(asked));
 };
+/** A setup restore's result: Restore complete, or the run stops on its failure toast (not a 15 min wait for success). */
+const restoredOrStop = async () => {
+    const nodes = await waitFor('the restore\'s result', (current) => (hasText(current, en['settings.backupMobile.restoreComplete']) && !confirmButton(current))
+        || hasText(current, en['settings.backupMobile.restoreFailed']), 900_000);
+    if (!hasText(nodes, en['settings.backupMobile.restoreComplete'])) fail(`a setup restore failed: ${nodes.map((node) => node.text).filter(Boolean).join(' | ')}`);
+};
 const restoreFile = async (file) => {
     await openData();
     await tap(tagged(await screen(), 'data-transfer-restore'));
@@ -830,19 +836,18 @@ const boundarySequence = async (shape, limitMiB, imports) => {
     const restoreAt = (workload, prefix) => async (size) => {
         const file = measureFixture(`d1-mb-${shape}-${workload}-${size}-${run}.json`, size, shape, prefix);
         push(file);
-        return measureRun(shape, workload, limitMiB, () => restoreFile(file), (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']), { ...options, sourceBytes: bytesOf(file) });
+        return { ...await measureRun(shape, workload, limitMiB, () => restoreFile(file), (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']), { ...options, sourceBytes: bytesOf(file) }), file };
     };
     await measureFreshInstall(limitMiB);
     const fresh = await atAdmittedBoundary(limitMiB, restoreAt('restore-fresh', 'd1mf'));
     if (!fresh) return;
-    const filled = measureFixture(`d1-mb-${shape}-filled-${run}.json`, fresh.row.sourceMiB, shape, 'd1mf');
-    push(filled);
     // The Undo of that restore, stopped before its send: the start reads the full library, then replays the Undo.
     await measureRecoveryBoot(shape, limitMiB, restoreNewestSnapshot, options);
     // A fresh install again: the Undo left the restore's rows as tombstones, and that library plus the file passes the limit.
     await measureFreshInstall(limitMiB);
-    await restoreFile(filled);
-    await toastWith(en['settings.backupMobile.restoreComplete'], 900_000);
+    // The admitted file itself: a fixture rebuilt from its size comes out larger (step 0 run 6: 11.8 MiB from 10.7, refused).
+    await restoreFile(fresh.file);
+    await restoredOrStop();
     setProp('export_tree', TREE);
     for (const [workload, tag, suffix] of [['export-json', 'data-transfer-export', '.json'], ['export-csv', 'data-transfer-export-csv', '.csv']]) {
         const before = exportsOnPhone();
@@ -862,7 +867,7 @@ const boundarySequence = async (shape, limitMiB, imports) => {
     const base = measureFixture(`d1-mb-${shape}-base-${run}.json`, Math.max(1, Math.floor(limitMiB / 4)), shape, 'd1mh');
     push(base);
     await restoreFile(base);
-    await toastWith(en['settings.backupMobile.restoreComplete'], 900_000);
+    await restoredOrStop();
     const room = () => Math.max(1, Math.floor(limitMiB - libraryNowMiB('mb-room') - 0.5));
     await atAdmittedBoundary(room(), async (size) => {
         const file = measureFixture(`d1-mb-${shape}-merge-${size}-${run}.json`, size, shape, 'd1mm');
@@ -875,7 +880,7 @@ const boundarySequence = async (shape, limitMiB, imports) => {
     // On its own half-full library: the merge's result passed the limit (S + L admits it, and the merge grows L by more than S).
     await measureFreshInstall(limitMiB);
     await restoreFile(base);
-    await toastWith(en['settings.backupMobile.restoreComplete'], 900_000);
+    await restoredOrStop();
     const over = await atAdmittedBoundary(room(), restoreAt('restore-over', 'd1mo'));
     if (over) {
         await measureRun(shape, 'undo', limitMiB, restoreNewestSnapshot,
