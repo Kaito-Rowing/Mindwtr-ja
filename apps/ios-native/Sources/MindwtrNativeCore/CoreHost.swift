@@ -12100,6 +12100,13 @@ private final class Engine: @unchecked Sendable {
             }
             preparedSomedaySectionTaskEnvelope = nil
         }
+        if method == "captureLinesSubmit" {
+            // Lines prepare, commit and finish in one call. Inside prepareCallCommand's frame, finish's plan check
+            // entered JavaScriptCore with too little of the 512 KiB queue stack left and overflowed.
+            let result = try submitCaptureLines(args)
+            NSLog("Native iOS capture lines ran outside command preparation releaseCheck=v1.3.7/ios-capture-lines-stack outcome=returned")
+            return result
+        }
         let command: PendingCommand
         let preparation = try prepareCallCommand(method, argumentsJSON: argumentsJSON, args: args,
             editorAttempt: editorAttempt, freshPomodoroRequest: freshPomodoroRequest)
@@ -13991,8 +13998,6 @@ private final class Engine: @unchecked Sendable {
                     _ = try invoke("boardValidate", arguments: journalArguments(command))
                 }
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
-        } else if method == "captureLinesSubmit" {
-            return .result(try submitCaptureLines(args))
         } else if method == "captureSubmit" {
             try allowRetainedOrdinaryPreparation()
             do {
