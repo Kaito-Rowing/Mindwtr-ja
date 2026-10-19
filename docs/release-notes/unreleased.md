@@ -2,6 +2,7 @@
 
 Changes collected since the latest stable release.
 
+- Android: Back now leaves multi-select in task lists, projects, Contexts, Review and Trash, instead of leaving the screen or closing the project. The Contexts selection bar uses the same X button and compact buttons as Inbox, so there is no "Done" button next to the Done status (#1415).
 - Sync: an attachment another device changed is no longer overwritten by this device's older copy when its download is delayed (a failed download, the per-sync download limit, or a sync that ended early). The older file now waits for the newer version instead of being uploaded as a local edit.
 - Sync: settings pages, saved filters, the task editor, Process Inbox and the project sheet no longer put back values another device synced while they were open. Only what you changed is saved, and lists (tags, contexts, checklist items, attachments) merge item by item, so nothing another device added or removed is lost.
 - Sync: an edit made while a sync was saving no longer overwrites what another device had just synced. Attachments, checklist items, tags and contexts, Someday section moves and Undo now apply to the task or project as sync left it, so the other device's change stays.
