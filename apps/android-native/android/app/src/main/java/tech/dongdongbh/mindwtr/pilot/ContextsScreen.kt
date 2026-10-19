@@ -1,5 +1,6 @@
 package tech.dongdongbh.mindwtr.pilot
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,7 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
@@ -65,6 +65,8 @@ fun ContextsList(model: InboxViewModel) = with(model.menu) {
     val theme = LocalTheme.current
     val bulk = view.optJSONObject("bulk")
     val selected = view.optJSONArray("selectedIds").ids()
+    // Back leaves selection mode before the screen (RN's useTaskListSelection); an open dialog takes Back first.
+    BackHandler(enabled = bulk != null && dialog == null && model.failedAction == null) { endSelection(); reload() }
     LazyColumn(Modifier.fillMaxSize().testTag("contexts-list"), contentPadding = PaddingValues(bottom = 16.dp)) {
         item(key = "search") {
             Box(Modifier.fillMaxWidth().background(c.cardBg).hairline(c.border, top = false).padding(12.dp)) {
@@ -133,43 +135,37 @@ fun ContextsList(model: InboxViewModel) = with(model.menu) {
 }
 
 /**
- * RN's Contexts bulk bar: core's count and Done, core's statuses, then core's token actions and Delete (core's question first). Each
- * sends the selection with [revisions], the view's taskRevisions for it.
+ * RN's Contexts bulk bar, in the look of the task lists' bar (BulkBar): core's count and the X exit, core's statuses, then core's
+ * token actions and Delete (core's question first). Each sends the selection with [revisions], the view's taskRevisions for it.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ContextsBulkBar(model: InboxViewModel, bulk: JSONObject, selected: List<String>, revisions: JSONObject) = with(model.menu) {
     val c = LocalTheme.current.colors
-    Column(Modifier.fillMaxWidth().background(c.cardBg).hairline(c.border, top = false).padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(bulk.getString("countLabel"), style = rnText(13, 600), color = c.secondaryText)
-            PillChip(bulk.getString("exitLabel"), c.text, idle) { endSelection(); reload() }
+    val any = idle && selected.isNotEmpty()
+    Column(Modifier.fillMaxWidth().background(c.cardBg).hairline(c.border, top = false).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(bulk.getString("countLabel"), style = rnText(12, 600), color = c.secondaryText, modifier = Modifier.weight(1f))
+            BulkExitButton(bulk.getString("exitLabel"), idle) { endSelection(); reload() }
         }
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for (status in bulk.menuObjects("statuses")) {
-                PillChip(status.getString("label"), c.text, idle && selected.isNotEmpty()) { act("contextsAction", moveTasks(selected, status.getString("status"), revisions)) }
+                BarButton(status.getString("label"), any, c.filterBg, c.text, weight = 500) { act("contextsAction", moveTasks(selected, status.getString("status"), revisions)) }
             }
         }
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (token in bulk.menuObjects("tokenActions")) {
-                PillChip(token.getString("title"), c.text, idle && token.getBoolean("enabled")) {
+                BarButton(token.getString("title"), any && token.getBoolean("enabled"), c.filterBg, c.text) {
                     keepDialog(JSONObject().put("kind", "tokens").put("list", "contexts").put("field", token.getString("field"))
                         .put("mode", token.getString("mode")).put("text", "").put("picked", JSONArray()))
                 }
             }
-            PillChip(bulk.getString("deleteLabel"), c.text, idle && selected.isNotEmpty()) {
+            BarButton(bulk.getString("deleteLabel"), any, c.filterBg, c.text) {
                 confirm(bulk.getJSONObject("deleteConfirmation"), trashTasks(selected, revisions), "contextsAction")
             }
         }
     }
-}
-
-/** RN's round bulk button (Contexts): bordered, the filter background, 13/600, dimmed while disabled. */
-@Composable
-fun PillChip(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
-    val c = LocalTheme.current.colors
-    Text(label, style = rnText(13, 600), color = color, modifier = Modifier.fade(if (enabled) 1f else 0.5f).clip(CircleShape).background(c.filterBg).border(1.dp, c.border, CircleShape)
-        .clickable(enabled = enabled, role = Role.Button, onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp))
 }
 
 /** RN's search input on a list (Contexts): 40 high, radius 8, the input background, core's placeholder; the text as typed. */
