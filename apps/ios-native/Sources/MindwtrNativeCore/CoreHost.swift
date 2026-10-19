@@ -8737,7 +8737,7 @@ private final class Engine: @unchecked Sendable {
         try attachmentDraftHooks?.boundary?(before)
         #endif
         _ = try requireMixedSaveAuthority(command, turn: turn, cancellation: cancellation, promotion: true, proposedState: state)
-        let data = try JSONEncoder().encode(command)
+        let data = try ownedEncoded(command)
         guard data.count <= Self.ownedSaveMaximumBytes else { throw Self.ownedSaveFailure }
         #if DEBUG
         try faults?.journalWrite?()
@@ -26659,7 +26659,7 @@ private final class Engine: @unchecked Sendable {
             try faults?.journalWrite?()
             #endif
             try requireCalendarSubscriptionSettingTurn()
-            let bytes = try JSONEncoder().encode(command)
+            let bytes = try ownedEncoded(command)
             do { try DurableFile.write(bytes, to: journalURL, privateDraft: operation == .add) }
             catch {
                 if (try? readJournalBytes(maximumBytes: Self.calendarSubscriptionSettingJournalLimit, failure: Self.deviceStorageUnavailable, singleLink: true)) == bytes { turn.journal = bytes }
@@ -26707,7 +26707,7 @@ private final class Engine: @unchecked Sendable {
                 try DurableFile.write(data, to: journalURL, privateDraft: true)
                 return
             }
-            let data = try JSONEncoder().encode(command)
+            let data = try ownedEncoded(command)
             guard data.count <= Self.ownedSaveMaximumBytes else { throw Self.ownedSaveFailure }
             if command.method == Self.ownedDiscardMethod { _ = try ownedDiscardJournal(command, checkingNative: false) }
             else { _ = try ownedSaveJournal(command, checkingNative: false) }
@@ -26733,7 +26733,7 @@ private final class Engine: @unchecked Sendable {
         try faults?.journalWrite?()
         #endif
         try requireRetainedOrdinaryTurn(requirePreparation: true)
-        let bytes = try JSONEncoder().encode(command)
+        let bytes = try ownedEncoded(command)
         if boardOrderEnvelope(command) != nil {
             guard bytes.count <= Self.boardOrderJournalLimit else { throw HostFailure("INVALID_INPUT: Board order journal exceeds native byte budget") }
         }
