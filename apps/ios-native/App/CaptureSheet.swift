@@ -99,7 +99,9 @@ struct CaptureSheet: View {
                     .accessibilityIdentifier("capture-title")
                 Spacer()
                 Button { model.requestCaptureClose() } label: {
-                    AppIcon(name: "x", size: 18).foregroundStyle(palette.secondary).frame(width: 48, height: 36)
+                    // RN closeButton: 48x48 hit area with -6pt vertical margins (36pt of layout).
+                    AppIcon(name: "x", size: 18).foregroundStyle(palette.secondary).frame(width: 48, height: 48)
+                        .contentShape(Rectangle()).padding(.vertical, -6)
                 }
                 .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
                 .accessibilityLabel(copy.text("close")).accessibilityIdentifier("capture-close")
@@ -121,12 +123,7 @@ struct CaptureSheet: View {
                 }
                 .background(palette.input, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1))
-                Button {} label: {
-                    AppIcon(name: "mic", size: 16).frame(width: 40, height: 40)
-                        .background(palette.filter, in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1))
-                }
-                .buttonStyle(.plain).disabled(true).accessibilityLabel(model.label("quickAdd.audioRecord"))
+                // ponytail: no mic until native audio capture exists; RN's recorder button returns with it.
             }
 
             if !model.capture.objects("preview").isEmpty {
