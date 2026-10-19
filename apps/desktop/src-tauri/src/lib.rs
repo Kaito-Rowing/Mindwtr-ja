@@ -1879,8 +1879,12 @@ pub fn run() {
                     .find(|window| window.label == "main")
                     .cloned()
                     .ok_or("main window config missing")?;
+                // WebKitGTK refuses navigator.clipboard.writeText once the click's user
+                // activation is gone, which a menu path can lose (#1327). Clipboard access
+                // drops that gesture check; the webview only runs Mindwtr's own UI.
                 let mut main_window_builder =
-                    tauri::WebviewWindowBuilder::from_config(app.handle(), &main_window_config)?;
+                    tauri::WebviewWindowBuilder::from_config(app.handle(), &main_window_config)?
+                        .enable_clipboard_access();
                 if let Some(webview_dir) = crate::storage::portable_webview_data_dir() {
                     let _ = std::fs::create_dir_all(&webview_dir);
                     main_window_builder = main_window_builder.data_directory(webview_dir);
