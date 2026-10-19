@@ -21844,16 +21844,31 @@ final class CoreModel: ObservableObject {
         inboxBulkOrganizeReading = true
         inboxBulkOrganizeTask = Task {
             defer {
-                if generation == inboxBulkOrganizeGeneration { inboxBulkOrganizeReading = false; inboxBulkOrganizeTask = nil }
+                if generation == inboxBulkOrganizeGeneration {
+                    inboxBulkOrganizeReading = false; inboxBulkOrganizeTask = nil
+                    // Edits left behind a busy or stale interval keep the dialog not current; show Retry.
+                    if !inboxBulkOrganizeCurrent, inboxBulkOrganizeReadError == nil {
+                        inboxBulkOrganizeReadError = label("settings.feedback.actionFailed")
+                    }
+                }
             }
             while current(), !inboxBulkOrganizePendingEdits.isEmpty {
                 let edit = inboxBulkOrganizePendingEdits.removeFirst()
                 do {
                     let bulk = try await inboxOrganizeRead(edit: edit, current: current)
-                    guard !Task.isCancelled, current() else { return }
+                    // The read is a pure projection, so a not-installed edit is safe to replay.
+                    guard !Task.isCancelled, current() else {
+                        // Only the dialog generation that queued the edit may keep it.
+                        if generation == inboxBulkOrganizeGeneration { inboxBulkOrganizePendingEdits.insert(edit, at: 0) }
+                        return
+                    }
                     installInboxOrganizeView(bulk)
                 } catch {
-                    guard !Task.isCancelled, current() else { return }
+                    guard !Task.isCancelled, current() else {
+                        // Only the dialog generation that queued the edit may keep it.
+                        if generation == inboxBulkOrganizeGeneration { inboxBulkOrganizePendingEdits.insert(edit, at: 0) }
+                        return
+                    }
                     // A rejected partial text edit must not strand a newer correction behind it.
                     if edit.text("type") == "setText", inboxBulkOrganizePendingEdits.contains(where: {
                         $0.text("type") == "setText" && $0.text("field") == edit.text("field")
