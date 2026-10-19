@@ -563,4 +563,25 @@ describe('Reference prompt transactional receipt prerequisite', () => {
             const later = await raw(sqlite); value(await sqlite.host.commitPreparedReferenceProjectNextAction(envelope as never)); expect(await raw(sqlite)).toEqual(later);
         } finally { race = false; transactionReadFailure = false; await sqlite.close(); }
     }, 15_000);
+    it('creates the Add row under Skip as RN addTask does, and replays an earlier Send row unchanged', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(NOW));
+        const sqlite = await openSqliteHost(seed());
+        try { const proof = await origin(sqlite); const options = value(await sqlite.host.getReferenceProjectNextActionOptions({ origin: proof, params: { offset: 0, revision: null } }))!;
+            const add = (requestId: string) => ({ requestId, origin: options.origin, promptRevision: options.promptRevision, action: 'add' as const, text: 'Reminder default', openAfterSave: false });
+            const sendRequest = add('00000000-0000-4000-8000-000000000195');
+            const sent = value(await sqlite.host.prepareReferenceProjectNextAction({ request: sendRequest, origin: proof })).prepared;
+            if (sent.operation.kind !== 'add') throw new Error('Expected Add');
+            expect(sent.operation.task.suppressMindwtrReminders).toBe(false);
+            await useTaskStore.getState().updateSettings({ taskReminderDefault: 'skip' }); await flushPendingSave();
+            const request = add(WRITE);
+            const prepared = value(await sqlite.host.prepareReferenceProjectNextAction({ request, origin: proof })).prepared;
+            if (prepared.operation.kind !== 'add') throw new Error('Expected Add');
+            expect(prepared.operation.task.suppressMindwtrReminders).toBe(true);
+            expect(value(await sqlite.host.commitPreparedReferenceProjectNextAction({ request, prepared }))).toEqual(prepared.result);
+            expect(useTaskStore.getState()._tasksById.get(prepared.operation.task.id)?.suppressMindwtrReminders).toBe(true);
+            expect(value(sqlite.host.validatePreparedReferenceProjectNextAction({ request: sendRequest, prepared: sent }))).toEqual(sent.result);
+            const ordinary = await useTaskStore.getState().addTask('Reference', { projectId: 'project' });
+            expect(useTaskStore.getState()._tasksById.get(ordinary.id!)?.suppressMindwtrReminders).toBe(true);
+        } finally { await sqlite.close(); }
+    });
 });

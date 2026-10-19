@@ -18,6 +18,7 @@ import { normalizeProjectLifecycleFields } from './project-status';
 import { prepareTaskUpdatesForStore, planTaskUpdateEffects } from './store-tasks';
 import { projectLifecycleEffect } from './store-projects/project-actions';
 import { buildNewTask } from './task-creation';
+import { getTaskReminderDefault } from './task-reminder-policy';
 import { parseProjectNextActionInput, isNaturalLanguageDatesEnabled } from './quick-add';
 import { normalizeClockTimeInput } from './date';
 import { ensureDeviceId, getNextProjectOrder } from './store-helpers';
@@ -232,10 +233,15 @@ const validIntent = (v: unknown, context: NativeProjectNextActionContext): v is 
             && typeof a.id === 'string' && UUID.test(a.id) && a.kind === 'link' && text(a.title, 100_000) && text(a.uri, 100_000)
             && iso(a.createdAt) && a.createdAt === a.updatedAt);
 };
-const addTask = (op: AddOperation): Task => {
+// The intent cannot carry a reminder policy, so the new row inherits the library
+// default and its suppression flag records that default. The journal shape (which
+// Swift checks exactly) stays unchanged: rows written before Skip was honored
+// carry `false`, which replays as Send, exactly as they were prepared.
+const frozenReminderDefault = (task: Task): 'send' | 'skip' => task.suppressMindwtrReminders === true ? 'skip' : 'send';
+const addTask = (op: AddOperation, taskReminderDefault = frozenReminderDefault(op.task)): Task => {
     const { creation: c } = op; const f = c.focus; const props = c.intent.props;
     const built = buildNewTask({ title: c.intent.title, initialTaskProps: props, id: op.task.id, now: op.updateAt,
-        deviceId: op.deviceIdBefore ?? op.deviceIdToInitialize!, state: { settings: {}, _allProjects: [c.containers.project],
+        deviceId: op.deviceIdBefore ?? op.deviceIdToInitialize!, state: { settings: { taskReminderDefault }, _allProjects: [c.containers.project],
             _allSections: c.containers.section ? [c.containers.section] : [], _allAreas: c.containers.areas },
         tasks: f?.lists.tasks ?? [], focusedCount: f?.focusCount ?? 0, focusTaskLimit: f?.focusLimit ?? 1,
         projectOrderReserver: (id) => { if (id !== c.projectOrder.projectId) throw new Error('Unknown creation order'); return c.projectOrder.max + 1; },
@@ -530,7 +536,7 @@ export function createReferenceProjectNextActionMethods(deps: { readiness: () =>
                     const op: AddOperation = { kind: 'add', creation: { intent, containers: { project, section, areas },
                         projectOrder: { projectId: project.id, max: (getNextProjectOrder(project.id, lists.tasks) ?? 0) - 1 }, focus },
                         task: { id } as Task, ...deviceFields, updateAt: creationAt };
-                    op.task = addTask(op); operation = op; result = { action: 'add', id, openAfterSave: request.openAfterSave };
+                    op.task = addTask(op, getTaskReminderDefault(data.settings)); operation = op; result = { action: 'add', id, openAfterSave: request.openAfterSave };
                     rawBefore = { tasks: [{ id, before: null }], projects: [], sections: [] };
                 } else {
                     if (context.scope !== 'project') return fail('INVALID_INPUT', 'This section prompt cannot complete its project');
