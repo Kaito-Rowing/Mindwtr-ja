@@ -37229,7 +37229,9 @@ extension CoreHostTests {
             }
             if self.archive180IsDomainWrite(statement) { writes += 1 }
         }
-        await expectFailure("STALE_REVISION") { _ = try await core.call("inboxTasksMoveWrite", argumentsJSON: json([json(request)])) }
+        // The shared core's BEGIN epoch fence refuses any commit that landed after its last read as SAVE_FAILED, with no receipt
+        // (native-host-contract-inbox-bulk-status.test.ts, "uses the actual production BEGIN epoch fence").
+        await expectFailure("SAVE_FAILED: SQLITE_BUSY") { _ = try await core.call("inboxTasksMoveWrite", argumentsJSON: json([json(request)])) }
         XCTAssertTrue(changed); XCTAssertEqual(writes, 0)
         let saved = try SQLiteBridge(url: database)
         XCTAssertEqual(try nineTableSnapshot(saved), try XCTUnwrap(externallyChanged)); XCTAssertEqual(try doneTask176Receipts(saved), try XCTUnwrap(originalReceipts))
