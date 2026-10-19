@@ -19,9 +19,9 @@ import { prepareTaskUpdatesForStore, planTaskUpdateEffects } from './store-tasks
 import { projectLifecycleEffect } from './store-projects/project-actions';
 import { buildNewTask } from './task-creation';
 import { getTaskReminderDefault } from './task-reminder-policy';
-import { parseProjectNextActionInput, isNaturalLanguageDatesEnabled } from './quick-add';
-import { normalizeClockTimeInput } from './date';
-import { ensureDeviceId, getNextProjectOrder } from './store-helpers';
+import { buildQuickAddParseOptions, parseProjectNextActionInput } from './quick-add';
+import { ensureDeviceId, getNextProjectOrder, selectVisiblePeople, selectVisibleTasks } from './store-helpers';
+import { isTimeEstimate } from './native-host-contract-menu-views';
 import { countFocusedTasksBeforeBoundary, projectFocusDateValues, type FocusDateProjection } from './task-utils';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import { generateUUID } from './uuid';
@@ -210,7 +210,7 @@ const trimChooseOperation = (request: Extract<NativeReferenceProjectNextActionRe
 };
 const validDevice = (op: { deviceIdBefore: string | null; deviceIdToInitialize: string | null }) => op.deviceIdBefore === null
     ? typeof op.deviceIdToInitialize === 'string' && UUID.test(op.deviceIdToInitialize) : text(op.deviceIdBefore, 500) && op.deviceIdToInitialize === null;
-const creationKeys = ['status', 'projectId', 'sectionId', 'areaId', 'startTime', 'dueDate', 'reviewAt', 'description', 'contexts', 'tags', 'priority', 'energyLevel', 'assignedTo', 'attachments', 'isFocusedToday'];
+const creationKeys = ['status', 'projectId', 'sectionId', 'areaId', 'startTime', 'dueDate', 'reviewAt', 'description', 'contexts', 'tags', 'priority', 'energyLevel', 'assignedTo', 'attachments', 'isFocusedToday', 'timeEstimate'];
 const validResolvedDate = (v: unknown): boolean => iso(v) || typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
     && Number.isFinite(Date.parse(`${v}T00:00:00Z`)) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v;
 const validIntent = (v: unknown, context: NativeProjectNextActionContext): v is NativeProjectNextActionResolvedIntent => {
@@ -227,6 +227,7 @@ const validIntent = (v: unknown, context: NativeProjectNextActionContext): v is 
         || ['tags', 'contexts'].some((k) => p[k] !== undefined && (!Array.isArray(p[k]) || p[k].length > 1000 || !p[k].every((s: unknown) => text(s, 1000))))
         || p.priority !== undefined && !['low', 'medium', 'high', 'urgent'].includes(String(p.priority))
         || p.energyLevel !== undefined && !['low', 'medium', 'high'].includes(String(p.energyLevel))
+        || p.timeEstimate !== undefined && !isTimeEstimate(p.timeEstimate)
         || p.isFocusedToday !== undefined && p.isFocusedToday !== true) return false;
     return p.attachments === undefined || Array.isArray(p.attachments) && p.attachments.length <= 1000 && unique(p.attachments as { id: string }[])
         && p.attachments.every((a) => record(a) && exact(a, ['id', 'kind', 'title', 'uri', 'createdAt', 'updatedAt'])
@@ -519,9 +520,8 @@ export function createReferenceProjectNextActionMethods(deps: { readiness: () =>
                     rawBefore = rawBeforeOf(data, op.effect.tasks, op.effect.projects, op.effect.sections);
                 } else if (request.action === 'add') {
                     const parsed = parseProjectNextActionInput(request.text, { projectId: context.project.id, sectionId: context.section?.id,
-                        projects: lists.projects, areas: lists.areas, parseOptions: {
-                            defaultScheduleTime: normalizeClockTimeInput(data.settings.gtd?.defaultScheduleTime) || undefined,
-                            preserveText: data.settings.quickAddAutoClean !== true, naturalLanguageDates: isNaturalLanguageDatesEnabled(data.settings) } });
+                        projects: lists.projects, areas: lists.areas, parseOptions: buildQuickAddParseOptions(data.settings,
+                            { tasks: selectVisibleTasks(lists.tasks), _allTasks: lists.tasks, people: selectVisiblePeople(data.people ?? []) }) });
                     const intent = { title: parsed.title, props: parsed.props };
                     if (!validIntent(intent, context)) return fail('INVALID_INPUT', 'Resolved next action cannot be represented safely');
                     const project = lists.projects.find((r) => r.id === intent.props.projectId)!;

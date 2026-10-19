@@ -584,4 +584,25 @@ describe('Reference prompt transactional receipt prerequisite', () => {
             expect(useTaskStore.getState()._tasksById.get(ordinary.id!)?.suppressMindwtrReminders).toBe(true);
         } finally { await sqlite.close(); }
     });
+    it('parses Add with the shared quick-add options: feature gates, time estimates and known people, as the RN prompt does', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(NOW));
+        const start = seed(); start.settings = { ...start.settings!, features: { priorities: false, timeEstimates: true } };
+        start.people = [{ id: 'person-john', name: 'John Smith', createdAt: NOW, updatedAt: NOW }];
+        const sqlite = await openSqliteHost(start);
+        try { const proof = await origin(sqlite); const options = value(await sqlite.host.getReferenceProjectNextActionOptions({ origin: proof, params: { offset: 0, revision: null } }))!;
+            const prepare = async (requestId: string, text: string) => {
+                const request = { requestId, origin: options.origin, promptRevision: options.promptRevision, action: 'add' as const, text, openAfterSave: false };
+                const prepared = value(await sqlite.host.prepareReferenceProjectNextAction({ request, origin: proof })).prepared;
+                if (prepared.operation.kind !== 'add') throw new Error('Expected Add');
+                expect(value(sqlite.host.validatePreparedReferenceProjectNextAction({ request, prepared }))).toEqual(prepared.result);
+                return prepared.operation.creation.intent;
+            };
+            const gated = await prepare('00000000-0000-4000-8000-000000000196', 'Call /priority:high');
+            expect(gated.props.priority).toBeUndefined(); expect(gated.title).toBe('Call /priority:high');
+            const estimated = await prepare('00000000-0000-4000-8000-000000000197', 'Draft /estimate:30m');
+            expect(estimated.props.timeEstimate).toBe('30min'); expect(estimated.title).toBe('Draft');
+            const assigned = await prepare('00000000-0000-4000-8000-000000000198', 'Ask %John Smith');
+            expect(assigned.props.assignedTo).toBe('John Smith'); expect(assigned.title).toBe('Ask');
+        } finally { await sqlite.close(); }
+    });
 });
