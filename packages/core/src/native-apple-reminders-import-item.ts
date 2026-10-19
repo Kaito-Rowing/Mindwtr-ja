@@ -79,7 +79,12 @@ const readFactory = (value: unknown): NativeAppleReminderImportFactory => {
     return value as NativeAppleReminderImportFactory;
 };
 
-export function prepareNativeAppleReminderImportItem(input: unknown): PreparedNativeAppleReminderImportItem | null {
+/**
+ * `taskReminderDefault` is the library default a new row inherits. Validation reads it back from
+ * the frozen row's suppression flag, so the plan keeps its version-1 shape.
+ */
+export function prepareNativeAppleReminderImportItem(input: unknown,
+    taskReminderDefault: 'send' | 'skip' = 'send'): PreparedNativeAppleReminderImportItem | null {
     const value = detach(input);
     if (!exact(value, ['request', 'target', 'factory'])) invalid();
     const request = readRequest(value.request);
@@ -99,7 +104,8 @@ export function prepareNativeAppleReminderImportItem(input: unknown): PreparedNa
     }
     const factory = readFactory(value.factory);
     const areaId = factory.effectiveDefaultAreaId;
-    const settings: AppSettings = { gtd: areaId ? { defaultAreaMode: 'fixed', defaultAreaId: areaId } : { defaultAreaMode: 'none' } };
+    const settings: AppSettings = { gtd: areaId ? { defaultAreaMode: 'fixed', defaultAreaId: areaId } : { defaultAreaMode: 'none' },
+        taskReminderDefault };
     const areas = areaId ? [{ id: areaId }] as Area[] : [];
     const built = buildNewTask({ title: classified.title, initialTaskProps: classified.props, id: taskId, now: factory.preparedAt,
         deviceId: factory.deviceIdBefore ?? factory.deviceIdToInitialize!, state: { settings, _allAreas: areas, _allProjects: [], _allSections: [] },
@@ -121,7 +127,8 @@ export function validatePreparedNativeAppleReminderImportItem(input: unknown): P
             : ['version', 'request', 'mode', 'target', 'result']) || prepared.version !== 1
         || !exact(prepared.result, ['taskId', 'importKey', 'mode']) || !taskEditValuesEqual(request, prepared.request)) invalid();
     const rebuilt = prepareNativeAppleReminderImportItem({ request, target: prepared.target,
-        factory: prepared.mode === 'new' ? prepared.factory : null });
+        factory: prepared.mode === 'new' ? prepared.factory : null },
+        prepared.mode === 'new' && record(prepared.task) && prepared.task.suppressMindwtrReminders === true ? 'skip' : 'send');
     if (!rebuilt || !taskEditValuesEqual(prepared, rebuilt)) invalid();
     return rebuilt;
 }

@@ -211,4 +211,17 @@ describe('native Apple Reminders pure item preparation', () => {
         cells[TASK_SQLITE_COLUMNS.indexOf('description')] += 'x';
         expect(() => prepareNativeAppleReminderImportItem({ request, target, factory: null })).toThrow();
     });
+    it('creates the row under Skip as RN addTask does, in an unchanged version-1 plan', () => {
+        const plan = prepareNativeAppleReminderImportItem(input(), 'skip')!;
+        if (plan.mode !== 'new') throw new Error('fixture');
+        expect(plan.version).toBe(1); expect(plan.task.suppressMindwtrReminders).toBe(true);
+        expect(Object.keys(plan.factory).sort()).toEqual(['deviceIdBefore', 'deviceIdToInitialize', 'effectiveDefaultAreaId', 'preparedAt']);
+        expect(validatePreparedNativeAppleReminderImportItem({ request: plan.request, prepared: plan })).toEqual(plan);
+        const sent = prepareNativeAppleReminderImportItem(input())!;
+        if (sent.mode !== 'new') throw new Error('fixture');
+        expect(sent.task.suppressMindwtrReminders).toBe(false);
+        expect(validatePreparedNativeAppleReminderImportItem({ request: sent.request, prepared: sent })).toEqual(sent);
+        const forged = JSON.parse(JSON.stringify(plan)); forged.task.title = 'Different';
+        expect(() => validatePreparedNativeAppleReminderImportItem({ request: plan.request, prepared: forged })).toThrow();
+    });
 });

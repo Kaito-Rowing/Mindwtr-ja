@@ -145,6 +145,7 @@ import { hasRawReadRow, rawReadRow } from '../../../packages/core/src/sqlite-raw
 import { taskEditValuesEqual } from '../../../packages/core/src/json-value-equality';
 import { ensureDeviceId, stripSensitiveSettings } from '../../../packages/core/src/store-helpers';
 import { resolveDefaultNewTaskAreaId } from '../../../packages/core/src/area-utils';
+import { getTaskReminderDefault } from '../../../packages/core/src/task-reminder-policy';
 import { classifyAppleReminderForImport, normalizeAppleRemindersImportSettings } from '../../../packages/core/src/apple-reminders-import-model';
 import { prepareNativeAppleReminderImportItem, validatePreparedNativeAppleReminderImportItem,
     type NativeAppleReminderImportRequest } from '../../../packages/core/src/native-apple-reminders-import-item';
@@ -4665,7 +4666,7 @@ globalThis.MindwtrHost = {
                 preparedAt: new Date().toISOString(), deviceIdBefore: data.settings.deviceId ?? null,
                 deviceIdToInitialize: device!.updated ? device!.deviceId : null,
                 effectiveDefaultAreaId: resolveDefaultNewTaskAreaId(data.settings, data.areas ?? []) ?? null,
-            } });
+            } }, getTaskReminderDefault(data.settings));
             if (!plan) throw new Error('INVALID_INPUT: Reminders candidate could not be prepared');
             const planJSON = JSON.stringify({ request: plan.request, prepared: plan });
             validatePreparedNativeAppleReminderImportItem(appleReminderJSON(planJSON));

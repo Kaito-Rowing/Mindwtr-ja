@@ -275,4 +275,12 @@ describe('inactive native Apple Reminders item receipt owner', () => {
         expect((await env.owner.commit(env.envelope)).ok).toBe(true);
     });
 
+    it('saves the frozen Skip row even after the reminder default changes, so a recovered journal never wedges', async () => {
+        const env = await open();
+        const prepared = prepareNativeAppleReminderImportItem({ request: env.envelope.request, target: env.envelope.prepared.target,
+            factory: (env.envelope.prepared as { factory: unknown }).factory }, 'skip')!;
+        expect(await env.owner.commit({ request: env.envelope.request, prepared })).toEqual({ ok: true, value: prepared.result });
+        const [row] = await env.client.all<{ suppressMindwtrReminders: number }>('SELECT suppressMindwtrReminders FROM tasks WHERE id=?', [TASK]);
+        expect(row.suppressMindwtrReminders).toBe(1);
+    });
 });
