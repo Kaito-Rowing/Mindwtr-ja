@@ -2546,6 +2546,8 @@ final class CoreModel: ObservableObject {
     private var trashCaller: Surface = .inbox
     private var trashLoadedDepth = 50
     private let pageSize = 50
+    /// Rebuild windows after page zero use the host maximum (`NATIVE_HOST_MAX_WINDOW`).
+    private let followUpWindow = 100
     private var preference = "nativeFoundation.capture.addAnother"
     private var storedLanguage = ""
     private var storedTheme = ""
@@ -19374,7 +19376,7 @@ final class CoreModel: ObservableObject {
                 var rows = next.objects("rows")
                 let target = min(depth, next.number("total"))
                 while rows.count < target {
-                    let limit = min(pageSize, target - rows.count)
+                    let limit = min(followUpWindow, target - rows.count)
                     let page = try await contextsPage(selection: selection, search: search, offset: rows.count,
                                                       limit: limit, revision: next.text("revision"))
                     guard contextsReadAllowed(generation, ownsOperation: ownsOperation) else { return }
@@ -22705,7 +22707,7 @@ final class CoreModel: ObservableObject {
                 var rows = next.objects("rows")
                 let target = min(savedSearchLoadedDepth, next.number("total"))
                 while rows.count < target {
-                    let limit = min(pageSize, target - rows.count)
+                    let limit = min(followUpWindow, target - rows.count)
                     let page = try await query("menuRead", ["savedSearch", try json([
                         "id": id, "offset": rows.count, "limit": limit, "revision": next.text("revision")])])
                     guard current() else { return }
@@ -25908,7 +25910,7 @@ final class CoreModel: ObservableObject {
                 let personChanged = next.text("person") != waitingPerson
                 let target = min(personChanged ? pageSize : waitingLoadedDepth, next.number("total"))
                 while rows.count < target {
-                    let limit = min(pageSize, target - rows.count)
+                    let limit = min(followUpWindow, target - rows.count)
                     let page = try await query("menuRead", ["waiting", try json([
                         "person": next.text("person"), "offset": rows.count, "limit": limit, "revision": next.text("revision")])])
                     try validateWaitingPage(page, against: next, count: limit)
@@ -35280,7 +35282,7 @@ final class CoreModel: ObservableObject {
                           rows.count == min(pageSize, total) else { throw CocoaError(.coderReadCorrupt) }
                     let target = min(max(pageSize, loaded[key] ?? pageSize), total)
                     while rows.count < target {
-                        let limit = min(pageSize, target - rows.count)
+                        let limit = min(followUpWindow, target - rows.count)
                         let window = try await query("menuRead", ["focusSection", try json([
                             "key": key, "offset": rows.count, "limit": limit, "revision": revision, "controls": state])])
                         guard focusReadAllowed(generation, ownsOperation: ownsOperation) else { return }
