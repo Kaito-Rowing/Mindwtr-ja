@@ -70,6 +70,12 @@ if (command === 'rkstorage') {
 } else if (command === 'run') {
     const [serial, pkg, label, outDir, samplesText = '10', changesText = '250', tapsText = 'on', pushText = 'off', startText = 'cold'] = args;
     if (!pkg.endsWith('.benchmark')) throw new Error(`REFUSED: ${pkg} is not a benchmark package`);
+    // The bench package keeps a 5,000-task library synced to 127.0.0.1:18781 with background sync on: left installed, its
+    // sync job fires later into another check's server on the same port. Every exit removes it (series.sh seeds it again).
+    process.on('exit', () => {
+        try { execFileSync(ADB, ['-s', serial, 'uninstall', pkg], { stdio: 'ignore' }); } catch { /* not installed */ }
+    });
+    for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(1));
     const samples = Number(samplesText);
     const changes = Number(changesText);
     const taps = tapsText === 'on';
