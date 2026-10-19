@@ -415,6 +415,7 @@ final class CoreModel: ObservableObject {
     private var pomodoroCollapsePreference = "nativeFoundation.pomodoro.collapsed"
     private var pomodoroNeedsRead = true
     private var pomodoroWorkHost: CoreHost?
+    private var pomodoroActionsWaiting = 0
     private var pomodoroWork: Task<Void, Never>?
     private var pomodoroWake: Task<Void, Never>?
     #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
@@ -34722,7 +34723,7 @@ final class CoreModel: ObservableObject {
     }
 
     private func admitPomodoroRuntime() {
-        guard pomodoroNeedsRead, pomodoroWork == nil, pomodoroWorkHost == nil, pomodoroCommand == nil,
+        guard pomodoroNeedsRead, pomodoroActionsWaiting == 0, pomodoroWork == nil, pomodoroWorkHost == nil, pomodoroCommand == nil,
               ready, !busy, !retryNeeded, !taskPresented, !capturePresented, !projectRenameEditing,
               !appLock.concealed, !settingsSyncRestartRequired, completedStartupToken != nil,
               UIApplication.shared.applicationState == .active, let owner = host else { return }
@@ -34751,13 +34752,31 @@ final class CoreModel: ObservableObject {
     }
 
     func performPomodoroAction(_ requestedAction: String?, values: CoreObject = [:]) async {
-        guard ready, !busy, !retryNeeded, !appLock.concealed, !taskPresented,
-              !settingsSyncRestartRequired, pomodoroWorkHost == nil, let owner = host else { return }
-        busy = true; pomodoroWorkHost = owner; pomodoroNeedsRead = false; pomodoroError = nil
+        // A tapped action waits for the in-flight read instead of being dropped by the owner guard.
+        // While it waits, automatic reads are not re-admitted, so the action takes the owner next.
+        if requestedAction != nil {
+            pomodoroActionsWaiting += 1
+            var awaited: Task<Void, Never>?
+            while pomodoroCommand == nil, let reading = pomodoroWork, reading != awaited { awaited = reading; await reading.value }
+            pomodoroActionsWaiting -= 1
+        }
+        func writable() -> Bool {
+            ready && !busy && !retryNeeded && !appLock.concealed && !taskPresented && !settingsSyncRestartRequired
+        }
+        guard writable(), pomodoroWorkHost == nil, let owner = host else {
+            if requestedAction != nil { admitPomodoroRuntime() }
+            return
+        }
+        // A panel read never holds `busy`, so a tap right after another operation is not dropped.
+        // pomodoroWorkHost still serializes Pomodoro work; only a write holds `busy`.
+        var holdsBusy = requestedAction != nil
+        if holdsBusy { busy = true }
+        pomodoroWorkHost = owner; pomodoroNeedsRead = false; pomodoroError = nil
         defer {
             if host === owner, pomodoroWorkHost === owner {
                 pomodoroAlarmWakeTicket &+= 1
-                finishOperation(); pomodoroWorkHost = nil; armPomodoroDeadline()
+                if holdsBusy { finishOperation() }
+                pomodoroWorkHost = nil; armPomodoroDeadline()
                 admitPomodoroRuntime()
                 admitReminderLifecycle()
             }
@@ -34770,6 +34789,11 @@ final class CoreModel: ObservableObject {
             else if before.flag("selectionMissing") { action = "selectTask" }
             else { action = before.flag("needsReconcile") ? "reconcile" : nil }
             if let action {
+                if !holdsBusy {
+                    // Another operation may have started during the read; write after it finishes.
+                    guard host === owner, writable() else { pomodoroNeedsRead = true; return }
+                    busy = true; holdsBusy = true
+                }
                 guard ["adoptLegacy", "reconcile", "toggle", "reset", "switchPhase", "setDurations", "selectTask"].contains(action) else { throw CocoaError(.coderInvalidValue) }
                 var input: CoreObject = ["action": action, "requestId": UUID().uuidString.lowercased(),
                     "observedAtMs": before.object("observation")["nowMs"] ?? NSNull(),
@@ -35805,7 +35829,9 @@ final class CoreModel: ObservableObject {
     }
     private func finishOperation() {
         if pomodoroWorkHost == nil {
-            pomodoroNeedsRead = true
+            // A hidden ready panel (Pomodoro off) re-reads on source, clock and scene changes;
+            // an ordinary operation does not need another read.
+            if pomodoroPanel.text("kind") != "ready" || pomodoroPanel.flag("visible") { pomodoroNeedsRead = true }
             pomodoroAlarmWakeTicket &+= 1
         }
         defer {
