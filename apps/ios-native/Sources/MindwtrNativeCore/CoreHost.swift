@@ -602,6 +602,12 @@ struct NativeAIProviderDeviceState: Decodable, Sendable, Equatable {
 /// One off-main owner for the core runtime, database and pending command journal.
 /// Every result is the JSON-encoded core value, with host/core failures thrown.
 public final class CoreHost: @unchecked Sendable {
+    #if DEBUG
+    /// Pure journal-witness check, exposed for package tests only.
+    static func validReferenceProjectNextActionWitness(_ prepared: [String: Any], request: [String: Any]) -> Bool {
+        Engine.validReferenceProjectNextActionWitness(prepared, request: request)
+    }
+    #endif
     private let queue = DispatchQueue(label: "tech.dongdongbh.mindwtr.native-core", qos: .userInitiated)
     private let engine: Engine
     private let localAttachmentRequests = NativeAttachmentLocalRequests()
@@ -20106,7 +20112,16 @@ private final class Engine: @unchecked Sendable {
         }
     }
 
-    private static func validReferenceProjectNextActionWitness(_ prepared: [String: Any], request: [String: Any]) -> Bool {
+    /// Core `isTimeEstimate`: a picker preset, or `custom:` plus a finite JS Number of at least 1.
+    private static func isTimeEstimate(_ value: Any) -> Bool {
+        guard let text = value as? String else { return false }
+        if ["5min", "10min", "15min", "30min", "1hr", "2hr", "3hr", "4hr", "4hr+"].contains(text) { return true }
+        // JS Number trims whitespace; its rare 0b/0o spellings are refused here (fail closed).
+        guard text.hasPrefix("custom:"),
+              let minutes = Double(text.dropFirst("custom:".count).trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
+        return minutes.isFinite && minutes >= 1
+    }
+    static func validReferenceProjectNextActionWitness(_ prepared: [String: Any], request: [String: Any]) -> Bool {
         guard let context = prepared["context"] as? [String: Any],
               Set(context.keys) == Set(["source", "rawSource", "project", "section", "tasks", "scope"]),
               context["source"] is [String: Any], context["rawSource"] is [String: Any], context["project"] is [String: Any],
@@ -20136,8 +20151,8 @@ private final class Engine: @unchecked Sendable {
                   let intent = creation["intent"] as? [String: Any], Set(intent.keys) == Set(["title", "props"]),
                   intent["title"] is String, let props = intent["props"] as? [String: Any],
                   Set(["status", "projectId"]).isSubset(of: Set(props.keys)),
-                  Set(props.keys).isSubset(of: Set(["status", "projectId", "sectionId", "areaId", "startTime", "dueDate", "reviewAt", "description", "contexts", "tags", "priority", "energyLevel", "assignedTo", "attachments", "isFocusedToday"])),
-                  !props.values.contains(where: { $0 is NSNull }),
+                  Set(props.keys).isSubset(of: Set(["status", "projectId", "sectionId", "areaId", "startTime", "dueDate", "reviewAt", "description", "contexts", "tags", "priority", "energyLevel", "assignedTo", "attachments", "isFocusedToday", "timeEstimate"])),
+                  !props.values.contains(where: { $0 is NSNull }), props["timeEstimate"].map(Self.isTimeEstimate) ?? true,
                   let containers = creation["containers"] as? [String: Any], Set(containers.keys) == Set(["project", "section", "areas"]),
                   containers["project"] is [String: Any], containers["section"] is NSNull || containers["section"] is [String: Any], containers["areas"] is [[String: Any]],
                   let order = creation["projectOrder"] as? [String: Any], Set(order.keys) == Set(["projectId", "max"]), order["projectId"] is String, order["max"] is NSNumber else { return false }

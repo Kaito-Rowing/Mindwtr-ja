@@ -631,6 +631,28 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: journal), "malformed")
     }
 
+    /// Core's project next-action Add carries `timeEstimate` (validated by `isTimeEstimate`).
+    func testProjectNextActionAddWitnessAdmitsCoreTimeEstimates() {
+        func witness(_ estimate: Any?) -> Bool {
+            var props: [String: Any] = ["status": "next", "projectId": "project"]
+            if let estimate { props["timeEstimate"] = estimate }
+            let creation: [String: Any] = ["intent": ["title": "Next", "props": props],
+                "containers": ["project": [String: Any](), "section": NSNull(), "areas": [[String: Any]]()],
+                "projectOrder": ["projectId": "project", "max": 0], "focus": NSNull()]
+            let prepared: [String: Any] = [
+                "context": ["source": [String: Any](), "rawSource": [String: Any](), "project": [String: Any](),
+                            "section": NSNull(), "tasks": [[String: Any]](), "scope": "project"],
+                "operation": ["kind": "add", "creation": creation, "task": [String: Any](),
+                              "deviceIdBefore": "device", "deviceIdToInitialize": NSNull(), "updateAt": "2026-10-18T00:00:00.000Z"]]
+            return CoreHost.validReferenceProjectNextActionWitness(prepared, request: ["action": "add"])
+        }
+        XCTAssertTrue(witness(nil))
+        for estimate in ["5min", "30min", "1hr", "4hr", "4hr+", "custom:45", "custom:1"] { XCTAssertTrue(witness(estimate), estimate) }
+        for estimate: Any in ["45min", "custom:0", "custom:", "custom:abc", "custom:Infinity", 30, NSNull()] {
+            XCTAssertFalse(witness(estimate), "\(estimate)")
+        }
+    }
+
     func testValidationRejectionAllowsDraftEditing() async throws {
         let faults = HostIOFaults()
         let core = host(faults)
