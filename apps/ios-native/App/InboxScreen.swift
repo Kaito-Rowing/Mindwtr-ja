@@ -7,6 +7,7 @@ struct InboxScreen: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var inboxBulkDeletePresented = false
+    @State private var bottomSafeInset: CGFloat = 0
     private var palette: AppPalette { AppPalette(theme: model.theme, system: systemScheme) }
     private var focusSections: [CoreObject] { model.focus.objects("sections").filter { $0.number("total") > 0 } }
     private var reviewProjects: [CoreObject] { model.focus.objects("reviewProjects") }
@@ -149,6 +150,10 @@ struct InboxScreen: View {
                         .accessibilityHidden(model.inboxSortPresented || model.inboxGroupPresented || model.inboxFiltersPresented)
                 }
             }
+            .background(GeometryReader { proxy in
+                Color.clear.onAppear { bottomSafeInset = proxy.safeAreaInsets.bottom }
+                    .onChange(of: proxy.safeAreaInsets.bottom) { bottomSafeInset = $0 }
+            })
             // More's content, dismissal backdrop and visible tabs share one modal boundary.
             .accessibilityElement(children: .contain)
             .accessibilityAddTraits(model.morePresented || model.inboxSortPresented || model.inboxGroupPresented ? .isModal : [])
@@ -1211,8 +1216,8 @@ struct InboxScreen: View {
         }
         .frame(minHeight: 66)
         .disabled(model.unassignedAreaColorActive || model.settingsAreaCreatePresented)
-        // RN's iOS tab bar subtracts 12pt from the bottom safe-area inset.
-        .padding(.bottom, -12)
+        // RN's iOS tab bar uses max(0, inset - 12): it moves at most 12pt into the bottom safe area.
+        .padding(.bottom, -min(12, bottomSafeInset))
         .background(palette.card.ignoresSafeArea(edges: .bottom))
         .overlay(alignment: .top) { palette.border.frame(height: 0.5) }
     }
