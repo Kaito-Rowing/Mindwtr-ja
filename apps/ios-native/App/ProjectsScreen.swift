@@ -1588,9 +1588,10 @@ struct ProjectDetailScreen: View {
                 .buttonStyle(.plain).disabled(model.busy)
                 .accessibilityIdentifier("project-task-order-retry")
             }
-            if model.busy { ProgressView().padding(12) }
+            // An overlay keeps the order table still while busy toggles.
             ProjectTaskOrderTable(model: model, palette: palette)
                 .accessibilityIdentifier("project-task-order-list")
+                .overlay(alignment: .top) { if model.busy { ProgressView().padding(12) } }
         }
         .background(palette.bg)
     }
