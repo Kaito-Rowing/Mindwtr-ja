@@ -1,3 +1,5 @@
+import { findLiveAttachmentResourceReferences, holdRestoreUndoAttachments, markMissingLocalAttachmentFiles } from './attachment-cleanup';
+import type { LocalAttachmentPresence } from './attachment-transfer';
 import { MAX_BACKUP_SOURCE_BYTES, serializeBackupData } from './backup-transfer';
 import { base64ToBytes } from './base64-bytes';
 import { runSerializedSyncDocumentWriteOperation } from './data-transfer-transaction';
@@ -494,9 +496,11 @@ export async function readNativeBackupDocumentOutcome(adapter: NativeReceiptSqli
 /** Commit only the frozen plan, or reload after an exact durable replay. */
 /** A host's plan text, handed over once (Android's file channel): no caller's frame keeps the text while the commit runs. */
 export type NativeBackupPlanSource = { take(): string };
-export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, reference: NativeBackupOperationReference, planJSON: string | NativeBackupPlanSource, snapshotName: string): Promise<NativeBackupDocumentReply> {
+/** [options.getLocalAttachmentPresence]: the host's local file check; a live file attachment whose file is gone is saved as 'missing'. */
+export type NativeBackupCommitOptions = { getLocalAttachmentPresence?: (uri: string) => Promise<LocalAttachmentPresence> };
+export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, reference: NativeBackupOperationReference, planJSON: string | NativeBackupPlanSource, snapshotName: string, options: NativeBackupCommitOptions = {}): Promise<NativeBackupDocumentReply> {
     try {
-        return await commitPlan(adapter, reference, planJSON, snapshotName);
+        return await commitPlan(adapter, reference, planJSON, snapshotName, options);
     } catch (error) {
         // A stale, refused or failed commit shows its failure, never this operation's result: its names go now.
         releaseNativeBackupDocumentWarnings();
@@ -504,7 +508,7 @@ export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAda
     }
 }
 
-async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: NativeBackupOperationReference, planJSON: string | NativeBackupPlanSource, snapshotName: string): Promise<NativeBackupDocumentReply> {
+async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: NativeBackupOperationReference, planJSON: string | NativeBackupPlanSource, snapshotName: string, options: NativeBackupCommitOptions): Promise<NativeBackupDocumentReply> {
     // The plan's two documents are held only until the adapter took them (cut g, pass D1c); its small fields stay.
     let plan: Plan | null = readPlan(reference, typeof planJSON === 'string' ? planJSON : planJSON.take(), snapshotName);
     const kept = { mode: plan.mode, reply: plan.reply, maxLibraryBytes: plan.maxLibraryBytes };
@@ -512,11 +516,16 @@ async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: Native
     try {
         return await runSerializedSyncDocumentWriteOperation(async () => {
             await flush();
+            // Every mode but a snapshot restore wrote a recovery snapshot of expectedCurrent: the result toast's Undo. Only its
+            // attachments' paths and keys stay, never the document.
+            const undoReferences = kept.mode !== 'restore' ? findLiveAttachmentResourceReferences(plan!.expectedCurrent) : null;
             let result;
             try {
                 // This plan was parsed here and nobody else holds it, so the adapter may keep its objects without a copy.
                 const saving = adapter.saveDocumentWithReceipt({ requestId: ownedReference.id, payload: payload(ownedReference, kept),
-                    expectedCurrent: plan!.expectedCurrent, data: plan!.data, reply: kept.reply, owned: true,
+                    expectedCurrent: plan!.expectedCurrent, reply: kept.reply, owned: true,
+                    data: options.getLocalAttachmentPresence
+                        ? await markMissingLocalAttachmentFiles(plan!.data, options.getLocalAttachmentPresence) : plan!.data,
                     ...(kept.maxLibraryBytes === undefined ? {} : { maxLibraryBytes: kept.maxLibraryBytes }) });
                 plan = null;
                 result = await saving;
@@ -528,6 +537,7 @@ async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: Native
                 return saveFailed();
             }
             const reply = matchedReply(result.reply, kept);
+            if (undoReferences) holdRestoreUndoAttachments(undoReferences);
             try {
                 markNextLoadAsDocumentReplacement();
                 // Maintenance resumes only after the native journal has been cleared.

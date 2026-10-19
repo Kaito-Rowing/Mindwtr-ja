@@ -5123,7 +5123,9 @@ globalThis.MindwtrHost = {
                 }
             } } : planJSON;
             try {
-                return await commitNativeBackupDocument(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof commitNativeBackupDocument>[1], source, snapshotName);
+                const presence = attachmentsHost?.getLocalAttachmentPresence;
+                return await commitNativeBackupDocument(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof commitNativeBackupDocument>[1], source, snapshotName,
+                    presence ? { getLocalAttachmentPresence: (uri) => presence(uri) } : {});
             } finally {
                 native().memProbe?.('commit:done');
                 if (debugControl('no-activation-storage')) setStorageTimeoutMs(before);

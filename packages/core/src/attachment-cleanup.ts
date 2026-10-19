@@ -1,5 +1,6 @@
 import type { AppData, Attachment, PendingRemoteAttachmentDelete, Project, Task } from './types';
-import { normalizePendingRemoteDeletes } from './attachment-transfer';
+import { applyAttachmentPatches, normalizePendingRemoteDeletes, type LocalAttachmentPresence } from './attachment-transfer';
+import { logInfo } from './logger';
 import { isFileSyncGenerationCloudKey } from './attachment-paths';
 import { getErrorStatus } from './sync-runtime-utils';
 import { sanitizeAttachmentCloudKeyForSyncMerge } from './sync-normalization';
@@ -118,7 +119,9 @@ const attachmentHasFreshCleanupWork = (
     attachment: Attachment,
     parentPurged: boolean,
     pendingCloudKeys: ReadonlySet<string>,
+    held: LiveAttachmentResourceReferences | null,
 ): boolean => {
+    if (isRestoreUndoAttachmentHeld(attachment, held)) return false;
     if (parentPurged) return true;
     if (!attachment.deletedAt) return false;
     if (attachment.kind === 'file' && attachment.localStatus !== 'missing') return true;
@@ -139,8 +142,9 @@ export function hasFreshAttachmentCleanupWork(appData: AppData): boolean {
         return true;
     }
     const pendingCloudKeys = new Set(pendingRemoteDeletes.map((entry) => entry.cloudKey));
+    const held = heldRestoreUndoAttachments(Date.now());
     const hasWork = (attachments: readonly Attachment[] | undefined, parentPurged: boolean): boolean => (
-        Boolean(attachments?.some((attachment) => attachmentHasFreshCleanupWork(attachment, parentPurged, pendingCloudKeys)))
+        Boolean(attachments?.some((attachment) => attachmentHasFreshCleanupWork(attachment, parentPurged, pendingCloudKeys, held)))
     );
     return appData.tasks.some((task) => hasWork(task.attachments, Boolean(task.purgedAt)))
         || appData.projects.some((project) => hasWork(project.attachments, Boolean(project.purgedAt)));
@@ -289,6 +293,71 @@ export function isAttachmentCloudResourceReferenced(
     return Boolean(attachment.cloudKey && references.cloudKeys.has(attachment.cloudKey));
 }
 
+/**
+ * A restore, merge or import offers Undo: a restore of the recovery snapshot taken just before it. While that Undo may still be
+ * taken, cleanup leaves alone the local files and remote copies the snapshot's live attachments name, or the Undo would bring
+ * them back with no bytes (follow-up restore-undo-attachment-bytes). Core never sees the result toast close, so the hold ends
+ * after a fixed time, or when a newer transfer with its own Undo replaces it; cleanup then runs as before.
+ */
+// ponytail: one in-memory hold with a fixed end; a host signal for the toast's close would end it sooner, and a recovery
+// snapshot restored from Settings later (or after a process death) is covered only by markMissingLocalAttachmentFiles.
+export const RESTORE_UNDO_ATTACHMENT_HOLD_MS = 10 * 60 * 1000;
+let restoreUndoHold: { references: LiveAttachmentResourceReferences; until: number } | null = null;
+
+/** [references]: findLiveAttachmentResourceReferences of the library the Undo would bring back (its recovery snapshot). */
+export function holdRestoreUndoAttachments(references: LiveAttachmentResourceReferences, nowMs = Date.now()): void {
+    restoreUndoHold = { references, until: nowMs + RESTORE_UNDO_ATTACHMENT_HOLD_MS };
+}
+
+export function resetRestoreUndoAttachmentHold(): void {
+    restoreUndoHold = null;
+}
+
+const heldRestoreUndoAttachments = (nowMs: number): LiveAttachmentResourceReferences | null => (
+    restoreUndoHold && nowMs < restoreUndoHold.until ? restoreUndoHold.references : null
+);
+
+const isRestoreUndoAttachmentHeld = (
+    attachment: Pick<Attachment, 'uri' | 'cloudKey'>,
+    held: LiveAttachmentResourceReferences | null,
+): boolean => Boolean(held) && (
+    isAttachmentLocalResourceReferenced(attachment, held!)
+    || isAttachmentCloudResourceReferenced({ cloudKey: sanitizeAttachmentCloudKeyForSyncMerge(attachment.cloudKey) }, held!)
+);
+
+/**
+ * After a restore, merge, import or snapshot restore: a live file attachment whose local file is confirmed gone becomes
+ * 'missing' (device-local, never syncs), so a cloud copy downloads again and File Sync activation is not refused on it.
+ * One presence check per live file attachment with a local path; an unreadable answer changes nothing.
+ */
+export async function markMissingLocalAttachmentFiles(
+    data: AppData,
+    getLocalAttachmentPresence: (uri: string) => Promise<LocalAttachmentPresence>,
+): Promise<AppData> {
+    const patches = new Map<string, Attachment>();
+    for (const owner of [...data.tasks, ...data.projects]) {
+        if (owner.deletedAt || owner.purgedAt) continue;
+        for (const attachment of owner.attachments ?? []) {
+            if (attachment.kind !== 'file' || attachment.deletedAt || attachment.localStatus === 'missing') continue;
+            const uri = attachment.uri || '';
+            if (!uri || /^https?:\/\//i.test(uri)) continue;
+            const presence = await getLocalAttachmentPresence(uri).catch(() => 'unreadable' as const);
+            if (presence === 'confirmed-not-found') patches.set(attachment.id, { ...attachment, localStatus: 'missing' });
+        }
+    }
+    if (patches.size === 0) return data;
+    try {
+        logInfo('Restore marked attachments without a local file as missing', {
+            scope: 'transfer',
+            category: 'storage',
+            context: { releaseCheck: 'v1.3.7/restore-attachment-presence', count: patches.size },
+        });
+    } catch {
+        // Logging must not fail the restore.
+    }
+    return applyAttachmentPatches(data, patches);
+}
+
 
 export type AttachmentCleanupApplyResult = {
     lastCleanupAt: string;
@@ -396,11 +465,13 @@ export function applyAttachmentCleanupResult(appData: AppData, result: Attachmen
 export async function runAttachmentCleanupLifecycle(
     options: AttachmentCleanupLifecycleOptions,
 ): Promise<AttachmentCleanupLifecycleResult> {
+    const held = heldRestoreUndoAttachments(Date.now());
     const orphanedAttachments = findOrphanedAttachments(options.appData);
     const deletedAttachments = findDeletedAttachmentsForFileCleanup(options.appData);
     const cleanupTargets = new Map<string, Attachment>();
-    for (const attachment of orphanedAttachments) cleanupTargets.set(attachment.id, attachment);
-    for (const attachment of deletedAttachments) cleanupTargets.set(attachment.id, attachment);
+    // A held attachment is left untouched (no delete, no 'missing' stamp, no cloudKey clear): it stays fresh work for later.
+    for (const attachment of orphanedAttachments) if (!isRestoreUndoAttachmentHeld(attachment, held)) cleanupTargets.set(attachment.id, attachment);
+    for (const attachment of deletedAttachments) if (!isRestoreUndoAttachmentHeld(attachment, held)) cleanupTargets.set(attachment.id, attachment);
 
     const previousPendingRemoteDeletes = normalizePendingRemoteDeletes(
         options.appData.settings.attachments?.pendingRemoteDeletes,
@@ -414,8 +485,13 @@ export async function runAttachmentCleanupLifecycle(
 
     const liveResourceReferences = findLiveAttachmentResourceReferences(options.appData);
     const remoteCleanupTargets = new Map<string, AttachmentCleanupRemoteTarget>();
+    const heldPendingRemoteDeletes: PendingRemoteAttachmentDelete[] = [];
     for (const pending of previousPendingByCloudKey.values()) {
         if (isAttachmentCloudResourceReferenced(pending, liveResourceReferences)) continue;
+        if (held && isAttachmentCloudResourceReferenced(pending, held)) {
+            heldPendingRemoteDeletes.push(pending);
+            continue;
+        }
         remoteCleanupTargets.set(pending.cloudKey, {
             cloudKey: pending.cloudKey,
             title: pending.title || pending.cloudKey,
@@ -433,7 +509,7 @@ export async function runAttachmentCleanupLifecycle(
     // itself on them every cycle and never reach the rest: unprocessed work goes first.
     const pendingCloudKeys = new Set(previousPendingByCloudKey.keys());
     const hasFreshWork = (attachment: Attachment) => (
-        attachmentHasFreshCleanupWork(attachment, purgedParentAttachmentIds.has(attachment.id), pendingCloudKeys)
+        attachmentHasFreshCleanupWork(attachment, purgedParentAttachmentIds.has(attachment.id), pendingCloudKeys, null)
     );
     const orderedTargets = Array.from(cleanupTargets.values())
         .sort((left, right) => Number(hasFreshWork(right)) - Number(hasFreshWork(left)));
@@ -473,7 +549,9 @@ export async function runAttachmentCleanupLifecycle(
     }
 
     const lastCleanupAt = (options.now ?? (() => new Date().toISOString()))();
-    const nextPendingRemoteDeletesByCloudKey = new Map<string, PendingRemoteAttachmentDelete>();
+    const nextPendingRemoteDeletesByCloudKey = new Map<string, PendingRemoteAttachmentDelete>(
+        heldPendingRemoteDeletes.map((pending) => [pending.cloudKey, pending]),
+    );
     const remoteTargetsInBatch = Array.from(remoteCleanupTargets.values()).slice(0, maxAttachmentTargets);
     const remoteDeleteTargetCount = remoteTargetsInBatch
         .filter((target) => !options.shouldRetainRemoteAttachment?.(target))

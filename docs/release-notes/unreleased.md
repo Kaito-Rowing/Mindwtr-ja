@@ -2,6 +2,7 @@
 
 Changes collected since the latest stable release.
 
+- Mobile: taking Undo right after a restore, merge or import now brings attachments back with their files. Before, a sync that ran in between could delete the files of attachments the restore had removed, and Undo then showed them as available with nothing on the phone. A restore or snapshot restore also marks any attachment whose file is missing on the phone, so the next sync downloads it again.
 - Linux desktop: **Copy Title**, **Copy task link** and **Copy task ID** in the task menu no longer fail now and then with "Could not copy task". The menu could lose the click before the copy ran, and WebKit then refused the clipboard write (#1327).
 - Android: Back now leaves multi-select in task lists, projects, Contexts, Review and Trash, instead of leaving the screen or closing the project. The Contexts selection bar uses the same X button and compact buttons as Inbox, so there is no "Done" button next to the Done status (#1415).
 - Sync: an attachment another device changed is no longer overwritten by this device's older copy when its download is delayed (a failed download, the per-sync download limit, or a sync that ended early). The older file now waits for the newer version instead of being uploaded as a local edit.

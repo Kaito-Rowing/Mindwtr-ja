@@ -17,6 +17,7 @@ import {
 import { addBreadcrumb } from './log-breadcrumbs';
 import { createImportDiagnostics, type ImportDiagnostic } from './import-diagnostics';
 import type { ImportSourceInput } from './import-source-reader';
+import type { LocalAttachmentPresence } from './attachment-transfer';
 import {
     applyMindwtrCsvImport,
     parseMindwtrCsvImportSource,
@@ -78,6 +79,7 @@ export type DataTransferBoundaries = {
     persistData: (data: AppData) => Promise<void>;
     readCurrentData: () => Promise<AppData>;
     refreshData: () => Promise<void>;
+    getLocalAttachmentPresence?: (uri: string) => Promise<LocalAttachmentPresence>;
 };
 
 export type TransferLogInfo = (
