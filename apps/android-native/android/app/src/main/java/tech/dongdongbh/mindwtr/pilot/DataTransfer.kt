@@ -38,10 +38,12 @@ import java.util.UUID
 
 /** The measured transfer limit (design §4.1): a picked file and the library together, before anything is decoded or parsed. */
 object DataTransferLimits {
-    // Measured on the S23 (pass D1a, result.md measure2; heap growth limit 256 MiB): a 12 MiB file restored over a 12 MiB
-    // library (24 MiB in all) peaked at 128 MiB Java heap, half the growth limit, and the limit is half of that.
+    // Measured on the S23 (pass D1c step 0 runs 5 and 6; native heap ceiling 512 MiB): the smallest workload bound was an
+    // OmniFocus import that left a 31.5 MiB library (native 228 MiB), and the limit is half of that. Restoring into a fresh
+    // library passed at 91 MiB (run 5); an Undo over 53.4 MiB of rows reached 641 MiB native. Every workload rerun at 15 MiB
+    // peaked at or under 327 MiB native and 79 MiB Java (rule: 128, half the 256 MiB growth limit).
     // ponytail: one fixed limit; a device with a smaller heap gets the same number. Stream the plan through a file if libraries outgrow it.
-    internal const val LIMIT_BYTES = 12L * 1024 * 1024
+    internal const val LIMIT_BYTES = 15L * 1024 * 1024
     /** Core's MAX_BACKUP_SOURCE_BYTES: a picked JSON backup alone. */
     const val MAX_BACKUP_SOURCE_BYTES = 128L * 1024 * 1024
     /** Core's DEFAULT_IMPORT_SOURCE_LIMITS.maxInputBytes: an import's picked file alone. */
