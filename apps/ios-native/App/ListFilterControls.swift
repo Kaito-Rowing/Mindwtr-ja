@@ -179,10 +179,11 @@ struct ListFilterControls: View {
                         id: prefix + "-filter-picker-search", value: $pickerQuery)
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    if pickerCurrent {
+                    // Keep the accepted projection in layout while refreshing to preserve the scroll position.
+                    Group {
                         let items = picker.objects("items")
                         ForEach(items.indices, id: \.self) { index in pickerOption(items[index]) }
-                        if items.isEmpty {
+                        if pickerCurrent && items.isEmpty {
                             Text(localized("search.noResults")).rnFont(14).foregroundStyle(palette.secondary).padding(.vertical, 28)
                         }
                         if items.count < picker.number("total") {
@@ -193,24 +194,32 @@ struct ListFilterControls: View {
                             .accessibilityIdentifier(prefix + "-filter-picker-more")
                         }
                         if pickerName == "tokens" {
-                            let controls = filters.objects("matchModes")
-                            ForEach(controls.indices, id: \.self) { index in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    sectionLabel(controls[index].text("label"))
-                                    optionChips(controls[index].objects("options"), id: prefix + "-filter-match-" + controls[index].text("kind"))
+                            // Give the bounded match controls one lazy child so their index IDs cannot collide with token rows.
+                            VStack(alignment: .leading, spacing: 0) {
+                                let controls = filters.objects("matchModes")
+                                ForEach(controls.indices, id: \.self) { index in
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        sectionLabel(controls[index].text("label"))
+                                        optionChips(controls[index].objects("options"), id: prefix + "-filter-match-" + controls[index].text("kind"))
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
                             }
                         }
                     }
-                    if let error = error { filterFailure(error, picker: false) }
-                    else if let error = pickerError { filterFailure(error, picker: true) }
-                    else if !pickerCurrent { ProgressView().frame(maxWidth: .infinity).padding(16) }
+                    .disabled(!pickerEnabled)
                 }
                 .padding(.vertical, 8)
             }
+            .overlay {
+                if !pickerCurrent && error == nil && pickerError == nil {
+                    ProgressView().allowsHitTesting(false)
+                }
+            }
             .scrollDismissesKeyboard(.interactively)
             .accessibilityIdentifier(prefix + "-filter-picker-scroll")
+            if let error = error { filterFailure(error, picker: false) }
+            else if let error = pickerError { filterFailure(error, picker: true) }
         }
     }
 

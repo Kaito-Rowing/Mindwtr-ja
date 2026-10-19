@@ -1032,6 +1032,7 @@ export const ruOverrides: Record<string, string> = {
         'settings.aiProviderOpenAI': 'ОпенАИ',
         'settings.aiProviderGemini': 'Близнецы',
         'settings.aiProviderAnthropic': 'Антропный (Клод)',
+        'settings.aiEffortMinimalSaved': 'Сохранено: Минимальный',
         'settings.aiEffortLow': 'Низкий',
         'settings.aiEffortMedium': 'Середина',
         'settings.aiEffortHigh': 'Высокий',

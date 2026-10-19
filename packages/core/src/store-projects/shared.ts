@@ -38,6 +38,7 @@ export type ProjectActions = Pick<
     | 'commitPreparedProjectSectionOrder'
     | 'commitPreparedProjectTaskOrder'
     | 'commitPreparedAreaCreate'
+    | 'commitPreparedInboxOrganizeDestinationCreate'
     | 'commitPreparedAreaColor'
     | 'commitPreparedAreaRename'
     | 'commitPreparedAreaOrder'
@@ -123,7 +124,7 @@ export type ProjectCoreActions = Pick<
 export type SectionActions = Pick<ProjectActions, 'addSection' | 'commitPreparedProjectSectionCreate' | 'commitPreparedProjectSectionRename' | 'commitPreparedProjectSectionDelete' | 'updateSection' | 'deleteSection'>;
 export type ProjectToSectionActions = Pick<ProjectActions, 'convertProjectToSection' | 'undoProjectToSection'>;
 
-export type AreaActions = Pick<ProjectActions, 'addArea' | 'commitPreparedAreaCreate' | 'commitPreparedAreaColor' | 'commitPreparedAreaRename' | 'commitPreparedAreaOrder' | 'commitPreparedAreaDelete' | 'updateArea' | 'deleteArea' | 'restoreArea' | 'reorderAreas'>;
+export type AreaActions = Pick<ProjectActions, 'addArea' | 'commitPreparedAreaCreate' | 'commitPreparedInboxOrganizeDestinationCreate' | 'commitPreparedAreaColor' | 'commitPreparedAreaRename' | 'commitPreparedAreaOrder' | 'commitPreparedAreaDelete' | 'updateArea' | 'deleteArea' | 'restoreArea' | 'reorderAreas'>;
 
 export type OrderingActions = Pick<ProjectActions, 'reorderProjects' | 'reorderProjectTasks' | 'reorderBoardTasks' | 'reorderSections' | 'commitPreparedProjectSectionOrder' | 'commitPreparedProjectTaskOrder'>;
 

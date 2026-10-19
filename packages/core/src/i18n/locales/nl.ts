@@ -18,6 +18,7 @@ export const nlOverrides: Record<string, string> = {
     "timeline.reorderConflict": "De volgorde is elders gewijzigd. Probeer opnieuw.",
     "timeline.reorderFailed": "De nieuwe volgorde kon niet worden opgeslagen. Probeer opnieuw.",
     "timeline.reorderInstructions": "Druk op Spatie om een rij op te pakken, Omhoog of Omlaag om deze binnen de groep te verplaatsen, Spatie om neer te zetten of Escape om te annuleren.",
+    'settings.aiEffortMinimalSaved': 'Opgeslagen: Minimaal',
     'task.doneTagOutcomeUnknown': "De tagwijziging kon niet worden bevestigd. Start Mindwtr opnieuw om de opgeslagen gegevens opnieuw te laden.",
     "task.copyTaskLink": "Taaklink kopiëren",
     "task.copyTaskId": "Taak-ID kopiëren",

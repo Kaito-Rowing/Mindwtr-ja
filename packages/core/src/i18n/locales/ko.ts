@@ -1463,6 +1463,7 @@ export const koOverrides: Record<string, string> = {
         'settings.aiProviderOpenAI': 'OpenAI',
         'settings.aiProviderGemini': 'Gemini',
         'settings.aiProviderAnthropic': 'Anthropic (Claude)',
+        'settings.aiEffortMinimalSaved': '저장됨: 최소',
         'settings.aiEffortLow': '낮은',
         'settings.aiEffortMedium': '중간',
         'settings.aiEffortHigh': '높은',

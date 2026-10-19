@@ -94,6 +94,44 @@ describe('native host contract: Focus controls', () => {
         },
     );
 
+    it('pages Pomodoro choices from all four RN Focus pools under the same controls and revision', async () => {
+        freezeClock();
+        const host = await openHost();
+        const states = [DEFAULT_FOCUS_CONTROL_STATE, withFilters({ tokens: ['@phone'] })];
+        for (const controls of states) {
+            const focus = value(host.getFocus({ limit: 1, controls }));
+            const lists = direct(controls).lists;
+            const expected = new Map<string, string>();
+            for (const task of [...lists.focusedTasks, ...lists.schedule, ...lists.nextActions, ...lists.reviewDue])
+                if (!task.deletedAt) expected.set(task.id, task.title);
+            const observed: { id: string; title: string }[] = [];
+            for (let offset = 0; offset < Math.max(1, expected.size); offset += 2) {
+                const page = value(host.getPomodoroTaskWindow({ offset, limit: 2, revision: focus.revision, controls }));
+                expect(page.total).toBe(expected.size);
+                expect(page.revision).toBe(focus.revision);
+                observed.push(...page.rows);
+            }
+            expect(observed).toEqual([...expected].map(([id, title]) => ({ id, title })));
+            expect(host.getPomodoroTaskWindow({ offset: 0, limit: 2, revision: focus.revision + '-stale', controls }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        }
+        expect(focusControlsWrites()).toHaveLength(0);
+    });
+
+    it('rejects malformed, oversized and unready Pomodoro picker reads', async () => {
+        freezeClock();
+        const host = await openHost();
+        const focus = value(host.getFocus({ limit: 1 }));
+        const input = { offset: 0, limit: 1, revision: focus.revision };
+        for (const change of [{ offset: -1 }, { offset: 0.5 }, { limit: 0 }, { limit: 101 },
+            { revision: null }, { controls: { extra: true } }, { extra: true }]) {
+            expect(host.getPomodoroTaskWindow({ ...input, ...change } as never))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        expect(createNativeHostContract().getPomodoroTaskWindow(input))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+    });
+
     it('returns what core\'s Focus model returns when called directly', async () => {
         freezeClock();
         const host = await openHost('base');

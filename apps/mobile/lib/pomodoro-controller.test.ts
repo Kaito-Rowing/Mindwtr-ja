@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_POMODORO_DURATIONS, getPomodoroLocalDayKey, runStoreCommand, runSyncStoreSave, type Task } from '@mindwtr/core';
+import { logInfo } from './app-log';
 
 vi.mock('./app-log', () => ({ logInfo: vi.fn(async () => undefined), logWarn: vi.fn(async () => undefined) }));
 
@@ -19,6 +20,7 @@ describe('mobile pomodoro controller', () => {
 
   beforeEach(() => {
     nowMs = 10_000;
+    vi.mocked(logInfo).mockClear();
   });
 
   it.each([
@@ -200,6 +202,162 @@ describe('mobile pomodoro controller', () => {
     expect(updateTask).toHaveBeenCalledWith(task.id, {
       timeSpentMinutes: 5 + DEFAULT_POMODORO_DURATIONS.focusMinutes,
     });
+  });
+
+  it('credits the expired old interval before replacing its durations', async () => {
+    const task = { id: 'task-a', title: 'Write', timeSpentMinutes: 5 } as Task;
+    const updateTask = vi.fn(async () => ({ success: true }));
+    const controller = createMobilePomodoroController({
+      storage: makeStorage(),
+      now: () => nowMs,
+      getTaskStore: () => ({ tasks: [task], updateTask }),
+    });
+    await controller.ensureHydrated();
+    controller.setSelectedTaskId(task.id);
+    controller.toggle();
+
+    nowMs += 25 * 60_000;
+    controller.setDurations({ focusMinutes: 50, breakMinutes: 10 });
+    await controller.flushPersistence();
+
+    expect(updateTask).toHaveBeenCalledExactlyOnceWith(task.id, { timeSpentMinutes: 30 });
+    expect(logInfo).toHaveBeenCalledExactlyOnceWith('Pomodoro elapsed focus boundary resolved before action', {
+      scope: 'pomodoro',
+      extra: { releaseCheck: 'v1.3.5/pomodoro-rn-boundary', outcome: 'elapsed-focus-resolved' },
+    });
+    expect(controller.getSnapshot()).toMatchObject({
+      durations: { focusMinutes: 50, breakMinutes: 10 },
+      timerState: { phase: 'break', remainingSeconds: 600, isRunning: false, completedFocusSessions: 1 },
+      selectedTaskId: task.id,
+      lastEvent: null,
+      sessionHistory: { totalCompletedFocusSessions: 1, completedFocusSessionsByTaskId: { 'task-a': 1 } },
+    });
+    expect(controller.getSnapshot().phaseEndsAt).toBeUndefined();
+    controller.reconcile();
+    controller.setDurations({ focusMinutes: 50, breakMinutes: 10 });
+    await controller.flushPersistence();
+    expect(updateTask).toHaveBeenCalledTimes(1);
+    expect(logInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses restored durations to credit hydration rather than the default in-memory pair', async () => {
+    const task = { id: 'restored-task', title: 'Write', timeSpentMinutes: 5 } as Task;
+    const updateTask = vi.fn(async () => ({ success: true }));
+    const controller = createMobilePomodoroController({
+      storage: makeStorage({
+        durations: { focusMinutes: 50, breakMinutes: 10 },
+        timerState: { phase: 'focus', remainingSeconds: 1, isRunning: true, completedFocusSessions: 0 },
+        selectedTaskId: task.id,
+        phaseEndsAt: new Date(9_000).toISOString(),
+      }),
+      now: () => nowMs,
+      getTaskStore: () => ({ tasks: [task], updateTask }),
+    });
+    await controller.ensureHydrated();
+    controller.reconcile();
+    await controller.flushPersistence();
+
+    expect(updateTask).toHaveBeenCalledExactlyOnceWith(task.id, { timeSpentMinutes: 55 });
+    expect(controller.getSnapshot()).toMatchObject({
+      durations: { focusMinutes: 50, breakMinutes: 10 },
+      timerState: { phase: 'break', remainingSeconds: 600, completedFocusSessions: 1 },
+    });
+    expect(logInfo).not.toHaveBeenCalled();
+  });
+
+  it('journals the expired old duration before retrying its task credit after a restart', async () => {
+    const task = { id: 'task-a', title: 'Write', timeSpentMinutes: 5 } as Task;
+    const device = new Map<string, string>();
+    const storage = {
+      getItem: async (key: string) => device.get(key) ?? null,
+      setItem: async (key: string, value: string) => { device.set(key, value); },
+    };
+    let rejectCredit = true;
+    const updateTask = vi.fn(async (_id: string, updates: Partial<Task>) => {
+      if (rejectCredit) return { success: false };
+      Object.assign(task, updates);
+      return { success: true };
+    });
+    const options = { storage, now: () => nowMs, getTaskStore: () => ({ tasks: [task], updateTask }) };
+    const first = createMobilePomodoroController(options);
+    await first.ensureHydrated();
+    first.setSelectedTaskId(task.id);
+    first.toggle();
+
+    nowMs += 25 * 60_000;
+    first.setDurations({ focusMinutes: 50, breakMinutes: 10 });
+    await first.flushPersistence();
+
+    expect(task.timeSpentMinutes).toBe(5);
+    expect(JSON.parse(device.get(POMODORO_SESSION_STORAGE_KEY)!)).toMatchObject({
+      durations: { focusMinutes: 50, breakMinutes: 10 },
+      pendingCredits: [{ taskId: task.id, from: 5, to: 30 }],
+    });
+    expect(updateTask).toHaveBeenCalledExactlyOnceWith(task.id, { timeSpentMinutes: 30 });
+
+    rejectCredit = false;
+    const restarted = createMobilePomodoroController(options);
+    await restarted.ensureHydrated();
+    await restarted.flushPersistence();
+    await restarted.flushPersistence();
+    expect(task.timeSpentMinutes).toBe(30);
+    expect(updateTask).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(device.get(POMODORO_SESSION_STORAGE_KEY)!)).not.toHaveProperty('pendingCredits');
+
+    const third = createMobilePomodoroController(options);
+    await third.ensureHydrated();
+    await third.flushPersistence();
+    expect(task.timeSpentMinutes).toBe(30);
+    expect(updateTask).toHaveBeenCalledTimes(2);
+  });
+
+  it.each((['focus', 'break'] as const).flatMap((phase) => (
+    [false, true].flatMap((autoStartBreaks) => (
+      [false, true].flatMap((autoStartFocus) => (
+        ['task-b', undefined].map((selectedTaskId) => ({ phase, autoStartBreaks, autoStartFocus, selectedTaskId }))
+      ))
+    ))
+  )))('settles the old $phase selection with breaks=$autoStartBreaks focus=$autoStartFocus before selecting $selectedTaskId', async ({
+    phase, autoStartBreaks, autoStartFocus, selectedTaskId,
+  }) => {
+    const taskA = { id: 'task-a', title: 'Write', timeSpentMinutes: 5 } as Task;
+    const taskB = { id: 'task-b', title: 'Read', timeSpentMinutes: 10 } as Task;
+    const updateTask = vi.fn(async () => ({ success: true }));
+    const controller = createMobilePomodoroController({
+      storage: makeStorage(),
+      now: () => nowMs,
+      getTaskStore: () => ({ tasks: [taskA, taskB], updateTask }),
+    });
+    await controller.ensureHydrated();
+    controller.setSelectedTaskId(taskA.id);
+    if (phase === 'break') controller.switchPhase();
+    controller.toggle();
+    nowMs += (phase === 'focus' ? 25 : 5) * 60_000;
+    const autoStartOptions = { autoStartBreaks, autoStartFocus };
+
+    controller.setSelectedTaskId(selectedTaskId, autoStartOptions);
+    await controller.flushPersistence();
+
+    const isRunning = phase === 'focus' ? autoStartBreaks : autoStartFocus;
+    const remainingSeconds = phase === 'focus' ? 300 : 1500;
+    expect(controller.getSnapshot()).toMatchObject({
+      selectedTaskId,
+      timerState: { phase: phase === 'focus' ? 'break' : 'focus', remainingSeconds, isRunning },
+      lastEvent: phase === 'focus' ? 'focus-finished' : 'break-finished',
+    });
+    expect(controller.getSnapshot().phaseEndsAt).toBe(isRunning
+      ? new Date(nowMs + remainingSeconds * 1000).toISOString()
+      : undefined);
+    if (phase === 'focus') {
+      expect(updateTask).toHaveBeenCalledExactlyOnceWith(taskA.id, { timeSpentMinutes: 30 });
+      expect(controller.getSnapshot().sessionHistory.completedFocusSessionsByTaskId).toEqual({ 'task-a': 1 });
+    } else {
+      expect(updateTask).not.toHaveBeenCalled();
+    }
+    controller.setSelectedTaskId(selectedTaskId, autoStartOptions);
+    controller.reconcile(autoStartOptions);
+    await controller.flushPersistence();
+    expect(updateTask).toHaveBeenCalledTimes(phase === 'focus' ? 1 : 0);
   });
 });
 

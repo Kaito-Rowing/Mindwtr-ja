@@ -184,7 +184,7 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
 
   const replaceSession = (
     next: ResolvedPomodoroSession,
-    config: { persist?: boolean; updatedAtMs?: number; previousHistory?: PomodoroSessionHistory } = {},
+    config: { persist?: boolean; updatedAtMs?: number; previousHistory?: PomodoroSessionHistory; creditFocusMinutes?: number } = {},
   ): boolean => {
     const previousHistory = config.previousHistory ?? state.sessionHistory;
     const changed = !sessionEquals(state, next)
@@ -192,7 +192,7 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
       || state.isHydrating;
     if (!changed) return false;
     const owed = pendingCredits.length;
-    queueCredits(previousHistory, next.sessionHistory, next.durations.focusMinutes);
+    queueCredits(previousHistory, next.sessionHistory, config.creditFocusMinutes ?? next.durations.focusMinutes);
     state = {
       ...next,
       isHydrating: false,
@@ -250,9 +250,17 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
     autoStartOptions: PomodoroAutoStartOptions = {},
     nowMs = now(),
   ): boolean => {
+    const completedBeforeAction = state.sessionHistory.totalCompletedFocusSessions;
     const current = resolvePomodoroSession(state, nowMs, autoStartOptions);
     const updatedAtMs = Math.max(nowMs, state.updatedAtMs + 1);
-    return replaceSession(mutation(current, nowMs), { updatedAtMs });
+    const changed = replaceSession(mutation(current, nowMs), { updatedAtMs, creditFocusMinutes: current.durations.focusMinutes });
+    if (changed && current.sessionHistory.totalCompletedFocusSessions > completedBeforeAction) {
+      void logInfo('Pomodoro elapsed focus boundary resolved before action', {
+        scope: 'pomodoro',
+        extra: { releaseCheck: 'v1.3.5/pomodoro-rn-boundary', outcome: 'elapsed-focus-resolved' },
+      }).catch(() => undefined);
+    }
+    return changed;
   };
 
   const setDurations = (durations: PomodoroDurations, autoStartOptions: PomodoroAutoStartOptions = {}) => mutate((current) => ({

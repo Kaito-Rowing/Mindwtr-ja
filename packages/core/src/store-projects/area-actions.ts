@@ -9,7 +9,9 @@ import { generateUUID as uuidv4 } from '../uuid';
 import { taskEditValuesEqual } from '../json-value-equality';
 import { normalizeTaskForLoad } from '../task-status';
 import { normalizeProjectLifecycleFields } from '../project-status';
-import { getPersistenceStatus } from '../store';
+import { getPersistenceStatus, getStorageAdapter } from '../store';
+import { referenceBatchModules } from '../store-reference-batch-modules';
+import { rawReadTaskSnapshot, rawReadProjectSnapshot, rawReadAreaSnapshot } from '../sqlite-raw-snapshot';
 import type { AppData } from '../types';
 import type { PreparedAreaAuthority, TaskStore, PreparedAreaColor, PreparedAreaCreate, PreparedAreaDelete, PreparedAreaOrder, PreparedTaskEditResult } from '../store-types';
 import type { Area, AreaActions, Project, ProjectActionContext, Section, Task } from './shared';
@@ -275,6 +277,48 @@ export const createAreaActions = ({
             };
         });
         return area;
+    },
+
+    /** A first raw creation effect only; a completed retry is answered by its typed receipt, never target equality. */
+    commitPreparedInboxOrganizeDestinationCreate: async (input, authority): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Inbox destination creation conflicts with saved data' };
+        const adapter = getStorageAdapter();
+        // Match the existing registered prepared-batch seam and recheck every authority after yielding.
+        await Promise.resolve();
+        const shared = referenceBatchModules.shared;
+        const checks = referenceBatchModules.inboxOrganizeCreate?.(input);
+        if (!shared || !checks || getStorageAdapter() !== adapter
+            || !(adapter instanceof shared.NativeReceiptSqliteAdapter) || !adapter.concurrentWritesGuarded
+            || !checks.validateEnvelope()) return result;
+        set(memory => {
+            if (!areaAuthorityMatches(memory, authority) || getStorageAdapter() !== adapter) return memory;
+            const durable = authority.snapshot;
+            try { if (!checks.authorityMatches(durable)) return memory; } catch { return memory; }
+            const bind = <T extends { id: string }>(rows: T[], pairs: { before: T | null; after: T }[],
+                snapshot: (row: T) => T | null): T[] | null => {
+                const current = new Map(rows.map(row => [row.id, row]));
+                const updates = new Map<string, T>(); const created: T[] = [];
+                for (const pair of pairs) {
+                    const id = pair.after.id; const before = current.get(id);
+                    if (updates.has(id) || (pair.before === null ? Boolean(before)
+                        : !before || pair.before.id !== id || !taskEditValuesEqual(snapshot(before), pair.before))) return null;
+                    updates.set(id, pair.after); if (pair.before === null) created.push(pair.after);
+                }
+                return [...rows.map(row => updates.get(row.id) ?? row), ...created];
+            };
+            const tasks = bind(durable.tasks, input.effect.tasks, rawReadTaskSnapshot);
+            const projects = bind(durable.projects, input.effect.projects, rawReadProjectSnapshot);
+            const sections = bind(durable.sections ?? [], input.effect.sections, row => row);
+            const areas = bind(durable.areas ?? [], input.effect.areas, rawReadAreaSnapshot);
+            if (!tasks || !projects || !sections || !areas) return memory;
+            const settings = input.deviceIdToInitialize ? { ...durable.settings, deviceId: input.deviceIdToInitialize } : durable.settings;
+            clearDerivedCache();
+            result = { success: true, id: input.result.id, outcome: 'applied' };
+            return persistPreparedArea(memory, durable, { ...durable, tasks, projects, sections,
+                areas: input.request.kind === 'area' ? areas.sort((a, b) => a.order - b.order) : areas, settings },
+            input.effect.tasks.flatMap(pair => pair.before ? [{ before: pair.before, after: pair.after }] : []), authority);
+        });
+        return result;
     },
 
     commitPreparedAreaCreate: async (input, authority): Promise<PreparedTaskEditResult> => {

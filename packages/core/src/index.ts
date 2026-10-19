@@ -43,6 +43,7 @@ export * from './store';
 export { runStoreCommand, runSyncStoreSave } from './store-write-gate';
 export * from './store-latest-updates';
 export * from './native-host-contract';
+export * from './native-host-contract-trash-purge';
 export * from './native-host-contract-calendar';
 export * from './native-host-contract-saved-search-write';
 export * from './native-host-contract-attachments';
@@ -264,6 +265,8 @@ export * from './diagnostics-log';
 export * from './performance-log';
 export * from './log-breadcrumbs';
 export * from './pomodoro';
+export * from './pomodoro-session';
+export * from './native-pomodoro-panel';
 export * from './color-constants';
 export * from './task-accent-color';
 export * from './analytics-heartbeat';
@@ -289,6 +292,7 @@ export * from './context-color';
 export * from './capture';
 export * from './capture-session';
 export * from './quick-capture-model';
+export * from './apple-reminders-import-model';
 export * from './capture-deeplink';
 export * from './dropbox-auth-callback';
 export * from './entry-points';
@@ -393,3 +397,19 @@ export { checklistProjectBlockReason, prepareChecklistProjectConversion } from '
 export type { ChecklistProjectConversion } from './checklist-project-conversion';
 
 export * from './task-reminder-policy';
+
+export type { NativeInboxTasksMoveRequest, NativeInboxTasksMovePrepared, NativeInboxTasksMoveEnvelope,
+    NativeInboxTasksMoveResult, NativeInboxTasksMovePreparation, NativeInboxTasksMoveParams } from './native-host-contract-inbox-bulk-status';
+
+export type { NativeInboxTasksAddTagRequest, NativeInboxTasksAddTagPrepared, NativeInboxTasksAddTagEnvelope,
+    NativeInboxTasksAddTagResult, NativeInboxTasksAddTagPreparation } from './native-host-contract-inbox-bulk-tag';
+
+export type { NativeInboxTasksRemoveTagRequest, NativeInboxTasksRemoveTagPrepared, NativeInboxTasksRemoveTagEnvelope,
+    NativeInboxTasksRemoveTagResult, NativeInboxTasksRemoveTagPreparation } from './native-host-contract-inbox-bulk-remove-tag';
+
+export type { NativeInboxTasksOrganizeRequest, NativeInboxTasksOrganizePrepared, NativeInboxTasksOrganizeEnvelope,
+    NativeInboxTasksOrganizeResult, NativeInboxTasksOrganizePreparation } from './native-host-contract-inbox-bulk-organize';
+
+export type { NativeInboxOrganizeDestinationCreateRequest, NativeInboxOrganizeDestinationCreatePrepared,
+    NativeInboxOrganizeDestinationCreateEnvelope, NativeInboxOrganizeDestinationCreateResult,
+    NativeInboxOrganizeDestinationCreatePreparation } from './native-host-contract-inbox-organize-create';

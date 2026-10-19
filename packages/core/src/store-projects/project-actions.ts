@@ -696,6 +696,24 @@ const commitProjectAvailabilityWrite = async (input: SelectedProjectAvailability
 };
 
 
+/** Existing permanent-project row policy; attachment cleanup remains a separate guarded settings effect. */
+export const projectPurgeEffect = (project: Project, tasks: readonly Task[], sections: readonly Section[],
+    deviceId: string, now: string) => {
+    const sectionIds = new Set(sections.filter((row) => row.projectId === project.id).map((row) => row.id));
+    return {
+        project: { before: project, after: compactPurgedProjectForLocalStorage({ ...project,
+            deletedAt: project.deletedAt ?? now, purgedAt: now, updatedAt: now,
+            rev: nextRevision(project.rev), revBy: deviceId }) },
+        sections: sections.filter((row) => sectionIds.has(row.id)).map((before) => ({ before,
+            after: compactPurgedProjectSectionTombstone({ ...before, deletedAt: now, updatedAt: now,
+                rev: nextRevision(before.rev), revBy: deviceId }, now) })),
+        tasks: tasks.filter((row) => !row.deletedAt && (row.projectId === project.id
+            || Boolean(row.sectionId && sectionIds.has(row.sectionId)))).map((before) => ({ before,
+            after: { ...before, projectId: undefined, sectionId: undefined, updatedAt: now,
+                rev: nextRevision(before.rev), revBy: deviceId } })),
+    };
+};
+
 export const createProjectCoreActions = ({
     set,
     get,
@@ -1667,50 +1685,15 @@ export const createProjectCoreActions = ({
                 return state;
             }
             const deviceState = ensureDeviceId(state.settings);
-            const sectionIdsForProject = new Set(
-                state._allSections
-                    .filter((section) => section.projectId === id)
-                    .map((section) => section.id)
-            );
             const nextSettings = settingsWithPurgedParentAttachmentDeletes(deviceState.settings,
                 state._allTasks, state._allProjects, new Set(), new Set([id]));
             const settingsChanged = deviceState.updated || nextSettings !== deviceState.settings;
-
-            const newAllProjects = state._allProjects.map((project) =>
-                project.id === id
-                    ? compactPurgedProjectForLocalStorage({
-                        ...project,
-                        deletedAt: project.deletedAt ?? now,
-                        purgedAt: now,
-                        updatedAt: now,
-                        rev: nextRevision(project.rev),
-                        revBy: deviceState.deviceId,
-                    })
-                    : project
-            );
-            const newAllSections = state._allSections.map((section) =>
-                sectionIdsForProject.has(section.id)
-                    ? compactPurgedProjectSectionTombstone({
-                        ...section,
-                        deletedAt: now,
-                        updatedAt: now,
-                        rev: nextRevision(section.rev),
-                        revBy: deviceState.deviceId,
-                    }, now)
-                    : section
-            );
-            const newAllTasks = state._allTasks.map(task =>
-                !task.deletedAt && (task.projectId === id || (task.sectionId && sectionIdsForProject.has(task.sectionId)))
-                    ? {
-                        ...task,
-                        projectId: undefined,
-                        sectionId: undefined,
-                        updatedAt: now,
-                        rev: nextRevision(task.rev),
-                        revBy: deviceState.deviceId,
-                    }
-                    : task
-            );
+            const effect = projectPurgeEffect(target, state._allTasks, state._allSections, deviceState.deviceId, now);
+            const taskAfter = new Map(effect.tasks.map((pair) => [pair.before.id, pair.after]));
+            const sectionAfter = new Map(effect.sections.map((pair) => [pair.before.id, pair.after]));
+            const newAllProjects = state._allProjects.map((row) => row.id === id ? effect.project.after : row);
+            const newAllSections = state._allSections.map((row) => sectionAfter.get(row.id) ?? row);
+            const newAllTasks = state._allTasks.map((row) => taskAfter.get(row.id) ?? row);
             clearDerivedCache();
             persist(set, debouncedSave, state, {
                 tasks: newAllTasks,

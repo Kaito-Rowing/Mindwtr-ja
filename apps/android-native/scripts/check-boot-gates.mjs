@@ -650,7 +650,7 @@ assert.match(hostEntry, /createNativeSync\(nativeSyncBindings\)/);
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await adapter.withConnection(() => loadNativeRequestReceipts(sqlite), { write: true })', "else await adapter.withConnection(() => loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] }), { write: true })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await adapter.withConnection(() => loadNativeRequestReceipts(sqlite), { write: true })', "else await adapter.withConnection(() => loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'inboxTasksMove', 'inboxTasksAddTag', 'inboxTasksRemoveTag', 'inboxTasksOrganize', 'inboxOrganizeDestinationCreate', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] }), { write: true })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await withHostConnection\(\(\) => pruneNativeRequestReceipts\(sqlite\)\) \}\)\);/);
     // D9b change 1 (design.md W2): the host's own SQL runs inside core's adapter lock, and the read check runs in the read's
@@ -1242,10 +1242,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert(methods.length > 40 && methods.some((m) => m.name === 'menuCommand'), 'host-entry\'s methods parsed');
     // The iOS host's prepared commits and its Calendar preference, Focus grouping, Someday section task and task attachment
     // link/remove writes: its own journal holds them, and Kotlin never calls them.
-    const iosPreparedCommits = ['captureCommit', 'draftCommit'];
+    const iosPreparedCommits = ['captureCommit', 'captureLinesCommit', 'draftCommit'];
     // The iOS host's task attachment link/remove methods (taskAttachmentLinks, taskAttachmentRemove) are its own; Kotlin sends
     // the same core writes through MENU_COMMANDS and the journal (pass A2).
-    const iosOnlyWrites = ['commitPreparedNotificationSetting', 'commitReminderCompletion', 'retryReminderCompletion', 'commitReminderSnooze', 'retryReminderSnooze', 'setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment'];
+    const iosOnlyWrites = ['commitPreparedInboxTasksOrganize', 'commitPreparedInboxOrganizeDestinationCreate', 'commitPreparedNotificationSetting', 'commitReminderCompletion', 'retryReminderCompletion', 'commitReminderSnooze', 'retryReminderSnooze', 'setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment'];
     // Core writes no host method calls yet: wiring one into host-entry fails the write-list checks above until the journal
     // takes it. (Settings › Calendar's edits were wired in pass C3.)
     const unwiredWrites = [];
@@ -1433,6 +1433,24 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
                     continue;
                 }
                 const owner = defs.filter((def) => def.index < site.index).at(-1);
+                const sharedInboxPayload = {
+                    inboxTasksOrganize: ['NativeInboxTasksOrganizeEnvelope', 'commitPreparedInboxTasksOrganize'],
+                    inboxOrganizeDestinationCreate: ['Envelope', 'commitPreparedInboxOrganizeDestinationCreate'],
+                }[site[1]];
+                if (sharedInboxPayload) {
+                    const [type, command] = sharedInboxPayload;
+                    const helper = `const payload = (envelope: ${type}): string => `;
+                    if (site.index === file.indexOf(helper) + helper.length) {
+                        const writer = defs.find((def) => def[1] === command);
+                        assert(writer, `${site[1]}'s shared payload has its core writer`);
+                        const body = file.slice(writer.index, defs.find((def) => def.index > writer.index)?.index);
+                        assert.match(body, /const boundPayload = payload\(envelope\);/);
+                        assert.match(body, /receipts\.run\(envelope\.request\.requestId, boundPayload, async \(\) =>/);
+                        receiptNames.get(command).push(site[1]);
+                        if (coreWrites.includes(command)) sites += 1;
+                        continue;
+                    }
+                }
                 assert(owner, `core's receipt payload '${site[1]}' sits inside a core write`);
                 receiptNames.get(owner[1]).push(site[1]);
                 if (coreWrites.includes(owner[1])) sites += 1;
@@ -1853,7 +1871,7 @@ assert.match(owner, /\.put\("error", message\.substringBefore\(':'\)\)\)\s+Start
 assert.match(owner, /runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "drained"\)\.put\("ingested", ingested\)\)/);
 assert.match(owner, /runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "failed"\)\.put\("error", message\.substringBefore\(':'\)\)\)/);
 assert.match(coreHost, /fun logLine\(message: String, context: JSONObject\) \{\s+runCatching \{ callAsync\("logLine", message, context\.toString\(\)\) \}\.onFailure \{ Log\.i\(TAG, "\$message \$context"\) \}/);
-assert.match(hostEntry, /logLine\(message: string, contextJson: string\): string \{\s+return submit\(async \(\) => \{\s+try \{\s+logInfo\(message, \{ scope: 'native-android', context: JSON\.parse\(contextJson\) as Record<string, unknown> \}\);/);
+assert.match(hostEntry, /logLine\(message: string, contextJson: string\): string \{\s+return submit\(async \(\) => \{\s+try \{\s+logInfo\(message, \{ scope: globalThis\.__mindwtrHostPlatform === 'ios' \? 'native-ios' : 'native-android', context: JSON\.parse\(contextJson\) as Record<string, unknown> \}\);/);
 assert.match(coreHost, /fun ingestPendingCaptures\(requestId: String\): JSONObject = callAsync\("ingest", requestId\)/);
 assert.equal(kotlinFiles.join('\n').match(/runtime\.language\(|runtime\.strings\(/g).length, 2);
 // Core's editor statuses and priorities each have their label key.
@@ -3875,6 +3893,8 @@ export { buildCalendarSubscriptionSettingsModel } from ${JSON.stringify(resolve(
 export { REMINDER_STORE_RESCHEDULE_DELAY_MS, shouldRescheduleReminderAlarms } from ${JSON.stringify(resolve(app, '../../packages/core/src/mobile-reminder-alarms.ts'))};
 export { nameNotifyListener } from ${JSON.stringify(resolve(app, '../../packages/core/src/store-notify-profiler.ts'))};
 export { buildShortcutsSnapshot } from ${JSON.stringify(resolve(app, '../../packages/core/src/widget-payload.ts'))};
+export { serializeBackupData } from ${JSON.stringify(resolve(app, '../../packages/core/src/backup-transfer.ts'))};
+export { validateMergedSyncData } from ${JSON.stringify(resolve(app, '../../packages/core/src/sync-normalization.ts'))};
 export { getNextFutureStartRevealAt } from ${JSON.stringify(resolve(app, '../../packages/core/src/task-utils.ts'))};
 export { resolveEntityOpenTarget } from ${JSON.stringify(resolve(app, '../../packages/core/src/entry-points.ts'))};
 export { compareAppVersions, fetchAppStoreInfo, UPDATE_BADGE_AVAILABLE_KEY, UPDATE_BADGE_LAST_CHECK_KEY, UPDATE_BADGE_LATEST_KEY, shouldCheckForAppUpdate } from ${JSON.stringify(resolve(app, '../../packages/core/src/app-store-update.ts'))};
@@ -3901,7 +3921,9 @@ export { prepareNativeAttachmentDraftDiscardCandidates, prepareNativeAttachmentD
 export { prepareNativeAttachmentCleanupWitness, isNativeAttachmentCleanupWitnessEligible } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-attachment-cleanup.ts'))};
 import { createOwnedEditorFileEditTaskDraftSaveMethods as createRealMixedSaveMethods } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-host-contract-owned-file-edit-save.ts'))};
 import { createNativeHostContract as createRealCompleteContract } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-host-contract.ts'))};
-import { NativeReceiptSqliteAdapter as RealCompleteAdapter } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-request-receipts.ts'))};
+import { NativePomodoroTransitionRefusal as PomodoroRefusal520, NativeReceiptSqliteAdapter as RealCompleteAdapter } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-request-receipts.ts'))};
+import { TASK_SQLITE_COLUMNS as pomodoroColumns520, taskToSqliteRow as pomodoroRow520 } from ${JSON.stringify(resolve(app, '../../packages/core/src/task-sync-schema.ts'))};
+import { rememberRawReadRow as rememberPomodoroRow520 } from ${JSON.stringify(resolve(app, '../../packages/core/src/sqlite-raw-snapshot.ts'))};
 import { setStorageAdapter as setRealCompleteAdapter, useTaskStore as realCompleteStore,
     getPersistenceStatus as realCompletePersistence } from ${JSON.stringify(resolve(app, '../../packages/core/src/store.ts'))};
 const realCompleteContract = createRealCompleteContract();
@@ -3924,6 +3946,7 @@ async function completeFixtureContract() {
   await realCompleteActivation; return realCompleteContract;
 }
 export { taskRevisionOf } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-request-receipts.ts'))};
+export { buildNativePomodoroPanel, readNativePomodoroPresentation } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-pomodoro-panel.ts'))};
 // File-only changed/noop fixtures have no ordinary patch fields. Refuse any
 // field edit rather than manufacturing a second editor field policy here.
 const realMixedSaveMethods = createRealMixedSaveMethods({ readiness: () => ({ ok: true, value: null }),
@@ -3970,9 +3993,56 @@ export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName, t) {
   return { title: t('settings.undoImportConfirmTitle'), message: t('settings.undoImportConfirm', { snapshotName }),
     confirmLabel: t('markdown.referenceRestore'), cancelLabel: t('common.cancel') };
 }
+export function createNativeAIRequestTimeoutMethods(deps) {
+  const read = (kind, input, current) => {
+    current(); const ready = deps.readiness(); if (!ready.ok) return ready;
+    globalThis.aiTimeoutInputs.push([kind, JSON.stringify(input)]);
+    return globalThis.aiTimeoutReplies[kind];
+  };
+  return {
+    options: async (input, current) => read('options', input, current),
+    prepare: async (input, current) => read('prepare', input, current),
+    commit: async (input, current) => read('commit', input, current),
+    validate: input => { globalThis.aiTimeoutInputs.push(['validate', JSON.stringify(input)]); return globalThis.aiTimeoutReplies.validate; },
+    outcome: input => { const ready = deps.readiness(); if (!ready.ok) return ready; globalThis.aiTimeoutInputs.push(['outcome', JSON.stringify(input)]); return globalThis.aiTimeoutReplies.outcome; },
+  };
+}
+export function createNativeAIReasoningEffortMethods(deps) {
+  globalThis.aiReasoningDeps = deps;
+  const read = async (kind, input, current) => {
+    current(); const ready = deps.readiness(); if (!ready.ok) return ready;
+    await globalThis.aiReasoningHold; current();
+    globalThis.aiReasoningInputs.push([kind, JSON.stringify(input)]);
+    return globalThis.aiReasoningReplies[kind];
+  };
+  return {
+    options: (input, current) => read('options', input, current),
+    prepare: (input, current) => read('prepare', input, current),
+    commit: (input, current) => read('commit', input, current),
+    validate: input => { globalThis.aiReasoningInputs.push(['validate', JSON.stringify(input)]); return globalThis.aiReasoningReplies.validate; },
+    outcome: input => { const ready = deps.readiness(); if (!ready.ok) return ready; globalThis.aiReasoningInputs.push(['outcome', JSON.stringify(input)]); return globalThis.aiReasoningReplies.outcome; },
+  };
+}
+export function createNativeAIGeminiThinkingBudgetMethods(deps) {
+  globalThis.aiGeminiDeps = deps;
+  const read = async (kind, input, current) => {
+    current(); const ready = deps.readiness(); if (!ready.ok) return ready;
+    await globalThis.aiGeminiHold; current();
+    globalThis.aiGeminiInputs.push([kind, JSON.stringify(input)]);
+    return globalThis.aiGeminiReplies[kind];
+  };
+  return {
+    options: (input, current) => read('options', input, current),
+    prepare: (input, current) => read('prepare', input, current),
+    commit: (input, current) => read('commit', input, current),
+    validate: input => { globalThis.aiGeminiInputs.push(['validate', JSON.stringify(input)]); return globalThis.aiGeminiReplies.validate; },
+    outcome: input => { const ready = deps.readiness(); if (!ready.ok) return ready; globalThis.aiGeminiInputs.push(['outcome', JSON.stringify(input)]); return globalThis.aiGeminiReplies.outcome; },
+  };
+}
 export function setLogger(logger) { globalThis.coreLogger = logger; setRealLogger(logger); }
 export function consoleLogger() {}
 export class SqliteAdapter {
+  get concurrentWritesGuarded() { return globalThis.linesUnguarded !== true; }
   async ensureSchema() { globalThis.events.push('schema'); }
   async withConnection(work) { return work(); }
   async afterReadNow() {}
@@ -3989,9 +4059,19 @@ export class SqliteAdapter {
   }
   // core's public read runs its protected body, which ends with the subclass's check (afterReadNow) in the same hold.
   async getData(options) { return this.getDataNow(options); }
-  async getDataNow() {
+  async getDataNow(options) {
     globalThis.events.push('load');
     globalThis.lastLoaded = globalThis.fakeDataSequence.shift() || globalThis.fakeData;
+    if (globalThis.linesReadHold) await globalThis.linesReadHold;
+    if (options?.rawTasks && globalThis.pomodoroRawCells) {
+      for (const task of globalThis.lastLoaded.tasks) {
+        const projection = pomodoroRow520(task);
+        const row = Object.fromEntries(pomodoroColumns520.map((name, index) => [name, projection[index]]));
+        Object.assign(row, globalThis.pomodoroRawCells);
+        rememberPomodoroRow520(task, row, pomodoroColumns520, projection);
+        globalThis.pomodoroExpectedRaw = pomodoroColumns520.map((name) => row[name]);
+      }
+    }
     await this.afterReadNow((table) => globalThis.lastLoaded[table].length, globalThis.lastLoaded.settings);
     return globalThis.lastLoaded;
   }
@@ -4011,11 +4091,27 @@ export function assertNativeLegacyBackupSafe() { globalThis.events.push('legacyC
 // Core compares every persisted field; the fake compares the whole snapshot.
 export function legacyImportMismatch(merged, saved) { return JSON.stringify(merged) === JSON.stringify(saved) ? null : 'tasks'; }
 export function splitSqlStatements(sql) { return [sql]; }
-export class NativeReceiptSqliteAdapter extends SqliteAdapter {}
+export class NativeReceiptSqliteAdapter extends SqliteAdapter {
+  async readPomodoroSession() {
+    globalThis.events.push('pomodoro-read');
+    if (globalThis.pomodoroReadHold) await globalThis.pomodoroReadHold;
+    if (globalThis.pomodoroReadError) throw new Error('Pomodoro session could not be read');
+    return globalThis.pomodoroSession ? JSON.parse(JSON.stringify(globalThis.pomodoroSession)) : { raw: null, state: null };
+  }
+  async savePomodoroTransitionWithReceipt(plan, options) {
+    globalThis.pomodoroInputs.push(JSON.stringify([plan, options]));
+    if (globalThis.pomodoroRefusal) throw new PomodoroRefusal520(globalThis.pomodoroRefusal, 'pre-domain');
+    if (globalThis.pomodoroCommitError) throw new Error(globalThis.pomodoroCommitError);
+    globalThis.pomodoroOutcome = plan.result;
+    globalThis.pomodoroSession = { raw: plan.sessionAfter, state: JSON.parse(plan.sessionAfter) };
+    return { result: plan.result, replayed: options.replayOnly, projectionReloaded: globalThis.pomodoroProjection !== false };
+  }
+  async readPomodoroTransitionOutcome() { return globalThis.pomodoroOutcome || null; }
+}
 export async function loadNativeRequestReceipts(_client, options) { globalThis.receiptsLoadedAt = globalThis.events.length;
   globalThis.receiptScope = options?.durableCommands ?? null; return 0; }
 export function setNativeReplayTokens(mode) { globalThis.replayTokens = mode; }
-export async function pruneNativeRequestReceipts() { return 3; }
+export async function pruneNativeRequestReceipts(client, at, options) { globalThis.pruneInputs.push(options ?? null); return 3; }
 export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
 export function getStorageAdapter() { return globalThis.adapter; }
 export async function flushPendingSave() { globalThis.events.push('flush'); await globalThis.flushHold;
@@ -4056,6 +4152,10 @@ export function createNativeHostContract(bindings = {}) {
       globalThis.activationCount++;
       globalThis.saveCount++;
       return { ok: true, value: null };
+    },
+    getGtdPomodoroOptions(input) {
+      globalThis.menuInputs.push(JSON.stringify(['gtdPomodoroOptions', input]));
+      return globalThis.gtdPomodoroResult;
     },
     getInboxWindow() {
       globalThis.queryCount++;
@@ -4193,6 +4293,70 @@ export function createNativeHostContract(bindings = {}) {
         globalThis.onReadiness?.();
         return globalThis.backupReadinessResult;
     },
+    async prepareInboxTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTagPrepare', input]));
+      return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
+    },
+    validatePreparedInboxTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTagValidate', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async commitPreparedInboxTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTagCommit', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async inboxTasksAddTagOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTagOutcome', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async prepareInboxTasksRemoveTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxRemoveTagPrepare', input]));
+      return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
+    },
+    validatePreparedInboxTasksRemoveTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxRemoveTagValidate', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async commitPreparedInboxTasksRemoveTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxRemoveTagCommit', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async inboxTasksRemoveTagOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxRemoveTagOutcome', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async prepareInboxTasksOrganize(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTasksOrganizePrepare', input]));
+      return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
+    },
+    validatePreparedInboxTasksOrganize(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTasksOrganizeValidate', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async commitPreparedInboxTasksOrganize(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTasksOrganizeCommit', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async inboxTasksOrganizeOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTasksOrganizeOutcome', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async prepareInboxOrganizeDestinationCreate(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxOrganizeDestinationCreatePrepare', input]));
+      return { ok: true, value: { kind: 'prepared', prepared: { version: 1, request: input, result: { id: input.requestId, changed: true } } } };
+    },
+    validatePreparedInboxOrganizeDestinationCreate(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxOrganizeDestinationCreateValidate', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async commitPreparedInboxOrganizeDestinationCreate(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxOrganizeDestinationCreateCommit', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async inboxOrganizeDestinationCreateOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxOrganizeDestinationCreateOutcome', input]));
+      return { ok: true, value: input.prepared.result };
+    },
     async prepareReferenceTasksAddTag(input) {
       globalThis.menuInputs.push(JSON.stringify(['referenceTagPrepare', input]));
       return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
@@ -4225,6 +4389,42 @@ export function createNativeHostContract(bindings = {}) {
       globalThis.menuInputs.push(JSON.stringify(['referenceRemoveTagOutcome', input]));
       return { ok: true, value: input.prepared.result };
     },
+    getTrashSelection(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashSelection', input]));
+      return globalThis.trashSelectionResult;
+    },
+    async prepareTrashItemsRestore(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashRestorePrepare', input]));
+      return globalThis.trashRestorePreparation;
+    },
+    validatePreparedTrashItemsRestore(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashRestoreValidate', input]));
+      return globalThis.trashRestoreValidation;
+    },
+    async commitPreparedTrashItemsRestore(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashRestoreCommit', input]));
+      return globalThis.trashRestoreResult;
+    },
+    trashItemsRestoreOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashRestoreOutcome', input]));
+      return globalThis.trashRestoreOutcome;
+    },
+    async prepareTrashItemsPurge(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashPurgePrepare', input]));
+      return globalThis.trashPurgePreparation;
+    },
+    validatePreparedTrashItemsPurge(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashPurgeValidate', input]));
+      return globalThis.trashPurgeValidation;
+    },
+    async commitPreparedTrashItemsPurge(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashPurgeCommit', input]));
+      return globalThis.trashPurgeResult;
+    },
+    trashItemsPurgeOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['trashPurgeOutcome', input]));
+      return globalThis.trashPurgeOutcome;
+    },
     getProjects() {
       globalThis.projectInputs.push('projects');
       return { ok: true, value: { version: 1, revision: 'p', active: [], deferred: [], archived: [] } };
@@ -4234,6 +4434,18 @@ export function createNativeHostContract(bindings = {}) {
       return globalThis.projectDetailResult;
     },
     async submitQuickCapture(input) { globalThis.createCount++; globalThis.captureInputs.push(JSON.stringify(['submit', input])); return { ok: true, value: { kind: 'saved', taskId: 'id', next: 'close', reset: null } }; },
+    prepareQuickCaptureLines(request) {
+      globalThis.captureInputs.push(JSON.stringify(['linesPrepare', request]));
+      if (globalThis.linesRefused) return { ok: true, value: { kind: 'refused', notice: { message: 'Invalid date' } } };
+      return { ok: true, value: { kind: 'prepared', prepared: { version: 1, request,
+        tasks: [], projects: [], deviceIdToInitialize: null, result: { kind: 'saved', taskIds: request.captureIds } } } };
+    },
+    validatePreparedQuickCaptureLines(input) { return { ok: true, value: input.prepared.result }; },
+    async commitPreparedQuickCaptureLines(input) {
+      globalThis.captureInputs.push(JSON.stringify(['linesCommit', input]));
+      if (globalThis.linesCommitFailure) return { ok: false, error: { code: 'SAVE_FAILED', message: 'Injected lines save' } };
+      return { ok: true, value: input.prepared.result };
+    },
     openQuickCapture() { globalThis.captureInputs.push('open'); return { ok: true, value: { version: 1, options: {} } }; },
     getQuickCaptureView(input) { globalThis.captureInputs.push(JSON.stringify(['view', input])); return { ok: true, value: { version: 1, options: input.options } }; },
     editQuickCapture(input) { globalThis.captureInputs.push(JSON.stringify(['edit', input])); return { ok: true, value: { view: { options: input.options }, notice: null } }; },
@@ -4312,7 +4524,8 @@ export const useTaskStore = { getState: () => {
   settings: globalThis.settings,
   _allTasks: globalThis.lastLoaded ? globalThis.lastLoaded.tasks : globalThis.emptyOwnerTasks,
   _tasksById: globalThis.ownerTaskMap,
-  _allProjects: globalThis.ownerProjects, _allSections: [], _allAreas: [], _allPeople: [],
+  _allProjects: globalThis.ownerProjects, _allSections: globalThis.ownerSections ??= [],
+  _allAreas: globalThis.ownerAreas ??= [], _allPeople: globalThis.ownerPeople ??= [],
   persistenceFailure: globalThis.persistenceFailure, isLoading: globalThis.storeLoading, editLockCount: globalThis.storeEditLocks,
 }; } };
 export function logInfo(message, meta) {
@@ -4371,12 +4584,16 @@ const built = await build({
     entryPoints: [resolve(app, 'bundle/host-entry.ts')], bundle: true, write: false, format: 'iife',
     plugins: [{ name: 'fake-core', setup(plugin) {
         plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-request-timeout$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-reasoning-effort$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-gemini-thinking-budget$/ }, () => ({ path: 'core', namespace: 'test' }));
         plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
     } }],
 });
 const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined, configure = () => {}, source = built.outputFiles[0].text) => {
     const state = {
         fakeData: { tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} },
+        pomodoroInputs: [], pomodoroSession: null, pomodoroOutcome: null, pruneInputs: [],
         fakeDataSequence, activationCount: 0, saveCount: 0, queryCount: 0,
         __mindwtrHostPlatform: hostPlatform,
         events: [], planInputs: [], plan: null, sqliteHasData: true, saveError: null, afterSave: null, lastLoaded: null, commitResult: null,
@@ -4452,6 +4669,9 @@ const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined, c
             kvSet(key, value) { state.fileCalls.push(`kvSet ${key} ${value}`); state.kv[key] = value; return null; },
         },
     };
+    state.aiTimeoutInputs = []; state.aiTimeoutReplies = {};
+    state.aiReasoningInputs = []; state.aiReasoningReplies = {};
+    state.aiGeminiInputs = []; state.aiGeminiReplies = {};
     configure(state);
     vm.runInNewContext(source, state);
     assert.equal(state.contractBindings.reminderPlatform, hostPlatform === 'ios' ? 'ios' : 'android');
@@ -4461,6 +4681,991 @@ const poll = async (state, id) => {
     await new Promise((resolveTick) => setImmediate(resolveTick));
     return JSON.parse(state.MindwtrHost.poll(id));
 };
+// Task587: production host dispatch and the real shared projection. Storage is
+// a stand-in here; NativeAISettingsProjectionTests owns actual JSC/SQLite proof.
+{
+    const read = (state, input = '{}', owner = () => '') => poll(state, state.MindwtrHost.iosAISettingsProjection(input, owner));
+    const ready = async (settings = {}) => {
+        const state = makeState(0, [], 'ios', state => { state.fakeData.settings = settings; });
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        state.settings = state.fakeData.settings;
+        state.events.length = 0; state.fileCalls.length = 0;
+        return state;
+    };
+    const marker = 'v1.3.5/ios-ai-settings-projection';
+    const refused = async (state, input = '{}', owner = () => '') => {
+        const before = state.logText, data = JSON.stringify(state.fakeData), kv = JSON.stringify(state.kv);
+        assert.equal((await read(state, input, owner)).ok, false);
+        assert.equal(state.logText, before, 'refusal emits no projection marker');
+        assert.equal(JSON.stringify(state.fakeData), data); assert.equal(JSON.stringify(state.kv), kv);
+        assert(!state.events.includes('save')); assert.equal(state.aiInputs.length, 0);
+    };
+    const sentinel = 'PRIVATE587-SENTINEL';
+    const state = await ready({ ai: { provider: 'anthropic', enabled: true, reasoningEffort: 'high', thinkingBudget: 4096,
+        requestTimeoutSeconds: 300, model: sentinel, copilotModel: sentinel, baseUrl: 'https://' + sentinel,
+        openAIExtraBodyParams: { secret: sentinel }, speechToText: { enabled: true, provider: 'parakeet',
+            model: sentinel, language: sentinel, baseUrl: sentinel, offlineModelPath: sentinel,
+            mode: 'transcribe_only', fieldStrategy: 'description_only' } } });
+    const before = JSON.stringify(state.fakeData), kv = JSON.stringify(state.kv);
+    const first = await read(state), second = await read(state);
+    assert.equal(first.ok, true); assert.deepEqual(second, first);
+    assert.equal(first.value.version, 1); assert.equal(first.value.aiProvider, 'anthropic');
+    assert.equal(first.value.aiThinkingBudget, 4096); assert.equal(first.value.speechProvider, 'whisper');
+    assert.equal(first.value.anthropicThinkingEnabled, true); assert.equal(first.value.speechMode, 'transcribe_only');
+    assert(!JSON.stringify(first).includes(sentinel)); assert(!state.logText.includes(sentinel));
+    assert.equal(JSON.stringify(state.fakeData), before); assert.equal(JSON.stringify(state.kv), kv);
+    assert.deepEqual(state.events, ['baseline', 'baseline', 'baseline', 'baseline']);
+    assert.equal(state.fileCalls.length, 0); assert.equal(state.aiInputs.length, 0);
+    assert.equal(state.contractBindings.ai, undefined, 'the read never activates the AI factory');
+    const lines = state.logText.split('\n').filter(line => line.includes(marker));
+    assert.equal(lines.length, 2);
+    assert.deepEqual(JSON.parse(lines[0]).context, { releaseCheck: marker, outcome: 'read' });
+    for (const input of ['null', '[]', '{', '{"extra":true}', ' '.repeat(257) + '{}']) await refused(state, input);
+    await refused(state, '{}', null); await refused(state, '{}', () => 'retired-owner');
+    for (const field of ['failed', 'queued', 'inFlight', 'immediate', 'retrying']) {
+        state.persistenceStatus = { [field]: true }; await refused(state); state.persistenceStatus = null;
+    }
+    for (const field of ['sandbox', 'workspaceTransition', 'storeLoading', 'storeEditLocks', 'linesUnguarded']) {
+        state[field] = true; await refused(state); state[field] = false;
+    }
+    state.rowBaselineNull = true; await refused(state); state.rowBaselineNull = false;
+    state.rowBaseline = { settings: { ai: { provider: 'gemini' } } }; await refused(state); state.rowBaseline = null;
+    state.adapter = {}; await refused(state);
+    await refused(makeState(0, [], 'ios'));
+    const android = makeState(0, [], 'android');
+    assert.equal((await poll(android, android.MindwtrHost.boot())).ok, true);
+    await refused(android);
+    for (const mutation of ['baseline', 'settings', 'generation', 'owner']) {
+        const changed = await ready(), original = changed.adapter.readRowBaseline.bind(changed.adapter);
+        let reads = 0, currentOwner = true;
+        changed.adapter.readRowBaseline = async () => {
+            const saved = await original();
+            if (++reads === 1) {
+                if (mutation === 'baseline') changed.rowBaselineNull = true;
+                if (mutation === 'settings') changed.settings = {};
+                if (mutation === 'generation') changed.persistenceStatus = { generation: 1 };
+                if (mutation === 'owner') currentOwner = false;
+            }
+            return saved;
+        };
+        await refused(changed, '{}', () => currentOwner ? '' : 'retired');
+    }
+    const invalid = await ready({ ai: { provider: sentinel } });
+    await refused(invalid);
+    assert(!(await read(invalid)).error.includes(sentinel));
+    for (const dispatch of ['menuRead', 'menuCommand']) {
+        const fresh = await ready();
+        assert.equal((await poll(fresh, fresh.MindwtrHost[dispatch]('iosAISettingsProjection', '{}'))).ok, false);
+        assert(!(fresh.logText ?? '').includes(marker));
+    }
+    const swift = readFileSync(resolve(app, '../ios-native/Sources/MindwtrNativeCore/CoreHost.swift'), 'utf8');
+    assert.match(swift, /guard method != "iosAISettingsProjection"/);
+    assert.match(swift, /\n    public func readAISettingsProjection\(\) async throws -> NativeAISettingsProjection/);
+    console.log('Task587: private AI projection routing, bounds, saved baseline, authority, secret omission and no-write gates passed; Apple execution pending');
+}
+// Task590: invoke the production private routes. Core write/SQLite semantics have
+// their own actual-module tests; these stand-ins prove dispatch and argument wiring.
+{
+    const state = makeState(0, [], 'ios');
+    assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+    assert(state.receiptScope.includes('aiRequestTimeout'), 'private timeout receipts must survive native restart');
+    const expected = { aiPresent: false, timeoutPresent: false, timeout: null, providerPresent: false, provider: null, stampPresent: false, stamp: null };
+    const request = { requestId: '00000000-0000-4000-8000-000000000590', value: 60, expected };
+    const prepared = { version: 1, request }, envelope = { request, prepared }, reply = { value: 60, changed: true };
+    state.aiTimeoutReplies = {
+        options: { ok: true, value: { value: 30, expected } }, prepare: { ok: true, value: { kind: 'prepared', prepared } },
+        validate: { ok: true, value: reply }, commit: { ok: true, value: reply }, outcome: { ok: true, value: reply },
+    };
+    const invoke = async (route, value, owner = () => '') => poll(state, state.MindwtrHost[route](JSON.stringify(value), owner));
+    for (const [route, kind, input] of [['iosAIRequestTimeoutOptions', 'options', {}], ['iosAIRequestTimeoutPrepare', 'prepare', request],
+        ['iosAIRequestTimeoutValidate', 'validate', envelope], ['iosAIRequestTimeoutCommit', 'commit', envelope],
+        ['iosAIRequestTimeoutRetryOutcome', 'outcome', request]]) {
+        assert.equal(typeof state.MindwtrHost[route], 'function', 'actual private timeout route missing: ' + route);
+        const before = state.aiTimeoutInputs.length;
+        assert.deepEqual(await invoke(route, input), state.aiTimeoutReplies[kind]);
+        assert.deepEqual(JSON.parse(JSON.stringify(state.aiTimeoutInputs.at(-1))), [kind, JSON.stringify(input)]);
+        assert.equal(state.aiTimeoutInputs.length, before + 1);
+    }
+    for (const route of ['iosAIRequestTimeoutOptions', 'iosAIRequestTimeoutPrepare', 'iosAIRequestTimeoutCommit']) {
+        const before = state.aiTimeoutInputs.length;
+        assert.equal((await invoke(route, {}, null)).ok, false);
+        assert.equal((await invoke(route, {}, () => 'retired')).ok, false);
+        assert.equal(state.aiTimeoutInputs.length, before, 'invalid owner reaches no contract method');
+    }
+    const marker = 'v1.3.5/ios-ai-request-timeout';
+    assert(!(state.logText ?? '').includes(marker), 'prepare/commit dispatch alone cannot claim native durable acknowledgment');
+    assert.equal((await poll(state, state.MindwtrHost.iosAIRequestTimeoutAcknowledged())).ok, true);
+    const lines = state.logText.split('\n').filter(line => line.includes(marker));
+    assert.equal(lines.length, 1); assert.deepEqual(JSON.parse(lines[0]).context, { releaseCheck: marker, outcome: 'saved' });
+    for (const dispatch of ['menuRead', 'menuCommand']) {
+        for (const route of ['iosAIRequestTimeout', 'iosAIRequestTimeoutOptions', 'iosAIRequestTimeoutPrepare', 'iosAIRequestTimeoutCommit'])
+            assert.equal((await poll(state, state.MindwtrHost[dispatch](route, '{}'))).ok, false);
+    }
+    const swift = readFileSync(resolve(app, '../ios-native/Sources/MindwtrNativeCore/CoreHost.swift'), 'utf8');
+    assert.match(swift, /guard !Engine\.aiRequestTimeoutMethods\.contains\(method\)/);
+    assert.match(swift, /func setAIRequestTimeout\(_ request: NativeAIRequestTimeoutRequest,/);
+    // Task601 exposes the existing typed timeout facade to App, never raw requests or private fields.
+    const requireTypedAITimeoutFacade = source => {
+        assert.match(source, /public func readAIRequestTimeoutOptions\(\) async throws -> NativeAIRequestTimeoutOptions/);
+        assert.match(source, /public func setAIRequestTimeout\(_ request: NativeAIRequestTimeoutRequest,\s*readmission:/);
+        assert.match(source, /public init\(requestId: String, value: Int, expected: NativeAIRequestTimeoutWitness\)/);
+        for (const name of ['Witness', 'Request', 'Options', 'Result'])
+            assert.match(source, new RegExp('public struct NativeAIRequestTimeout' + name + ':'));
+        for (const [name, fields] of [['Request', ['value']], ['Options', ['value', 'expected']], ['Result', ['value', 'changed']]]) {
+            const dto = new RegExp('public struct NativeAIRequestTimeout' + name + ':([\\s\\S]*?)\\n}').exec(source)?.[1];
+            assert(dto);
+            assert.deepEqual([...dto.matchAll(/\n    public (?:let|var) (\w+):/g)].map(match => match[1]), fields);
+            assert.doesNotMatch(dto, /public func (?:json|validated)/);
+        }
+        const witness = source.slice(source.indexOf('public struct NativeAIRequestTimeoutWitness:'), source.indexOf('public struct NativeAIRequestTimeoutRequest:'));
+        assert.match(witness, /^public struct NativeAIRequestTimeoutWitness: Sendable, Equatable \{/);
+        assert.doesNotMatch(witness, /public (?:let|var|func|init)/);
+        assert.doesNotMatch(source, /public func (?:probeAIRequestTimeoutOutcome|readAIProviderDeviceState|invokeAIRequestTimeoutRead)/);
+        assert.doesNotMatch(source, /public func (?:setAIRequestTimeout|readAIRequestTimeoutOptions)\([^)]*(?:requestJSON|argumentsJSON)/);
+        assert.match(source, /guard !Engine\.aiRequestTimeoutMethods\.contains\(method\)/);
+    };
+    requireTypedAITimeoutFacade(swift);
+    for (const [before, after] of [
+        ['public func readAIRequestTimeoutOptions()', 'func readAIRequestTimeoutOptions()'],
+        ['public func setAIRequestTimeout(_ request:', 'func setAIRequestTimeout(_ request:'],
+        ['public init(requestId: String, value: Int, expected:', 'init(requestId: String, value: Int, expected:'],
+        ['    let stamp: String?', '    public let stamp: String?'],
+        ['public struct NativeAIRequestTimeoutWitness: Sendable, Equatable', 'public struct NativeAIRequestTimeoutWitness: Decodable, Sendable, Equatable'],
+        ['    func probeAIRequestTimeoutOutcome(', '    public func probeAIRequestTimeoutOutcome('],
+        ['guard !Engine.aiRequestTimeoutMethods.contains(method)', 'guard true'],
+    ]) {
+        const target = before === '    let stamp: String?'
+            ? swift.slice(swift.indexOf('public struct NativeAIRequestTimeoutWitness:'), swift.indexOf('public struct NativeAIRequestTimeoutRequest:')) : swift;
+        assert(target.includes(before), 'Task601 gate mutation anchor exists: ' + before);
+        const changed = target === swift ? swift.replace(before, after) : swift.replace(target, target.replace(before, after));
+        assert.throws(() => requireTypedAITimeoutFacade(changed));
+    }
+    console.log('Task590: production private timeout invocation, exact arguments, owner refusal and receipt registration passed; Apple execution pending');
+}
+// Task678: production private reasoning routes; shared real-module/SQLite
+// tests own state semantics. This VM proves wiring, owner fences and receipt scope.
+{
+    const ready = async (platform = 'ios') => {
+        const state = makeState(0, [], platform);
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        return state;
+    };
+    const state = await ready();
+    assert.equal(typeof state.MindwtrHost.iosAIReasoningEffortOptions, 'function', 'actual private reasoning route missing');
+    assert(state.receiptScope.includes('aiReasoningEffort'), 'effort receipts survive restart independently of timeout');
+    assert(state.receiptScope.includes('aiRequestTimeout'));
+    const expected = { aiPresent: true, effortPresent: true, effort: 'minimal', providerPresent: false, provider: null, stampPresent: false, stamp: null };
+    const request = { requestId: '00000000-0000-4000-8000-000000000678', value: 'medium', expected };
+    const prepared = { version: 1, request }, envelope = { request, prepared }, reply = { value: 'medium', changed: true };
+    state.aiReasoningReplies = {
+        options: { ok: true, value: { value: 'minimal', expected } }, prepare: { ok: true, value: { kind: 'prepared', prepared } },
+        validate: { ok: true, value: reply }, commit: { ok: true, value: reply }, outcome: { ok: true, value: reply },
+    };
+    const routes = [['iosAIReasoningEffortOptions', 'options', {}], ['iosAIReasoningEffortPrepare', 'prepare', request],
+        ['iosAIReasoningEffortValidate', 'validate', envelope], ['iosAIReasoningEffortCommit', 'commit', envelope],
+        ['iosAIReasoningEffortRetryOutcome', 'outcome', request]];
+    const invoke = (route, input, owner = () => '') => poll(state, state.MindwtrHost[route](JSON.stringify(input), owner));
+    for (const [route, kind, input] of routes) {
+        assert.equal(typeof state.MindwtrHost[route], 'function');
+        const before = state.aiReasoningInputs.length;
+        assert.deepEqual(await invoke(route, input), state.aiReasoningReplies[kind]);
+        assert.deepEqual(JSON.parse(JSON.stringify(state.aiReasoningInputs.at(-1))), [kind, JSON.stringify(input)]);
+        assert.equal(state.aiReasoningInputs.length, before + 1);
+    }
+    for (const value of ['low', 'medium', 'high']) {
+        const input = { ...request, value };
+        await invoke('iosAIReasoningEffortPrepare', input);
+        assert.equal(JSON.parse(state.aiReasoningInputs.at(-1)[1]).value, value);
+    }
+    for (const route of ['iosAIReasoningEffortOptions', 'iosAIReasoningEffortPrepare', 'iosAIReasoningEffortCommit']) {
+        const before = state.aiReasoningInputs.length;
+        assert.equal((await invoke(route, {}, null)).ok, false);
+        assert.equal((await invoke(route, {}, () => 'retired')).ok, false);
+        for (const raw of ['{', ' '.repeat(route.endsWith('Options') ? 257 : route.endsWith('Prepare') ? 2049 : 8193) + '{}'])
+            assert.equal((await poll(state, state.MindwtrHost[route](raw, () => ''))).ok, false);
+        assert.equal(state.aiReasoningInputs.length, before);
+        let release; state.aiReasoningHold = new Promise(resolve => { release = resolve; });
+        const ticket = state.MindwtrHost[route]('{}', () => '');
+        state.MindwtrHost.abort(ticket); release();
+        assert.equal((await poll(state, ticket)).ok, false);
+        assert.equal(state.aiReasoningInputs.length, before, 'cancelled route does not reach contract');
+        state.aiReasoningHold = undefined;
+        let active = true;
+        state.aiReasoningHold = new Promise(resolve => { release = resolve; });
+        const changed = state.MindwtrHost[route]('{}', () => active ? '' : 'retired');
+        active = false; release();
+        assert.equal((await poll(state, changed)).ok, false);
+        assert.equal(state.aiReasoningInputs.length, before, 'late owner refuses');
+        state.aiReasoningHold = undefined;
+    }
+    for (const [route, , input] of routes.filter(([route]) => route.endsWith('Validate') || route.endsWith('RetryOutcome'))) {
+        const before = state.aiReasoningInputs.length;
+        for (const raw of ['{', ' '.repeat(route.endsWith('Validate') ? 8193 : 2049) + '{}'])
+            assert.equal((await poll(state, state.MindwtrHost[route](raw))).ok, false);
+        assert.equal(state.aiReasoningInputs.length, before);
+    }
+    for (const flag of ['sandbox', 'workspaceTransition', 'linesUnguarded']) {
+        state[flag] = true;
+        assert.equal((await invoke('iosAIReasoningEffortOptions', {})).ok, false);
+        assert.equal((await invoke('iosAIReasoningEffortRetryOutcome', request)).ok, false);
+        state[flag] = false;
+    }
+    const adapter = state.adapter; state.adapter = {};
+    assert.equal((await invoke('iosAIReasoningEffortOptions', {})).ok, false); state.adapter = adapter;
+    const android = await ready('android');
+    assert.equal((await poll(android, android.MindwtrHost.iosAIReasoningEffortOptions('{}', () => ''))).ok, false);
+    assert.equal((await poll(android, android.MindwtrHost.iosAIReasoningEffortAcknowledged())).ok, true);
+    assert(!(android.logText ?? '').includes('v1.3.5/ios-ai-reasoning-effort'));
+    assert.equal((await state.aiReasoningDeps.save()).ok, true);
+    state.flushError = 'PRIVATE678-FAILURE';
+    assert.equal((await state.aiReasoningDeps.save()).ok, false); state.flushError = undefined;
+    const marker = 'v1.3.5/ios-ai-reasoning-effort';
+    assert(!(state.logText ?? '').includes(marker), 'route replies do not claim native acknowledgment');
+    assert.equal((await poll(state, state.MindwtrHost.iosAIReasoningEffortAcknowledged())).ok, true);
+    const lines = state.logText.split('\n').filter(line => line.includes(marker));
+    assert.equal(lines.length, 1);
+    assert.deepEqual(JSON.parse(lines[0]).context, { releaseCheck: marker, outcome: 'saved' });
+    assert(!lines[0].includes(request.requestId) && !lines[0].includes('minimal') && !lines[0].includes('medium'));
+    for (const dispatch of ['menuRead', 'menuCommand']) {
+        for (const route of ['iosAIReasoningEffort', ...routes.map(([route]) => route), 'iosAIReasoningEffortAcknowledged'])
+            assert.equal((await poll(state, state.MindwtrHost[dispatch](route, '{}'))).ok, false);
+    }
+    const count = state.logText.split('\n').filter(line => line.includes(marker)).length;
+    assert.equal(count, 1, 'generic route cannot emit marker');
+    console.log('Task678: private reasoning routing, saved minimal, choices, bounds, platform/owner/cancellation, receipts and fixed acknowledgment gates passed; Swift/Apple pending');
+}
+// Task698: production private Gemini thinking budget routes; shared real-module/SQLite
+// tests own state semantics. This VM proves wiring, owner fences and receipt scope.
+{
+    const ready = async (platform = 'ios') => {
+        const state = makeState(0, [], platform);
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        return state;
+    };
+    const state = await ready();
+    assert.equal(typeof state.MindwtrHost.iosAIGeminiThinkingBudgetOptions, 'function', 'actual private Gemini thinking budget route missing');
+    assert(state.receiptScope.includes('aiGeminiThinkingBudget'), 'Gemini receipts survive restart independently of timeout and effort');
+    assert(state.receiptScope.includes('aiRequestTimeout') && state.receiptScope.includes('aiReasoningEffort'));
+    const rawSentinel = JSON.stringify({ ai: { enabled: false, provider: 'gemini', thinkingBudget: 123, model: 'PRIVATE698-MODEL', baseUrl: 'https://PRIVATE698-URL', reasoningEffort: 'high' }, security: { mobileAppLockEnabled: false } });
+    state.fakeData.settings = JSON.parse(rawSentinel);
+    const expected = { aiPresent: true, budgetPresent: true, budget: 123, providerPresent: true, provider: 'gemini', stampPresent: false, stamp: null };
+    const request = { requestId: '00000000-0000-4000-8000-000000000698', value: 256, expected };
+    const prepared = { version: 1, request }, envelope = { request, prepared }, reply = { value: 256, changed: true };
+    state.aiGeminiReplies = {
+        options: { ok: true, value: { value: 123, expected } }, prepare: { ok: true, value: { kind: 'prepared', prepared } },
+        validate: { ok: true, value: reply }, commit: { ok: true, value: reply }, outcome: { ok: true, value: reply },
+    };
+    const routes = [['iosAIGeminiThinkingBudgetOptions', 'options', {}], ['iosAIGeminiThinkingBudgetPrepare', 'prepare', request],
+        ['iosAIGeminiThinkingBudgetValidate', 'validate', envelope], ['iosAIGeminiThinkingBudgetCommit', 'commit', envelope],
+        ['iosAIGeminiThinkingBudgetRetryOutcome', 'outcome', request]];
+    const invoke = (route, input, owner = () => '') => poll(state, state.MindwtrHost[route](JSON.stringify(input), owner));
+    for (const [route, kind, input] of routes) {
+        assert.equal(typeof state.MindwtrHost[route], 'function');
+        const before = state.aiGeminiInputs.length;
+        assert.deepEqual(await invoke(route, input), state.aiGeminiReplies[kind]);
+        assert.deepEqual(JSON.parse(JSON.stringify(state.aiGeminiInputs.at(-1))), [kind, JSON.stringify(input)]);
+        assert.equal(state.aiGeminiInputs.length, before + 1);
+    }
+    await invoke('iosAIGeminiThinkingBudgetCommit', envelope);
+    assert.deepEqual(JSON.parse(JSON.stringify(state.aiGeminiInputs.at(-1))), ['commit', JSON.stringify(envelope)], 'exact retry forwards the retained request/prepared envelope unchanged');
+    for (const value of [0, 128, 256, 512]) {
+        const input = { ...request, value };
+        await invoke('iosAIGeminiThinkingBudgetPrepare', input);
+        assert.equal(JSON.parse(state.aiGeminiInputs.at(-1)[1]).value, value);
+    }
+    for (const route of ['iosAIGeminiThinkingBudgetOptions', 'iosAIGeminiThinkingBudgetPrepare', 'iosAIGeminiThinkingBudgetCommit']) {
+        const before = state.aiGeminiInputs.length;
+        assert.equal((await invoke(route, {}, null)).ok, false);
+        assert.equal((await invoke(route, {}, () => 'retired')).ok, false);
+        for (const raw of ['{', ' '.repeat(route.endsWith('Options') ? 257 : route.endsWith('Prepare') ? 2049 : 8193) + '{}'])
+            assert.equal((await poll(state, state.MindwtrHost[route](raw, () => ''))).ok, false);
+        assert.equal(state.aiGeminiInputs.length, before);
+        let release; state.aiGeminiHold = new Promise(resolve => { release = resolve; });
+        const ticket = state.MindwtrHost[route]('{}', () => '');
+        state.MindwtrHost.abort(ticket); release();
+        assert.equal((await poll(state, ticket)).ok, false);
+        assert.equal(state.aiGeminiInputs.length, before, 'cancelled route does not reach contract');
+        state.aiGeminiHold = undefined;
+        let active = true;
+        state.aiGeminiHold = new Promise(resolve => { release = resolve; });
+        const changed = state.MindwtrHost[route]('{}', () => active ? '' : 'retired');
+        active = false; release();
+        assert.equal((await poll(state, changed)).ok, false);
+        assert.equal(state.aiGeminiInputs.length, before, 'late owner refuses');
+        state.aiGeminiHold = undefined;
+    }
+    for (const [route, , input] of routes.filter(([route]) => route.endsWith('Validate') || route.endsWith('RetryOutcome'))) {
+        const before = state.aiGeminiInputs.length;
+        for (const raw of ['{', ' '.repeat(route.endsWith('Validate') ? 8193 : 2049) + '{}'])
+            assert.equal((await poll(state, state.MindwtrHost[route](raw))).ok, false);
+        assert.equal(state.aiGeminiInputs.length, before);
+    }
+    for (const flag of ['sandbox', 'workspaceTransition', 'linesUnguarded']) {
+        state[flag] = true;
+        assert.equal((await invoke('iosAIGeminiThinkingBudgetOptions', {})).ok, false);
+        assert.equal((await invoke('iosAIGeminiThinkingBudgetRetryOutcome', request)).ok, false);
+        state[flag] = false;
+    }
+    const adapter = state.adapter; state.adapter = {};
+    assert.equal((await invoke('iosAIGeminiThinkingBudgetOptions', {})).ok, false); state.adapter = adapter;
+    const android = await ready('android');
+    assert.equal((await poll(android, android.MindwtrHost.iosAIGeminiThinkingBudgetOptions('{}', () => ''))).ok, false);
+    assert.equal((await poll(android, android.MindwtrHost.iosAIGeminiThinkingBudgetAcknowledged())).ok, true);
+    assert(!(android.logText ?? '').includes('v1.3.5/ios-ai-gemini-thinking-budget'));
+    assert.equal((await state.aiGeminiDeps.save()).ok, true);
+    state.flushError = 'PRIVATE698-FAILURE';
+    assert.equal((await state.aiGeminiDeps.save()).ok, false); state.flushError = undefined;
+    state.aiGeminiReplies.options = { ok: false, error: { code: 'ACTION_FAILED', message: 'Thinking budget is available for explicit Gemini only' } };
+    const providerRefusal = await invoke('iosAIGeminiThinkingBudgetOptions', {});
+    assert.equal(providerRefusal.ok, false);
+    assert.equal(providerRefusal.error, 'ACTION_FAILED: Thinking budget is available for explicit Gemini only', 'shared provider refusal stays a refusal at the private bridge');
+    const marker = 'v1.3.5/ios-ai-gemini-thinking-budget';
+    assert(!(state.logText ?? '').includes(marker), 'route replies do not claim native acknowledgment');
+    assert.equal((await poll(state, state.MindwtrHost.iosAIGeminiThinkingBudgetAcknowledged())).ok, true);
+    const lines = state.logText.split('\n').filter(line => line.includes(marker));
+    assert.equal(lines.length, 1);
+    assert.deepEqual(JSON.parse(lines[0]).context, { releaseCheck: marker, outcome: 'saved' });
+    assert(!lines[0].includes(request.requestId) && !lines[0].includes('123') && !lines[0].includes('256') && !lines[0].includes('PRIVATE698'));
+    assert.equal(JSON.stringify(state.fakeData.settings), rawSentinel, 'bridge routing never rewrites saved private neighbors');
+    for (const dispatch of ['menuRead', 'menuCommand']) {
+        for (const route of ['iosAIGeminiThinkingBudget', ...routes.map(([route]) => route), 'iosAIGeminiThinkingBudgetAcknowledged'])
+            assert.equal((await poll(state, state.MindwtrHost[dispatch](route, '{}'))).ok, false);
+    }
+    const count = state.logText.split('\n').filter(line => line.includes(marker)).length;
+    assert.equal(count, 1, 'generic route cannot emit marker');
+    console.log('Task698: private Gemini thinking budget routing, saved custom123, four presets, bounds, platform/owner/cancellation, receipts and fixed acknowledgment gates passed; Swift/Apple pending');
+}
+// Task592: actual private route and real selected-provider helper; device metadata
+// is a native stand-in here. Apple tests own actual Keychain/KV/SQLite evidence.
+{
+    const marker = 'v1.3.5/ios-ai-device-state', sentinel = 'PRIVATE592-SENTINEL';
+    const ready = async (settings = {}) => {
+        const state = makeState(0, [], 'ios', state => { state.fakeData.settings = settings; });
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        state.settings = settings.ai?.apiKey ? { ...settings, ai: { ...settings.ai, apiKey: undefined } } : settings;
+        state.events.length = 0; state.fileCalls.length = 0;
+        return state;
+    };
+    const calls = [];
+    const metadata = async (...input) => {
+        calls.push(input); return JSON.stringify({ consentRecorded: true, secureItem: 'present', legacyItemPresent: true });
+    };
+    const read = (state, input = '{}', owner = () => '', inspect = metadata) =>
+        poll(state, state.MindwtrHost.iosAIProviderDeviceState(input, owner, inspect));
+    const refused = async (state, input = '{}', owner = () => '', inspect = metadata) => {
+        const before = state.logText, data = JSON.stringify(state.fakeData), kv = JSON.stringify(state.kv);
+        assert.equal((await read(state, input, owner, inspect)).ok, false);
+        assert.equal(state.logText, before); assert.equal(JSON.stringify(state.fakeData), data);
+        assert.equal(JSON.stringify(state.kv), kv); assert(!state.events.includes('save'));
+        assert.equal(state.aiInputs.length, 0);
+    };
+    for (const provider of [undefined, 'openai', 'gemini', 'anthropic']) {
+        const state = await ready({ ai: { ...(provider ? { provider } : {}), apiKey: sentinel, baseUrl: sentinel } });
+        const before = JSON.stringify(state.fakeData), selected = provider ?? 'openai';
+        calls.length = 0;
+        const result = await read(state);
+        assert.equal(result.ok, true, JSON.stringify(result));
+        assert.deepEqual(result.value, { version: 1, provider: selected, consentRecorded: true, secureItem: 'present', legacyItemPresent: true });
+        assert.deepEqual(calls, [[selected, 'mindwtr-ai-key_' + selected, 'mindwtr-ai-key:' + selected]]);
+        assert.equal(JSON.stringify(state.fakeData), before); assert.equal(state.fileCalls.length, 0);
+        assert.equal(state.contractBindings.ai, undefined); assert.equal(state.aiInputs.length, 0);
+        assert(!JSON.stringify(result).includes(sentinel)); assert(!state.logText.includes(sentinel));
+        const lines = state.logText.split('\n').filter(line => line.includes(marker));
+        assert.equal(lines.length, 1); assert.deepEqual(JSON.parse(lines[0]).context, { releaseCheck: marker });
+    }
+    const state = await ready();
+    for (const input of ['null', '[]', '{', '{"provider":"gemini"}', '{"account":"' + sentinel + '"}', ' '.repeat(257) + '{}']) {
+        calls.length = 0; await refused(state, input); assert.equal(calls.length, 0);
+    }
+    calls.length = 0; await refused(state, '{}', null); await refused(state, '{}', () => 'retired');
+    await refused(state, '{}', () => '', null); assert.equal(calls.length, 0);
+    for (const field of ['failed', 'queued', 'inFlight', 'immediate', 'retrying']) {
+        state.persistenceStatus = { [field]: true }; await refused(state); state.persistenceStatus = null;
+    }
+    for (const field of ['sandbox', 'workspaceTransition', 'storeLoading', 'storeEditLocks', 'linesUnguarded']) {
+        state[field] = true; await refused(state); state[field] = false;
+    }
+    for (const secureItem of ['present', 'absent', 'unavailable']) {
+        const result = await read(state, '{}', () => '', () => JSON.stringify({ consentRecorded: false, secureItem, legacyItemPresent: false }));
+        assert.equal(result.ok, true); assert.equal(result.value.secureItem, secureItem);
+    }
+    for (const raw of ['null', '[]', '{}', JSON.stringify({ consentRecorded: 1, secureItem: 'present', legacyItemPresent: false }),
+        JSON.stringify({ consentRecorded: false, secureItem: 'absent', legacyItemPresent: false, value: sentinel }),
+        '!MindwtrNativeError:Device metadata is unavailable']) await refused(state, '{}', () => '', () => raw);
+    state.rowBaselineNull = true; await refused(state); state.rowBaselineNull = false;
+    state.rowBaseline = { settings: { ai: { provider: 'gemini' } } }; await refused(state); state.rowBaseline = null;
+    await refused(await ready({ ai: { provider: sentinel } }));
+    for (const mutation of ['settings', 'provider', 'generation', 'owner', 'baseline', 'adapter']) {
+        const changed = await ready(); let live = true;
+        await refused(changed, '{}', () => live ? '' : 'retired', async () => {
+            if (mutation === 'settings') changed.settings = {};
+            if (mutation === 'provider') changed.settings = { ai: { provider: 'gemini' } };
+            if (mutation === 'generation') changed.persistenceStatus = { generation: 1 };
+            if (mutation === 'owner') live = false;
+            if (mutation === 'baseline') changed.rowBaselineNull = true;
+            if (mutation === 'adapter') changed.adapter = {};
+            return JSON.stringify({ consentRecorded: false, secureItem: 'absent', legacyItemPresent: false });
+        });
+    }
+    // A value-free checkpoint can land before a concurrent retirement; final delivery must still refuse.
+    const late = await ready(), originalLog = late.__mindwtrNative.logFile;
+    let retired = false;
+    late.__mindwtrNative.logFile = (operation, text) => {
+        const result = originalLog(operation, text);
+        if (operation === 'append' && text.includes(marker)) retired = true;
+        return result;
+    };
+    assert.equal((await read(late, '{}', () => retired ? 'retired' : '')).ok, false);
+    assert(retired); assert(late.logText.includes(marker));
+    await refused(makeState(0, [], 'ios'));
+    const android = makeState(0, [], 'android');
+    assert.equal((await poll(android, android.MindwtrHost.boot())).ok, true); await refused(android);
+    for (const dispatch of ['menuRead', 'menuCommand']) {
+        const fresh = await ready();
+        assert.equal((await poll(fresh, fresh.MindwtrHost[dispatch]('iosAIProviderDeviceState', '{}'))).ok, false);
+        assert(!(fresh.logText ?? '').includes(marker));
+    }
+    const swift = readFileSync(resolve(app, '../ios-native/Sources/MindwtrNativeCore/CoreHost.swift'), 'utf8');
+    assert.match(swift, /guard method != "iosAIProviderDeviceState"/);
+    assert.match(swift, /\n    func readAIProviderDeviceState\(\) async throws -> NativeAIProviderDeviceState/);
+    assert.doesNotMatch(swift, /public func readAIProviderDeviceState/);
+    const secrets = readFileSync(resolve(app, '../ios-native/Sources/MindwtrNativeCore/NativeSecretJobs.swift'), 'utf8');
+    const query = secrets.slice(secrets.indexOf('    private func inspectAIProviderItem(_ job:'), secrets.indexOf('    private func write('));
+    assert.match(query, /kSecReturnAttributes as String\] = true/);
+    assert.match(query, /kSecMatchLimit as String\] = kSecMatchLimitOne/);
+    assert.match(secrets, /kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail/);
+    assert.doesNotMatch(query, /kSecReturnData|kSecReturnRef|kSecReturnPersistentRef|kSecValueData|SecItemAdd|SecItemUpdate|SecItemDelete/);
+    assert.match(query, /if result == errSecItemNotFound \{ continue \}/);
+    assert.match(query, /result == errSecSuccess \? "present" : "unavailable"/);
+    assert.match(query, /worker\.sync \{\}/);
+    assert.match(secrets, /let operation = input\["op"\] as\? String, \["get", "set", "delete"\]\.contains\(operation\)/);
+    const kv = readFileSync(resolve(app, '../ios-native/Sources/MindwtrNativeCore/NativeDeviceKV.swift'), 'utf8');
+    const selected = kv.slice(kv.indexOf('    func readAIProviderDeviceMetadata('), kv.indexOf('    func readSearchConsent('));
+    assert.match(selected, /pending == nil/); assert.match(selected, /try checkedRead\(\)/);
+    assert.match(selected, /current\.values\.keys\.contains/);
+    assert.match(selected, /CFGetTypeID\(value\) == CFBooleanGetTypeID\(\) && value\.boolValue/);
+    assert.match(selected, /Self\.strictAIConsentJSON\(raw\)/);
+    assert.doesNotMatch(selected, /mutate\(|multiGet\(|get\(|current\.values\[Data\("mindwtr-ai-key/);
+    console.log('Task592: actual private metadata route, exact DTO/input/mappings, saved identity/refusal and value-free checkpoint gates passed; Apple execution pending');
+}
+// Task502: the production facades forward the original request/envelope and
+// shared full selection once. This VM uses a core stand-in; actual JSC/SQLite
+// native journal/replay proof belongs to NativeTrashBulkRestoreHostTests.
+{
+    const state = makeState(0, [], 'ios');
+    const request = { requestId: '0bfaf47b-9fa9-4c53-af66-3c9a8a582278', taskIds: ['t'],
+        taskRevisions: { t: 'rt' }, projectIds: ['p'], projectRevisions: { p: 'rp' } };
+    const envelope = { request, prepared: { version: 1, request, result: { count: 2 } } };
+    state.trashSelectionResult = { ok: true, value: { taskIds: ['t'], taskRevisions: { t: 'rt' }, projectIds: ['p'], projectRevisions: { p: 'rp' } } };
+    state.trashRestorePreparation = { ok: true, value: { kind: 'prepared', prepared: envelope.prepared } };
+    state.trashRestoreValidation = { ok: true, value: { count: 2 } };
+    state.trashRestoreResult = { ok: true, value: { count: 2 } };
+    state.trashRestoreOutcome = { ok: true, value: null };
+    state.persistenceFailure = { kind: 'save_failed' };
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestorePrepare(JSON.stringify(request)))).ok, false);
+    assert.equal(state.menuInputs.length, 0, 'preparation waits for the existing exact saved-state gate');
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestoreValidate(JSON.stringify(envelope)))).ok, true, 'cold pure validation is available before activation');
+    state.menuInputs.length = 0; state.persistenceFailure = null;
+    assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+    assert.deepEqual((await poll(state, state.MindwtrHost.trashSelection('{"revision":"r"}'))).value, state.trashSelectionResult.value);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestorePrepare(JSON.stringify(request)))).value.kind, 'prepared');
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestoreValidate(JSON.stringify(envelope)))).value.count, 2);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestoreCommit(JSON.stringify(envelope)))).value.count, 2);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestoreOutcome(JSON.stringify(envelope)))).value, null);
+    assert.deepEqual(state.menuInputs.map(JSON.parse), [['trashSelection', { revision: 'r' }],
+        ['trashRestorePrepare', request], ['trashRestoreValidate', envelope], ['trashRestoreCommit', envelope], ['trashRestoreOutcome', envelope]]);
+    state.trashRestoreOutcome = { ok: true, value: { count: 2 } };
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestoreOutcome(JSON.stringify(envelope)))).value.count, 2);
+    state.trashRestoreResult = { ok: false, error: { code: 'SAVE_FAILED', message: 'owned raw save' } };
+    assert.match((await poll(state, state.MindwtrHost.trashItemsRestoreCommit(JSON.stringify(envelope)))).error, /SAVE_FAILED/);
+    state.trashSelectionResult = { ok: false, error: { code: 'STALE_REVISION', message: 'refresh Trash' } };
+    assert.match((await poll(state, state.MindwtrHost.trashSelection('{"revision":"old"}'))).error, /STALE_REVISION/);
+    const before = state.menuInputs.length;
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsRestorePrepare(JSON.stringify({ text: 'x'.repeat(2_000_001) })))).ok, false);
+    assert.equal(state.menuInputs.length, before, 'existing completion transport length refusal never reaches core');
+}
+// Task507: the production facades forward the original request/envelope and
+// shared full selection once. This VM uses a core stand-in; actual JSC/SQLite
+// native journal/replay proof belongs to NativeTrashPurgeHostTests.
+{
+    const state = makeState(0, [], 'ios');
+    const request = { requestId: '0bfaf47b-9fa9-4c53-af66-3c9a8a582278', taskIds: ['t'],
+        taskRevisions: { t: 'rt' }, projectIds: ['p'], projectRevisions: { p: 'rp' } };
+    const envelope = { request, prepared: { version: 1, request, result: { count: 2 } } };
+    state.trashSelectionResult = { ok: true, value: { taskIds: ['t'], taskRevisions: { t: 'rt' }, projectIds: ['p'], projectRevisions: { p: 'rp' } } };
+    state.trashPurgePreparation = { ok: true, value: { kind: 'prepared', prepared: envelope.prepared } };
+    state.trashPurgeValidation = { ok: true, value: { count: 2 } };
+    state.trashPurgeResult = { ok: true, value: { count: 2 } };
+    state.trashPurgeOutcome = { ok: true, value: null };
+    state.persistenceFailure = { kind: 'save_failed' };
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgePrepare(JSON.stringify(request)))).ok, false);
+    assert.equal(state.menuInputs.length, 0, 'preparation waits for the existing exact saved-state gate');
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgeValidate(JSON.stringify(envelope)))).ok, true, 'cold pure validation is available before activation');
+    state.trashPurgeValidation = { ok: false, error: { code: 'INVALID_INPUT', message: 'closed purge plan' } };
+    assert.match((await poll(state, state.MindwtrHost.trashItemsPurgeValidate(JSON.stringify(envelope)))).error, /INVALID_INPUT/);
+    state.trashPurgeValidation = { ok: true, value: { count: 2 } };
+    state.menuInputs.length = 0; state.persistenceFailure = null;
+    assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+    assert.deepEqual((await poll(state, state.MindwtrHost.trashSelection('{"revision":"r"}'))).value, state.trashSelectionResult.value);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgePrepare(JSON.stringify(request)))).value.kind, 'prepared');
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgeValidate(JSON.stringify(envelope)))).value.count, 2);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgeCommit(JSON.stringify(envelope)))).value.count, 2);
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgeOutcome(JSON.stringify(envelope)))).value, null);
+    assert.deepEqual(state.menuInputs.map(JSON.parse), [['trashSelection', { revision: 'r' }],
+        ['trashPurgePrepare', request], ['trashPurgeValidate', envelope], ['trashPurgeCommit', envelope], ['trashPurgeOutcome', envelope]]);
+    state.trashPurgeOutcome = { ok: true, value: { count: 2 } };
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgeOutcome(JSON.stringify(envelope)))).value.count, 2);
+    state.trashPurgeResult = { ok: false, error: { code: 'SAVE_FAILED', message: 'owned raw save' } };
+    assert.match((await poll(state, state.MindwtrHost.trashItemsPurgeCommit(JSON.stringify(envelope)))).error, /SAVE_FAILED/);
+    state.trashSelectionResult = { ok: false, error: { code: 'STALE_REVISION', message: 'refresh Trash' } };
+    assert.match((await poll(state, state.MindwtrHost.trashSelection('{"revision":"old"}'))).error, /STALE_REVISION/);
+    const before = state.menuInputs.length;
+    assert.equal((await poll(state, state.MindwtrHost.trashItemsPurgePrepare(JSON.stringify({ text: 'x'.repeat(2_000_001) })))).ok, false);
+    assert.equal(state.menuInputs.length, before, 'existing completion transport length refusal never reaches core');
+}
+// Task548: private settings facade keeps the existing saved-state gate and core errors.
+// The stand-in proves transport only; the native tests exercise the actual contract.
+{
+    const state = makeState(0, [], 'ios');
+    state.gtdPomodoroResult = { ok: false, error: { code: 'NOT_READY', message: 'core is not ready' } };
+    assert.match((await poll(state, state.MindwtrHost.gtdPomodoroOptions('{}'))).error, /^NOT_READY:/);
+    state.menuInputs.length = 0;
+    assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+    state.gtdPomodoroResult = { ok: true, value: { pomodoro: { title: 'Pomodoro' }, expected: {} } };
+    assert.deepEqual((await poll(state, state.MindwtrHost.gtdPomodoroOptions('{}'))).value, state.gtdPomodoroResult.value);
+    assert.deepEqual(state.menuInputs.map(JSON.parse), [['gtdPomodoroOptions', {}]]);
+    state.persistenceFailure = { kind: 'save_failed' };
+    assert.equal((await poll(state, state.MindwtrHost.gtdPomodoroOptions('{}'))).ok, false);
+    assert.equal(state.menuInputs.length, 1);
+    state.persistenceFailure = null;
+    state.gtdPomodoroResult = { ok: false, error: { code: 'STORAGE_ERROR', message: 'settings read failed' } };
+    assert.match((await poll(state, state.MindwtrHost.gtdPomodoroOptions('{}'))).error, /STORAGE_ERROR: settings read failed/);
+    const count = state.menuInputs.length;
+    assert.equal((await poll(state, state.MindwtrHost.gtdPomodoroOptions('{'))).ok, false);
+    assert.equal(state.menuInputs.length, count);
+}
+// Task575: production Reminders bridge preparation uses the shared literal factory.
+// This adapter stand-in proves routing/guards, not SQLite or native journal settlement.
+{
+    const source = { version: 1, requestId: '11111111-1111-4111-8111-111111111111',
+        list: { id: 'selected-list', sourceId: 'selected-source' },
+        reminder: { id: '22222222-2222-4222-8222-222222222222', title: 'Literal @home /due:today', notes: 'Keep notes', completed: false } };
+    const registry = JSON.stringify({ selectedListId: source.list.id, selectedListTitle: 'Selected',
+        importedReminderIds: ['older'], deleteImportedReminders: false, autoImportOnOpen: true });
+    const ready575 = async () => {
+        const state = makeState(0, [], 'ios');
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        state.fakeData.settings.deviceId = '33333333-3333-4333-8333-333333333333';
+        state.settings = state.fakeData.settings;
+        return state;
+    };
+    const state = await ready575();
+    const prepared = await poll(state, state.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), registry));
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    const plan = JSON.parse(prepared.value.planJSON);
+    assert.equal(plan.prepared.task.title, source.reminder.title);
+    assert.equal(plan.prepared.task.status, 'inbox'); assert.equal(plan.prepared.task.dueDate, undefined);
+    assert.deepEqual(plan.prepared.task.contexts, []);
+    assert.equal(plan.request.generatedTaskId, null);
+    assert.equal(plan.prepared.target.row, null);
+    const cold = makeState(0, [], 'ios');
+    assert.deepEqual((await poll(cold, cold.MindwtrHost.appleReminderItemValidate(prepared.value.planJSON))).value, plan.prepared.result);
+    assert.equal(cold.events.length, 0, 'preboot validation has no SQL/KV/provider access');
+    const rebased = await poll(cold, cold.MindwtrHost.appleReminderRegistryPlan(prepared.value.planJSON, registry));
+    assert.deepEqual(JSON.parse(rebased.value.nextRaw), { ...JSON.parse(registry), importedReminderIds: ['older', source.reminder.id] });
+    assert.equal(cold.events.length, 0);
+    const before = state.events.length;
+    for (const raw of ['{', '[]', JSON.stringify({ importedReminderIds: [1] }), JSON.stringify({ deleteImportedReminders: 'true' })])
+        assert.equal((await poll(state, state.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), raw))).ok, false);
+    assert.deepEqual((await poll(state, state.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), JSON.stringify({ ...JSON.parse(registry), importedReminderIds: [source.reminder.id] })))).value, { kind: 'noop', reason: 'duplicate' });
+    assert.equal(state.events.length, before, 'malformed and duplicate sources perform no saved-data reads');
+    const deletion = await ready575();
+    const deletionRaw = JSON.stringify({ ...JSON.parse(registry), deleteImportedReminders: true });
+    assert.equal((await poll(deletion, deletion.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), deletionRaw))).ok, true);
+    const enabled = await poll(state, state.MindwtrHost.appleReminderSettingPrepare(JSON.stringify({ type: 'deleteImportedReminders', value: true }), registry));
+    assert.equal(enabled.ok, true);
+    assert.deepEqual(JSON.parse(enabled.value.nextRaw), JSON.parse(deletionRaw), 'enabling deletion preserves the import registry');
+    const fresh = await ready575();
+    const claim = await poll(fresh, fresh.MindwtrHost.appleReminderItemPrepare(JSON.stringify(source), registry));
+    assert.equal(claim.ok, true);
+    assert.equal((await poll(fresh, fresh.MindwtrHost.appleReminderItemAdmission(claim.value.planJSON))).value, true);
+    fresh.persistenceStatus = { generation: 1 };
+    assert.equal((await poll(fresh, fresh.MindwtrHost.appleReminderItemAdmission(claim.value.planJSON))).ok, false);
+    assert.equal((await poll(fresh, fresh.MindwtrHost.appleReminderItemCommit(claim.value.planJSON, true))).ok, false);
+}
+// Task520: actual shared pure preparation/validation with the production five
+// private facades. This storage stand-in proves routing/admission only; the
+// receipt suite and pending native tests own real SQLite journal/fault proof.
+{
+    const request = JSON.stringify({ action: 'initialize', requestId: '11111111-1111-4111-8111-111111111111',
+        observedAtMs: 1791590400000, localDayKey: '2026-10-10', durations: { focusMinutes: 25, breakMinutes: 5 } });
+    const ready520 = async (platform = 'ios', taskCount = 0) => {
+        const state = makeState(taskCount, [], platform);
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        state.settings = state.fakeData.settings;
+        return state;
+    };
+    const state = await ready520();
+    assert.deepEqual((await poll(state, state.MindwtrHost.pomodoroSessionRead())).value, { raw: null, state: null });
+    const prepared = await poll(state, state.MindwtrHost.pomodoroTransitionPrepare(request));
+    assert.equal(prepared.ok, true); assert.equal(prepared.value.kind, 'prepared');
+    const planJSON = prepared.value.planJSON, plan = JSON.parse(planJSON);
+    assert.deepEqual(plan.request, JSON.parse(request)); assert.equal(plan.sessionBefore, null);
+    assert.equal(JSON.parse(plan.sessionAfter).session.timerState.isRunning, false);
+    // Saved panel/alarm reads must refuse an external commit, including one during the timer read.
+    for (const method of ['pomodoroAlarmRead', 'pomodoroPanelRead']) {
+        const args = method === 'pomodoroPanelRead' ? [JSON.stringify({ collapsed: false, lastEvent: null })] : [];
+        for (const during of [false, true]) {
+            const reader = await ready520();
+            reader.pomodoroSession = { raw: plan.sessionAfter, state: JSON.parse(plan.sessionAfter) };
+            reader.events.length = 0;
+            let release;
+            if (during) reader.pomodoroReadHold = new Promise(resolve => { release = resolve; });
+            else reader.rowBaselineNull = true;
+            const ticket = reader.MindwtrHost[method](...args);
+            if (during) {
+                await new Promise(resolve => setImmediate(resolve));
+                assert(reader.events.includes('pomodoro-read'));
+                reader.rowBaselineNull = true;
+                release();
+            }
+            const answer = await poll(reader, ticket);
+            assert.equal(answer.ok, false, method + ': stale external baseline must refuse');
+            assert.match(answer.error, /STALE_REVISION/);
+            assert.equal(reader.pomodoroInputs.length, 0);
+            assert.equal(reader.events.filter(event => event === 'baseline').length, during ? 2 : 1);
+        }
+        const current = await ready520();
+        current.pomodoroSession = { raw: plan.sessionAfter, state: JSON.parse(plan.sessionAfter) };
+        assert.equal((await poll(current, current.MindwtrHost[method](...args))).ok, true);
+    }
+    // Task586: production private facade, pure repeated probes and saved-state authority.
+    const scope586 = 'tech.test.native:' + 'a'.repeat(64);
+    const prepare586 = (owner, granted = true) => poll(owner,
+        owner.MindwtrHost.iosPomodoroAlarmPrepare('alarm586', granted, null, scope586, '[]', '[]'));
+    const alarm586 = await ready520();
+    alarm586.pomodoroSession = { raw: plan.sessionAfter, state: JSON.parse(plan.sessionAfter) };
+    assert.equal((await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).value, true);
+    assert.equal((await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmBegin('second'))).ok, false);
+    const probe586 = await prepare586(alarm586);
+    assert.equal(probe586.ok, true); assert.equal(probe586.value.schedule, null);
+    assert.deepEqual((await prepare586(alarm586)).value, probe586.value, 'repeated preparation has no effects');
+    assert.equal(alarm586.pomodoroInputs.length, 0);
+    assert.equal((await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmCurrent('wrong'))).ok, false);
+    await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmEnd('wrong'));
+    assert.equal((await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmCurrent('alarm586'))).value, true);
+    await poll(alarm586, alarm586.MindwtrHost.iosPomodoroAlarmEnd('alarm586'));
+    assert.equal((await prepare586(alarm586)).ok, false);
+    for (const denial of [false, true]) {
+        const cancel586 = await ready520();
+        if (!denial) cancel586.settings = { gtd: { pomodoro: { completionAlert: false } } };
+        cancel586.pomodoroReadError = true;
+        assert.equal((await poll(cancel586, cancel586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).value, true);
+        cancel586.events.length = 0;
+        assert.equal((await prepare586(cancel586, !denial)).ok, true, 'off/denied bypass corrupt timer decode');
+        assert(!cancel586.events.includes('pomodoro-read'));
+        cancel586.rowBaselineNull = true;
+        assert.equal((await prepare586(cancel586, !denial)).ok, false, 'off/denied still require accepted saved settings');
+    }
+    for (const mutation of ['generation', 'settings', 'baseline', 'queued', 'sandbox']) {
+        const stale586 = await ready520();
+        assert.equal((await poll(stale586, stale586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).value, true);
+        if (mutation === 'generation') stale586.persistenceStatus = { generation: 2 };
+        if (mutation === 'settings') stale586.settings = { ...stale586.settings };
+        if (mutation === 'baseline') stale586.rowBaselineNull = true;
+        if (mutation === 'queued') stale586.persistenceStatus = { queued: true };
+        if (mutation === 'sandbox') stale586.sandbox = true;
+        assert.equal((await prepare586(stale586)).ok, false, mutation + ' invalidates private alarm turn');
+    }
+    const held586 = await ready520();
+    held586.pomodoroSession = { raw: plan.sessionAfter, state: JSON.parse(plan.sessionAfter) };
+    assert.equal((await poll(held586, held586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).value, true);
+    let release586; held586.pomodoroReadHold = new Promise(resolve => { release586 = resolve; });
+    const heldTicket586 = held586.MindwtrHost.iosPomodoroAlarmPrepare('alarm586', true, null, scope586, '[]', '[]');
+    await new Promise(resolve => setImmediate(resolve));
+    assert(held586.events.includes('pomodoro-read'));
+    held586.rowBaselineNull = true; release586();
+    assert.match((await poll(held586, heldTicket586)).error, /STALE_REVISION/);
+    const dispatch586 = await ready520(), fire586 = Date.now() + 60_000;
+    const running586 = JSON.parse(plan.sessionAfter);
+    running586.session.timerState.isRunning = true;
+    running586.session.phaseEndsAt = new Date(fire586).toISOString();
+    dispatch586.pomodoroSession = { raw: JSON.stringify(running586), state: running586 };
+    assert.equal((await poll(dispatch586, dispatch586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).value, true);
+    const future586 = await prepare586(dispatch586);
+    assert.equal(future586.value.schedule.immediate, false);
+    vm.runInNewContext(`globalThis.Date = class extends Date { static now() { return ${fire586}; } };`, dispatch586);
+    const immediate586 = await poll(dispatch586, dispatch586.MindwtrHost.iosPomodoroAlarmDispatchPrepare(
+        'alarm586', JSON.stringify(future586.value.schedule), future586.value.writeAhead, scope586));
+    assert.equal(immediate586.ok, true);
+    assert.equal(immediate586.value.schedule.immediate, true, 'dispatch refresh happens after durable-publication delay');
+    assert.equal(JSON.parse(immediate586.value.writeAhead).libraries[0].alarm.immediate, true);
+    assert.equal(JSON.parse(immediate586.value.writeAhead).libraries[0].alarm.status, 'attempted');
+    assert.equal((await poll(dispatch586, dispatch586.MindwtrHost.iosPomodoroAlarmDispatchPrepare(
+        'alarm586', JSON.stringify(future586.value.schedule), immediate586.value.published, scope586))).ok, false,
+        'confirmed receipts never authorize a second dispatch');
+    const android586 = await ready520('android');
+    assert.equal((await poll(android586, android586.MindwtrHost.iosPomodoroAlarmBegin('alarm586'))).ok, false);
+    const cold = makeState(0, [], 'ios');
+    assert.equal((await poll(cold, cold.MindwtrHost.pomodoroTransitionValidate(planJSON))).ok, true);
+    assert.equal(cold.events.length, 0, 'pure validation does not activate/read/write');
+    assert.equal((await poll(cold, cold.MindwtrHost.pomodoroSessionRead())).ok, false);
+    assert.equal((await poll(cold, cold.MindwtrHost.pomodoroTransitionPrepare(request))).ok, false);
+    assert.equal((await poll(state, state.MindwtrHost.pomodoroTransitionCommit(planJSON, false))).value.projectionReloaded, true);
+    assert.deepEqual(JSON.parse(state.pomodoroInputs[0]), [plan, { replayOnly: false }]);
+    assert.deepEqual((await poll(state, state.MindwtrHost.pomodoroTransitionOutcome(planJSON))).value, plan.result);
+    assert.equal((await poll(state, state.MindwtrHost.pomodoroTransitionCommit(planJSON, true))).value.replayed, true);
+    const reconcile = JSON.stringify({ action: 'reconcile', requestId: '22222222-2222-4222-8222-222222222222',
+        observedAtMs: 1791590400000, localDayKey: '2026-10-10', autoStart: { autoStartFocus: false, autoStartBreaks: false } });
+    const before = state.pomodoroInputs.length;
+    assert.deepEqual((await poll(state, state.MindwtrHost.pomodoroTransitionPrepare(reconcile))).value, { kind: 'noop' });
+    assert.equal(state.pomodoroInputs.length, before, 'countdown/paused observation commits nothing');
+    state.pomodoroReadError = true;
+    assert.equal((await poll(state, state.MindwtrHost.pomodoroTransitionPrepare(reconcile))).ok, false, 'read failure never means native absence');
+    const android = await ready520('android');
+    assert.equal((await poll(android, android.MindwtrHost.pomodoroSessionRead())).ok, false);
+    const raw = await ready520('ios', 'auto');
+    const task = { id: 'task', title: 'Private', status: 'next', contexts: [], tags: [],
+        createdAt: '2026-10-10T00:00:00.000Z', updatedAt: '2026-10-10T00:00:00.000Z', rev: 1,
+        revBy: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', timeSpentMinutes: 4 };
+    raw.fakeData = { ...raw.fakeData, tasks: [task], settings: { deviceId: task.revBy } };
+    raw.lastLoaded = raw.fakeData; raw.settings = raw.fakeData.settings;
+    const running = JSON.parse(plan.sessionAfter);
+    running.session.selectedTaskId = task.id; running.session.timerState.isRunning = true;
+    running.session.phaseEndsAt = '2026-10-10T00:00:00.000Z';
+    raw.pomodoroSession = { raw: JSON.stringify(running), state: running };
+    raw.pomodoroRawCells = { contexts: ' [ ] ', tags: null, timeSpentMinutes: 4, isFocusedToday: 0 };
+    const rawPrepared = await poll(raw, raw.MindwtrHost.pomodoroTransitionPrepare(reconcile));
+    assert.equal(rawPrepared.ok, true, JSON.stringify(rawPrepared));
+    const rawPlan = JSON.parse(rawPrepared.value.planJSON);
+    assert.deepEqual(rawPlan.target.row, [...raw.pomodoroExpectedRaw], 'literal SQL JSON/null/numeric cells reach the actual helper');
+    assert.equal((await poll(raw, raw.MindwtrHost.pomodoroTransitionCommit(rawPrepared.value.planJSON, false))).ok, true);
+    assert.deepEqual(JSON.parse(raw.pomodoroInputs[0])[0].target.row, rawPlan.target.row, 'Commit preserves literal BEFORE cells');
+    const owed = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const retained = Array.from({ length: 128 }, (_, index) => index.toString(16).padStart(8, '0') + '-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    assert.equal((await poll(raw, raw.MindwtrHost.iosPruneReceipts(JSON.stringify(retained), owed))).ok, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(raw.pruneInputs.at(-1))), { retainedRequestIds: [...retained, owed] });
+    assert.equal((await poll(raw, raw.MindwtrHost.iosPruneReceipts('null', owed))).ok, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(raw.pruneInputs.at(-1))), {
+        retainedCommands: ['reminderComplete', 'reminderSnooze'], retainedRequestIds: [owed] });
+    const pruneCount = raw.pruneInputs.length;
+    assert.equal((await poll(raw, raw.MindwtrHost.iosPruneReceipts('null', 'NOT-UUID'))).ok, false);
+    assert.equal(raw.pruneInputs.length, pruneCount, 'invalid owner never reaches pruning');
+    for (const mutation of ['generation', 'tasks', 'settings', 'edit', 'adapter', 'queued']) {
+        const stale = await ready520(), preparation = await poll(stale, stale.MindwtrHost.pomodoroTransitionPrepare(request));
+        assert.equal(preparation.ok, true);
+        if (mutation === 'generation') stale.persistenceStatus = { generation: 1 };
+        else if (mutation === 'tasks') stale.lastLoaded = { ...stale.lastLoaded, tasks: [] };
+        else if (mutation === 'settings') stale.settings = {};
+        else if (mutation === 'edit') stale.storeEditLocks = 1;
+        else if (mutation === 'adapter') stale.adapter = {};
+        else stale.persistenceStatus = { generation: 0, queued: true };
+        assert.equal((await poll(stale, stale.MindwtrHost.pomodoroTransitionCommit(preparation.value.planJSON, false))).ok, false, mutation);
+        assert.equal(stale.pomodoroInputs.length, 0, 'stale first preparation never enters storage');
+    }
+    for (const code of ['staleBaseline', 'notReady']) {
+        const refused = await ready520(); refused.pomodoroRefusal = code;
+        const prep = await poll(refused, refused.MindwtrHost.pomodoroTransitionPrepare(request));
+        assert.match((await poll(refused, refused.MindwtrHost.pomodoroTransitionCommit(prep.value.planJSON, false))).error,
+            code === 'staleBaseline' ? /^STALE_REVISION:/ : /^NOT_READY:/);
+    }
+    const uncertain = await ready520(); uncertain.pomodoroCommitError = 'NOT_READY: provider text';
+    const prep = await poll(uncertain, uncertain.MindwtrHost.pomodoroTransitionPrepare(request));
+    assert.equal((await poll(uncertain, uncertain.MindwtrHost.pomodoroTransitionCommit(prep.value.planJSON, false))).error,
+        'Pomodoro transition could not be proven', 'arbitrary provider text is never a refusal witness');
+
+    // Task529: controls use the same five private routes and actual shared524
+    // algebra. The adapter above is a routing stand-in, never atomic SQL proof.
+    const controls = ['toggle', 'reset', 'switchPhase', 'setDurations', 'selectTask'];
+    const at = 1791590400000;
+    const options = { autoStartFocus: false, autoStartBreaks: false };
+    const control = (action, fields = {}) => ({ action, requestId: '33333333-3333-4333-8333-333333333333',
+        observedAtMs: at, localDayKey: '2026-10-10', autoStart: options, ...fields });
+    for (const action of controls) {
+        const active = await ready520();
+        await poll(active, active.MindwtrHost.pomodoroTransitionCommit(planJSON, false));
+        const fields = action === 'setDurations' ? { durations: { focusMinutes: 50, breakMinutes: 10 } }
+            : action === 'selectTask' ? { taskId: null } : {};
+        const preparedControl = await poll(active, active.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(control(action, fields))));
+        assert.equal(preparedControl.ok, true, action); assert.equal(preparedControl.value.kind, 'prepared');
+        const nextPlan = JSON.parse(preparedControl.value.planJSON), nextState = JSON.parse(nextPlan.sessionAfter);
+        assert.deepEqual(nextPlan.request, control(action, fields));
+        assert.equal(nextState.generation, JSON.parse(plan.sessionAfter).generation + 1, action);
+        assert.equal(nextState.session.updatedAtMs, at + 1, 'same-time explicit intent has a monotonic stamp');
+        assert.equal(Object.hasOwn(nextState.session, 'lastEvent'), false);
+        const validator = makeState(0, [], 'ios');
+        assert.equal((await poll(validator, validator.MindwtrHost.pomodoroTransitionValidate(preparedControl.value.planJSON))).ok, true);
+        assert.equal(validator.events.length, 0, 'control pure validation precedes any activation');
+        const forged = { ...nextPlan, result: { ...nextPlan.result, generation: nextPlan.result.generation + 1 } };
+        assert.equal((await poll(validator, validator.MindwtrHost.pomodoroTransitionValidate(JSON.stringify(forged)))).ok, false);
+        assert.equal(validator.events.length, 0, 'forged result cannot open storage');
+        active.pomodoroProjection = false;
+        const saved = await poll(active, active.MindwtrHost.pomodoroTransitionCommit(preparedControl.value.planJSON, false));
+        assert.equal(saved.value.projectionReloaded, false);
+        assert.deepEqual(JSON.parse(active.pomodoroInputs.at(-1)), [nextPlan, { replayOnly: false }]);
+        assert.deepEqual((await poll(active, active.MindwtrHost.pomodoroTransitionOutcome(preparedControl.value.planJSON))).value, nextPlan.result);
+        assert.equal((await poll(active, active.MindwtrHost.pomodoroTransitionCommit(preparedControl.value.planJSON, true))).value.replayed, true);
+        assert.deepEqual(JSON.parse(active.pomodoroInputs.at(-1)), [nextPlan, { replayOnly: true }]);
+        const count = active.pomodoroInputs.length;
+        assert.equal((await poll(active, active.MindwtrHost.pomodoroTransitionCommit(preparedControl.value.planJSON, 'true'))).ok, false);
+        assert.equal(active.pomodoroInputs.length, count, 'closed replay flag never reaches storage');
+    }
+    for (const autoStartFocus of [false, true]) for (const autoStartBreaks of [false, true]) {
+        const selected = await ready520('ios', 'auto');
+        const other = { ...task, id: 'other', timeSpentMinutes: 7 };
+        selected.fakeData = { ...selected.fakeData, tasks: [task, other], settings: { deviceId: task.revBy } };
+        selected.lastLoaded = selected.fakeData; selected.settings = selected.fakeData.settings;
+        selected.pomodoroRawCells = { contexts: ' [ ] ', tags: null, timeSpentMinutes: 4, isFocusedToday: 0 };
+        for (const taskId of ['other', null]) {
+            selected.pomodoroSession = { raw: JSON.stringify(running), state: running };
+            const input = control('selectTask', { taskId, autoStart: { autoStartFocus, autoStartBreaks } });
+            const answer = await poll(selected, selected.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(input)));
+            assert.equal(answer.ok, true, JSON.stringify(input));
+            const frozen = JSON.parse(answer.value.planJSON), after = JSON.parse(frozen.sessionAfter);
+            assert.equal(frozen.target.id, 'task', 'selection always credits the raw BEFORE selection');
+            assert.equal(frozen.target.row[0], 'task'); assert.equal(frozen.result.creditedMinutes, 25);
+            assert.equal(after.session.selectedTaskId ?? null, taskId);
+            assert.equal(after.session.timerState.phase, 'break');
+            assert.equal(after.session.timerState.isRunning, autoStartBreaks);
+            assert.equal(after.session.phaseEndsAt ?? null, autoStartBreaks ? '2026-10-10T00:05:00.000Z' : null);
+        }
+        selected.pomodoroSession = { raw: JSON.stringify(running), state: running };
+        const preset = await poll(selected, selected.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(control('setDurations', {
+            durations: { focusMinutes: 50, breakMinutes: 10 }, autoStart: { autoStartFocus, autoStartBreaks } }))));
+        assert.equal(preset.ok, true); const preparedPreset = JSON.parse(preset.value.planJSON);
+        assert.equal(preparedPreset.result.creditedMinutes, 25, 'preset credits the old duration');
+        assert.deepEqual(JSON.parse(preparedPreset.sessionAfter).session.durations, { focusMinutes: 50, breakMinutes: 10 });
+    }
+    const invalid = await ready520(); await poll(invalid, invalid.MindwtrHost.pomodoroTransitionCommit(planJSON, false));
+    const count = invalid.pomodoroInputs.length;
+    const requests = [control('unknown'), control('reset', { extra: true }), control('toggle', { autoStart: { autoStartFocus: 1, autoStartBreaks: false } }),
+        control('setDurations', { durations: { focusMinutes: true, breakMinutes: 5 } }), control('setDurations', { durations: { focusMinutes: 181, breakMinutes: 5 } }),
+        control('selectTask'), control('selectTask', { taskId: '' }), control('selectTask', { taskId: '__proto__' }),
+        control('selectTask', { taskId: ' task' }), control('selectTask', { taskId: '😀'.repeat(251) }),
+        control('selectTask', { taskId: null, localDayKey: '2026-02-31' })];
+    for (const value of requests) assert.equal((await poll(invalid, invalid.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(value)))).ok, false, JSON.stringify(value));
+    // Duplicate textual keys are refused by the Swift private transport before
+    // this JS facade; NativePomodoroActionsHostTests covers that native boundary.
+    assert.equal(invalid.pomodoroInputs.length, count, 'invalid controls never reach the storage stand-in');
+    const maximum = await poll(invalid, invalid.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(control('selectTask', { taskId: '😀'.repeat(250) }))));
+    assert.equal(maximum.ok, true, '500 UTF-16 units remain byte-exact');
+    assert.equal(JSON.parse(maximum.value.planJSON).request.taskId, '😀'.repeat(250));
+
+    // Task541: only native Engine supplies this augmentation. These actual
+    // shared535 helpers prove routing/pure validation, not KV source authority
+    // or atomic storage (owned by the authored real JSC/SQLite native cases).
+    const adoption = (sessionRaw = null, collapsedRaw = null) => control('adoptLegacy', {
+        legacy: { version: 1, namespace: 'NativeUITests.fixture', sessionRaw, collapsedRaw },
+    });
+    const absent = await ready520();
+    const absence = await poll(absent, absent.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(adoption())));
+    assert.equal(absence.ok, true);
+    const absentPlan = JSON.parse(absence.value.planJSON);
+    assert.equal(absentPlan.sessionBefore, null); assert.equal(absentPlan.result.creditedMinutes, 0);
+    assert.equal(JSON.parse(absentPlan.sessionAfter).session.updatedAtMs, 0);
+    const pureLegacy = makeState(0, [], 'ios');
+    assert.equal((await poll(pureLegacy, pureLegacy.MindwtrHost.pomodoroTransitionValidate(absence.value.planJSON))).ok, true);
+    assert.equal(pureLegacy.events.length, 0, 'adoption validator does not read KV, boot or open SQL');
+    const forgedLegacy = { ...absentPlan, request: { ...absentPlan.request, legacy: { ...absentPlan.request.legacy, version: 2 } } };
+    assert.equal((await poll(pureLegacy, pureLegacy.MindwtrHost.pomodoroTransitionValidate(JSON.stringify(forgedLegacy)))).ok, false);
+    assert.equal(pureLegacy.events.length, 0);
+    assert.equal((await poll(absent, absent.MindwtrHost.pomodoroTransitionCommit(absence.value.planJSON, false))).ok, true);
+    assert.equal((await poll(absent, absent.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(adoption())))).ok, false,
+        'existing native session cannot fall back to legacy');
+    assert.equal((await poll(absent, absent.MindwtrHost.pomodoroTransitionCommit(absence.value.planJSON, true))).value.replayed, true);
+    assert.deepEqual(JSON.parse(absent.pomodoroInputs.at(-1)), [absentPlan, { replayOnly: true }]);
+    assert.equal((await poll(android, android.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(adoption())))).ok, false);
+    for (const autoStartFocus of [false, true]) for (const autoStartBreaks of [false, true]) {
+        const active = await ready520('ios', 'auto');
+        active.fakeData = { ...active.fakeData, tasks: [task], settings: { deviceId: task.revBy } };
+        active.lastLoaded = active.fakeData; active.settings = active.fakeData.settings;
+        active.pomodoroRawCells = { contexts: ' [ ] ', tags: null, timeSpentMinutes: 4, isFocusedToday: 0 };
+        const legacy = { durations: { focusMinutes: 50, breakMinutes: 10 }, selectedTaskId: 'task',
+            timerState: { phase: 'focus', remainingSeconds: 1, isRunning: true, completedFocusSessions: 3 },
+            sessionHistory: { totalCompletedFocusSessions: 3, completedFocusSessionsByTaskId: { task: 3 } },
+            phaseEndsAt: '2026-10-10T00:00:00.000Z', updatedAtMs: at - 1000 };
+        const rawSource = ' '.repeat(9000) + JSON.stringify(legacy);
+        const input = { ...adoption(rawSource, 'true'), autoStart: { autoStartFocus, autoStartBreaks } };
+        const response = await poll(active, active.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(input)));
+        assert.equal(response.ok, true, JSON.stringify(response));
+        const frozen = JSON.parse(response.value.planJSON), after = JSON.parse(frozen.sessionAfter);
+        assert.deepEqual(frozen.request, input, 'source beyond ordinary intent bound is retained exactly');
+        assert.deepEqual(frozen.target.row, [...active.pomodoroExpectedRaw], 'legacy selection uses literal raw BEFORE cells');
+        assert.equal(frozen.result.creditedMinutes, 50); assert.equal(after.session.updatedAtMs, at - 1000);
+        assert.equal(after.session.timerState.phase, 'break'); assert.equal(after.session.timerState.isRunning, autoStartBreaks);
+        assert.equal((await poll(active, active.MindwtrHost.pomodoroTransitionCommit(response.value.planJSON, false))).ok, true);
+    }
+    for (const raw of ['', 'null', '{"unknown":1}', '{"updatedAtMs":1,"updatedAtMs":2}',
+        '{"timerState":{"isRunning":"true"}}']) {
+        const active = await ready520();
+        assert.equal((await poll(active, active.MindwtrHost.pomodoroTransitionPrepare(JSON.stringify(adoption(raw))))).ok, false);
+        assert.equal(active.pomodoroInputs.length, 0, 'malformed present source never reaches commit');
+    }
+    const oversizedLegacy = await ready520();
+    assert.equal((await poll(oversizedLegacy, oversizedLegacy.MindwtrHost.pomodoroTransitionPrepare(
+        JSON.stringify(adoption(null, '\\'.repeat(1_000_000)))))).ok, false, 'encoded private request budget remains bounded');
+}
+// Task499: production private facades, saved-generation/row identity and stale
+// accepted-baseline ordering. The core stand-in is deliberate: native JSC tests
+// own actual prepared-row/SQLite/file/replay semantics.
+{
+    const input = JSON.stringify({ text: 'One\nTwo', options: {}, captureIds: [
+        '164f0a4c-6fb4-4385-b1db-3c55a651f161', 'f8ca0ea6-c084-48fb-8dcc-7bdcc1196d42'] });
+    const ready499 = async () => {
+        const state = makeState(0, [], 'ios');
+        assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+        state.settings = state.fakeData.settings; state.events.length = 0;
+        return state;
+    };
+    const prepare499 = async (state) => poll(state, state.MindwtrHost.captureLinesPrepare(input));
+    const local = await ready499(), prepared = await prepare499(local);
+    assert.equal(prepared.ok, true); assert.equal(prepared.value.kind, 'prepared');
+    assert.deepEqual(Array.from(local.events), ['flush', 'baseline', 'load']);
+    assert.deepEqual(JSON.parse(prepared.value.recoveryJSON).tasks, []);
+    assert.equal((await poll(local, local.MindwtrHost.captureLinesAdmission(prepared.value.planJSON))).ok, true);
+    assert.equal((await poll(local, local.MindwtrHost.captureLinesCommit(prepared.value.planJSON, true))).ok, true);
+    assert.equal(local.events.filter((event) => event === 'load').length, 1, 'first commit never resets the accepted adapter epoch with another full read');
+    assert.equal((await poll(local, local.MindwtrHost.captureLinesAdmission(prepared.value.planJSON))).ok, false, 'successful commit consumes warm admission');
+    const stale = await ready499(); stale.rowBaselineNull = true;
+    assert.match((await prepare499(stale)).error, /STALE_REVISION/);
+    assert.deepEqual(Array.from(stale.events), ['flush', 'baseline'], 'stale accepted epoch is refused before getData can adopt it');
+    for (const mutation of ['generation', 'tasks', 'projects', 'sections', 'areas', 'people', 'settings', 'adapter', 'unguarded', 'sandbox', 'transition', 'failed', 'inFlight', 'immediate', 'retrying', 'queued']) {
+        const state = await ready499(), plan = await prepare499(state); assert.equal(plan.ok, true);
+        if (mutation === 'generation') state.persistenceStatus = { generation: 1 };
+        else if (mutation === 'tasks') state.lastLoaded = { ...state.lastLoaded, tasks: [] };
+        else if (mutation === 'projects') state.ownerProjects = [];
+        else if (mutation === 'sections') state.ownerSections = [];
+        else if (mutation === 'areas') state.ownerAreas = [];
+        else if (mutation === 'people') state.ownerPeople = [];
+        else if (mutation === 'settings') state.settings = {};
+        else if (mutation === 'adapter') state.adapter = {};
+        else if (mutation === 'unguarded') state.linesUnguarded = true;
+        else if (mutation === 'sandbox') state.sandbox = true;
+        else if (mutation === 'transition') state.workspaceTransition = true;
+        else state.persistenceStatus = { generation: 0, [mutation]: 1 };
+        assert.match((await poll(state, state.MindwtrHost.captureLinesAdmission(plan.value.planJSON))).error, /STALE_REVISION|NOT_READY/, mutation);
+        assert.match((await poll(state, state.MindwtrHost.captureLinesCommit(plan.value.planJSON, true))).error, /STALE_REVISION|NOT_READY/, mutation);
+        assert.equal(state.captureInputs.filter((entry) => JSON.parse(entry)[0] === 'linesCommit').length, 0);
+    }
+    const held = await ready499(); let release;
+    held.linesReadHold = new Promise((resolveHold) => { release = resolveHold; });
+    const ticket = held.MindwtrHost.captureLinesPrepare(input); await new Promise((tick) => setImmediate(tick));
+    held.ownerPeople = []; release();
+    assert.match((await poll(held, ticket)).error, /STALE_REVISION/);
+    const owed = await ready499(), owedPlan = await prepare499(owed);
+    const cold = makeState(0, [], 'ios');
+    assert.equal((await poll(cold, cold.MindwtrHost.captureLinesValidate(owedPlan.value.planJSON))).ok, true, 'pure cold validation requires no activation or live defaults');
+    assert.equal(cold.captureInputs.filter((entry) => JSON.parse(entry)[0] === 'linesCommit').length, 0);
+    owed.linesCommitFailure = true;
+    assert.match((await poll(owed, owed.MindwtrHost.captureLinesCommit(owedPlan.value.planJSON, true))).error, /SAVE_FAILED/);
+    owed.linesCommitFailure = false; owed.persistenceStatus = { generation: 4 }; owed.ownerPeople = [];
+    assert.equal((await poll(owed, owed.MindwtrHost.captureLinesCommit(owedPlan.value.planJSON))).ok, true, 'already-journaled replay does not reapply warm base proof');
+    const refused = await ready499(); refused.linesRefused = true;
+    const rejection = await prepare499(refused);
+    assert.equal(rejection.value.kind, 'refused'); assert.equal('planJSON' in rejection.value, false);
+    assert.equal(refused.captureInputs.filter((entry) => JSON.parse(entry)[0] === 'linesCommit').length, 0);
+    console.log('Task499: private saved-base admission, await identity, stale epoch ordering and owed replay facades (Node VM; no native proof)');
+}
 // Task362: real pure route/projection and the production private-entry Off/admission path.
 // Native363 separately proves actual HTTP/receipt/intent/recovery with the real core bundle.
 {
@@ -4672,6 +5877,9 @@ export function createNativeSync() {
             plugin.onResolve({ filter: /^\.\/host-sync$/ }, () => ({ path: 'sync', namespace: 'download-test' }));
             plugin.onLoad({ filter: /.*/, namespace: 'download-test' }, () => ({ contents: syncFixture, loader: 'js' }));
             plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-request-timeout$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-reasoning-effort$/ }, () => ({ path: 'core', namespace: 'test' }));
+        plugin.onResolve({ filter: /packages\/core\/src\/native-ai-gemini-thinking-budget$/ }, () => ({ path: 'core', namespace: 'test' }));
             plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
         } }],
     });
@@ -7075,6 +8283,29 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
         assert.equal((await poll(tag195, tag195.MindwtrHost[method]('x'.repeat(2000001)))).ok, false);
     }
 }
+// Task741: real shared tag-input policy, bounded wrappers and exact raw payload
+// transport. Store/receipt/CAS behavior runs in core and real Swift/JSC tests.
+{
+    const tag741 = makeState('auto');
+    assert.equal((await poll(tag741, tag741.MindwtrHost.boot())).ok, true);
+    for (const [text, count] of [['', 0], [' \n\t', 0], ['###', 0], ['  ###café 🧭  ', 3], ['x'.repeat(2000), 0]]) {
+        assert.deepEqual(await poll(tag741, tag741.MindwtrHost.inboxBulkTagInput(text, count)),
+            await poll(tag741, tag741.MindwtrHost.doneBulkTagInput(text, count)));
+    }
+    for (const [text, count] of [['x'.repeat(2001), 0], ['x', -1], ['x', 0.5], ['x', true], ['x', 10001]]) {
+        assert.equal((await poll(tag741, tag741.MindwtrHost.inboxBulkTagInput(text, count))).ok, false);
+    }
+    const request = { requestId: '74100000-0000-4000-8000-000000000001', taskIds: ['task-cafe\u0301'],
+        taskRevisions: { ['task-cafe\u0301']: 'revision195' }, tag: '  ###café 🧭  ', source: 'inbox', params: { groupBy: 'none' } };
+    const envelope = { request, prepared: { version: 1, request, result: { count: 1, changed: true } } };
+    assert.deepEqual(await poll(tag741, tag741.MindwtrHost.inboxTasksAddTagPrepare(JSON.stringify(request))),
+        { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } });
+    for (const [method, phase] of [['inboxTasksAddTagValidate', 'Validate'], ['inboxTasksAddTagCommit', 'Commit'], ['inboxTasksAddTagOutcome', 'Outcome']]) {
+        assert.deepEqual(await poll(tag741, tag741.MindwtrHost[method](JSON.stringify(envelope))), { ok: true, value: envelope.prepared.result });
+        assert.deepEqual(JSON.parse(tag741.menuInputs.at(-1)), ['inboxTag' + phase, envelope]);
+        assert.equal((await poll(tag741, tag741.MindwtrHost[method]('x'.repeat(2000001)))).ok, false);
+    }
+}
 // Task196: Remove tag uses its own exact envelope family and whole-payload bound.
 {
     const remove196 = makeState('auto');
@@ -7090,6 +8321,49 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
         assert.deepEqual(await poll(remove196, remove196.MindwtrHost[method](JSON.stringify(envelope))), { ok: true, value: envelope.prepared.result });
         assert.deepEqual(JSON.parse(remove196.menuInputs.at(-1)), ['referenceRemoveTag' + phase, envelope]);
         assert.equal((await poll(remove196, remove196.MindwtrHost[method]('x'.repeat(2000001)))).ok, false);
+    }
+}// Task742: Remove tag uses its own exact envelope family and whole-payload bound.
+{
+    const remove742 = makeState('auto');
+    assert.equal((await poll(remove742, remove742.MindwtrHost.boot())).ok, true);
+    const tags = ['  ###café 🧭  ', 'cafe\u0301', 'x'.repeat(2001), ...Array.from({length: 101}, (_, i) => 'pick742-' + i)];
+    const request = { requestId: '74200000-0000-4000-8000-000000000001', taskIds: ['task-cafe\u0301'],
+        taskRevisions: { ['task-cafe\u0301']: 'revision742' }, tags, source: 'inbox', params: { groupBy: 'none' } };
+    const envelope = { request, prepared: { version: 1, request, result: { count: 1, changed: true } } };
+    assert.deepEqual(await poll(remove742, remove742.MindwtrHost.inboxTasksRemoveTagPrepare(JSON.stringify(request))),
+        { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } });
+    assert.deepEqual(JSON.parse(remove742.menuInputs.at(-1)), ['inboxRemoveTagPrepare', request]);
+    for (const [method, phase] of [['inboxTasksRemoveTagValidate', 'Validate'], ['inboxTasksRemoveTagCommit', 'Commit'], ['inboxTasksRemoveTagOutcome', 'Outcome']]) {
+        assert.deepEqual(await poll(remove742, remove742.MindwtrHost[method](JSON.stringify(envelope))), { ok: true, value: envelope.prepared.result });
+        assert.deepEqual(JSON.parse(remove742.menuInputs.at(-1)), ['inboxRemoveTag' + phase, envelope]);
+        assert.equal((await poll(remove742, remove742.MindwtrHost[method]('x'.repeat(2000001)))).ok, false);
+    }
+}
+// Task743: independent Apply/create wires preserve captured inputs and reject oversized envelopes.
+{
+    const organize743 = makeState('auto');
+    assert.equal((await poll(organize743, organize743.MindwtrHost.boot())).ok, true);
+    const draft = { status: '__KEEP__', projectChoice: '__KEEP__', areaChoice: '__KEEP__', contexts: '@café',
+        tags: '#tag', startDate: '', dueDate: '', reviewDate: '', delegateWho: '' };
+    const apply = { requestId: '74300000-0000-4000-8000-000000000001', source: 'inbox', taskIds: ['task743'],
+        taskRevisions: { task743: 'rev743' }, draft, params: { groupBy: 'none' } };
+    for (const [prefix, request, result] of [
+        ['inboxTasksOrganize', apply, { count: 1, changed: true }],
+        ['inboxOrganizeDestinationCreate', { ...apply, kind: 'area', name: 'Destination743', offerRevision: 'offer743' }, { id: apply.requestId, changed: true }],
+    ]) {
+        const prepared = { version: 1, request, result }, envelope = { request, prepared };
+        assert.deepEqual(await poll(organize743, organize743.MindwtrHost[prefix + 'Prepare'](JSON.stringify(request))),
+            { ok: true, value: prefix === 'inboxTasksOrganize' ? { kind: 'noop', result: { count: 0, changed: false } } : { kind: 'prepared', prepared } });
+        assert.deepEqual(JSON.parse(organize743.menuInputs.at(-1)), [prefix + 'Prepare', request]);
+        for (const phase of ['Validate', 'Commit', 'Outcome']) {
+            assert.deepEqual(await poll(organize743, organize743.MindwtrHost[prefix + phase](JSON.stringify(envelope))), { ok: true, value: result });
+            assert.deepEqual(JSON.parse(organize743.menuInputs.at(-1)), [prefix + phase, envelope]);
+        }
+        for (const phase of ['Prepare', 'Validate', 'Commit', 'Outcome']) {
+            const before = organize743.menuInputs.length;
+            assert.equal((await poll(organize743, organize743.MindwtrHost[prefix + phase]('x'.repeat(2000001)))).ok, false);
+            assert.equal(organize743.menuInputs.length, before);
+        }
     }
 }
 assert.equal(ready.activationCount, 1);
@@ -7136,7 +8410,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'inboxTasksMove', 'inboxTasksAddTag', 'inboxTasksRemoveTag', 'inboxTasksOrganize', 'inboxOrganizeDestinationCreate', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);

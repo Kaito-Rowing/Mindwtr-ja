@@ -62,6 +62,10 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'source', 'documentFocused', 'activationSupported', 'activationActive', 'clipboardAvailable', 'errorKind',
     // task-copy-input: click trust and coarse pointer/keyboard-or-assistive classification only.
     'inputTrusted', 'inputKind',
+    // ios-inbox-filters reuses releaseCheck, operation, and count below.
+    // ios-inbox-bulk-trash reuses releaseCheck, count, and outcome below.
+    // ios-inbox-group: fixed grouping choice and aggregate folded headings.
+    'axis', 'collapsedCount',
     // ios-search-publication reuses releaseCheck, operation, outcome, enabled, and count below.
     // ios-search-snapshot reuses releaseCheck and count below.
     // widget-context-selection reuses releaseCheck and count below.
@@ -74,6 +78,10 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // automation concurrent-write replay; capture routing reuses outcome below.
     'enabled',
     'retryCount',
+    // ios-reminders-run: aggregate acknowledged items and failures, never reminder content.
+    'importedCount', 'failedCount',
+    // ios-board-order: bounded aggregate affected rows, never identity/order/content.
+    'affectedCount',
     // deferred-attachment-pass: which pass owes the deferred pre-sync phase's work.
     'owed',
     // native-android-calendar-feeds: which screen's external calendars loaded (calendar, weeklyReview, dailyReview); outcome and the counts are below.
@@ -265,6 +273,15 @@ describe('release diagnostics field names', () => {
         expect(sanitizeLogContext(receipt)).toEqual({ ...receipt, count: '1' });
     });
 
+    it.each(['deleted', 'restored'])('preserves content-free Inbox bulk Trash %s acknowledgement fields', outcome => {
+        const receipt = { releaseCheck: 'v1.3.5/ios-inbox-bulk-trash', count: 2, outcome };
+        expect(sanitizeLogContext(receipt)).toEqual({ ...receipt, count: '2' });
+    });
+
+    it('preserves the content-free native Pomodoro SQL confirmation', () => {
+        const receipt = { releaseCheck: 'v1.3.5/ios-pomodoro-credit', outcome: 'confirmed' };
+        expect(sanitizeLogContext(receipt)).toEqual(receipt);
+    });
     it('preserves the fixed iOS legacy secret retirement receipt', () => {
         const receipt = { releaseCheck: 'v1.3.5/ios-legacy-secret-retirement', operation: 'legacy-secret-retirement', outcome: 'delivered' };
         expect(sanitizeLogContext(receipt)).toEqual(receipt);

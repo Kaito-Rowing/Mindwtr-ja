@@ -62,6 +62,14 @@ const clock = () => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(n
 afterEach(async () => { await flushPendingSave(); resetForTests(); vi.restoreAllMocks(); vi.useRealTimers(); if (ORIGINAL_TZ === undefined) delete process.env.TZ; else process.env.TZ = ORIGINAL_TZ; });
 
 describe('guarded Reference bulk Add tag', () => {
+    it('preserves pre-Task741 Reference envelope bytes', async () => {
+        clock(); process.env.TZ = 'UTC'; const sqlite = await openSqliteHost(seed());
+        try { const command = await prepare(sqlite, request('  @@## new  '));
+            // Captured by executing the exact pre-Task741 implementation, not
+            // rebuilt from the new source or a subset of envelope fields.
+            expect(deterministicHash128(JSON.stringify(command))).toEqual([2217490741, 714767651, 31281605, 2943030739]);
+        } finally { await sqlite.close(); }
+    });
     it.each(['new', 'different', ' one,two words ', '@@## new', 'École', 'x'.repeat(501), 'x'.repeat(2000)])('matches actual RN builder/batchUpdateTasks full AppData and all nine SQLite domains for %s', async (tag) => {
         clock(); const initial = seed(); initial.tasks![0].tags = ['#a', '#A', '#école', '#排序', '']; initial.tasks![1].tags = ['#new'];
         const rn = await openSqliteHost(initial); let expected; let expectedRaw; let count = 0;

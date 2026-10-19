@@ -51,6 +51,7 @@ import {
   getFocusSortOptions,
   getFocusStarBlockedText,
   getProjectDeadlineBoostLabel,
+  getPomodoroTaskChoices,
   getReviewDueProjects,
   moveFocusReorderTask,
   planFocusFilterCriterionRemoval,
@@ -1086,14 +1087,8 @@ export default function FocusScreen() {
     hasAnyTasks: tasks.length > 0,
     t,
   });
-  const pomodoroTasks = useMemo(() => {
-    const byId = new Map<string, Task>();
-    [...focusedTasks, ...schedule, ...nextActions, ...reviewDue].forEach((task) => {
-      if (task.deletedAt) return;
-      byId.set(task.id, task);
-    });
-    return Array.from(byId.values());
-  }, [focusedTasks, schedule, nextActions, reviewDue]);
+  const pomodoroTasks = useMemo(() => getPomodoroTaskChoices({ focusedTasks, schedule, nextActions, reviewDue }),
+    [focusedTasks, schedule, nextActions, reviewDue]);
 
   const onEdit = useCallback((task: Task) => {
     setTaskModalDefaultTab('view');

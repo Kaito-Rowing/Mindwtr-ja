@@ -1145,6 +1145,7 @@ export const itOverrides: Record<string, string> = {
         'settings.aiReasoningHintFoss': 'Usato dai modelli supportati.',
         'settings.aiProviderOpenAI': 'OpenAI',
         'settings.aiProviderGemini': 'Gemini',
+        'settings.aiEffortMinimalSaved': 'Salvato: Minimo',
         'settings.aiEffortLow': 'Basso',
         'settings.aiEffortMedium': 'Medio',
         'settings.aiEffortHigh': 'Alto',

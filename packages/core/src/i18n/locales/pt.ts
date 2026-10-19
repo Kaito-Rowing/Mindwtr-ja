@@ -1084,6 +1084,7 @@ export const ptOverrides: Record<string, string> = {
         'settings.aiProviderOpenAI': 'OpenAI',
         'settings.aiProviderGemini': 'Gêmeos',
         'settings.aiProviderAnthropic': 'Antrópico (Claude)',
+        'settings.aiEffortMinimalSaved': 'Salvo: Mínimo',
         'settings.aiEffortLow': 'Baixo',
         'settings.aiEffortMedium': 'Médio',
         'settings.aiEffortHigh': 'Alto',
