@@ -33,11 +33,13 @@
     "homepage": "https://mindwtr.app",
     "linux": {
       "deb": {
+        "desktopTemplate": "./linux/mindwtr.desktop.template",
         "files": {
           "/usr/share/applications/mindwtr.desktop": "./linux/mindwtr-window-matcher.desktop"
         }
       },
       "rpm": {
+        "desktopTemplate": "./linux/mindwtr.desktop.template",
         "files": {
           "/usr/share/applications/mindwtr.desktop": "./linux/mindwtr-window-matcher.desktop"
         }
