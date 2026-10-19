@@ -1,3 +1,5 @@
+import type { NativePreparedTrashItemsPurge } from './native-host-contract-trash-purge';
+import type { NativePreparedTrashItemsRestore } from './native-host-contract-trash-bulk-restore';
 import type { ChecklistProjectConversion } from './checklist-project-conversion';
 import type { ProjectTaskSummary } from './project-row-meta';
 import type { FocusStarAction } from './focus-star';
@@ -589,8 +591,8 @@ export type PersistenceFailure = {
  * IMPORTANT: `tasks` and `projects` contain only VISIBLE (non-deleted) items for UI.
  * The store internally tracks ALL items (including soft-deleted) for persistence.
  */
-export type PreparedTrashItemsRestore = import('./native-host-contract-trash-bulk-restore').NativePreparedTrashItemsRestore;
-export type PreparedTrashItemsPurge = import('./native-host-contract-trash-purge').NativePreparedTrashItemsPurge;
+export type PreparedTrashItemsRestore = NativePreparedTrashItemsRestore;
+export type PreparedTrashItemsPurge = NativePreparedTrashItemsPurge;
 
 export interface TaskStore {
     tasks: Task[];

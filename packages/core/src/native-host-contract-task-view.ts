@@ -9,6 +9,8 @@
  * landed writes nothing, and compare-and-set on the View tab's `taskRevision`, so a
  * replay after a restart never undoes a later edit (STALE_REVISION).
  */
+import { isNativeJsonWithinBytes } from './native-json';
+export { isNativeJsonWithinBytes } from './native-json';
 import { formatTimeEstimateLabel } from './calendar-scheduling';
 import { createDateFormatter, type DateFormatter, type DateFormattingConfig } from './date';
 import { tFallback } from './i18n';
@@ -98,31 +100,6 @@ type TaskViewDeps = {
 const CHECKLIST_LIMIT = 1_000;
 const TEXT_LIMIT = 10_000;
 const NATIVE_JSON_LIMIT_BYTES = 2_000_000;
-
-/** The host checks UTF-8 bytes, including for a JSON string with non-ASCII text. */
-export const isNativeJsonWithinBytes = (value: unknown, limit = NATIVE_JSON_LIMIT_BYTES): boolean => {
-    let json: string;
-    try {
-        json = JSON.stringify(value);
-    } catch {
-        return false;
-    }
-    if (typeof json !== 'string' || json.length > limit) return false;
-    let bytes = 0;
-    for (let index = 0; index < json.length; index++) {
-        const unit = json.charCodeAt(index);
-        if (unit < 0x80) bytes++;
-        else if (unit < 0x800) bytes += 2;
-        else if (unit >= 0xd800 && unit <= 0xdbff
-            && index + 1 < json.length && json.charCodeAt(index + 1) >= 0xdc00
-            && json.charCodeAt(index + 1) <= 0xdfff) {
-            bytes += 4;
-            index++;
-        } else bytes += 3;
-        if (bytes > limit) return false;
-    }
-    return true;
-};
 
 const fail = (code: 'INVALID_INPUT' | 'STALE_REVISION' | 'TASK_NOT_FOUND' | 'SAVE_FAILED' | 'NOT_READY', message: string): NativeHostResult<never> => ({
     ok: false,

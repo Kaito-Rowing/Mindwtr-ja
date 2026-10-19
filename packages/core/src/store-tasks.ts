@@ -1094,7 +1094,8 @@ export function buildDuplicateTask({ sourceTask, asNextAction, copyId, now, devi
     return newTask;
 }
 
-export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPendingSave, trackImmediateSave, hasQueuedSnapshotSave, getSaveGeneration }: TaskActionContext): TaskActions => {
+// Called while native command modules finish loading their store dependency. Keep the factory hoisted.
+export function createTaskActions({ set, get, getStorage, debouncedSave, flushPendingSave, trackImmediateSave, hasQueuedSnapshotSave, getSaveGeneration }: TaskActionContext): TaskActions {
     // The family-specific full envelope and raw authority checks remain caller-owned.
     const commitPreparedRawReferenceBatch = async (input: {
         request: { taskIds: string[] }; effect: { tasks: { before: Task; after: Task }[];
@@ -3292,4 +3293,4 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         return get()._allTasks.filter((task) => taskMatchesQuery(task, options));
     },
 });
-};
+}

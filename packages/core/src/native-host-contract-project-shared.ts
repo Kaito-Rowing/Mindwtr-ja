@@ -1,12 +1,8 @@
-import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
+import { isNativeJsonWithinBytes, record } from './native-json';
+export { exact, record } from './native-json';
 import { PROJECT_SYNC_FIELD_SCHEMA, projectToSqliteRow } from './project-sync-schema';
 import type { Project } from './types';
 
-export const record = (value: unknown): value is Record<string, unknown> =>
-    Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
-export const exact = (value: Record<string, unknown>, keys: readonly string[]) =>
-    Object.keys(value).length === keys.length && keys.every((key) => own(value, key));
 export const iso = (value: unknown): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value))
     && new Date(value).toISOString() === value;
 
