@@ -4461,6 +4461,8 @@ final class CoreModel: ObservableObject {
                     }
                 }
                 await previous?.value
+                // A newer queued checkpoint writes the latest snapshot; skip this superseded durable write.
+                guard taskRecoveryCheckpointTaskID == checkpointID else { return }
                 if owned, taskAttachmentCheckpointFailed != nil { return }
                 do {
                     #if DEBUG && targetEnvironment(simulator)
