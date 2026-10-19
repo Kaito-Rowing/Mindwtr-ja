@@ -378,9 +378,12 @@ internal object ProcessCoreHost {
         refreshWidgets(runtime)
     }
 
-    /** The home-screen widgets published from the store now if what they show changed, off the caller's thread. */
-    private fun refreshWidgets(runtime: CoreHost) = widgetThread.execute {
-        runCatching { runtime.refreshWidgets() }.onFailure { Log.w(CoreHost.TAG, "Native Android widget refresh failed", it) }
+    /**
+     * The home-screen widgets published from the store now if what they show changed, off the caller's thread; [leave]: only a
+     * change still waiting (RN's flush on leaving).
+     */
+    private fun refreshWidgets(runtime: CoreHost, leave: Boolean = false) = widgetThread.execute {
+        runCatching { runtime.refreshWidgets(leave) }.onFailure { Log.w(CoreHost.TAG, "Native Android widget refresh failed", it) }
     }
 
     /** MainActivity resumed ("active") or paused ("background"): core's triggers sync on resume and on leaving. */
@@ -409,8 +412,9 @@ internal object ProcessCoreHost {
                 widgetThread.schedule({ deferredWidgets.takeIf(generation)?.let { publishHeldWidgets(it, "resume-fallback") } },
                     WIDGET_FALLBACK_MS, TimeUnit.MILLISECONDS)
             } else {
-                deferredWidgets.clear()
-                refreshWidgets(runtime)
+                // A publication still held (this resume left before its first content or fallback) runs in full; else only a
+                // change still waiting is published (RN's flush on leaving).
+                refreshWidgets(runtime, leave = !deferredWidgets.leave())
             }
         }
         val runtime = syncHost ?: return

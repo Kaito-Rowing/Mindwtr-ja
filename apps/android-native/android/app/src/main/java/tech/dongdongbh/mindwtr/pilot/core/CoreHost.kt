@@ -742,10 +742,11 @@ class CoreHost(
 
     /**
      * The home-screen widgets published now if what they show changed (bundle/host-widgets.ts), and stored and drawn before this
-     * returns: after a CoreWork job, and when the app comes to the front.
+     * returns: after a CoreWork job, and when the app comes to the front. [leave]: the app left the front, so only a change still
+     * waiting is published (RN's flush); the whole payload is not built again.
      */
-    fun refreshWidgets() {
-        callAsync("widgetsRefresh")
+    fun refreshWidgets(leave: Boolean = false) {
+        if (leave) callAsync("widgetsRefresh", "leave") else callAsync("widgetsRefresh")
         widgets?.settle()
     }
 

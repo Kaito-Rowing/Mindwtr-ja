@@ -2324,10 +2324,11 @@ globalThis.MindwtrHost = {
     },
     /**
      * Publishes the home-screen widgets now when what they show changed: after a CoreWork job and when the app comes to the
-     * front (host-widgets.ts). `{ published }`.
+     * front (host-widgets.ts). `mode` "leave" (the app left the front) publishes only a change still waiting, as RN flushes it.
+     * `{ published }`.
      */
-    widgetsRefresh(): string {
-        return submit(async () => ({ published: widgets?.publish() ?? false }));
+    widgetsRefresh(mode = ''): string {
+        return submit(async () => ({ published: (mode === 'leave' ? widgets?.flush() : widgets?.publish()) ?? false }));
     },
     /** Opt-in iOS read: a settled synced language wins; the legacy device-key route above is unchanged. */
     languageSaved(stored: string, system: string): string {

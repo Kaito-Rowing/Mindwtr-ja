@@ -1844,6 +1844,9 @@ assert.match(source('CoreWork.kt'), /fun retryDrain\(context: Context\) = enqueu
     // C3: the external calendars' device binding and each screen's feed (bundle/host-calendar.test.ts, bun).
     const calendarTested = spawnSync('bun', ['test', 'apps/android-native/bundle/host-calendar.test.ts'], { cwd: resolve(app, '../..'), encoding: 'utf8' });
     assert.equal(calendarTested.status, 0, `bundle/host-calendar.test.ts: ${calendarTested.stderr.slice(-1500)}`);
+    // Leaving the app flushes only a waiting widget change (bundle/host-widgets.test.ts, bun).
+    const widgetsTested = spawnSync('bun', ['test', 'apps/android-native/bundle/host-widgets.test.ts'], { cwd: resolve(app, '../..'), encoding: 'utf8' });
+    assert.equal(widgetsTested.status, 0, `bundle/host-widgets.test.ts: ${widgetsTested.stderr.slice(-1500)}`);
     // D1c cut i: the storage adapter keeps no read document after a boot (bundle/host-backup-memory.test.ts, bun).
     const memoryTested = spawnSync('bun', ['test', 'apps/android-native/bundle/host-backup-memory.test.ts'], { cwd: resolve(app, '../..'), encoding: 'utf8' });
     assert.equal(memoryTested.status, 0, `bundle/host-backup-memory.test.ts: ${memoryTested.stderr.slice(-1500)}`);
@@ -3863,10 +3866,11 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // came before the validated load was not sent. It waits with the boot's sync start for the first screen's content (startup
     // pass). Resume publishes through the same call, off the engine's callers.
     const ownerKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/ProcessCoreHost.kt'), 'utf8');
-    assert.match(ownerKt, /private fun refreshWidgets\(runtime: CoreHost\) = widgetThread\.execute \{\s+runCatching \{ runtime\.refreshWidgets\(\) \}\.onFailure \{ Log\.w\(CoreHost\.TAG, "Native Android widget refresh failed", it\) \}\s+\}/);
-    // Coming to the front and leaving it both publish (RN's resume refresh and its flush on leaving). Coming to the front, it
+    assert.match(ownerKt, /private fun refreshWidgets\(runtime: CoreHost, leave: Boolean = false\) = widgetThread\.execute \{\s+runCatching \{ runtime\.refreshWidgets\(leave\) \}\.onFailure \{ Log\.w\(CoreHost\.TAG, "Native Android widget refresh failed", it\) \}\s+\}/);
+    // Coming to the front publishes (RN's resume refresh); leaving flushes only a change still waiting (RN's flush on leaving:
+    // host-widgets.ts flush builds nothing otherwise, host-widgets.test.ts). Coming to the front, it
     // waits for the screen's first content (startDeferredSync runs it) or the fallback, so a warm start draws first.
-    assert.match(ownerKt, /if \(state == appState\) return\s+appState = state\s+(?:\/\/[^\n]*\s+)*boot\?\.takeIf \{ it\.isDone \}\?\.let \{ task -> runCatching \{ task\.get\(\) \}\.getOrNull\(\) \}\?\.let \{ runtime ->\s+if \(state == "active"\) \{\s+(?:\/\/[^\n]*\s+)*val generation = deferredWidgets\.hold\(runtime\)\s+widgetThread\.schedule\(\{ deferredWidgets\.takeIf\(generation\)\?\.let \{ publishHeldWidgets\(it, "resume-fallback"\) \} \},\s+WIDGET_FALLBACK_MS, TimeUnit\.MILLISECONDS\)\s+\} else \{\s+deferredWidgets\.clear\(\)\s+refreshWidgets\(runtime\)\s+\}\s+\}/, 'a resume\'s fallback publishes only its own hold (HeldPublicationTest)');
+    assert.match(ownerKt, /if \(state == appState\) return\s+appState = state\s+(?:\/\/[^\n]*\s+)*boot\?\.takeIf \{ it\.isDone \}\?\.let \{ task -> runCatching \{ task\.get\(\) \}\.getOrNull\(\) \}\?\.let \{ runtime ->\s+if \(state == "active"\) \{\s+(?:\/\/[^\n]*\s+)*val generation = deferredWidgets\.hold\(runtime\)\s+widgetThread\.schedule\(\{ deferredWidgets\.takeIf\(generation\)\?\.let \{ publishHeldWidgets\(it, "resume-fallback"\) \} \},\s+WIDGET_FALLBACK_MS, TimeUnit\.MILLISECONDS\)\s+\} else \{\s+(?:\/\/[^\n]*\s+)*refreshWidgets\(runtime, leave = !deferredWidgets\.leave\(\)\)\s+\}\s+\}/, 'a resume\'s fallback publishes only its own hold (HeldPublicationTest)');
     // Kotlin says when a publication did not reach the widgets (its store or redraw failed), so the publisher sends it again.
     const hostWidgetsKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/HostWidgets.kt'), 'utf8');
     assert.match(hostWidgetsKt, /\.put\("stale", stale\)/);
