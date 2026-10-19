@@ -670,12 +670,22 @@ const measureFreshInstall = async (limitMiB = 1024) => {
     setProp('transfer_limit_mb', String(limitMiB));
     await launch();
 };
+/**
+ * The question after a pick, answered; or the pick's failure toast, which measureRun's loop reads. Step 0 run 6's boundary
+ * waited 15 min for a question after a 16.8 MiB pick that Kotlin refused at stage (TransferTooLarge), so the refusal never
+ * shrank the next attempt.
+ */
+const answerQuestion = async () => {
+    const asked = await waitFor('the question or the pick\'s failure', (current) => Boolean(confirmButton(current))
+        || current.some((node) => /failed|too large/i.test(node.text ?? '')), 900_000);
+    if (confirmButton(asked)) await tap(confirmButton(asked));
+};
 const restoreFile = async (file) => {
     await openData();
     await tap(tagged(await screen(), 'data-transfer-restore'));
     await pickDocument(file.name);
     await until('the app back in front', () => !otherAppFront(), 15_000, 500);
-    await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 900_000)));
+    await answerQuestion();
 };
 const IMPORT_TITLES = { todoist: 'importTodoistData', ticktick: 'importTicktickData', dgt: 'importDgtGtdData', omnifocus: 'importOmnifocusData', 'mindwtr-csv': 'importMindwtrCsvData' };
 const importFile = async (key, file) => {
@@ -855,7 +865,7 @@ const boundarySequence = async (shape, limitMiB, imports) => {
         push(file);
         return measureRun(shape, 'merge-over', limitMiB, async () => {
             await merge(file);
-            await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 900_000)));
+            await answerQuestion();
         }, (nodes) => hasText(nodes, en['settings.mergeBackup']) && !confirmButton(nodes), { ...options, sourceBytes: bytesOf(file) });
     });
     const over = await atAdmittedBoundary(room(), restoreAt('restore-over', 'd1mo'));
@@ -901,7 +911,7 @@ const runSequence = async (shape, mib, { imports }) => {
     push(b);
     await measureRun(shape, 'merge-over', mib, async () => {
         await merge(b);
-        await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 900_000)));
+        await answerQuestion();
     }, (nodes) => hasText(nodes, en['settings.mergeBackup']) && !confirmButton(nodes), { sourceBytes: bytesOf(b), boundary });
     const a2 = a;
     const over = await measureRun(shape, 'restore-over', mib, () => restoreFile(a2), (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']), { sourceBytes: bytesOf(a2), boundary });
