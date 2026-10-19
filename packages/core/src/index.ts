@@ -395,3 +395,10 @@ export type { NativeInboxTasksAddTagRequest, NativeInboxTasksAddTagPrepared, Nat
 
 export type { NativeInboxTasksRemoveTagRequest, NativeInboxTasksRemoveTagPrepared, NativeInboxTasksRemoveTagEnvelope,
     NativeInboxTasksRemoveTagResult, NativeInboxTasksRemoveTagPreparation } from './native-host-contract-inbox-bulk-remove-tag';
+
+export type { NativeInboxTasksOrganizeRequest, NativeInboxTasksOrganizePrepared, NativeInboxTasksOrganizeEnvelope,
+    NativeInboxTasksOrganizeResult, NativeInboxTasksOrganizePreparation } from './native-host-contract-inbox-bulk-organize';
+
+export type { NativeInboxOrganizeDestinationCreateRequest, NativeInboxOrganizeDestinationCreatePrepared,
+    NativeInboxOrganizeDestinationCreateEnvelope, NativeInboxOrganizeDestinationCreateResult,
+    NativeInboxOrganizeDestinationCreatePreparation } from './native-host-contract-inbox-organize-create';

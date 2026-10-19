@@ -334,6 +334,33 @@ final class CoreModel: ObservableObject {
     private var inboxBulkRemoveParams: CoreObject = [:]
     private var inboxBulkRemoveRevision = ""
     private var inboxTasksAddTagOwner: (host: CoreHost, request: String)?
+    // Task743: core-owned Organize draft; separate immutable Apply/create debts.
+    @Published private(set) var inboxBulkOrganizePresented = false
+    @Published private(set) var inboxBulkOrganizeView: CoreObject = [:]
+    @Published private(set) var inboxBulkOrganizeInputs: [String: String] = [:]
+    @Published private(set) var inboxBulkOrganizeCurrent = false
+    @Published private(set) var inboxBulkOrganizeReading = false
+    @Published private(set) var inboxBulkOrganizeReadError: String?
+    @Published private(set) var inboxBulkOrganizePickerKind: String?
+    @Published private(set) var inboxBulkOrganizePickerQuery = ""
+    @Published private(set) var inboxBulkOrganizePicker: CoreObject = [:]
+    @Published private(set) var inboxBulkOrganizePickerItems: [CoreObject] = []
+    @Published private(set) var inboxBulkOrganizePickerReading = false
+    @Published private(set) var inboxBulkOrganizePickerCurrent = false
+    @Published private(set) var inboxBulkOrganizePickerError: String?
+    private var inboxBulkOrganizeContext: InboxBulkConfirmation?
+    private var inboxBulkOrganizeIDs: [String] = []
+    private var inboxBulkOrganizeRevisions: CoreObject = [:]
+    private var inboxBulkOrganizeParams: CoreObject = [:]
+    private var inboxBulkOrganizeRevision = ""
+    private var inboxBulkOrganizeGeneration = 0
+    private var inboxBulkOrganizeTask: Task<Void, Never>?
+    private var inboxBulkOrganizePendingEdits: [CoreObject] = []
+    private var inboxBulkOrganizePickerGeneration = 0
+    private var inboxBulkOrganizePickerTask: Task<Void, Never>?
+    private var inboxTasksOrganizeOwner: (host: CoreHost, request: String)?
+    private var inboxOrganizeDestinationCreateOwner: (host: CoreHost, request: String)?
+
     @Published private(set) var inboxBulkTagPresented = false
     @Published private(set) var inboxBulkTagText = ""
     @Published private(set) var inboxBulkTagOptions: CoreObject = [:]
@@ -5603,7 +5630,7 @@ final class CoreModel: ObservableObject {
                     referenceProjectNextActionEditID = result.text("id")
                 }
             }
-            if ["inboxTasksMoveCommit", "inboxTasksAddTagCommit", "inboxTasksRemoveTagCommit"].contains(recovery.text("method")), recovery.text("source") == "inbox" {
+            if ["inboxTasksMoveCommit", "inboxTasksAddTagCommit", "inboxTasksRemoveTagCommit", "inboxTasksOrganizeCommit", "inboxOrganizeDestinationCreateCommit"].contains(recovery.text("method")), recovery.text("source") == "inbox" {
                 selectedSurface = .inbox
                 clearInboxTaskSelection()
                 taskActionNotice = [:]; inboxBulkNoticeHost = nil
@@ -20891,13 +20918,15 @@ final class CoreModel: ObservableObject {
 
     // MARK: Task739 Inbox selection, using the list's complete core-owned scope
     private var inboxBulkMutationPending: Bool {
-        inboxBulkDeleteOwner != nil || inboxBulkUndoOwner != nil || inboxTasksMoveOwner != nil || inboxTasksAddTagOwner != nil || inboxTasksRemoveTagOwner != nil
+        inboxBulkDeleteOwner != nil || inboxBulkUndoOwner != nil || inboxTasksMoveOwner != nil || inboxTasksAddTagOwner != nil || inboxTasksRemoveTagOwner != nil || inboxTasksOrganizeOwner != nil || inboxOrganizeDestinationCreateOwner != nil
     }
     private var inboxBulkMutationHost: CoreHost? {
-        inboxTasksRemoveTagOwner?.host ?? inboxTasksAddTagOwner?.host ?? inboxTasksMoveOwner?.host ?? inboxBulkDeleteOwner?.host ?? inboxBulkUndoOwner?.host
+        if let owner = inboxOrganizeDestinationCreateOwner?.host { return owner }
+        if let owner = inboxTasksOrganizeOwner?.host { return owner }
+        return inboxTasksRemoveTagOwner?.host ?? inboxTasksAddTagOwner?.host ?? inboxTasksMoveOwner?.host ?? inboxBulkDeleteOwner?.host ?? inboxBulkUndoOwner?.host
     }
     private var inboxBulkCompositionBlocked: Bool {
-        inboxBulkMutationPending || inboxBulkConfirmation != nil || inboxBulkTagPresented || inboxBulkRemovePresented
+        inboxBulkMutationPending || inboxBulkConfirmation != nil || inboxBulkTagPresented || inboxBulkRemovePresented || inboxBulkOrganizePresented
     }
     var inboxBulkRetryError: String? {
         guard let owner = inboxBulkMutationHost, host === owner, ready, !busy, !appLock.concealed,
@@ -20905,7 +20934,7 @@ final class CoreModel: ObservableObject {
               !taskPresented, !capturePresented, !areaPickerPresented, !morePresented,
               !inboxGroupPresented, !inboxSortPresented, !inboxFiltersPresented, !taskStatusMenuPresented,
               !mindSweepPresented, !processInboxPresented, !calendarComposerPresented, !calendarItemPresented else { return nil }
-        if inboxTasksMoveOwner != nil || inboxTasksAddTagOwner != nil || inboxTasksRemoveTagOwner != nil { return label("task.doneStatusOutcomeUnknown") }
+        if inboxTasksMoveOwner != nil || inboxTasksAddTagOwner != nil || inboxTasksRemoveTagOwner != nil || inboxTasksOrganizeOwner != nil || inboxOrganizeDestinationCreateOwner != nil { return label("task.doneStatusOutcomeUnknown") }
         return label(inboxBulkUndoOwner == nil ? "task.archiveDeleteOutcomeUnknown" : "task.trashOutcomeUnknown")
     }
     private var inboxBulkSelectionEnabled: Bool {
@@ -20961,6 +20990,7 @@ final class CoreModel: ObservableObject {
         if changed {
             inboxSelectionGeneration += 1
             if inboxBulkConfirmation != nil { cancelArchiveBulkDeleteConfirmation() }
+            retireInboxBulkOrganize()
             closeInboxBulkRemove(clearPicks: inboxTasksRemoveTagOwner == nil)
             closeInboxBulkTag(clearInput: inboxTasksAddTagOwner == nil)
         }
@@ -20972,6 +21002,7 @@ final class CoreModel: ObservableObject {
     }
 
     private func clearInboxTaskSelection() {
+        retireInboxBulkOrganize()
         closeInboxBulkRemove(clearPicks: inboxTasksRemoveTagOwner == nil)
         closeInboxBulkTag(clearInput: inboxTasksAddTagOwner == nil)
         inboxSelectionGeneration += 1
@@ -21694,8 +21725,367 @@ final class CoreModel: ObservableObject {
     }
 
 
+    // MARK: Task743 Inbox Organize (core draft edits, exact original write owners)
+    var inboxBulkOrganizeEnabled: Bool {
+        inboxBulkSelectionEnabled && inboxBulk.object("bar").object("organize").flag("enabled")
+    }
+    var inboxBulkOrganizeControlsEnabled: Bool {
+        inboxBulkOrganizePresented && !busy && !retryNeeded && !inboxBulkMutationPending
+            && inboxBulkOrganizeContext.map { inboxOrganizeContextCurrent($0) } == true
+    }
+    var inboxBulkOrganizeApplyEnabled: Bool {
+        inboxBulkOrganizeControlsEnabled && inboxBulkOrganizeCurrent && !inboxBulkOrganizeReading
+            && inboxBulkOrganizePendingEdits.isEmpty && inboxBulkOrganizePickerKind == nil
+            && inboxBulkOrganizeReadError == nil && inboxBulkOrganizeView.flag("canApply")
+    }
+    var inboxBulkOrganizeCloseEnabled: Bool {
+        inboxBulkOrganizePresented && !busy && !retryNeeded && !inboxBulkMutationPending
+    }
+    private func inboxOrganizeContextCurrent(_ context: InboxBulkConfirmation) -> Bool {
+        inboxBulkOrganizePresented && inboxBulkTagContextCurrent(context)
+            && inboxExactJSON(inboxSelectedIDs, inboxBulkOrganizeIDs)
+            && inboxExactJSON(inboxSelectedRevisions, inboxBulkOrganizeRevisions)
+            && inboxExactJSON(inboxParams, inboxBulkOrganizeParams)
+    }
+    func openInboxBulkOrganize() {
+        guard inboxBulkOrganizeEnabled, let owner = host else { return }
+        retireInboxBulkOrganize()
+        do {
+            inboxBulkOrganizeContext = InboxBulkConfirmation(host: owner, params: try json(inboxParams),
+                revision: inbox.text("revision"), selectionGeneration: inboxSelectionGeneration,
+                filterSequence: inboxFilterSequence, foregroundGeneration: foregroundSyncGeneration)
+        } catch { inboxReadError = label("task.updateFailed"); return }
+        inboxBulkOrganizeIDs = inboxSelectedIDs; inboxBulkOrganizeRevisions = inboxSelectedRevisions
+        inboxBulkOrganizeParams = inboxParams; inboxBulkOrganizePresented = true
+        // Empty organize asks core for EMPTY_BULK_ORGANIZE_DRAFT; Swift never authors that schema.
+        inboxBulkOrganizePendingEdits = [[:]]
+        drainInboxBulkOrganizeEdits()
+    }
+    func closeInboxBulkOrganize() {
+        guard inboxBulkOrganizeCloseEnabled else { return }
+        retireInboxBulkOrganize()
+    }
+    private func retireInboxBulkOrganize() {
+        inboxBulkOrganizeGeneration += 1; inboxBulkOrganizeTask?.cancel(); inboxBulkOrganizeTask = nil
+        inboxBulkOrganizePresented = false; inboxBulkOrganizeCurrent = false; inboxBulkOrganizeReading = false
+        inboxBulkOrganizeReadError = nil; inboxBulkOrganizePendingEdits = []
+        inboxBulkOrganizeView = [:]; inboxBulkOrganizeInputs = [:]; inboxBulkOrganizeRevision = ""
+        inboxBulkOrganizeContext = nil; inboxBulkOrganizeIDs = []; inboxBulkOrganizeRevisions = [:]; inboxBulkOrganizeParams = [:]
+        retireInboxOrganizePicker()
+        // Never clear either dispatched original Host/request debt on lifecycle retirement.
+    }
+    private func retireInboxOrganizePicker() {
+        inboxBulkOrganizePickerGeneration += 1; inboxBulkOrganizePickerTask?.cancel(); inboxBulkOrganizePickerTask = nil
+        inboxBulkOrganizePickerKind = nil; inboxBulkOrganizePickerQuery = ""; inboxBulkOrganizePicker = [:]
+        inboxBulkOrganizePickerItems = []; inboxBulkOrganizePickerCurrent = false
+        inboxBulkOrganizePickerReading = false; inboxBulkOrganizePickerError = nil
+    }
+    func editInboxBulkOrganize(_ edit: CoreObject) {
+        guard inboxBulkOrganizeControlsEnabled, inboxBulkOrganizePickerKind == nil, !edit.isEmpty else { return }
+        if edit.text("type") == "setText", let value = edit["value"] as? String {
+            inboxBulkOrganizeInputs[edit.text("field")] = value
+            if inboxBulkOrganizePendingEdits.last?.text("type") == "setText",
+               inboxBulkOrganizePendingEdits.last?.text("field") == edit.text("field") {
+                inboxBulkOrganizePendingEdits[inboxBulkOrganizePendingEdits.count - 1] = edit
+            } else { inboxBulkOrganizePendingEdits.append(edit) }
+        } else { inboxBulkOrganizePendingEdits.append(edit) }
+        inboxBulkOrganizeCurrent = false; inboxBulkOrganizeReadError = nil
+        drainInboxBulkOrganizeEdits()
+    }
+    func setInboxBulkOrganizeText(_ field: String, value: String) {
+        guard inboxBulkOrganizeView.object("draft")[field] is String,
+              inboxBulkOrganizeInputs[field]?.utf8.elementsEqual(value.utf8) != true else { return }
+        editInboxBulkOrganize(["type": "setText", "field": field, "value": value])
+    }
+    private func inboxOrganizeRead(edit: CoreObject? = nil, picker: CoreObject? = nil,
+                                  current: @escaping () -> Bool) async throws -> CoreObject {
+        guard current() else { throw CancellationError() }
+        var organize: CoreObject = [:]
+        if !inboxBulkOrganizeView.isEmpty { organize["draft"] = inboxBulkOrganizeView.object("draft") }
+        if let edit, !edit.isEmpty { organize["edit"] = edit }
+        var request: CoreObject = ["list": "inbox", "params": inboxBulkOrganizeParams,
+            "taskIds": inboxBulkOrganizeIDs, "organize": organize]
+        if let picker { request["picker"] = picker }
+        let result = try await query("menuRead", ["bulk", try json(request)], beforeDispatch: current)
+        guard current(), !result.text("revision").isEmpty else { throw CancellationError() }
+        try validateInboxTaskBulk(result, snapshot: ["revision": result.text("revision")])
+        guard let ids = result["selectedIds"] as? [String], let revisions = result["taskRevisions"] as? CoreObject,
+              inboxExactJSON(ids, inboxBulkOrganizeIDs), inboxExactJSON(revisions, inboxBulkOrganizeRevisions),
+              let view = result["organize"] as? CoreObject, let draft = view["draft"] as? CoreObject,
+              !draft.isEmpty, let canApply = view["canApply"] as? NSNumber,
+              CFGetTypeID(canApply) == CFBooleanGetTypeID() else { throw CocoaError(.coderReadCorrupt) }
+        return result
+    }
+    private func installInboxOrganizeView(_ bulk: CoreObject) {
+        inboxBulkOrganizeView = bulk.object("organize"); inboxBulkOrganizeRevision = bulk.text("revision")
+        for (field, value) in inboxBulkOrganizeView.object("draft") {
+            guard let value = value as? String else { continue }
+            if !inboxBulkOrganizePendingEdits.contains(where: { $0.text("type") == "setText" && $0.text("field") == field }) {
+                inboxBulkOrganizeInputs[field] = value
+            }
+        }
+        inboxBulkOrganizeCurrent = inboxBulkOrganizePendingEdits.isEmpty
+        inboxBulkOrganizeReadError = nil
+    }
+    private func drainInboxBulkOrganizeEdits() {
+        guard inboxBulkOrganizeTask == nil, inboxBulkOrganizeControlsEnabled,
+              !inboxBulkOrganizePendingEdits.isEmpty, let context = inboxBulkOrganizeContext else { return }
+        let generation = inboxBulkOrganizeGeneration
+        let current = { self.inboxBulkOrganizeGeneration == generation && self.inboxOrganizeContextCurrent(context)
+            && !self.busy && !self.retryNeeded && !self.inboxBulkMutationPending }
+        inboxBulkOrganizeReading = true
+        inboxBulkOrganizeTask = Task {
+            defer {
+                if generation == inboxBulkOrganizeGeneration { inboxBulkOrganizeReading = false; inboxBulkOrganizeTask = nil }
+            }
+            while current(), !inboxBulkOrganizePendingEdits.isEmpty {
+                let edit = inboxBulkOrganizePendingEdits.removeFirst()
+                do {
+                    let bulk = try await inboxOrganizeRead(edit: edit, current: current)
+                    guard !Task.isCancelled, current() else { return }
+                    installInboxOrganizeView(bulk)
+                } catch {
+                    guard !Task.isCancelled, current() else { return }
+                    // A rejected partial text edit must not strand a newer correction behind it.
+                    if edit.text("type") == "setText", inboxBulkOrganizePendingEdits.contains(where: {
+                        $0.text("type") == "setText" && $0.text("field") == edit.text("field")
+                    }) { continue }
+                    inboxBulkOrganizePendingEdits.insert(edit, at: 0)
+                    inboxBulkOrganizeCurrent = false; inboxBulkOrganizeReadError = error.localizedDescription
+                    return
+                }
+            }
+        }
+    }
+    func retryInboxBulkOrganizeRead() {
+        guard inboxBulkOrganizeControlsEnabled else { return }
+        if inboxBulkOrganizePickerKind != nil { readInboxOrganizePicker(reset: true); return }
+        if inboxBulkOrganizePendingEdits.isEmpty { inboxBulkOrganizePendingEdits = [[:]] }
+        drainInboxBulkOrganizeEdits()
+    }
+    func openInboxOrganizePicker(_ kind: String) {
+        guard inboxBulkOrganizeControlsEnabled, inboxBulkOrganizeCurrent, !inboxBulkOrganizeReading,
+              ["project", "area"].contains(kind), !inboxBulkOrganizeView.object(kind).flag("disabled") else { return }
+        retireInboxOrganizePicker(); inboxBulkOrganizePickerKind = kind
+        readInboxOrganizePicker(reset: true)
+    }
+    func closeInboxOrganizePicker() {
+        guard inboxBulkOrganizeCloseEnabled else { return }
+        retireInboxOrganizePicker()
+    }
+    func setInboxOrganizePickerQuery(_ text: String) {
+        guard inboxBulkOrganizeControlsEnabled, inboxBulkOrganizePickerKind != nil,
+              !inboxBulkOrganizePickerQuery.utf8.elementsEqual(text.utf8) else { return }
+        inboxBulkOrganizePickerQuery = text; readInboxOrganizePicker(reset: true)
+    }
+    var inboxOrganizePickerCanLoadMore: Bool {
+        inboxBulkOrganizeControlsEnabled && inboxBulkOrganizePickerCurrent && !inboxBulkOrganizePickerReading
+            && inboxBulkOrganizePickerError == nil && inboxBulkOrganizePickerItems.count < inboxBulkOrganizePicker.number("total")
+    }
+    func loadMoreInboxOrganizePicker() {
+        guard inboxOrganizePickerCanLoadMore else { return }; readInboxOrganizePicker(reset: false)
+    }
+    func retryInboxOrganizePicker() { readInboxOrganizePicker(reset: true) }
+    private func readInboxOrganizePicker(reset: Bool) {
+        guard inboxBulkOrganizeControlsEnabled, let context = inboxBulkOrganizeContext,
+              let kind = inboxBulkOrganizePickerKind else { return }
+        inboxBulkOrganizePickerGeneration += 1; let generation = inboxBulkOrganizePickerGeneration
+        let queryText = inboxBulkOrganizePickerQuery, revision = inboxBulkOrganizeRevision
+        let offset = reset ? 0 : inboxBulkOrganizePickerItems.count
+        if reset { inboxBulkOrganizePickerItems = []; inboxBulkOrganizePicker = [:] }
+        inboxBulkOrganizePickerCurrent = false; inboxBulkOrganizePickerReading = true; inboxBulkOrganizePickerError = nil
+        inboxBulkOrganizePickerTask?.cancel()
+        let current = { self.inboxOrganizeContextCurrent(context) && !self.busy && !self.retryNeeded
+            && generation == self.inboxBulkOrganizePickerGeneration && self.inboxBulkOrganizePickerKind == kind
+            && self.inboxBulkOrganizePickerQuery.utf8.elementsEqual(queryText.utf8) }
+        inboxBulkOrganizePickerTask = Task {
+            defer { if generation == inboxBulkOrganizePickerGeneration { inboxBulkOrganizePickerReading = false; inboxBulkOrganizePickerTask = nil } }
+            do {
+                var picker: CoreObject = ["kind": kind, "query": queryText, "offset": offset, "limit": 100]
+                if !reset { picker["revision"] = revision }
+                let bulk = try await inboxOrganizeRead(picker: picker, current: current)
+                guard !Task.isCancelled, current() else { return }
+                let page = bulk.object("picker"), items = page.objects("items")
+                guard page.text("kind") == kind, let total = page["total"] as? NSNumber,
+                      CFGetTypeID(total) != CFBooleanGetTypeID(), total.doubleValue.rounded() == total.doubleValue,
+                      total.intValue >= offset + items.count, items.count <= 100,
+                      !items.isEmpty || offset == total.intValue,
+                      reset || (bulk.text("revision").utf8.elementsEqual(revision.utf8)
+                          && total.intValue == inboxBulkOrganizePicker.number("total")) else { throw CocoaError(.coderReadCorrupt) }
+                let combined = reset ? items : inboxBulkOrganizePickerItems + items
+                guard Set(combined.map { Data($0.text("value").utf8) }).count == combined.count else { throw CocoaError(.coderReadCorrupt) }
+                installInboxOrganizeView(bulk)
+                inboxBulkOrganizePickerItems = combined; inboxBulkOrganizePicker = page
+                inboxBulkOrganizePickerCurrent = true
+            } catch {
+                guard !Task.isCancelled, current() else { return }
+                inboxBulkOrganizePickerError = error.localizedDescription
+            }
+        }
+    }
+    func chooseInboxOrganizePicker(_ item: CoreObject) {
+        guard inboxBulkOrganizeControlsEnabled, inboxBulkOrganizePickerCurrent, !inboxBulkOrganizePickerReading,
+              inboxBulkOrganizePickerItems.contains(where: { inboxExactJSON($0, item) }),
+              let edit = item["edit"] as? CoreObject else { return }
+        retireInboxOrganizePicker(); editInboxBulkOrganize(edit)
+    }
+    func submitInboxOrganizePicker() async {
+        guard inboxBulkOrganizeControlsEnabled, inboxBulkOrganizePickerCurrent, !inboxBulkOrganizePickerReading else { return }
+        let submit = inboxBulkOrganizePicker.object("submit")
+        if let edit = submit["edit"] as? CoreObject {
+            retireInboxOrganizePicker(); editInboxBulkOrganize(edit)
+        } else if let name = submit["create"] as? String { await createInboxOrganizeDestination(name: name) }
+    }
+    func createInboxOrganizePickerChoice() async {
+        let name = inboxBulkOrganizePicker.object("create").text("name")
+        guard !name.isEmpty else { return }; await createInboxOrganizeDestination(name: name)
+    }
+    private func createInboxOrganizeDestination(name: String) async {
+        guard inboxBulkOrganizeControlsEnabled, inboxBulkOrganizePickerCurrent, !inboxBulkOrganizePickerReading,
+              let context = inboxBulkOrganizeContext, let kind = inboxBulkOrganizePickerKind,
+              inboxBulkOrganizePicker.object("create").text("name").utf8.elementsEqual(name.utf8),
+              !inboxBulkOrganizeRevision.isEmpty else { return }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "source": "inbox", "kind": kind,
+                "name": name, "draft": inboxBulkOrganizeView.object("draft"), "offerRevision": inboxBulkOrganizeRevision,
+                "taskIds": inboxBulkOrganizeIDs, "taskRevisions": inboxBulkOrganizeRevisions, "params": inboxBulkOrganizeParams])
+            await performInboxOrganizeWrite(request, creation: true, context: context)
+        } catch { inboxBulkOrganizeReadError = error.localizedDescription }
+    }
+    func applyInboxBulkOrganize() async {
+        guard inboxBulkOrganizeApplyEnabled, let context = inboxBulkOrganizeContext else { return }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "source": "inbox",
+                "taskIds": inboxBulkOrganizeIDs, "taskRevisions": inboxBulkOrganizeRevisions,
+                "draft": inboxBulkOrganizeView.object("draft"), "params": inboxBulkOrganizeParams])
+            await performInboxOrganizeWrite(request, creation: false, context: context)
+        } catch { inboxBulkOrganizeReadError = error.localizedDescription }
+    }
+    private func inboxOrganizeOwned(_ owner: CoreHost, request: String, creation: Bool) -> Bool {
+        let debt = creation ? inboxOrganizeDestinationCreateOwner : inboxTasksOrganizeOwner
+        return debt?.host === owner && debt?.request.utf8.elementsEqual(request.utf8) == true
+    }
+    private func performInboxOrganizeWrite(_ request: String, creation: Bool, context: InboxBulkConfirmation) async {
+        let owner = context.host, generation = inboxBulkOrganizeGeneration
+        let current = { self.inboxBulkOrganizeGeneration == generation && self.inboxOrganizeContextCurrent(context) }
+        guard current(), !inboxBulkMutationPending, !busy, !retryNeeded else { return }
+        if creation { inboxOrganizeDestinationCreateOwner = (owner, request) } else { inboxTasksOrganizeOwner = (owner, request) }
+        busy = true; inboxBulkOrganizeReadError = nil
+        var dispatched = false
+        defer { if host === owner { finishOperation() } }
+        do {
+            let result = try await query(creation ? "inboxOrganizeDestinationCreateWrite" : "inboxTasksOrganizeWrite", [request], beforeDispatch: {
+                let accepted = current() && self.inboxOrganizeOwned(owner, request: request, creation: creation)
+                if accepted { dispatched = true }; return accepted
+            })
+            guard inboxOrganizeOwned(owner, request: request, creation: creation) else { return }
+            let warm = current()
+            try acknowledgeInboxOrganize(result, on: owner, request: request, creation: creation, warm: warm, allowNoop: true)
+            if warm { await publishInboxOrganize(result, request: request, creation: creation, context: context, generation: generation) }
+        } catch {
+            guard inboxOrganizeOwned(owner, request: request, creation: creation) else { return }
+            if !dispatched {
+                if creation { inboxOrganizeDestinationCreateOwner = nil } else { inboxTasksOrganizeOwner = nil }
+                return
+            }
+            handleInboxOrganizeError(error, on: owner, request: request, creation: creation, warm: current())
+        }
+    }
+    private func acknowledgeInboxOrganize(_ result: CoreObject, on owner: CoreHost, request: String,
+                                         creation: Bool, warm: Bool, allowNoop: Bool = false) throws {
+        guard inboxOrganizeOwned(owner, request: request, creation: creation) else { throw CocoaError(.coderReadCorrupt) }
+        let frozen = try decode(request)
+        guard let changed = result["changed"] as? NSNumber, CFGetTypeID(changed) == CFBooleanGetTypeID() else { throw CocoaError(.coderReadCorrupt) }
+        if creation {
+            guard Set(result.keys) == Set(["id", "changed"]), changed.boolValue,
+                  let id = result["id"] as? String, !id.isEmpty, id.utf16.count <= 500 else { throw CocoaError(.coderReadCorrupt) }
+            inboxOrganizeDestinationCreateOwner = nil
+        } else {
+            guard Set(result.keys) == Set(["count", "changed"]), let ids = frozen["taskIds"] as? [String],
+                  let count = result["count"] as? NSNumber, CFGetTypeID(count) != CFBooleanGetTypeID(),
+                  count.doubleValue.rounded() == count.doubleValue,
+                  changed.boolValue ? (count.doubleValue > 0 && count.doubleValue <= Double(ids.count)) : (allowNoop && count.doubleValue == 0) else { throw CocoaError(.coderReadCorrupt) }
+            inboxTasksOrganizeOwner = nil
+        }
+        // Durably acknowledged debt is retired before any option/list/notice read can fail.
+        if warm { retryNeeded = false; inboxReadError = nil; inboxBulkOrganizeReadError = nil; error = nil }
+    }
+    private func publishInboxOrganize(_ result: CoreObject, request: String, creation: Bool,
+                                     context: InboxBulkConfirmation, generation: Int) async {
+        let owner = context.host
+        let current = { self.inboxBulkOrganizeGeneration == generation && self.inboxOrganizeContextCurrent(context) }
+        guard current() else { return }
+        if creation {
+            do {
+                let frozen = try decode(request), kind = frozen.text("kind"), id = result.text("id")
+                let field = kind == "project" ? "projectChoice" : "areaChoice"
+                let bulk = try await inboxOrganizeRead(edit: ["type": kind == "project" ? "setProject" : "setArea", "value": id], current: current)
+                guard current() else { return }
+                guard bulk.object("organize").object("draft").text(field).utf8.elementsEqual(id.utf8) else { throw CocoaError(.coderReadCorrupt) }
+                installInboxOrganizeView(bulk); retireInboxOrganizePicker()
+            } catch {
+                guard current() else { return }
+                // Missing current offered ID never restores/recreates or selects an unproven destination.
+                inboxBulkOrganizeCurrent = false; inboxBulkOrganizePickerCurrent = false
+                inboxBulkOrganizeReadError = error.localizedDescription
+            }
+            return
+        }
+        retireInboxBulkOrganize()
+        guard result.flag("changed") else { return }
+        clearInboxTaskSelection()
+        let selected = inboxSelectionGeneration
+        let warm = { self.inboxTasksMoveWarm(on: owner, generation: selected, foreground: context.foregroundGeneration) }
+        guard warm() else { return }; try? await readInbox(ownedGuard: warm)
+        guard warm(), let input = try? await query("inboxBulkTagInput", ["", result.number("count")], beforeDispatch: warm),
+              warm(), let notice = input["notice"] as? CoreObject, Set(notice.keys) == Set(["title", "message"]),
+              !notice.text("title").isEmpty, !notice.text("message").isEmpty else { return }
+        showTaskActionNotice(["operation": "inboxBulkOrganize", "source": "inbox", "undoEnabled": false,
+            "message": notice.text("title") + ": " + notice.text("message")])
+    }
+    private func handleInboxOrganizeError(_ failure: Error, on owner: CoreHost, request: String, creation: Bool, warm: Bool) {
+        guard inboxOrganizeOwned(owner, request: request, creation: creation) else { return }
+        if isDefiniteRejection(failure) {
+            if creation { inboxOrganizeDestinationCreateOwner = nil } else { inboxTasksOrganizeOwner = nil }
+        }
+        guard warm else { return }
+        retryNeeded = inboxOrganizeOwned(owner, request: request, creation: creation)
+        error = retryNeeded ? failure.localizedDescription : nil; inboxReadError = failure.localizedDescription
+        inboxBulkOrganizeCurrent = false; inboxBulkOrganizePickerCurrent = false
+        inboxBulkOrganizeReadError = failure.localizedDescription
+    }
+    private func retryInboxOrganize(on owner: CoreHost, acknowledgment: String?, creation: Bool,
+                                   selectionGeneration: Int, foreground: Int, surface: Surface) async throws {
+        let debt = creation ? inboxOrganizeDestinationCreateOwner : inboxTasksOrganizeOwner
+        guard let debt, debt.host === owner else { throw CocoaError(.coderReadCorrupt) }
+        let request = debt.request, context = inboxBulkOrganizeContext, generation = inboxBulkOrganizeGeneration
+        let currentDebt = { self.inboxOrganizeOwned(owner, request: request, creation: creation) }
+        let method = creation ? "inboxOrganizeDestinationCreateRetryOutcome" : "inboxTasksOrganizeRetryOutcome"
+        let outcome: CoreObject
+        if host === owner { outcome = try await query(method, [request], beforeDispatch: { self.host === owner && currentDebt() }) }
+        else { outcome = try decode(await owner.call(method, argumentsJSON: json([request]))) }
+        guard currentDebt() else { throw CancellationError() }
+        let warm = surface == .inbox && inboxTasksMoveWarm(on: owner, generation: selectionGeneration, foreground: foreground)
+            && context.map { inboxOrganizeContextCurrent($0) } == true
+        if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+            if warm { let unknown = label("task.doneStatusOutcomeUnknown"); retryNeeded = true; inboxReadError = unknown; error = unknown }
+            return
+        }
+        guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else { throw CocoaError(.coderReadCorrupt) }
+        let result = outcome.object("result")
+        if let acknowledgment, !inboxExactJSON(result, try decode(acknowledgment)) { throw CocoaError(.coderReadCorrupt) }
+        try acknowledgeInboxOrganize(result, on: owner, request: request, creation: creation, warm: warm)
+        if warm, let context { await publishInboxOrganize(result, request: request, creation: creation, context: context, generation: generation) }
+    }
+
     private func retryInboxBulk(on owner: CoreHost, acknowledgment: String?, selectionGeneration: Int,
                                 foreground: Int, surface: Surface) async throws {
+        if inboxOrganizeDestinationCreateOwner?.host === owner || inboxTasksOrganizeOwner?.host === owner {
+            try await retryInboxOrganize(on: owner, acknowledgment: acknowledgment,
+                creation: inboxOrganizeDestinationCreateOwner?.host === owner,
+                selectionGeneration: selectionGeneration, foreground: foreground, surface: surface)
+            return
+        }
         if inboxTasksRemoveTagOwner?.host === owner {
             try await retryInboxTasksRemoveTag(on: owner, acknowledgment: acknowledgment,
                 selectionGeneration: selectionGeneration, foreground: foreground, surface: surface)
@@ -33287,7 +33677,13 @@ final class CoreModel: ObservableObject {
             if !calendarPreferencePending { calendarComposerNavigation = nil }
         } catch {
             if let inboxRetryHost {
-                if let pending = inboxTasksRemoveTagOwner, pending.host === inboxRetryHost {
+                if let pending = inboxOrganizeDestinationCreateOwner, pending.host === inboxRetryHost {
+                    handleInboxOrganizeError(error, on: pending.host, request: pending.request, creation: true,
+                        warm: inboxTasksMoveWarm(on: pending.host, generation: inboxRetrySelection, foreground: inboxRetryForeground))
+                } else if let pending = inboxTasksOrganizeOwner, pending.host === inboxRetryHost {
+                    handleInboxOrganizeError(error, on: pending.host, request: pending.request, creation: false,
+                        warm: inboxTasksMoveWarm(on: pending.host, generation: inboxRetrySelection, foreground: inboxRetryForeground))
+                } else if let pending = inboxTasksRemoveTagOwner, pending.host === inboxRetryHost {
                     handleInboxTasksRemoveTagError(error, on: pending.host, request: pending.request,
                         warm: inboxTasksMoveWarm(on: pending.host, generation: inboxRetrySelection, foreground: inboxRetryForeground))
                 } else if let pending = inboxTasksAddTagOwner, pending.host === inboxRetryHost {

@@ -1519,3 +1519,89 @@ extension NativeBoardMoveTests {
         XCTAssertEqual(outcome["kind"] as? String, "confirmed"); XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); await cold.close()
     }
 }
+
+
+extension NativeBoardMoveTests {
+    private var organize743Draft: [String: String] {
+        ["status": "__KEEP__", "projectChoice": "__KEEP__", "areaChoice": "__KEEP__", "contexts": "", "tags": "",
+         "startDate": "", "dueDate": "", "reviewDate": "", "delegateWho": ""]
+    }
+    private func organize743Request(_ core: CoreHost, ids: [String], draft: [String: String]) async throws -> [String: Any] {
+        var request = try await inboxMove740Request(core, ids: ids, status: "next")
+        request.removeValue(forKey: "status"); request["draft"] = draft
+        return request
+    }
+    func testInboxOrganize743PublicCoupledEffectsNoopAndDiagnostic() async throws {
+        let core = host(); _ = try await core.start()
+        _ = try await core.call("dataSetting", argumentsJSON: json([json(["requestId": UUID().uuidString, "edit": ["type": "debugLogging", "value": true]])]))
+        let fixture = try await inboxBulk739Fixture(core), sentinelID = UUID().uuidString.lowercased()
+        _ = try await core.call("captureSubmit", argumentsJSON: capture(core, title: "Task743 sentinel", id: sentinelID))
+        let before = try inboxBulk739Snapshot(), sentinel = try json(storedTask(sentinelID))
+        let noop = try await organize743Request(core, ids: fixture.ids, draft: organize743Draft)
+        let noResult = try object(await core.call("inboxTasksOrganizeWrite", argumentsJSON: json([json(noop)])))
+        XCTAssertEqual(try json(noResult), try json(["count": 0, "changed": false])); XCTAssertEqual(try inboxBulk739Snapshot(), before)
+        var draft = organize743Draft; draft["status"] = "waiting"
+        let invalid = try await organize743Request(core, ids: fixture.ids, draft: draft)
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("inboxTasksOrganizeWrite", argumentsJSON: json([json(invalid)])) }
+        XCTAssertEqual(try inboxBulk739Snapshot(), before)
+        draft["delegateWho"] = "  Team743  "; draft["contexts"] = "desk, @desk"; draft["tags"] = "café #café"
+        draft["dueDate"] = "2030-03-10"; draft["reviewDate"] = "2030-03-09"
+        draft["projectChoice"] = "__NONE__"; draft["areaChoice"] = "__NONE__"
+        let request = try await organize743Request(core, ids: fixture.ids, draft: draft)
+        let result = try object(await core.call("inboxTasksOrganizeWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(result), try json(["count": 2, "changed": true]))
+        for id in fixture.ids {
+            let row = try storedTask(id)
+            XCTAssertEqual(row["status"] as? String, "waiting"); XCTAssertEqual(row["assignedTo"] as? String, "Team743")
+            XCTAssertEqual(row["contexts"] as? String, try json(["@desk"])); XCTAssertEqual(row["tags"] as? String, try json(["#café"]))
+            XCTAssertEqual(row["dueDate"] as? String, "2030-03-10"); XCTAssertEqual(row["reviewAt"] as? String, "2030-03-09")
+            XCTAssertEqual(row["title"] as? String, "Inbox bulk fixture")
+        }
+        XCTAssertEqual(try json(storedTask(sentinelID)), sentinel)
+        let outcome = try object(await core.call("inboxTasksOrganizeRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed")
+        let shared = try object(await core.diagnosticsFileAction("logShare")), url = try await core.validatedDiagnosticsShareURL(XCTUnwrap(shared["path"] as? String))
+        let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map { try object(String($0)) }
+        let markers = lines.filter { $0["message"] as? String == "Native Inbox bulk Organize confirmed" }
+        XCTAssertEqual(markers.count, 1)
+        XCTAssertEqual(try json(XCTUnwrap(markers.first?["context"])), try json(["releaseCheck": "v1.3.5/ios-inbox-bulk-organize", "count": "2", "outcome": "organized", "category": "storage"]))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); await core.close()
+    }
+    func testInboxOrganize743PublicFailedCommitExactRetryColdSource() async throws {
+        let faults = HostIOFaults(), writer = host(faults); _ = try await writer.start()
+        let fixture = try await inboxBulk739Fixture(writer)
+        var draft = organize743Draft; draft["tags"] = "#Task743"
+        let request = try await organize743Request(writer, ids: fixture.ids, draft: draft), before = try inboxBulk739Snapshot()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Task743 public COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("inboxTasksOrganizeWrite", argumentsJSON: json([json(request)])) }
+        let original = try Data(contentsOf: journal), envelope = try completionJournalEnvelope()
+        XCTAssertEqual(envelope.command["method"] as? String, "inboxTasksOrganizeCommit"); XCTAssertEqual(try json(XCTUnwrap(envelope.envelope["request"])), try json(request))
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        let retried = try object(String(contentsOf: journal, encoding: .utf8))
+        XCTAssertEqual(try json(retried), try json(object(String(decoding: original, as: UTF8.self))))
+        XCTAssertEqual(Data(try XCTUnwrap(retried["argumentsJSON"] as? String).utf8), Data(envelope.encoded.utf8))
+        XCTAssertEqual(try inboxBulk739Snapshot(), before); await writer.close()
+        let cold = host(), startup = try object(await cold.start()), recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["source"] as? String, "inbox"); XCTAssertEqual(recovery["method"] as? String, "inboxTasksOrganizeCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["count": 2, "changed": true]))
+        let outcome = try object(await cold.call("inboxTasksOrganizeRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed"); XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); await cold.close()
+    }
+    func testInboxOrganize743PublicDestinationCreationWithoutTaskApply() async throws {
+        let core = host(); _ = try await core.start(); let fixture = try await inboxBulk739Fixture(core)
+        let rows = try fixture.ids.map { try json(storedTask($0)) }, draft = organize743Draft, name = "Area743-" + UUID().uuidString
+        let bulk = try object(await core.call("menuRead", argumentsJSON: json(["bulk", json([
+            "list": "inbox", "params": ["groupBy": "none"], "taskIds": fixture.ids, "organize": ["draft": draft],
+            "picker": ["kind": "area", "query": name, "offset": 0, "limit": 100]])])))
+        var request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "source": "inbox", "taskIds": fixture.ids,
+            "taskRevisions": try XCTUnwrap(bulk["taskRevisions"] as? [String: String]), "draft": draft, "params": ["groupBy": "none"]]
+        request["kind"] = "area"; request["name"] = name; request["offerRevision"] = try XCTUnwrap(bulk["revision"] as? String)
+        let result = try object(await core.call("inboxOrganizeDestinationCreateWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(result["id"] as? String, request["requestId"] as? String); XCTAssertEqual(result["changed"] as? Bool, true)
+        XCTAssertEqual(try fixture.ids.map { try json(storedTask($0)) }, rows)
+        let before = try inboxBulk739Snapshot()
+        let outcome = try object(await core.call("inboxOrganizeDestinationCreateRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed"); XCTAssertEqual(try inboxBulk739Snapshot(), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); await core.close()
+    }
+}

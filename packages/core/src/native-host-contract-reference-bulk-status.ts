@@ -31,6 +31,7 @@ import { projectFromSqliteRow, projectToSqliteRow, PROJECT_SQLITE_COLUMNS } from
 import { normalizeRelativeStartOffset } from './task-relative-start';
 import type { NativeInboxTasksMoveRequest, NativeInboxTasksMovePrepared } from './native-host-contract-inbox-bulk-status';
 import type { TaskGroupBy } from './task-group-sections';
+import type { TaskLoadTemporalContext } from './task-status';
 
 export type NativeReferenceTasksMoveStatus = 'inbox' | 'next' | 'waiting' | 'someday' | 'done';
 export type NativeReferenceTasksMoveParams = { groupBy?: TaskGroupBy; includeArchivedProjects?: boolean;
@@ -219,10 +220,10 @@ const settingsReadable = (settings: AppData['settings']): boolean => {
 };
 const requiredDates = (scope: NativeReferenceTasksMoveScope) => [...new Set(scope.tasks.flatMap((row) =>
     [row.startTime, row.dueDate, row.reviewAt].filter((value): value is string => typeof value === 'string')))].sort();
-const selectable = (request: MoveRequest, scope: NativeReferenceTasksMoveScope, at: string): Set<string> => {
+const selectable = (request: MoveRequest, scope: NativeReferenceTasksMoveScope, at: string, temporal?: TaskLoadTemporalContext): Set<string> => {
     const kind = sourceOf(request);
     const t = (name: string) => name;
-    const tasks = scope.tasks.map((row) => historyRowLoadProjection(row, at));
+    const tasks = scope.tasks.map((row) => historyRowLoadProjection(row, at, temporal));
     const allProjects = scope.projects.map(loadedProject);
     const projects = allProjects.filter((row) => !row.deletedAt && !row.purgedAt && row.status !== 'archived');
     const areas = scope.areas.filter((row) => !row.deletedAt);
@@ -238,11 +239,11 @@ const selectable = (request: MoveRequest, scope: NativeReferenceTasksMoveScope, 
     return new Set(model.items.flatMap((item) => item.type === 'task'
         && !isStatusListTaskReadOnly(item.task, allProjects) ? [item.task.id] : []));
 };
-const selectedSourcesMatch = (request: MoveRequest, scope: NativeReferenceTasksMoveScope, at: string): boolean => {
-    const eligible = selectable(request, scope, at); const byId = buildEntityMap(scope.tasks);
+const selectedSourcesMatch = (request: MoveRequest, scope: NativeReferenceTasksMoveScope, at: string, temporal?: TaskLoadTemporalContext): boolean => {
+    const eligible = selectable(request, scope, at, temporal); const byId = buildEntityMap(scope.tasks);
     return request.taskIds.every((id) => { const row = byId.get(id); return row && row.status === sourceOf(request)
         && !row.deletedAt && !row.purgedAt && !isProjectedRecurringTaskId(id) && eligible.has(id)
-        && taskRevisionOf(historyRowLoadProjection(row, at)) === request.taskRevisions[id]; });
+        && taskRevisionOf(historyRowLoadProjection(row, at, temporal)) === request.taskRevisions[id]; });
 };
 
 const referenceSourcesMatch = (request: NativeReferenceTasksMoveRequest, scope: NativeReferenceTasksMoveScope, at: string): boolean =>
@@ -487,6 +488,7 @@ export function createReferenceTasksMoveMethods(deps: Parameters<typeof createTa
 
 /** Additive reuse for Reference batch families; Move V1 bodies/bytes stay unchanged. */
 export { detach as detachReferenceBatchJson, jsonSafe as detachReferenceBatchValue,
+    validRecurrenceProjection as validReferenceBatchRecurrenceProjection,
     readRequest as readReferenceBatchSelectionRequest, readMoveRequest as readStatusBatchSelectionRequest,
     selectedSourcesMatch as statusBatchSourcesMatch, moveSettings as statusBatchSettings, rawScope as rawReferenceBatchScope,
     loadedProject as loadedReferenceBatchProject, settingsReadable as referenceBatchSettingsReadable,

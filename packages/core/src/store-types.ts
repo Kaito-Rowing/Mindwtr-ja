@@ -698,6 +698,9 @@ export interface TaskStore {
     /** Inbox Remove tag's complete source-aware guarded raw batch. */
     commitPreparedInboxTasksRemoveTag: (input: import('./native-host-contract-inbox-bulk-remove-tag').NativeInboxTasksRemoveTagPrepared,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Inbox Organize's shared planner effect, including recurrence and parent changes. */
+    commitPreparedInboxTasksOrganize: (input: import('./native-host-contract-inbox-bulk-organize').NativeInboxTasksOrganizePrepared,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Reference Add tag's shared guarded raw batch; contract validates all selected members. */
     commitPreparedReferenceTasksAddTag: (input: import('./native-host-contract-reference-bulk-tag').NativeReferenceTasksAddTagPrepared,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
@@ -808,6 +811,8 @@ export interface TaskStore {
     commitPreparedProjectSectionOrder: (input: PreparedProjectSectionOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectTaskOrder: (input: PreparedProjectTaskOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaCreate: (input: PreparedAreaCreate & { request: { requestId: string; name: string; color: string; expectedAreaId: string } }, authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    commitPreparedInboxOrganizeDestinationCreate: (input: import('./native-host-contract-inbox-organize-create').NativeInboxOrganizeDestinationCreatePrepared,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaColor: (input: PreparedAreaColor & { request: { requestId: string; areaId: string; color: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaRename: (input: PreparedAreaRename & { request: { requestId: string; areaId: string; name: string; manageColor?: string };
         result: { id: string; areaId: string; name: string } }, authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;

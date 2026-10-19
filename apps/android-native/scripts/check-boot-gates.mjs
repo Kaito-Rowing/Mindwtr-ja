@@ -580,7 +580,7 @@ assert.match(hostEntry, /createNativeSync\(nativeSyncBindings\)/);
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'inboxTasksMove', 'inboxTasksAddTag', 'inboxTasksRemoveTag', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'inboxTasksMove', 'inboxTasksAddTag', 'inboxTasksRemoveTag', 'inboxTasksOrganize', 'inboxOrganizeDestinationCreate', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -3999,6 +3999,38 @@ export function createNativeHostContract(bindings = {}) {
     },
     async inboxTasksRemoveTagOutcome(input) {
       globalThis.menuInputs.push(JSON.stringify(['inboxRemoveTagOutcome', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async prepareInboxTasksOrganize(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTasksOrganizePrepare', input]));
+      return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
+    },
+    validatePreparedInboxTasksOrganize(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTasksOrganizeValidate', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async commitPreparedInboxTasksOrganize(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTasksOrganizeCommit', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async inboxTasksOrganizeOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxTasksOrganizeOutcome', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async prepareInboxOrganizeDestinationCreate(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxOrganizeDestinationCreatePrepare', input]));
+      return { ok: true, value: { kind: 'prepared', prepared: { version: 1, request: input, result: { id: input.requestId, changed: true } } } };
+    },
+    validatePreparedInboxOrganizeDestinationCreate(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxOrganizeDestinationCreateValidate', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async commitPreparedInboxOrganizeDestinationCreate(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxOrganizeDestinationCreateCommit', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async inboxOrganizeDestinationCreateOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['inboxOrganizeDestinationCreateOutcome', input]));
       return { ok: true, value: input.prepared.result };
     },
     async prepareReferenceTasksAddTag(input) {
@@ -7981,6 +8013,33 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
         assert.equal((await poll(remove742, remove742.MindwtrHost[method]('x'.repeat(2000001)))).ok, false);
     }
 }
+// Task743: independent Apply/create wires preserve captured inputs and reject oversized envelopes.
+{
+    const organize743 = makeState('auto');
+    assert.equal((await poll(organize743, organize743.MindwtrHost.boot())).ok, true);
+    const draft = { status: '__KEEP__', projectChoice: '__KEEP__', areaChoice: '__KEEP__', contexts: '@café',
+        tags: '#tag', startDate: '', dueDate: '', reviewDate: '', delegateWho: '' };
+    const apply = { requestId: '74300000-0000-4000-8000-000000000001', source: 'inbox', taskIds: ['task743'],
+        taskRevisions: { task743: 'rev743' }, draft, params: { groupBy: 'none' } };
+    for (const [prefix, request, result] of [
+        ['inboxTasksOrganize', apply, { count: 1, changed: true }],
+        ['inboxOrganizeDestinationCreate', { ...apply, kind: 'area', name: 'Destination743', offerRevision: 'offer743' }, { id: apply.requestId, changed: true }],
+    ]) {
+        const prepared = { version: 1, request, result }, envelope = { request, prepared };
+        assert.deepEqual(await poll(organize743, organize743.MindwtrHost[prefix + 'Prepare'](JSON.stringify(request))),
+            { ok: true, value: prefix === 'inboxTasksOrganize' ? { kind: 'noop', result: { count: 0, changed: false } } : { kind: 'prepared', prepared } });
+        assert.deepEqual(JSON.parse(organize743.menuInputs.at(-1)), [prefix + 'Prepare', request]);
+        for (const phase of ['Validate', 'Commit', 'Outcome']) {
+            assert.deepEqual(await poll(organize743, organize743.MindwtrHost[prefix + phase](JSON.stringify(envelope))), { ok: true, value: result });
+            assert.deepEqual(JSON.parse(organize743.menuInputs.at(-1)), [prefix + phase, envelope]);
+        }
+        for (const phase of ['Prepare', 'Validate', 'Commit', 'Outcome']) {
+            const before = organize743.menuInputs.length;
+            assert.equal((await poll(organize743, organize743.MindwtrHost[prefix + phase]('x'.repeat(2000001)))).ok, false);
+            assert.equal(organize743.menuInputs.length, before);
+        }
+    }
+}
 assert.equal(ready.activationCount, 1);
 // Startup #4: a non-legacy boot sets the schema up, and the activation's validated read is its first full read. Activation may
 // write (core backfills a person per assignee): the store is checked against the database after its save, by id, from core's
@@ -8025,7 +8084,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'inboxTasksMove', 'inboxTasksAddTag', 'inboxTasksRemoveTag', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'inboxTasksMove', 'inboxTasksAddTag', 'inboxTasksRemoveTag', 'inboxTasksOrganize', 'inboxOrganizeDestinationCreate', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);

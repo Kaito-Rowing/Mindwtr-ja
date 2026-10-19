@@ -30795,3 +30795,212 @@ extension FoundationUITests {
         }
     }
 }
+
+// Task743: two isolated, root-staged three-row libraries; public Organize/create flow only.
+extension FoundationUITests {
+    func testInboxBulkOrganize743NormalCancelCreateApplyAndColdRead() throws { try task743InboxOrganize("NORMAL") }
+    func testInboxBulkOrganize743LargestCancelCreateApplyAndColdRead() throws { try task743InboxOrganize("LARGEST", largest: true) }
+
+    @discardableResult private func task743Control(_ app: XCUIApplication, _ id: String, text: Bool = false) -> XCUIElement {
+        let element = text ? app.textFields[id] : app.buttons[id]
+        revealPagedElement(app, element, in: app.scrollViews["inbox-organize-scroll"], outerEdge: true)
+        boardEnabled(element); XCTAssertTrue(element.isHittable)
+        return element
+    }
+    private func task743Open(_ app: XCUIApplication) {
+        let open = task192Reveal(app, "inbox-bulk-organize-open", buttons: true, scrollID: "inbox-bulk-actions-scroll", horizontal: true, scans: 16)
+        task740InboxStatusReady(open); open.tap()
+        boardEnabled(app.buttons["inbox-organize-cancel"])
+        _ = task743Control(app, "inbox-organize-status-__KEEP__")
+    }
+    private func task743Text(_ app: XCUIApplication, _ id: String, _ value: String) {
+        let input = task743Control(app, id, text: true); input.tap()
+        let previous = input.value as? String ?? ""
+        let actual = previous == input.placeholderValue ? "" : previous
+        if actual != value {
+            if !actual.isEmpty {
+                // Same short-field keyboard clear as Task742: no public edit menu in an app modal.
+                input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: actual.count))
+                let cleared = NSPredicate { _, _ in
+                    let current = input.value as? String ?? ""
+                    return current.isEmpty || current == input.placeholderValue
+                }
+                guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: cleared, object: nil)], timeout: 5) == .completed else {
+                    XCTFail("Task743 field was not completely cleared"); return
+                }
+            }
+            input.typeText(value)
+        }
+        let exact = NSPredicate { _, _ in (input.value as? String ?? "").utf8.elementsEqual(value.utf8) }
+        guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: exact, object: nil)], timeout: 5) == .completed else {
+            XCTFail("Task743 field did not accept exact UTF8 intent"); return
+        }
+        // Ordinary fields release the keyboard before revealing the next whole row.
+        // Picker submit can create a destination and remains explicit below.
+        if id != "inbox-organize-picker-search" { task743DismissKeyboard(app, id, value) }
+    }
+    private func task743DismissKeyboard(_ app: XCUIApplication, _ id: String, _ value: String, preservingCreate: Bool = false) {
+        let input = app.textFields[id], keyboard = app.keyboards.firstMatch
+        boardEnabled(input)
+        if preservingCreate { boardEnabled(app.buttons["inbox-organize-picker-create"], timeout: 20) }
+        let shown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            keyboard.exists && !keyboard.frame.intersection(app.frame).isNull && !keyboard.frame.intersection(app.frame).isEmpty
+        }, object: keyboard)
+        guard XCTWaiter.wait(for: [shown], timeout: 10) == .completed else {
+            XCTFail("Task743 keyboard must be visible before the non-submitting drag"); return
+        }
+        let scroll = app.scrollViews["inbox-organize-scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+        var viewport = scroll.frame.intersection(app.frame)
+        if keyboard.frame.intersects(viewport) { viewport.size.height = max(0, keyboard.frame.minY - viewport.minY) }
+        guard !viewport.isNull && !viewport.isEmpty else { XCTFail("Task743 needs a visible scroll drag origin"); return }
+        let startY = viewport.minY + viewport.height * 0.25
+        let endY = min(keyboard.frame.maxY, app.frame.maxY) - 16
+        guard endY > startY else { XCTFail("Task743 keyboard dismissal needs a downward drag"); return }
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let x = viewport.minX + 4 - app.frame.minX
+        origin.withOffset(CGVector(dx: x, dy: startY - app.frame.minY)).press(forDuration: 0.05,
+            thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY - app.frame.minY)),
+            withVelocity: .slow, thenHoldForDuration: 0.2)
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !keyboard.exists || keyboard.frame.intersection(app.frame).isNull || keyboard.frame.intersection(app.frame).isEmpty
+        }, object: keyboard)
+        guard XCTWaiter.wait(for: [hidden], timeout: 10) == .completed else {
+            XCTFail("Task743 scroll drag must dismiss the keyboard without submitting"); return
+        }
+        XCTAssertTrue(input.exists)
+        XCTAssertTrue((input.value as? String ?? "").utf8.elementsEqual(value.utf8), "Keyboard dismissal must preserve exact field intent")
+        if preservingCreate {
+            XCTAssertTrue(app.textFields["inbox-organize-picker-search"].exists)
+            XCTAssertTrue(app.buttons["inbox-organize-picker-create"].exists)
+            XCTAssertTrue(app.buttons["inbox-organize-picker-create"].isEnabled)
+            XCTAssertFalse(app.buttons["inbox-organize-apply"].exists, "Dismissing the keyboard must leave the picker open")
+        }
+    }
+    private func task743Choose(_ app: XCUIApplication, _ kind: String, _ label: String) {
+        task743Control(app, "inbox-organize-" + kind).tap()
+        let option = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "inbox-organize-picker-choice-", label)).firstMatch
+        revealPagedElement(app, option, in: app.scrollViews["inbox-organize-scroll"], outerEdge: true)
+        task740InboxStatusReady(option); option.tap()
+        XCTAssertTrue(app.textFields["inbox-organize-picker-search"].waitForNonExistence(timeout: 15))
+    }
+    private func task743Section(_ app: XCUIApplication, _ id: String) {
+        let header = app.buttons[id]
+        boardEnabled(header)
+        revealPagedElement(app, header, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
+        if header.value as? String == "Expand" {
+            header.tap()
+            expectation(for: NSPredicate(format: "value == %@", "Collapse"), evaluatedWith: header)
+            waitForExpectations(timeout: 10)
+        }
+        XCTAssertEqual(header.value as? String, "Collapse")
+    }
+    private func task743Tokens(_ app: XCUIApplication, _ field: String, _ expected: Set<String>) {
+        let input = app.textFields["task-editor-" + field]
+        boardEnabled(input)
+        revealPagedElement(app, input, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
+        let value = input.value as? String ?? "", raw = value == input.placeholderValue ? "" : value
+        XCTAssertEqual(Set(raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }), expected)
+    }
+    private func task743InboxOrganize(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_INBOX_ORGANIZE_UI_" + role + "_LIBRARY"],
+              let uuid = UUID(uuidString: library), uuid.uuidString.lowercased() == library else {
+            throw XCTSkip("An externally staged fresh canonical Task743 Organize library is required")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US", "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); defer { app.terminate() }
+        task736OpenInbox(app); task737ChooseGroup(app, "none")
+        task738OpenFilters(app); task740SetSearch(app, "Task743 organize batch")
+        boardTap(app, "inbox-filters-close"); boardEnabled(app.buttons["inbox-filters-open"])
+        let first = task192Reveal(app, "task-title-task743-organize-01", buttons: true, scrollID: "inbox-scroll", scans: 120)
+        task740InboxStatusReady(first); first.press(forDuration: 0.8); task739Count(app, 1)
+        let second = task192Reveal(app, "inbox-select-none-task743-organize-02", buttons: true, scrollID: "inbox-scroll", scans: 120)
+        task740InboxStatusReady(second); second.tap(); task739Count(app, 2)
+        task743Open(app)
+        task743Control(app, "inbox-organize-status-waiting").tap()
+        _ = task743Control(app, "inbox-organize-delegateWho", text: true)
+        XCTAssertFalse(app.buttons["inbox-organize-apply"].isEnabled)
+        XCTAssertTrue(app.staticTexts["inbox-organize-validation"].exists)
+        boardTap(app, "inbox-organize-cancel"); task739Count(app, 2)
+        XCTAssertFalse(app.staticTexts["task-inboxBulkOrganize-notice"].exists)
+
+        task743Open(app)
+        XCTAssertTrue(task743Control(app, "inbox-organize-status-__KEEP__").isSelected)
+        XCTAssertEqual(task743Control(app, "inbox-organize-project").label, "Project: Keep project")
+        XCTAssertEqual(task743Control(app, "inbox-organize-area").label, "Area: Keep area")
+        task743Choose(app, "project", "No Project")
+        XCTAssertEqual(task743Control(app, "inbox-organize-project").label, "Project: No Project")
+        task743Choose(app, "area", "No Area")
+        XCTAssertEqual(task743Control(app, "inbox-organize-area").label, "Area: No Area")
+        task743Choose(app, "area", "Task743 Area B")
+        task743Choose(app, "project", "Task743 Project A")
+        let disabledArea = app.buttons["inbox-organize-area"]
+        _ = task192Reveal(app, "inbox-organize-area", buttons: true, scrollID: "inbox-organize-scroll", scans: 120)
+        XCTAssertFalse(disabledArea.isEnabled); XCTAssertEqual(disabledArea.label, "Area: Keep area")
+        task743Choose(app, "project", "Keep project")
+        XCTAssertEqual(task743Control(app, "inbox-organize-area").label, "Area: Keep area")
+        task743Choose(app, "area", "Task743 Area A")
+        task743Control(app, "inbox-organize-project").tap()
+        task743Text(app, "inbox-organize-picker-search", "Task743 Created Project")
+        task743DismissKeyboard(app, "inbox-organize-picker-search", "Task743 Created Project", preservingCreate: true)
+        let create = task743Control(app, "inbox-organize-picker-create"); create.tap()
+        XCTAssertTrue(app.textFields["inbox-organize-picker-search"].waitForNonExistence(timeout: 30))
+        XCTAssertEqual(task743Control(app, "inbox-organize-project").label, "Project: Task743 Created Project")
+        boardTap(app, "inbox-organize-cancel"); task739Count(app, 2)
+        XCTAssertFalse(app.staticTexts["task-inboxBulkOrganize-notice"].exists)
+
+        // Reopening proves the durable created destination survives Cancel; exact Done selects it without another Create.
+        task743Open(app); task743Control(app, "inbox-organize-project").tap()
+        task743Text(app, "inbox-organize-picker-search", "Task743 Created Project")
+        let offered = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "inbox-organize-picker-choice-", "Task743 Created Project")).firstMatch
+        revealPagedElement(app, offered, in: app.scrollViews["inbox-organize-scroll"], outerEdge: true)
+        task740InboxStatusReady(offered)
+        XCTAssertFalse(app.buttons["inbox-organize-picker-create"].exists)
+        app.textFields["inbox-organize-picker-search"].typeText("\n")
+        XCTAssertTrue(app.textFields["inbox-organize-picker-search"].waitForNonExistence(timeout: 15))
+        task743Control(app, "inbox-organize-status-waiting").tap()
+        task743Text(app, "inbox-organize-delegateWho", "Task743 Team")
+        task743Text(app, "inbox-organize-startDate", "2031-03-10")
+        task743Text(app, "inbox-organize-dueDate", "2031-03-12")
+        task743Text(app, "inbox-organize-reviewDate", "2031-03-14")
+        task743Text(app, "inbox-organize-contexts", "@École, @shared")
+        task743Text(app, "inbox-organize-tags", "新, #École")
+        boardEnabled(app.buttons["inbox-organize-apply"]); boardTap(app, "inbox-organize-apply")
+        XCTAssertTrue(app.staticTexts["inbox-bulk-count"].waitForNonExistence(timeout: 30))
+        let notice = app.staticTexts["task-inboxBulkOrganize-notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15)); XCTAssertEqual(notice.label, "Done: 2 tasks")
+        XCTAssertFalse(app.buttons["task-inboxBulkOrganize-undo"].exists); XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        app.terminate(); app.launch(); task736OpenInbox(app)
+        XCTAssertFalse(app.staticTexts["inbox-bulk-count"].exists); XCTAssertFalse(app.buttons["inbox-organize-apply"].exists)
+        for index in 1...3 {
+            let id = String(format: "task743-organize-%02d", index)
+            boardTap(app, "search-open"); let search = app.textFields["search-input"]; boardEnabled(search)
+            search.tap(); let prior = search.value as? String ?? ""
+            search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: prior.count) + "id:" + id + "\n")
+            let result = app.buttons["search-task-" + id]; task740InboxStatusReady(result); result.tap()
+            boardTap(app, "task-mode-edit")
+            let status = app.buttons["task-editor-status-" + (index < 3 ? "waiting" : "inbox")]
+            revealPagedElement(app, status, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
+            XCTAssertTrue(status.isSelected)
+            task743Section(app, "task-editor-section-organization")
+            task743Tokens(app, "tags", index < 3 ? Set([index == 1 ? "#alpha" : "#beta", "#新", "#École"]) : Set(["#keep"]))
+            task743Tokens(app, "contexts", index < 3 ? Set([index == 1 ? "@old" : "@shared", "@École", "@shared"]) : Set(["@sentinel"]))
+            let destination = app.buttons["task-editor-destination"]
+            revealPagedElement(app, destination, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
+            XCTAssertEqual(destination.value as? String, index < 3 ? "Task743 Created Project" : "Task743 Old Project")
+            if index < 3 {
+                task743Section(app, "task-editor-section-scheduling")
+                for (field, day) in [("startTime", "03/10/2031"), ("dueDate", "03/12/2031"), ("reviewAt", "03/14/2031")] {
+                    let date = app.buttons["task-editor-" + field]
+                    revealPagedElement(app, date, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
+                    XCTAssertEqual(date.value as? String, day)
+                }
+            }
+            boardTap(app, "task-view-close"); XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+            boardTap(app, "search-close"); boardEnabled(app.buttons["inbox-filters-open"])
+        }
+    }
+}

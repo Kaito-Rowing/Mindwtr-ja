@@ -297,6 +297,8 @@ import { createInboxTasksMoveMethods } from './native-host-contract-inbox-bulk-s
 import { createReferenceTasksMoveMethods } from './native-host-contract-reference-bulk-status';
 import { createInboxTasksAddTagMethods } from './native-host-contract-inbox-bulk-tag';
 import { createInboxTasksRemoveTagMethods } from './native-host-contract-inbox-bulk-remove-tag';
+import { createInboxTasksOrganizeMethods } from './native-host-contract-inbox-bulk-organize';
+import { createInboxOrganizeDestinationCreateMethods } from './native-host-contract-inbox-organize-create';
 import { createReferenceTasksAddTagMethods } from './native-host-contract-reference-bulk-tag';
 import { createReferenceTasksRemoveTagMethods } from './native-host-contract-reference-bulk-remove-tag';
 import { createArchivedTasksRestoreMethods } from './native-host-contract-archive-bulk-restore';
@@ -1602,6 +1604,13 @@ export function createNativeHostContract(options: {
         },
     });
 
+    const bulkActionMethods = createBulkActionMethods({
+        readiness, save, t: () => translate,
+        formatDate: () => createDateFormatter(dateFormatting()),
+        views: { ...menuViewMethods, ...inboxViewMethods },
+        pickerRevision: () => `${revision()}:${settingsRevision()}:${language}:${systemLocale ?? ''}`,
+    });
+
     // Built before the contract object: Process Inbox's Clarify reads the current step's draft.
     const inboxProcessingMethods = createInboxProcessingMethods({
         readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
@@ -1689,14 +1698,8 @@ export function createNativeHostContract(options: {
         // The Inbox tab's list, toolbar and screen parts: native-host-contract-inbox-view.ts.
         ...inboxViewMethods,
         // Selection mode on those lists: native-host-contract-bulk-actions.ts.
-        ...createBulkActionMethods({
-            readiness,
-            save,
-            t: () => translate,
-            formatDate: () => createDateFormatter(dateFormatting()),
-            views: { ...menuViewMethods, ...inboxViewMethods },
-            pickerRevision: () => `${revision()}:${settingsRevision()}:${language}:${systemLocale ?? ''}`,
-        }),
+        ...bulkActionMethods,
+        ...createInboxOrganizeDestinationCreateMethods({ readiness, save, getBulkActions: bulkActionMethods.getBulkActions }),
         // The Board: native-host-contract-board.ts.
         ...createBoardViewMethods({
             readiness,
@@ -1875,6 +1878,7 @@ export function createNativeHostContract(options: {
         ...createReferenceTasksAddTagMethods({ readiness, save }),
         ...createInboxTasksAddTagMethods({ readiness, save }),
         ...createInboxTasksRemoveTagMethods({ readiness, save }),
+        ...createInboxTasksOrganizeMethods({ readiness, save }),
         ...createReferenceTasksRemoveTagMethods({ readiness, save }),
         ...createArchivedTasksDeleteMethods({ readiness, save, t: () => translate }),
         ...createProjectDateMethods({ readiness, save,

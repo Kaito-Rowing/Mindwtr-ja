@@ -2404,6 +2404,7 @@ private final class Engine: @unchecked Sendable {
     private let databaseURL: URL
     private let bundleURL: URL
     private let diagnosticsFile: NativeDiagnosticsLogFile
+    private var commandPreparationStackLogged = false
     let backupExportFile: NativeBackupExportFile
     private let backupImportFile: NativeBackupImportFile
     private let backupOperationFiles: NativeBackupOperationFiles
@@ -2881,6 +2882,8 @@ private final class Engine: @unchecked Sendable {
     private var confirmedReferenceTasksMoveEnvelope: String?
     private var confirmedInboxTasksAddTagEnvelope: String?
     private var confirmedInboxTasksRemoveTagEnvelope: String?
+    private var confirmedInboxTasksOrganizeEnvelope: String?
+    private var confirmedInboxOrganizeDestinationCreateEnvelope: String?
     private var confirmedReferenceTasksAddTagEnvelope: String?
     private var confirmedReferenceTasksRemoveTagEnvelope: String?
     private var confirmedArchivedTasksDeleteEnvelope: String?
@@ -2915,6 +2918,8 @@ private final class Engine: @unchecked Sendable {
     private var startupReferenceTasksMoveResult: String?
     private var startupInboxTasksAddTagResult: String?
     private var startupInboxTasksRemoveTagResult: String?
+    private var startupInboxTasksOrganizeResult: String?
+    private var startupInboxOrganizeDestinationCreateResult: String?
     private var startupReferenceTasksAddTagResult: String?
     private var startupReferenceTasksRemoveTagResult: String?
     private var startupArchivedTasksDeleteResult: String?
@@ -3045,6 +3050,8 @@ private final class Engine: @unchecked Sendable {
         "inboxTasksMoveWrite": 1, "inboxTasksMoveRetryOutcome": 1, "inboxTasksMoveNotice": 1,
         "referenceTasksMoveWrite": 1, "referenceTasksMoveRetryOutcome": 1, "referenceTasksMoveNotice": 1,
         "inboxTasksRemoveTagWrite": 1, "inboxTasksRemoveTagRetryOutcome": 1,
+        "inboxTasksOrganizeWrite": 1, "inboxTasksOrganizeRetryOutcome": 1,
+        "inboxOrganizeDestinationCreateWrite": 1, "inboxOrganizeDestinationCreateRetryOutcome": 1,
         "inboxTasksAddTagWrite": 1, "inboxTasksAddTagRetryOutcome": 1, "inboxBulkTagInput": 2,
         "referenceTasksAddTagWrite": 1, "referenceTasksAddTagRetryOutcome": 1,
         "referenceTasksRemoveTagWrite": 1, "referenceTasksRemoveTagRetryOutcome": 1, "referenceBulkTagInput": 2,
@@ -3086,7 +3093,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["iosAIRequestTimeout", "iosAIReasoningEffort", "iosAIGeminiThinkingBudget", "pomodoroTransitionWrite", "calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "inboxTasksAddTagWrite", "inboxTasksRemoveTagWrite", "referenceTasksMoveWrite", "inboxTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "captureLinesSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["iosAIRequestTimeout", "iosAIReasoningEffort", "iosAIGeminiThinkingBudget", "pomodoroTransitionWrite", "calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "inboxTasksAddTagWrite", "inboxTasksRemoveTagWrite", "inboxTasksOrganizeWrite", "inboxOrganizeDestinationCreateWrite", "referenceTasksMoveWrite", "inboxTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "captureLinesSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -3291,6 +3298,53 @@ private final class Engine: @unchecked Sendable {
                 } else {
                     guard value.utf8.count <= 4096, isDefiniteRejection(value, method: saved.method) else {
                         throw HostFailure("INVALID_INPUT: Malformed Inbox bulk Remove tag refusal")
+                    }
+                }
+            }
+        }
+
+        if saved.method == "inboxTasksOrganizeCommit" {
+            guard try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)),
+                  Set(raw.keys) == Set(["version", "method", "argumentsJSON"])
+                    || Set(raw.keys) == Set(["version", "method", "argumentsJSON", "terminal"]) else {
+                throw HostFailure("INVALID_INPUT: Malformed Inbox bulk Organize journal")
+            }
+            _ = try inboxTasksOrganizeJournalArguments(saved)
+            if let terminal = raw["terminal"] {
+                guard let encoded = terminal as? [String: Any], encoded.count == 1,
+                      let name = encoded.keys.first, ["success", "rejected"].contains(name),
+                      let payload = encoded[name] as? [String: Any], Set(payload.keys) == Set(["_0"]),
+                      let value = payload["_0"] as? String else {
+                    throw HostFailure("INVALID_INPUT: Malformed Inbox bulk Organize terminal")
+                }
+                if name == "success" {
+                    try validatePreparedAcknowledgment(saved, value: value)
+                } else {
+                    guard value.utf8.count <= 4096, isDefiniteRejection(value, method: saved.method) else {
+                        throw HostFailure("INVALID_INPUT: Malformed Inbox bulk Organize refusal")
+                    }
+                }
+            }
+        }
+        if saved.method == "inboxOrganizeDestinationCreateCommit" {
+            guard try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)),
+                  Set(raw.keys) == Set(["version", "method", "argumentsJSON"])
+                    || Set(raw.keys) == Set(["version", "method", "argumentsJSON", "terminal"]) else {
+                throw HostFailure("INVALID_INPUT: Malformed Inbox Organize destination creation journal")
+            }
+            _ = try inboxOrganizeDestinationCreateJournalArguments(saved)
+            if let terminal = raw["terminal"] {
+                guard let encoded = terminal as? [String: Any], encoded.count == 1,
+                      let name = encoded.keys.first, ["success", "rejected"].contains(name),
+                      let payload = encoded[name] as? [String: Any], Set(payload.keys) == Set(["_0"]),
+                      let value = payload["_0"] as? String else {
+                    throw HostFailure("INVALID_INPUT: Malformed Inbox Organize destination creation terminal")
+                }
+                if name == "success" {
+                    try validatePreparedAcknowledgment(saved, value: value)
+                } else {
+                    guard value.utf8.count <= 4096, isDefiniteRejection(value, method: saved.method) else {
+                        throw HostFailure("INVALID_INPUT: Malformed Inbox Organize destination creation refusal")
                     }
                 }
             }
@@ -3621,6 +3675,15 @@ private final class Engine: @unchecked Sendable {
             }
             if let command = pending, command.method == "inboxTasksRemoveTagCommit" {
                 _ = try invoke("inboxTasksRemoveTagValidate", arguments: inboxTasksRemoveTagJournalArguments(command))
+                if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
+
+            if let command = pending, command.method == "inboxTasksOrganizeCommit" {
+                _ = try invoke("inboxTasksOrganizeValidate", arguments: inboxTasksOrganizeJournalArguments(command))
+                if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "inboxOrganizeDestinationCreateCommit" {
+                _ = try invoke("inboxOrganizeDestinationCreateValidate", arguments: inboxOrganizeDestinationCreateJournalArguments(command))
                 if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
             }
             if let command = pending, command.method == "referenceTasksAddTagCommit" {
@@ -4026,6 +4089,8 @@ private final class Engine: @unchecked Sendable {
         let recoveringReferenceTasksMove = pending?.method == "referenceTasksMoveCommit"
         let recoveringInboxTasksAddTag = pending?.method == "inboxTasksAddTagCommit"
         let recoveringInboxTasksRemoveTag = pending?.method == "inboxTasksRemoveTagCommit"
+        let recoveringInboxTasksOrganize = pending?.method == "inboxTasksOrganizeCommit"
+        let recoveringInboxOrganizeDestinationCreate = pending?.method == "inboxOrganizeDestinationCreateCommit"
         let recoveringReferenceTasksAddTag = pending?.method == "referenceTasksAddTagCommit"
         let recoveringReferenceTasksRemoveTag = pending?.method == "referenceTasksRemoveTagCommit"
         let recoveringArchivedTasksRestore = pending?.method == "archivedTasksRestoreCommit"
@@ -4151,6 +4216,8 @@ private final class Engine: @unchecked Sendable {
         if recoveringReferenceTasksMove, let terminal, case .success(let value) = terminal { startupReferenceTasksMoveResult = value }
         if recoveringInboxTasksAddTag, let terminal, case .success(let value) = terminal { startupInboxTasksAddTagResult = value }
         if recoveringInboxTasksRemoveTag, let terminal, case .success(let value) = terminal { startupInboxTasksRemoveTagResult = value }
+        if recoveringInboxTasksOrganize, let terminal, case .success(let value) = terminal { startupInboxTasksOrganizeResult = value }
+        if recoveringInboxOrganizeDestinationCreate, let terminal, case .success(let value) = terminal { startupInboxOrganizeDestinationCreateResult = value }
         if recoveringReferenceTasksAddTag, let terminal, case .success(let value) = terminal { startupReferenceTasksAddTagResult = value }
         if recoveringReferenceTasksRemoveTag, let terminal, case .success(let value) = terminal { startupReferenceTasksRemoveTagResult = value }
         if recoveringArchivedTasksRestore, let terminal, case .success(let value) = terminal { startupArchivedTasksRestoreResult = value }
@@ -4271,12 +4338,13 @@ private final class Engine: @unchecked Sendable {
             ?? recoveredManage ?? recoveredSomedaySections
             ?? startupSomedaySectionMoveResult ?? startupSomedaySectionUndoResult
         let recoveredArchiveDelete = startupArchivedTasksDeleteResult ?? startupArchivedTasksDeleteUndoResult
+        let recoveredInboxOrganize = startupInboxTasksOrganizeResult ?? startupInboxOrganizeDestinationCreateResult
         let recoveredBulkTags = startupReferenceTasksRemoveTagResult ?? startupInboxTasksRemoveTagResult
             ?? startupInboxTasksAddTagResult ?? startupReferenceTasksAddTagResult
         let recoveredBulkMoves = startupInboxTasksMoveResult ?? startupReferenceTasksMoveResult
             ?? recoveredArchiveDelete ?? startupArchivedTasksRestoreResult ?? startupArchivedTaskRestoreResult
         let recoveredArchiveRestore = startupTrashItemsPurgeResult ?? startupTrashItemsRestoreResult
-            ?? recoveredBulkTags ?? recoveredBulkMoves
+            ?? recoveredInboxOrganize ?? recoveredBulkTags ?? recoveredBulkMoves
         let recoveredDeleteRestore = recoveredArchiveRestore ?? startupTaskDeleteResult ?? startupProjectDeleteResult
             ?? startupProjectDeleteUndoResult ?? startupProjectDuplicateResult ?? startupProjectLifecycleResult
             ?? startupTrashTaskRestoreResult ?? startupTrashProjectRestoreResult
@@ -4323,7 +4391,9 @@ private final class Engine: @unchecked Sendable {
             : startupReminderSnoozeResult != nil ? "reminderSnoozeCommit" : nil
         let archiveMutationRecoveryMethod = startupArchivedTasksDeleteResult != nil ? "archivedTasksDeleteCommit"
             : startupArchivedTasksDeleteUndoResult != nil ? "archivedTasksDeleteUndoCommit" : nil
-        let historyRecoveryMethod = startupTrashItemsPurgeResult != nil ? "trashItemsPurgeCommit" : startupTrashItemsRestoreResult != nil ? "trashItemsRestoreCommit" : startupReferenceTasksRemoveTagResult != nil ? "referenceTasksRemoveTagCommit" : startupInboxTasksRemoveTagResult != nil ? "inboxTasksRemoveTagCommit" : startupInboxTasksAddTagResult != nil ? "inboxTasksAddTagCommit" : startupReferenceTasksAddTagResult != nil ? "referenceTasksAddTagCommit" : startupInboxTasksMoveResult != nil ? "inboxTasksMoveCommit" : startupReferenceTasksMoveResult != nil ? "referenceTasksMoveCommit" : archiveMutationRecoveryMethod ?? (startupArchivedTasksRestoreResult != nil ? "archivedTasksRestoreCommit" : completionRecoveryMethod)
+        let organizeRecoveryMethod = startupInboxTasksOrganizeResult != nil ? "inboxTasksOrganizeCommit"
+            : startupInboxOrganizeDestinationCreateResult != nil ? "inboxOrganizeDestinationCreateCommit" : nil
+        let historyRecoveryMethod = organizeRecoveryMethod ?? (startupTrashItemsPurgeResult != nil ? "trashItemsPurgeCommit" : startupTrashItemsRestoreResult != nil ? "trashItemsRestoreCommit" : startupReferenceTasksRemoveTagResult != nil ? "referenceTasksRemoveTagCommit" : startupInboxTasksRemoveTagResult != nil ? "inboxTasksRemoveTagCommit" : startupInboxTasksAddTagResult != nil ? "inboxTasksAddTagCommit" : startupReferenceTasksAddTagResult != nil ? "referenceTasksAddTagCommit" : startupInboxTasksMoveResult != nil ? "inboxTasksMoveCommit" : startupReferenceTasksMoveResult != nil ? "referenceTasksMoveCommit" : archiveMutationRecoveryMethod ?? (startupArchivedTasksRestoreResult != nil ? "archivedTasksRestoreCommit" : completionRecoveryMethod))
         let aiSettingsRecoveryMethod: String? = startupAIRequestTimeoutResult != nil ? "iosAIRequestTimeoutCommit"
             : startupAIReasoningEffortResult != nil ? "iosAIReasoningEffortCommit"
             : startupAIGeminiThinkingBudgetResult != nil ? "iosAIGeminiThinkingBudgetCommit" : nil
@@ -4374,7 +4444,7 @@ private final class Engine: @unchecked Sendable {
             recovery["source"] = "reference"
             window["recovery"] = recovery
         }
-        if startupInboxTasksMoveResult != nil || startupInboxTasksAddTagResult != nil || startupInboxTasksRemoveTagResult != nil, var recovery = window["recovery"] as? [String: Any] {
+        if startupInboxTasksMoveResult != nil || startupInboxTasksAddTagResult != nil || startupInboxTasksRemoveTagResult != nil || recoveredInboxOrganize != nil, var recovery = window["recovery"] as? [String: Any] {
             recovery["source"] = "inbox"
             window["recovery"] = recovery
         }
@@ -4444,6 +4514,8 @@ private final class Engine: @unchecked Sendable {
         startupReferenceTasksMoveResult = nil
         startupInboxTasksAddTagResult = nil
         startupInboxTasksRemoveTagResult = nil
+        startupInboxTasksOrganizeResult = nil
+        startupInboxOrganizeDestinationCreateResult = nil
         startupReferenceTasksAddTagResult = nil
         startupReferenceTasksRemoveTagResult = nil
         startupArchivedTasksDeleteResult = nil
@@ -11204,6 +11276,17 @@ private final class Engine: @unchecked Sendable {
                 throw CoreHostRejection(message: "INVALID_INPUT: Inbox bulk Remove tag cannot carry an editor draft")
             }
         }
+
+        if method == "inboxTasksOrganizeWrite" {
+            guard editorAttempt == nil, try editorDrafts.read() == nil else {
+                throw CoreHostRejection(message: "INVALID_INPUT: Inbox bulk Organize cannot carry an editor draft")
+            }
+        }
+        if method == "inboxOrganizeDestinationCreateWrite" {
+            guard editorAttempt == nil, try editorDrafts.read() == nil else {
+                throw CoreHostRejection(message: "INVALID_INPUT: Inbox Organize destination creation cannot carry an editor draft")
+            }
+        }
         if method == "referenceTasksAddTagWrite" {
             guard editorAttempt == nil, try editorDrafts.read() == nil else {
                 throw CoreHostRejection(message: "INVALID_INPUT: Reference bulk Add tag cannot carry an editor draft")
@@ -11245,7 +11328,7 @@ private final class Engine: @unchecked Sendable {
         }
         catch {
             if method == "captureLinesSubmit", pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
-            if (Self.historyTaskWritePrefix(method) != nil || ["referenceTasksRemoveTagWrite", "referenceTasksRemoveTagRetryOutcome", "referenceTasksAddTagWrite", "inboxTasksAddTagWrite", "inboxTasksRemoveTagWrite", "referenceTasksAddTagRetryOutcome", "inboxTasksAddTagRetryOutcome", "inboxTasksRemoveTagRetryOutcome", "referenceTasksMoveWrite", "referenceTasksMoveRetryOutcome", "referenceTasksMoveNotice", "inboxTasksMoveWrite", "inboxTasksMoveRetryOutcome", "inboxTasksMoveNotice"].contains(method)), pending == nil {
+            if (Self.historyTaskWritePrefix(method) != nil || ["referenceTasksRemoveTagWrite", "referenceTasksRemoveTagRetryOutcome", "referenceTasksAddTagWrite", "inboxTasksAddTagWrite", "inboxTasksRemoveTagWrite", "inboxTasksOrganizeWrite", "inboxOrganizeDestinationCreateWrite", "referenceTasksAddTagRetryOutcome", "inboxTasksAddTagRetryOutcome", "inboxTasksRemoveTagRetryOutcome", "inboxTasksOrganizeRetryOutcome", "inboxOrganizeDestinationCreateRetryOutcome", "referenceTasksMoveWrite", "referenceTasksMoveRetryOutcome", "referenceTasksMoveNotice", "inboxTasksMoveWrite", "inboxTasksMoveRetryOutcome", "inboxTasksMoveNotice"].contains(method)), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
             if ["archivedTaskRestoreWrite", "archivedTaskRestoreRetryOutcome", "archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "trashItemsRestoreRetryOutcome", "trashItemsPurgeRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome", "archivedTasksDeleteUndoWrite", "archivedTasksDeleteUndoRetryOutcome", "reviewTaskWrite", "taskCancellationUndo", "taskCompletion", "taskCompletionUndo", "taskCompletionRetryOutcome", "taskCompletionUndoRetryOutcome", "taskDelete", "taskDeleteReceiptOutcome", "taskDeleteUndo", "taskDeleteUndoReceiptOutcome", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteReceiptOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome", "projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method), pending == nil {
@@ -11337,6 +11420,13 @@ private final class Engine: @unchecked Sendable {
             }
             if method == "inboxTasksRemoveTagRetryOutcome" {
                 return try inboxTasksRemoveTagReceiptOutcome(arguments: args)
+            }
+
+            if method == "inboxTasksOrganizeRetryOutcome" {
+                return try inboxTasksOrganizeReceiptOutcome(arguments: args)
+            }
+            if method == "inboxOrganizeDestinationCreateRetryOutcome" {
+                return try inboxOrganizeDestinationCreateReceiptOutcome(arguments: args)
             }
             if method == "referenceTasksAddTagRetryOutcome" {
                 return try referenceTasksAddTagReceiptOutcome(arguments: args)
@@ -12003,6 +12093,93 @@ private final class Engine: @unchecked Sendable {
             preparedSomedaySectionTaskEnvelope = nil
         }
         let command: PendingCommand
+        let preparation = try prepareCallCommand(method, argumentsJSON: argumentsJSON, args: args,
+            editorAttempt: editorAttempt, freshPomodoroRequest: freshPomodoroRequest)
+        recordCommandPreparationStack()
+        switch preparation {
+        case .result(let result): return result
+        case .command(let prepared): command = prepared
+        }
+        if let turn = retainedOrdinaryTurn {
+            try requireRetainedOrdinaryTurn(requirePreparation: true)
+            _ = try ordinaryJournalArguments(command)
+            turn.command = command
+        }
+        if method == "notificationSetting" {
+            guard let turn = notificationSettingTurn, notificationSettingOwnerAccess, context === turn.runtime,
+                  attachmentGeneration == turn.generation, !turn.cancellation.isCancelled else {
+                throw CoreHostRejection(message: "STALE_REVISION: Notification edit is no longer current")
+            }
+        }
+        if method == "iosAIRequestTimeout" {
+            guard aiRequestTimeoutOwnerAccess else { throw HostFailure("AI timeout owner is unavailable") }
+            try requireAIRequestTimeoutTurn()
+        }
+        if method == "iosAIReasoningEffort" {
+            guard aiReasoningEffortOwnerAccess else { throw HostFailure("AI reasoning effort owner is unavailable") }
+            try requireAIReasoningEffortTurn()
+        }
+        if method == "iosAIGeminiThinkingBudget" {
+            guard aiGeminiThinkingBudgetOwnerAccess else { throw HostFailure("AI Gemini thinking budget owner is unavailable") }
+            try requireAIGeminiThinkingBudgetTurn()
+        }
+        if command.method == "backupDocumentCommit" {
+            try requireBackupDocumentMutationAllowed(command, arguments: backupDocumentArguments(command))
+        }
+        pending = command
+        try persist(command)
+        if command.method == Self.pomodoroMethod {
+            return try publicValue(executePomodoro(command, replayOnly: false, allowUnsettled: true, firstAttempt: true), method: Self.pomodoroMethod)
+        }
+        let terminal: TerminalResult
+        do {
+            let replay: [Any]
+            if command.method == "backupDocumentCommit" { replay = try backupDocumentArguments(command) }
+            else if command.method == "captureLinesCommit" { replay = try captureLinesArguments(command) }
+            else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
+            else { replay = try journalArguments(command) }
+            if command.method == "iosAIRequestTimeoutCommit" { terminal = .success(try invokeAIRequestTimeoutCommit(command)) }
+            else if command.method == "iosAIReasoningEffortCommit" { terminal = .success(try invokeAIReasoningEffortCommit(command)) }
+            else if command.method == "iosAIGeminiThinkingBudgetCommit" { terminal = .success(try invokeAIGeminiThinkingBudgetCommit(command)) }
+            else if CalendarSubscriptionOperation(commitMethod: command.method) != nil { terminal = .success(try invokeCalendarSubscriptionSettingCommit(command)) }
+            else { terminal = .success(try command.method == "deviceCalendarSettingCommit"
+                ? invokeDeviceCalendarSettingCommit(command) : invoke(command.method, arguments: replay)) }
+        } catch {
+            // These codes prove the first attempt stopped before its write. A
+            // replay rejection cannot prove an earlier uncertain attempt did not.
+            if let failure = error as? HostFailure,
+               isDefiniteRejection(failure.message, method: command.method) { terminal = .rejected(failure.message) }
+            else { throw error }
+        }
+        let finished = try finish(command, with: terminal)
+        if case .success = finished {
+            rememberConfirmedSomedayMove(command)
+            rememberConfirmedTaskCancellation(command)
+            rememberConfirmedTaskCompletion(command)
+            rememberConfirmedTaskDelete(command)
+            rememberConfirmedProjectDelete(command)
+        }
+        return try publicValue(finished, method: command.method)
+    }
+
+    private func recordCommandPreparationStack() {
+        guard !commandPreparationStackLogged else { return }
+        commandPreparationStackLogged = true
+        // Best effort, once per Engine; this marks preparation, never a saved command.
+        _ = try? invoke("logLine", arguments: ["Native iOS command preparation frame returned",
+            "{\"releaseCheck\":\"v1.3.5/ios-native-command-stack\",\"outcome\":\"prepared\"}"])
+    }
+
+    // Keep preparation locals off the stack while commit acknowledgment enters JavaScriptCore.
+    private enum CallPreparationResult {
+        case result(String)
+        case command(PendingCommand)
+    }
+
+    @inline(never)
+    private func prepareCallCommand(_ method: String, argumentsJSON: String, args: [Any],
+        editorAttempt: EditorDraftAttempt?, freshPomodoroRequest: [String: Any]?) throws -> CallPreparationResult {
+        let command: PendingCommand
         if method == "pomodoroTransitionWrite" {
             try allowRetainedOrdinaryPreparation()
             do {
@@ -12011,7 +12188,7 @@ private final class Engine: @unchecked Sendable {
                 let response = try Self.pomodoroObject(invoke("pomodoroTransitionPrepare", arguments: [preparedRequestJSON]), maximum: Self.pomodoroJournalLimit)
                 if response["kind"] as? String == "noop" {
                     guard Set(response.keys) == Set(["kind"]) else { throw Self.pomodoroFailure }
-                    return "{\"kind\":\"noop\"}"
+                    return .result("{\"kind\":\"noop\"}")
                 }
                 guard Set(response.keys) == Set(["kind", "planJSON"]), response["kind"] as? String == "prepared",
                       let planJSON = response["planJSON"] as? String,
@@ -12023,7 +12200,7 @@ private final class Engine: @unchecked Sendable {
             try allowRetainedOrdinaryPreparation()
             do {
                 switch try prepareSomedaySectionMove(method: method, arguments: args) {
-                case .noop(let value): return value
+                case .noop(let value): return .result(value)
                 case .command(let prepared): command = prepared
                 }
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
@@ -12051,7 +12228,7 @@ private final class Engine: @unchecked Sendable {
                                 && result["blocked"] as? String == "") else {
                         throw HostFailure("Malformed no-write Project Focus result")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12092,7 +12269,7 @@ private final class Engine: @unchecked Sendable {
                             throw HostFailure("Malformed blocked Task Focus result")
                         }
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12125,7 +12302,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed Focus order no-op")
                     }
                     try validateFocusOrderResult(result, request: submitted)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12157,7 +12334,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed Focus saved filter no-op")
                     }
                     try validateFocusSavedFilterResult(result, request: submitted)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12189,7 +12366,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed Saved search no-op")
                     }
                     try validateSavedSearchResult(result, request: submitted)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12230,7 +12407,7 @@ private final class Engine: @unchecked Sendable {
                                 && result["blocked"] as? String == "") else {
                         throw HostFailure("Malformed no-write Project rename result")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12270,7 +12447,7 @@ private final class Engine: @unchecked Sendable {
                                 && result["blocked"] as? String == "") else {
                         throw HostFailure("Malformed no-write Project flow result")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12310,7 +12487,7 @@ private final class Engine: @unchecked Sendable {
                                 && result["blocked"] as? String == "") else {
                         throw HostFailure("Malformed no-write Project task sort result")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12341,7 +12518,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed Project task order no-op")
                     }
                     try validateProjectTaskOrderResult(result, request: submitted)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12384,7 +12561,7 @@ private final class Engine: @unchecked Sendable {
                                 && result["blocked"] as? String == "") else {
                         throw HostFailure("Malformed no-write Project Notes result")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12425,7 +12602,7 @@ private final class Engine: @unchecked Sendable {
                                 && result["blocked"] as? String == "") else {
                         throw HostFailure("Malformed no-write Project Tags result")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12467,7 +12644,7 @@ private final class Engine: @unchecked Sendable {
                               && (result["message"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 100_000 }) == true) else {
                         throw HostFailure("Malformed no-write Project URL link result")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12512,7 +12689,7 @@ private final class Engine: @unchecked Sendable {
                                 && result["blocked"] as? String == "") else {
                         throw HostFailure("Malformed no-write Project status result")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12555,7 +12732,7 @@ private final class Engine: @unchecked Sendable {
                                 && result["blocked"] as? String == "") else {
                         throw HostFailure("Malformed no-write Project date result")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12599,7 +12776,7 @@ private final class Engine: @unchecked Sendable {
                                 && result["blocked"] as? String == "") else {
                         throw HostFailure("Malformed no-write Project Area result")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12630,7 +12807,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed no-write App lock result")
                     }
                     try validateAppLockResult(result, request: submitted)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12658,7 +12835,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed no-write GTD workflow result")
                     }
                     try validateGtdWorkflowResult(result, request: submitted, changed: false)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12693,7 +12870,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed no-write Notification setting result")
                     }
                     try validateNotificationSettingResult(result, request: submitted)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12724,7 +12901,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed no-write AI timeout result")
                     }
                     try validateAIRequestTimeoutResult(Self.ownedJSON(result), request: submitted, changed: false)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12755,7 +12932,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed no-write AI reasoning effort result")
                     }
                     try validateAIReasoningEffortResult(Self.ownedJSON(result), request: submitted, changed: false)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12786,7 +12963,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed no-write AI Gemini thinking budget result")
                     }
                     try validateAIGeminiThinkingBudgetResult(Self.ownedJSON(result), request: submitted, changed: false)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12810,7 +12987,7 @@ private final class Engine: @unchecked Sendable {
                     let value = try Self.ownedJSON(result)
                     if operation == .add { _ = try Self.calendarSubscriptionAddResult(value) }
                     else { _ = try Self.calendarSubscriptionSettingResult(value) }
-                    return value
+                    return .result(value)
                 }
                 guard response["kind"] as? String == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any], let request = prepared["request"],
@@ -12834,7 +13011,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed no-write Device Calendar setting result")
                     }
                     try Self.deviceCalendarSettingResult(result)
-                    return try Self.ownedJSON(result)
+                    return .result(try Self.ownedJSON(result))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12859,7 +13036,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed no-write General preference result")
                     }
                     try validateGeneralPreferenceResult(result, request: submitted)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12887,7 +13064,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed no-write taxonomy result")
                     }
                     try validateTaxonomyResult(result, request: submitted)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12916,7 +13093,7 @@ private final class Engine: @unchecked Sendable {
                           Self.equalJSON(result["personId"], submitted["personId"]),
                           Self.equalJSON(result["name"], expected["name"]) else { throw HostFailure("Malformed no-write Person edit result") }
                     try validatePersonEditResult(result, request: submitted)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -12991,7 +13168,7 @@ private final class Engine: @unchecked Sendable {
                           ["sortName", "sortColor"].contains(intent["kind"] as? String ?? "") else {
                         throw HostFailure("Malformed no-write Area order result")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -13046,7 +13223,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed no-write Area rename result")
                     }
                     try validateAreaRenameResult(result, request: submitted, noOp: true)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -13076,7 +13253,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed existing Person result")
                     }
                     try validatePersonCreateResult(result, request: submitted, created: false)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -13110,7 +13287,7 @@ private final class Engine: @unchecked Sendable {
                     if method == "areaCreate" {
                         NSLog("Native iOS Area duplicate used releaseCheck=v1.3.3/native-ios-area-create outcome=duplicate")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -13168,7 +13345,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed no-write Project Section rename result")
                     }
                     try validateProjectSectionRenameResult(result, request: submitted)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -13251,7 +13428,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed existing project result")
                     }
                     try validateProjectCreateResult(result, request: submitted, created: false)
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -13284,7 +13461,7 @@ private final class Engine: @unchecked Sendable {
             try allowRetainedOrdinaryPreparation()
             do {
                 switch try prepareInboxTasksAddTagCommand(arguments: args) {
-                case .noop(let result): return result
+                case .noop(let result): return .result(result)
                 case .prepared(let prepared): command = prepared
                 }
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
@@ -13292,7 +13469,24 @@ private final class Engine: @unchecked Sendable {
             try allowRetainedOrdinaryPreparation()
             do {
                 switch try prepareInboxTasksRemoveTagCommand(arguments: args) {
-                case .noop(let result): return result
+                case .noop(let result): return .result(result)
+                case .prepared(let prepared): command = prepared
+                }
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+
+        } else if method == "inboxTasksOrganizeWrite" {
+            try allowRetainedOrdinaryPreparation()
+            do {
+                switch try prepareInboxTasksOrganizeCommand(arguments: args) {
+                case .noop(let result): return .result(result)
+                case .prepared(let prepared): command = prepared
+                }
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "inboxOrganizeDestinationCreateWrite" {
+            try allowRetainedOrdinaryPreparation()
+            do {
+                switch try prepareInboxOrganizeDestinationCreateCommand(arguments: args) {
+                case .noop(let result): return .result(result)
                 case .prepared(let prepared): command = prepared
                 }
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
@@ -13300,7 +13494,7 @@ private final class Engine: @unchecked Sendable {
             try allowRetainedOrdinaryPreparation()
             do {
                 switch try prepareReferenceTasksAddTagCommand(arguments: args) {
-                case .noop(let result): return result
+                case .noop(let result): return .result(result)
                 case .prepared(let prepared): command = prepared
                 }
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
@@ -13308,7 +13502,7 @@ private final class Engine: @unchecked Sendable {
             try allowRetainedOrdinaryPreparation()
             do {
                 switch try prepareReferenceTasksRemoveTagCommand(arguments: args) {
-                case .noop(let result): return result
+                case .noop(let result): return .result(result)
                 case .prepared(let prepared): command = prepared
                 }
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
@@ -13316,7 +13510,7 @@ private final class Engine: @unchecked Sendable {
             try allowRetainedOrdinaryPreparation()
             do {
                 switch try prepareArchivedRestoreCommand(prefix: prefix, arguments: args) {
-                case .noop(let result): return result
+                case .noop(let result): return .result(result)
                 case .prepared(let prepared): command = prepared
                 }
             }
@@ -13348,7 +13542,7 @@ private final class Engine: @unchecked Sendable {
                           Set(response.keys) == Set(["kind", "result"]),
                           let result = response["result"] as? [String: Any], Set(result.keys) == Set(["id"]),
                           Self.equalJSON(result["id"], submitted["id"]) else { throw HostFailure("Malformed Done status no-op") }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
                       let prepared = response["prepared"] as? [String: Any], Self.equalJSON(prepared["request"], submitted) else {
@@ -13601,7 +13795,7 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("Malformed unchanged checklist reset")
                     }
                     try validateChecklistResult(result, request: submitted, kind: "reset")
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -13632,7 +13826,7 @@ private final class Engine: @unchecked Sendable {
                           Set(result.keys) == Set(["view", "notice", "toast"]) else {
                         throw HostFailure("Malformed Process Inbox flow result")
                     }
-                    return value
+                    return .result(value)
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any],
@@ -13697,7 +13891,7 @@ private final class Engine: @unchecked Sendable {
                           ["toast", "next", "scrollToMinutes", "composer"].allSatisfy({ result[$0] is NSNull }) else {
                         throw HostFailure("Malformed Calendar Unschedule no-op")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any], let request = prepared["request"] as? [String: Any],
@@ -13747,7 +13941,7 @@ private final class Engine: @unchecked Sendable {
                     guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any],
                           Set(result.keys) == Set(["changed", "toast", "next", "scrollToMinutes", "composer", "taskId"]),
                           result["changed"] as? Bool == false else { throw HostFailure("Malformed Calendar no-write result") }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any], let request = prepared["request"] as? [String: Any],
@@ -13773,7 +13967,7 @@ private final class Engine: @unchecked Sendable {
                           Self.isBoolean(result["changed"]), result["changed"] as? Bool == false, result["open"] is NSNull else {
                         throw HostFailure("Malformed Board no-op")
                     }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", let prepared = response["prepared"] as? [String: Any],
                       let request = prepared["request"] as? [String: Any], let original = args[0] as? String,
@@ -13790,14 +13984,14 @@ private final class Engine: @unchecked Sendable {
                 }
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "captureLinesSubmit" {
-            return try submitCaptureLines(args)
+            return .result(try submitCaptureLines(args))
         } else if method == "captureSubmit" {
             try allowRetainedOrdinaryPreparation()
             do {
                 let value = try invoke("capturePrepare", arguments: args)
                 guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
                       let kind = response["kind"] as? String else { throw HostFailure("Malformed capture preparation") }
-                if kind == "refused" || kind == "confirmLines" { return value }
+                if kind == "refused" || kind == "confirmLines" { return .result(value) }
                 guard kind == "prepared", let prepared = response["prepared"] as? [String: Any],
                       let request = prepared["request"] as? [String: Any] else { throw HostFailure("Malformed prepared capture") }
                 let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
@@ -13808,7 +14002,7 @@ private final class Engine: @unchecked Sendable {
             try allowRetainedOrdinaryPreparation()
             do {
                 switch try prepareReviewTaskWrite(args) {
-                case .noop(let value): return value
+                case .noop(let value): return .result(value)
                 case .prepared(let prepared):
                     command = prepared
                     try validateDraftAcknowledgment(command)
@@ -13827,7 +14021,7 @@ private final class Engine: @unchecked Sendable {
                     guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any],
                           Set(result.keys) == Set(["id", "draft"]), Self.equalJSON(result["id"], input["id"]),
                           result["draft"] is [String: Any] else { throw HostFailure("Malformed editor no-op") }
-                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                    return .result(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
                 }
                 guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
                       let prepared = response["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 2),
@@ -13844,66 +14038,7 @@ private final class Engine: @unchecked Sendable {
             command = PendingCommand(version: 2, method: method, argumentsJSON: argumentsJSON)
             if retainedOrdinaryTurn != nil { _ = try ordinaryJournalArguments(command); try allowRetainedOrdinaryPreparation() }
         }
-        if let turn = retainedOrdinaryTurn {
-            try requireRetainedOrdinaryTurn(requirePreparation: true)
-            _ = try ordinaryJournalArguments(command)
-            turn.command = command
-        }
-        if method == "notificationSetting" {
-            guard let turn = notificationSettingTurn, notificationSettingOwnerAccess, context === turn.runtime,
-                  attachmentGeneration == turn.generation, !turn.cancellation.isCancelled else {
-                throw CoreHostRejection(message: "STALE_REVISION: Notification edit is no longer current")
-            }
-        }
-        if method == "iosAIRequestTimeout" {
-            guard aiRequestTimeoutOwnerAccess else { throw HostFailure("AI timeout owner is unavailable") }
-            try requireAIRequestTimeoutTurn()
-        }
-        if method == "iosAIReasoningEffort" {
-            guard aiReasoningEffortOwnerAccess else { throw HostFailure("AI reasoning effort owner is unavailable") }
-            try requireAIReasoningEffortTurn()
-        }
-        if method == "iosAIGeminiThinkingBudget" {
-            guard aiGeminiThinkingBudgetOwnerAccess else { throw HostFailure("AI Gemini thinking budget owner is unavailable") }
-            try requireAIGeminiThinkingBudgetTurn()
-        }
-        if command.method == "backupDocumentCommit" {
-            try requireBackupDocumentMutationAllowed(command, arguments: backupDocumentArguments(command))
-        }
-        pending = command
-        try persist(command)
-        if command.method == Self.pomodoroMethod {
-            return try publicValue(executePomodoro(command, replayOnly: false, allowUnsettled: true, firstAttempt: true), method: Self.pomodoroMethod)
-        }
-        let terminal: TerminalResult
-        do {
-            let replay: [Any]
-            if command.method == "backupDocumentCommit" { replay = try backupDocumentArguments(command) }
-            else if command.method == "captureLinesCommit" { replay = try captureLinesArguments(command) }
-            else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
-            else { replay = try journalArguments(command) }
-            if command.method == "iosAIRequestTimeoutCommit" { terminal = .success(try invokeAIRequestTimeoutCommit(command)) }
-            else if command.method == "iosAIReasoningEffortCommit" { terminal = .success(try invokeAIReasoningEffortCommit(command)) }
-            else if command.method == "iosAIGeminiThinkingBudgetCommit" { terminal = .success(try invokeAIGeminiThinkingBudgetCommit(command)) }
-            else if CalendarSubscriptionOperation(commitMethod: command.method) != nil { terminal = .success(try invokeCalendarSubscriptionSettingCommit(command)) }
-            else { terminal = .success(try command.method == "deviceCalendarSettingCommit"
-                ? invokeDeviceCalendarSettingCommit(command) : invoke(command.method, arguments: replay)) }
-        } catch {
-            // These codes prove the first attempt stopped before its write. A
-            // replay rejection cannot prove an earlier uncertain attempt did not.
-            if let failure = error as? HostFailure,
-               isDefiniteRejection(failure.message, method: command.method) { terminal = .rejected(failure.message) }
-            else { throw error }
-        }
-        let finished = try finish(command, with: terminal)
-        if case .success = finished {
-            rememberConfirmedSomedayMove(command)
-            rememberConfirmedTaskCancellation(command)
-            rememberConfirmedTaskCompletion(command)
-            rememberConfirmedTaskDelete(command)
-            rememberConfirmedProjectDelete(command)
-        }
-        return try publicValue(finished, method: command.method)
+        return .command(command)
     }
 
     func retryPending() throws -> String? {
@@ -14184,6 +14319,19 @@ private final class Engine: @unchecked Sendable {
                 try validatePreparedAcknowledgment(command, value: probed)
                 try validatePreparedAcknowledgment(command, value: value)
             }
+
+            if command.method == "inboxTasksOrganizeCommit", case .success(let value) = terminal {
+                let probed = try invoke("inboxTasksOrganizeOutcome", arguments: inboxTasksOrganizeJournalArguments(command))
+                guard probed != "null" else { throw HostFailure("STALE_REVISION: Inbox bulk Organize has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: probed)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
+            if command.method == "inboxOrganizeDestinationCreateCommit", case .success(let value) = terminal {
+                let probed = try invoke("inboxOrganizeDestinationCreateOutcome", arguments: inboxOrganizeDestinationCreateJournalArguments(command))
+                guard probed != "null" else { throw HostFailure("STALE_REVISION: Inbox Organize destination creation has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: probed)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
             if command.method == "referenceTasksAddTagCommit", case .success(let value) = terminal {
                 let probed = try invoke("referenceTasksAddTagOutcome", arguments: referenceTasksAddTagJournalArguments(command))
                 guard probed != "null" else { throw HostFailure("STALE_REVISION: Reference bulk Add tag has no exact saved receipt") }
@@ -14359,6 +14507,25 @@ private final class Engine: @unchecked Sendable {
             if case .success(let value) = terminal {
                 let probed = try invoke("inboxTasksRemoveTagOutcome", arguments: inboxTasksRemoveTagJournalArguments(command))
                 guard probed != "null" else { throw HostFailure("STALE_REVISION: Inbox bulk Remove tag has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: probed)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
+        }
+
+        if command.method == "inboxTasksOrganizeCommit" {
+            _ = try invoke("inboxTasksOrganizeValidate", arguments: inboxTasksOrganizeJournalArguments(command))
+            if case .success(let value) = terminal {
+                let probed = try invoke("inboxTasksOrganizeOutcome", arguments: inboxTasksOrganizeJournalArguments(command))
+                guard probed != "null" else { throw HostFailure("STALE_REVISION: Inbox bulk Organize has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: probed)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
+        }
+        if command.method == "inboxOrganizeDestinationCreateCommit" {
+            _ = try invoke("inboxOrganizeDestinationCreateValidate", arguments: inboxOrganizeDestinationCreateJournalArguments(command))
+            if case .success(let value) = terminal {
+                let probed = try invoke("inboxOrganizeDestinationCreateOutcome", arguments: inboxOrganizeDestinationCreateJournalArguments(command))
+                guard probed != "null" else { throw HostFailure("STALE_REVISION: Inbox Organize destination creation has no exact saved receipt") }
                 try validatePreparedAcknowledgment(command, value: probed)
                 try validatePreparedAcknowledgment(command, value: value)
             }
@@ -14751,6 +14918,13 @@ private final class Engine: @unchecked Sendable {
         if command.method == "inboxTasksRemoveTagCommit", case .success = terminal {
             confirmedInboxTasksRemoveTagEnvelope = (try? inboxTasksRemoveTagJournalArguments(command))?.first as? String
         }
+
+        if command.method == "inboxTasksOrganizeCommit", case .success = terminal {
+            confirmedInboxTasksOrganizeEnvelope = (try? inboxTasksOrganizeJournalArguments(command))?.first as? String
+        }
+        if command.method == "inboxOrganizeDestinationCreateCommit", case .success = terminal {
+            confirmedInboxOrganizeDestinationCreateEnvelope = (try? inboxOrganizeDestinationCreateJournalArguments(command))?.first as? String
+        }
         if command.method == "referenceTasksAddTagCommit", case .success = terminal {
             confirmedReferenceTasksAddTagEnvelope = (try? referenceTasksAddTagJournalArguments(command))?.first as? String
         }
@@ -14892,6 +15066,17 @@ private final class Engine: @unchecked Sendable {
         if command.method == "inboxTasksRemoveTagCommit", case .success = terminal {
 #if DEBUG
             faults?.commandDiagnostic?("inboxTasksRemoveTag")
+#endif
+        }
+
+        if command.method == "inboxTasksOrganizeCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("inboxTasksOrganize")
+#endif
+        }
+        if command.method == "inboxOrganizeDestinationCreateCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("inboxOrganizeDestinationCreate")
 #endif
         }
         if command.method == "referenceTasksAddTagCommit", case .success = terminal {
@@ -15537,7 +15722,7 @@ private final class Engine: @unchecked Sendable {
             || (method == "calendarSubscriptionAddCommit" && message.hasPrefix("STALE_REVISION:"))
             || (["reminderCompletionCommit", "reminderSnoozeCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["doneTaskStatusCommit", "doneTaskCompletedAtCommit", "archiveTaskCompletedAtCommit", "referenceTaskBackdateCommit", "referenceTaskDestinationCommit", "referenceProjectNextActionCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
-            || (["referenceTasksRemoveTagCommit", "referenceTasksAddTagCommit", "inboxTasksAddTagCommit", "inboxTasksRemoveTagCommit", "referenceTasksMoveCommit", "inboxTasksMoveCommit", "archivedTaskRestoreCommit", "archivedTasksRestoreCommit", "trashItemsRestoreCommit", "trashItemsPurgeCommit", "archivedTasksDeleteCommit", "archivedTasksDeleteUndoCommit", "taskCompletionCommit", "taskCompletionUndoCommit", "taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit", "projectDuplicateCommit", "projectLifecycleCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["referenceTasksRemoveTagCommit", "referenceTasksAddTagCommit", "inboxTasksAddTagCommit", "inboxTasksRemoveTagCommit", "inboxTasksOrganizeCommit", "inboxOrganizeDestinationCreateCommit", "referenceTasksMoveCommit", "inboxTasksMoveCommit", "archivedTaskRestoreCommit", "archivedTasksRestoreCommit", "trashItemsRestoreCommit", "trashItemsPurgeCommit", "archivedTasksDeleteCommit", "archivedTasksDeleteUndoCommit", "taskCompletionCommit", "taskCompletionUndoCommit", "taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit", "projectDuplicateCommit", "projectLifecycleCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "calendarEventTaskCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "notificationSettingCommit", "iosAIRequestTimeoutCommit", "iosAIReasoningEffortCommit", "iosAIGeminiThinkingBudgetCommit", "deviceCalendarSettingCommit", "calendarSubscriptionSettingCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectFileRemoveWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
@@ -17632,11 +17817,54 @@ private final class Engine: @unchecked Sendable {
         return validInboxTasksMoveRequest(selection)
     }
 
+    private static func validInboxOrganizeDraft(_ draft: [String: Any]) -> Bool {
+        let fields = ["status", "projectChoice", "areaChoice", "contexts", "tags", "startDate", "dueDate", "reviewDate", "delegateWho"]
+        return Set(draft.keys) == Set(fields) && fields.allSatisfy {
+            guard let value = draft[$0] as? String else { return false }
+            return value.utf16.count <= 2_000_000
+        }
+    }
+
+    private static func validInboxTasksOrganizeRequest(_ request: [String: Any]) -> Bool {
+        guard Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "draft", "params", "source"]),
+              let draft = request["draft"] as? [String: Any], validInboxOrganizeDraft(draft) else { return false }
+        var selection = request
+        selection.removeValue(forKey: "draft")
+        selection["status"] = "next"
+        return validInboxTasksMoveRequest(selection)
+    }
+    private static func validInboxOrganizeDestinationCreateRequest(_ request: [String: Any]) -> Bool {
+        guard Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "draft", "params", "source", "kind", "name", "offerRevision"]),
+              let draft = request["draft"] as? [String: Any], validInboxOrganizeDraft(draft) else { return false }
+        guard let kind = request["kind"] as? String, ["project", "area"].contains(kind),
+              let name = request["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              name.utf16.count <= 2_000_000, let revision = request["offerRevision"] as? String,
+              !revision.isEmpty, revision.utf16.count <= 2_000_000 else { return false }
+        var selection = request
+        selection.removeValue(forKey: "draft")
+        for field in ["kind", "name", "offerRevision"] { selection.removeValue(forKey: field) }
+        selection["status"] = "next"
+        return validInboxTasksMoveRequest(selection)
+    }
+
     private static func validInboxTasksRemoveTagResult(_ result: [String: Any], request: [String: Any], allowNoop: Bool = false) -> Bool {
         guard Set(result.keys) == Set(["count", "changed"]), isInteger(result["count"]), isBoolean(result["changed"]),
               let ids = request["taskIds"] as? [String], let count = result["count"] as? NSNumber,
               let changed = result["changed"] as? Bool else { return false }
         return changed ? count.doubleValue > 0 && count.doubleValue <= Double(ids.count) : allowNoop && count.doubleValue == 0
+    }
+
+    private static func validInboxTasksOrganizeResult(_ result: [String: Any], request: [String: Any], allowNoop: Bool = false) -> Bool {
+        guard Set(result.keys) == Set(["count", "changed"]), isInteger(result["count"]), isBoolean(result["changed"]),
+              let ids = request["taskIds"] as? [String], let count = result["count"] as? NSNumber,
+              let changed = result["changed"] as? Bool else { return false }
+        return changed ? count.doubleValue > 0 && count.doubleValue <= Double(ids.count) : allowNoop && count.doubleValue == 0
+    }
+    private static func validInboxOrganizeDestinationCreateResult(_ result: [String: Any], request: [String: Any]) -> Bool {
+        guard Set(result.keys) == Set(["id", "changed"]), isBoolean(result["changed"]),
+              result["changed"] as? Bool == true, let id = result["id"] as? String,
+              !id.isEmpty, id.utf16.count <= 500 else { return false }
+        return true
     }
 
     private func inboxTasksRemoveTagJournalArguments(_ command: PendingCommand) throws -> [Any] {
@@ -17651,6 +17879,37 @@ private final class Engine: @unchecked Sendable {
               Self.equalJSON(prepared["request"], request), let result = prepared["result"] as? [String: Any],
               Self.validInboxTasksRemoveTagResult(result, request: request) else {
             throw HostFailure("Malformed Inbox bulk Remove tag journal")
+        }
+        return args
+    }
+
+    private func inboxTasksOrganizeJournalArguments(_ command: PendingCommand) throws -> [Any] {
+        guard command.method == "inboxTasksOrganizeCommit", command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= 12_000_000,
+              let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+              args.count == 1, args[0].utf8.count <= 2_000_000, try NativeJSON.hasUniqueObjectKeys(args[0]),
+              let raw = try? NativeJSON.jsonObject(with: Data(args[0].utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+              let envelope = raw as? [String: Any], Set(envelope.keys) == Set(["request", "prepared"]),
+              let request = envelope["request"] as? [String: Any], Self.validInboxTasksOrganizeRequest(request),
+              let prepared = envelope["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+              Self.equalJSON(prepared["request"], request), let result = prepared["result"] as? [String: Any],
+              Self.validInboxTasksOrganizeResult(result, request: request) else {
+            throw HostFailure("Malformed Inbox bulk Organize journal")
+        }
+        return args
+    }
+    private func inboxOrganizeDestinationCreateJournalArguments(_ command: PendingCommand) throws -> [Any] {
+        guard command.method == "inboxOrganizeDestinationCreateCommit", command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= 12_000_000,
+              let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+              args.count == 1, args[0].utf8.count <= 2_000_000, try NativeJSON.hasUniqueObjectKeys(args[0]),
+              let raw = try? NativeJSON.jsonObject(with: Data(args[0].utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+              let envelope = raw as? [String: Any], Set(envelope.keys) == Set(["request", "prepared"]),
+              let request = envelope["request"] as? [String: Any], Self.validInboxOrganizeDestinationCreateRequest(request),
+              let prepared = envelope["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+              Self.equalJSON(prepared["request"], request), let result = prepared["result"] as? [String: Any],
+              Self.validInboxOrganizeDestinationCreateResult(result, request: request) else {
+            throw HostFailure("Malformed Inbox Organize destination creation journal")
         }
         return args
     }
@@ -17684,6 +17943,55 @@ private final class Engine: @unchecked Sendable {
         return .prepared(command)
     }
 
+    private func prepareInboxTasksOrganizeCommand(arguments args: [Any]) throws -> ArchivedRestorePreparation {
+        guard let encoded = args.first as? String, try NativeJSON.hasUniqueObjectKeys(encoded),
+              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              Self.validInboxTasksOrganizeRequest(request) else { throw HostFailure("INVALID_INPUT: Inbox bulk Organize needs a bounded request") }
+        let value = try invoke("inboxTasksOrganizePrepare", arguments: args)
+        guard value.utf8.count <= 2_000_000, try NativeJSON.hasUniqueObjectKeys(value),
+              let raw = try? NativeJSON.jsonObject(with: Data(value.utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+              let response = raw as? [String: Any] else { throw HostFailure("Malformed Inbox bulk Organize preparation") }
+        if response["kind"] as? String == "noop" {
+            guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any],
+                  result["changed"] as? Bool == false,
+                  Self.validInboxTasksOrganizeResult(result, request: request, allowNoop: true) else {
+                throw HostFailure("Malformed Inbox bulk Organize no-op")
+            }
+            return .noop(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
+        }
+        guard Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+              let prepared = response["prepared"] as? [String: Any], Self.equalJSON(prepared["request"], request) else {
+            throw HostFailure("Malformed Inbox bulk Organize preparation")
+        }
+        let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+        guard envelope.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Inbox Organize journal is too large; select fewer tasks") }
+        let outer = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+        guard outer.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Inbox Organize journal is too large; select fewer tasks") }
+        let command = PendingCommand(version: 2, method: "inboxTasksOrganizeCommit", argumentsJSON: outer)
+        _ = try invoke("inboxTasksOrganizeValidate", arguments: inboxTasksOrganizeJournalArguments(command))
+        return .prepared(command)
+    }
+    private func prepareInboxOrganizeDestinationCreateCommand(arguments args: [Any]) throws -> ArchivedRestorePreparation {
+        guard let encoded = args.first as? String, try NativeJSON.hasUniqueObjectKeys(encoded),
+              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              Self.validInboxOrganizeDestinationCreateRequest(request) else { throw HostFailure("INVALID_INPUT: Inbox Organize destination creation needs a bounded request") }
+        let value = try invoke("inboxOrganizeDestinationCreatePrepare", arguments: args)
+        guard value.utf8.count <= 2_000_000, try NativeJSON.hasUniqueObjectKeys(value),
+              let raw = try? NativeJSON.jsonObject(with: Data(value.utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+              let response = raw as? [String: Any] else { throw HostFailure("Malformed Inbox Organize destination creation preparation") }
+        guard Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+              let prepared = response["prepared"] as? [String: Any], Self.equalJSON(prepared["request"], request) else {
+            throw HostFailure("Malformed Inbox Organize destination creation preparation")
+        }
+        let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+        guard envelope.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Inbox Organize journal is too large; select fewer tasks") }
+        let outer = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+        guard outer.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Inbox Organize journal is too large; select fewer tasks") }
+        let command = PendingCommand(version: 2, method: "inboxOrganizeDestinationCreateCommit", argumentsJSON: outer)
+        _ = try invoke("inboxOrganizeDestinationCreateValidate", arguments: inboxOrganizeDestinationCreateJournalArguments(command))
+        return .prepared(command)
+    }
+
     private func inboxTasksRemoveTagReceiptOutcome(arguments args: [Any]) throws -> String {
         guard let encoded = args.first as? String, try NativeJSON.hasUniqueObjectKeys(encoded),
               let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
@@ -17694,6 +18002,37 @@ private final class Engine: @unchecked Sendable {
             argumentsJSON: String(decoding: try JSONSerialization.data(withJSONObject: [confirmed], options: [.sortedKeys]), as: UTF8.self))
         _ = try invoke("inboxTasksRemoveTagValidate", arguments: inboxTasksRemoveTagJournalArguments(command))
         let value = try invoke("inboxTasksRemoveTagOutcome", arguments: [confirmed])
+        if value == "null" { return #"{"kind":"unproven"}"# }
+        try validatePreparedAcknowledgment(command, value: value)
+        let result = try NativeJSON.jsonObject(with: Data(value.utf8))
+        return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "confirmed", "result": result], options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    private func inboxTasksOrganizeReceiptOutcome(arguments args: [Any]) throws -> String {
+        guard let encoded = args.first as? String, try NativeJSON.hasUniqueObjectKeys(encoded),
+              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let confirmed = confirmedInboxTasksOrganizeEnvelope,
+              let envelope = try NativeJSON.jsonObject(with: Data(confirmed.utf8)) as? [String: Any],
+              Self.equalJSON(envelope["request"], request) else { return #"{"kind":"unproven"}"# }
+        let command = PendingCommand(version: 2, method: "inboxTasksOrganizeCommit",
+            argumentsJSON: String(decoding: try JSONSerialization.data(withJSONObject: [confirmed], options: [.sortedKeys]), as: UTF8.self))
+        _ = try invoke("inboxTasksOrganizeValidate", arguments: inboxTasksOrganizeJournalArguments(command))
+        let value = try invoke("inboxTasksOrganizeOutcome", arguments: [confirmed])
+        if value == "null" { return #"{"kind":"unproven"}"# }
+        try validatePreparedAcknowledgment(command, value: value)
+        let result = try NativeJSON.jsonObject(with: Data(value.utf8))
+        return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "confirmed", "result": result], options: [.sortedKeys]), as: UTF8.self)
+    }
+    private func inboxOrganizeDestinationCreateReceiptOutcome(arguments args: [Any]) throws -> String {
+        guard let encoded = args.first as? String, try NativeJSON.hasUniqueObjectKeys(encoded),
+              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let confirmed = confirmedInboxOrganizeDestinationCreateEnvelope,
+              let envelope = try NativeJSON.jsonObject(with: Data(confirmed.utf8)) as? [String: Any],
+              Self.equalJSON(envelope["request"], request) else { return #"{"kind":"unproven"}"# }
+        let command = PendingCommand(version: 2, method: "inboxOrganizeDestinationCreateCommit",
+            argumentsJSON: String(decoding: try JSONSerialization.data(withJSONObject: [confirmed], options: [.sortedKeys]), as: UTF8.self))
+        _ = try invoke("inboxOrganizeDestinationCreateValidate", arguments: inboxOrganizeDestinationCreateJournalArguments(command))
+        let value = try invoke("inboxOrganizeDestinationCreateOutcome", arguments: [confirmed])
         if value == "null" { return #"{"kind":"unproven"}"# }
         try validatePreparedAcknowledgment(command, value: value)
         let result = try NativeJSON.jsonObject(with: Data(value.utf8))
@@ -19368,7 +19707,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func validatePreparedAcknowledgment(_ command: PendingCommand, value: String) throws {
-        if ["inboxTasksMoveCommit", "inboxTasksAddTagCommit", "inboxTasksRemoveTagCommit"].contains(command.method) {
+        if ["inboxTasksMoveCommit", "inboxTasksAddTagCommit", "inboxTasksRemoveTagCommit", "inboxTasksOrganizeCommit", "inboxOrganizeDestinationCreateCommit"].contains(command.method) {
             guard value.utf8.count <= 2_000_000, try NativeJSON.hasUniqueObjectKeys(value),
                   Self.referenceTasksMoveJSONIsLossless(try NativeJSON.jsonObject(with: Data(value.utf8))) else {
                 throw HostFailure("Malformed Inbox bulk Move acknowledgment")
@@ -19432,6 +19771,17 @@ private final class Engine: @unchecked Sendable {
         if command.method == "inboxTasksRemoveTagCommit" {
             guard let request = envelope["request"] as? [String: Any], Self.validInboxTasksRemoveTagResult(result, request: request) else {
                 throw HostFailure("Malformed Inbox bulk Remove tag acknowledgment")
+            }
+        }
+
+        if command.method == "inboxTasksOrganizeCommit" {
+            guard let request = envelope["request"] as? [String: Any], Self.validInboxTasksOrganizeResult(result, request: request) else {
+                throw HostFailure("Malformed Inbox bulk Organize acknowledgment")
+            }
+        }
+        if command.method == "inboxOrganizeDestinationCreateCommit" {
+            guard let request = envelope["request"] as? [String: Any], Self.validInboxOrganizeDestinationCreateResult(result, request: request) else {
+                throw HostFailure("Malformed Inbox Organize destination creation acknowledgment")
             }
         }
         if command.method == "referenceTasksAddTagCommit" {
@@ -19846,6 +20196,9 @@ private final class Engine: @unchecked Sendable {
         if command.method == "inboxTasksMoveCommit" { return try inboxTasksMoveJournalArguments(command) }
         if command.method == "inboxTasksAddTagCommit" { return try inboxTasksAddTagJournalArguments(command) }
         if command.method == "inboxTasksRemoveTagCommit" { return try inboxTasksRemoveTagJournalArguments(command) }
+
+        if command.method == "inboxTasksOrganizeCommit" { return try inboxTasksOrganizeJournalArguments(command) }
+        if command.method == "inboxOrganizeDestinationCreateCommit" { return try inboxOrganizeDestinationCreateJournalArguments(command) }
         if command.method == "referenceTasksAddTagCommit" { return try referenceTasksAddTagJournalArguments(command) }
         if command.method == "referenceTasksRemoveTagCommit" { return try referenceTasksRemoveTagJournalArguments(command) }
         if command.method == "referenceProjectNextActionCommit" {
@@ -21226,6 +21579,8 @@ private final class Engine: @unchecked Sendable {
         #endif
         case "Native iOS launch selection admitted":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-launch-selection", "outcome": "confirmed"])
+        case "Native iOS command preparation frame returned":
+            valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-native-command-stack", "outcome": "prepared"])
         case "Native iOS Inbox view boundary rendered":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-inbox-view-boundary", "outcome": "rendered"])
         case "Native iOS Board drag submitted":
@@ -21387,7 +21742,7 @@ private final class Engine: @unchecked Sendable {
         if Self.historyTaskWritePrefix(method) == "referenceProjectNextAction", json.utf8.count > 12_610_000 {
             throw HostFailure("INVALID_INPUT: Next action request is too large")
         }
-        if ["referenceTasksRemoveTagWrite", "referenceTasksRemoveTagRetryOutcome", "referenceTasksAddTagWrite", "inboxTasksAddTagWrite", "inboxTasksRemoveTagWrite", "referenceTasksAddTagRetryOutcome", "inboxTasksAddTagRetryOutcome", "inboxTasksRemoveTagRetryOutcome", "referenceTasksMoveWrite", "referenceTasksMoveRetryOutcome", "inboxTasksMoveWrite", "inboxTasksMoveRetryOutcome", "archiveTaskSelection", "trashSelection", "archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "trashItemsRestoreRetryOutcome", "trashItemsPurgeRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome", "archivedTasksDeleteUndoWrite", "archivedTasksDeleteUndoRetryOutcome"].contains(method), json.utf8.count > 12_000_000 {
+        if ["referenceTasksRemoveTagWrite", "referenceTasksRemoveTagRetryOutcome", "referenceTasksAddTagWrite", "inboxTasksAddTagWrite", "inboxTasksRemoveTagWrite", "inboxTasksOrganizeWrite", "inboxOrganizeDestinationCreateWrite", "referenceTasksAddTagRetryOutcome", "inboxTasksAddTagRetryOutcome", "inboxTasksRemoveTagRetryOutcome", "inboxTasksOrganizeRetryOutcome", "inboxOrganizeDestinationCreateRetryOutcome", "referenceTasksMoveWrite", "referenceTasksMoveRetryOutcome", "inboxTasksMoveWrite", "inboxTasksMoveRetryOutcome", "archiveTaskSelection", "trashSelection", "archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "trashItemsRestoreRetryOutcome", "trashItemsPurgeRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome", "archivedTasksDeleteUndoWrite", "archivedTasksDeleteUndoRetryOutcome"].contains(method), json.utf8.count > 12_000_000 {
             throw HostFailure("INVALID_INPUT: Bulk selection request is too large; select fewer tasks")
         }
         if let prefix = Self.historyTaskWritePrefix(method), ["referenceTaskBackdate", "referenceTaskDestination"].contains(prefix), json.utf8.count > 24_586 {
@@ -22923,6 +23278,21 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Inbox bulk Remove tag needs exact selected revisions, scope, tags and a lowercase UUID")
             }
         }
+
+        if ["inboxTasksOrganizeWrite", "inboxTasksOrganizeRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000, try NativeJSON.hasUniqueObjectKeys(encoded),
+                  let raw = try? NativeJSON.jsonObject(with: Data(encoded.utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+                  let request = raw as? [String: Any], Self.validInboxTasksOrganizeRequest(request) else {
+                throw HostFailure("INVALID_INPUT: Inbox bulk Organize needs exact selected revisions, scope, tags and a lowercase UUID")
+            }
+        }
+        if ["inboxOrganizeDestinationCreateWrite", "inboxOrganizeDestinationCreateRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000, try NativeJSON.hasUniqueObjectKeys(encoded),
+                  let raw = try? NativeJSON.jsonObject(with: Data(encoded.utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+                  let request = raw as? [String: Any], Self.validInboxOrganizeDestinationCreateRequest(request) else {
+                throw HostFailure("INVALID_INPUT: Inbox Organize destination creation needs exact selected revisions, scope, tags and a lowercase UUID")
+            }
+        }
         if ["referenceTasksAddTagWrite", "referenceTasksAddTagRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let raw = try? NativeJSON.jsonObject(with: Data(encoded.utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
@@ -23374,8 +23744,8 @@ private final class Engine: @unchecked Sendable {
                 let referenceSelection = input["list"] as? String == "reference"
                 let inboxSelection = input["list"] as? String == "inbox"
                 let selectionName = referenceSelection ? "Reference" : inboxSelection ? "Inbox" : "Done"
-                // The shared selection union serves the same bounded Remove tag picker for all three lists.
-                let selectionKeys: Set<String> = ["list", "params", "taskIds", "anchorId", "selectionEdit", "rangeSelectMode", "busy", "picker"]
+                // Inbox also exposes the core-owned Organize draft and destination picker.
+                let selectionKeys: Set<String> = ["list", "params", "taskIds", "anchorId", "selectionEdit", "rangeSelectMode", "busy", "picker", "organize"]
                 guard json.utf8.count <= 2_000_000, ["done", "reference", "inbox"].contains(input["list"] as? String ?? ""),
                       Set(input.keys).isSubset(of: selectionKeys),
                       input["rangeSelectMode"] == nil || Self.isBoolean(input["rangeSelectMode"]),
@@ -23401,9 +23771,31 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure(inboxSelection ? "INVALID_INPUT: Inbox selection requires bounded unique task IDs" : "INVALID_INPUT: Done selection requires bounded unique task IDs")
                     }
                 }
+                if let organize = input["organize"] {
+                    guard inboxSelection, let value = organize as? [String: Any],
+                          Set(value.keys).isSubset(of: ["draft", "edit"]) else {
+                        throw HostFailure("INVALID_INPUT: Inbox Organize requires a bounded draft and edit")
+                    }
+                    if let draft = value["draft"] {
+                        let fields: Set<String> = ["status", "projectChoice", "areaChoice", "contexts", "tags", "startDate", "dueDate", "reviewDate", "delegateWho"]
+                        guard let draft = draft as? [String: String], Set(draft.keys).isSubset(of: fields),
+                              draft.values.allSatisfy({ $0.utf16.count <= 2_000_000 }) else {
+                            throw HostFailure("INVALID_INPUT: Inbox Organize draft must contain only bounded text fields")
+                        }
+                    }
+                    if let edit = value["edit"] {
+                        guard let edit = edit as? [String: Any], let type = edit["type"] as? String,
+                              ["setStatus", "setProject", "setArea", "setText"].contains(type),
+                              Set(edit.keys) == Set(type == "setText" ? ["type", "field", "value"] : ["type", "value"]),
+                              let text = edit["value"] as? String, text.utf16.count <= 2_000_000,
+                              type != "setText" || ["contexts", "tags", "startDate", "dueDate", "reviewDate", "delegateWho"].contains(edit["field"] as? String ?? "") else {
+                            throw HostFailure("INVALID_INPUT: Inbox Organize edit must match a core control")
+                        }
+                    }
+                }
                 if let picker = input["picker"] {
                     guard let value = picker as? [String: Any], Set(value.keys).isSubset(of: ["kind", "query", "offset", "limit", "revision"]),
-                          value["kind"] as? String == "removeTag",
+                          value["kind"] as? String == "removeTag" || (inboxSelection && input["organize"] != nil && ["project", "area"].contains(value["kind"] as? String ?? "")),
                           value["query"] == nil || (value["query"] as? String).map({ $0.utf16.count <= 500 }) == true,
                           value["offset"] == nil || Self.isInteger(value["offset"]) && (0...9_007_199_254_740_991).contains((value["offset"] as? NSNumber)?.doubleValue ?? -1),
                           value["limit"] == nil || Self.isInteger(value["limit"]) && (1...100).contains((value["limit"] as? NSNumber)?.intValue ?? 0),
@@ -27403,6 +27795,22 @@ private final class Engine: @unchecked Sendable {
                     self?.faults?.commandDiagnostic?("inboxTasksRemoveTagCoreAck:" + String(count.intValue))
                     #endif
                     NSLog("Native Inbox bulk Remove tag confirmed releaseCheck=v1.3.5/ios-inbox-bulk-remove-tag count=%ld outcome=removed", count.intValue)
+                } else if context["releaseCheck"] as? String == "v1.3.5/ios-inbox-bulk-organize",
+                          context["outcome"] as? String == "organized",
+                          Self.isInteger(context["count"]), let count = context["count"] as? NSNumber,
+                          (1.0...10_000.0).contains(count.doubleValue) {
+                    // Forward only the shared core's bounded aggregate receipt acknowledgment.
+                    #if DEBUG
+                    self?.faults?.commandDiagnostic?("inboxTasksOrganizeCoreAck:" + String(count.intValue))
+                    #endif
+                    NSLog("Native Inbox bulk Organize confirmed releaseCheck=v1.3.5/ios-inbox-bulk-organize count=%ld outcome=organized", count.intValue)
+                } else if context["releaseCheck"] as? String == "v1.3.5/ios-inbox-organize-stable-offer",
+                          context["outcome"] as? String == "saved", let kind = context["kind"] as? String,
+                          ["project", "area"].contains(kind) {
+                    #if DEBUG
+                    self?.faults?.commandDiagnostic?("inboxOrganizeDestinationCreateCoreAck:" + kind)
+                    #endif
+                    NSLog("Native Inbox Organize destination confirmed releaseCheck=v1.3.5/ios-inbox-organize-stable-offer kind=%@ outcome=saved", kind)
                 } else if context["releaseCheck"] as? String == "v1.3.4/ios-reference-bulk-tag",
                           context["outcome"] as? String == "added",
                           Self.isInteger(context["count"]), let count = context["count"] as? NSNumber,

@@ -37574,3 +37574,92 @@ extension CoreHostTests {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); await cold.close()
     }
 }
+
+
+// Task743: independently durable Organize Apply and destination creation.
+extension CoreHostTests {
+    private var organize743EmptyDraft: [String: String] {
+        ["status": "__KEEP__", "projectChoice": "__KEEP__", "areaChoice": "__KEEP__", "contexts": "", "tags": "",
+         "startDate": "", "dueDate": "", "reviewDate": "", "delegateWho": ""]
+    }
+    private func organize743Request(_ core: CoreHost, ids: [String], draft: [String: String]) async throws -> [String: Any] {
+        var request = try await inboxMove740Request(core, ids: ids, status: "next")
+        request.removeValue(forKey: "status"); request["draft"] = draft
+        return request
+    }
+    func testInboxOrganize743AllKeepThenExplicitSameValueWritesAndAcknowledgesCount() async throws {
+        let ids = try await seedInboxRemove742(), faults = HostIOFaults(), core = host(faults)
+        var acknowledgments: [String] = []; faults.commandDiagnostic = { acknowledgments.append($0) }
+        _ = try await core.start()
+        let sql = try SQLiteBridge(url: database), before = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql)
+        sql.close()
+        var writes = 0, journals = 0
+        faults.beforeSQL = { if self.archive180IsDomainWrite($0) { writes += 1 } }; faults.journalWrite = { journals += 1 }
+        let noop = try await organize743Request(core, ids: ids, draft: organize743EmptyDraft)
+        let noResult = try object(await core.call("inboxTasksOrganizeWrite", argumentsJSON: json([json(noop)])))
+        XCTAssertEqual(try json(noResult), try json(["count": 0, "changed": false]))
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before); XCTAssertEqual(try doneTask176Receipts(check), receipts); check.close()
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+        let sentinel = try json(storedTask(ids[0] + "-protected")), prior = try ids.map { try storedTask($0) }
+        var draft = organize743EmptyDraft; draft["tags"] = "#Keep742"
+        let request = try await organize743Request(core, ids: ids, draft: draft)
+        let result = try object(await core.call("inboxTasksOrganizeWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(result), try json(["count": ids.count, "changed": true]))
+        for (index, id) in ids.enumerated() {
+            let after = try storedTask(id)
+            XCTAssertEqual(after["tags"] as? String, prior[index]["tags"] as? String)
+            XCTAssertGreaterThan(try XCTUnwrap(after["rev"] as? Int), try XCTUnwrap(prior[index]["rev"] as? Int))
+        }
+        XCTAssertEqual(try json(storedTask(ids[0] + "-protected")), sentinel)
+        XCTAssertTrue(acknowledgments.contains("inboxTasksOrganizeCoreAck:\(ids.count)"))
+        let retry = try object(await core.call("inboxTasksOrganizeRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(retry["kind"] as? String, "confirmed")
+        await core.close()
+    }
+    func testInboxOrganize743FailedCommitRetainsOriginalAndColdRetryDoesNotReprepare() async throws {
+        let ids = try await seedInboxRemove742(), faults = HostIOFaults(), writer = host(faults)
+        _ = try await writer.start()
+        var draft = organize743EmptyDraft; draft["tags"] = "#Organized743"; draft["contexts"] = "@desk"
+        let request = try await organize743Request(writer, ids: ids, draft: draft)
+        let sql = try SQLiteBridge(url: database), before = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql); sql.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Task743 COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("inboxTasksOrganizeWrite", argumentsJSON: json([json(request)])) }
+        let bytes = try Data(contentsOf: journal)
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }; try assertJournalContentUnchanged(bytes)
+        let failed = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failed), before); XCTAssertEqual(try doneTask176Receipts(failed), receipts); failed.close()
+        await writer.close()
+        let cold = host(bundleURL: try dateBundle(at: archive180Clock, suffix: "MindwtrHost.inboxTasksOrganizePrepare=function(){throw new Error('Task743 must not reprepare');};"))
+        let started = try object(await cold.start()), recovery = try XCTUnwrap(started["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["source"] as? String, "inbox"); XCTAssertEqual(recovery["method"] as? String, "inboxTasksOrganizeCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["count": ids.count, "changed": true]))
+        let outcome = try object(await cold.call("inboxTasksOrganizeRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed")
+        var wrong = request; draft["tags"] = "#other"; wrong["draft"] = draft
+        let unproven = try object(await cold.call("inboxTasksOrganizeRetryOutcome", argumentsJSON: json([json(wrong)])))
+        XCTAssertEqual(unproven["kind"] as? String, "unproven"); await cold.close()
+    }
+    func testInboxOrganize743DestinationCreationIsSeparateAndReceiptSurvivesDeletion() async throws {
+        let ids = try await seedInboxRemove742(), faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        let draft = organize743EmptyDraft, name = "Area743-" + UUID().uuidString
+        let bulk = try object(await core.call("menuRead", argumentsJSON: json(["bulk", json([
+            "list": "inbox", "params": ["groupBy": "none"], "taskIds": ids, "organize": ["draft": draft],
+            "picker": ["kind": "area", "query": name, "offset": 0, "limit": 100]])])))
+        var request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "source": "inbox", "taskIds": ids,
+            "taskRevisions": try XCTUnwrap(bulk["taskRevisions"] as? [String: String]), "draft": draft, "params": ["groupBy": "none"]]
+        request["kind"] = "area"; request["name"] = name; request["offerRevision"] = try XCTUnwrap(bulk["revision"] as? String)
+        let before = try ids.map { try json(storedTask($0)) }
+        let result = try object(await core.call("inboxOrganizeDestinationCreateWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(result["id"] as? String, request["requestId"] as? String); XCTAssertEqual(result["changed"] as? Bool, true)
+        XCTAssertEqual(try ids.map { try json(storedTask($0)) }, before, "Creation does not Apply the selected tasks")
+        let sql = try SQLiteBridge(url: database)
+        _ = try sql.execute("DELETE FROM areas WHERE id=?", parametersJSON: json([XCTUnwrap(result["id"])]))
+        let deleted = try nineTableSnapshot(sql); sql.close()
+        let outcome = try object(await core.call("inboxOrganizeDestinationCreateRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed")
+        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), deleted); check.close()
+        await core.close()
+    }
+}

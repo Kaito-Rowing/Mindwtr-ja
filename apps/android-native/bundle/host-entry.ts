@@ -1217,7 +1217,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'inboxTasksMove', 'inboxTasksAddTag', 'inboxTasksRemoveTag', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'aiRequestTimeout', 'aiReasoningEffort', 'aiGeminiThinkingBudget', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'boardTaskCompletion', 'boardTaskCompletionUndo', 'boardTaskReactivate', 'boardTaskOrder', 'archivedTaskRestore', 'archivedTasksRestore', 'trashItemsRestore', 'trashItemsPurge', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'inboxTasksDelete', 'inboxTasksDeleteUndo', 'referenceTasksMove', 'inboxTasksMove', 'inboxTasksAddTag', 'inboxTasksRemoveTag', 'inboxTasksOrganize', 'inboxOrganizeDestinationCreate', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument', 'pomodoroTransition', 'appleReminderImportItem'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -3981,6 +3981,30 @@ globalThis.MindwtrHost = {
     },
     inboxTasksRemoveTagOutcome(json: string): string {
         return submit(async () => unwrap(await contract.inboxTasksRemoveTagOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.inboxTasksRemoveTagOutcome>[0])));
+    },
+    inboxTasksOrganizePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareInboxTasksOrganize(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareInboxTasksOrganize>[0])); });
+    },
+    inboxTasksOrganizeValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedInboxTasksOrganize(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedInboxTasksOrganize>[0])));
+    },
+    inboxTasksOrganizeCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedInboxTasksOrganize(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedInboxTasksOrganize>[0])));
+    },
+    inboxTasksOrganizeOutcome(json: string): string {
+        return submit(async () => unwrap(await contract.inboxTasksOrganizeOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.inboxTasksOrganizeOutcome>[0])));
+    },
+    inboxOrganizeDestinationCreatePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareInboxOrganizeDestinationCreate(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareInboxOrganizeDestinationCreate>[0])); });
+    },
+    inboxOrganizeDestinationCreateValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedInboxOrganizeDestinationCreate(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedInboxOrganizeDestinationCreate>[0])));
+    },
+    inboxOrganizeDestinationCreateCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedInboxOrganizeDestinationCreate(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedInboxOrganizeDestinationCreate>[0])));
+    },
+    inboxOrganizeDestinationCreateOutcome(json: string): string {
+        return submit(async () => unwrap(await contract.inboxOrganizeDestinationCreateOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.inboxOrganizeDestinationCreateOutcome>[0])));
     },
     referenceTasksAddTagPrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.prepareReferenceTasksAddTag(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareReferenceTasksAddTag>[0])); });
