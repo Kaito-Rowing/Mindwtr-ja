@@ -11854,7 +11854,8 @@ final class CoreModel: ObservableObject {
         guard let translated = result["strings"] as? CoreObject, translated.values.allSatisfy({ $0 is String }) else {
             throw CocoaError(.coderReadCorrupt)
         }
-        strings = translated
+        // Equal values must not republish: every view reads strings.
+        if !(translated as NSDictionary).isEqual(to: strings) { strings = translated }
     }
 
     private func readTheme() async throws {
@@ -11881,7 +11882,7 @@ final class CoreModel: ObservableObject {
             if preferenceDefaults.object(forKey: key) as? String != value { preferenceDefaults.set(value, forKey: key) }
         }
         if let value = mirrors["@mindwtr_theme"] { storedTheme = value }
-        theme = next
+        if !(next as NSDictionary).isEqual(to: theme) { theme = next }
     }
 
     func saveGeneralPreference(_ edit: CoreObject) async {
