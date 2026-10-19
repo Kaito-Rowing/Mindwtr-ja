@@ -22073,7 +22073,10 @@ final class CoreModel: ObservableObject {
         }
         guard warm else { return }
         retryNeeded = inboxOrganizeOwned(owner, request: request, creation: creation)
-        error = retryNeeded ? failure.localizedDescription : nil; inboxReadError = failure.localizedDescription
+        error = retryNeeded ? failure.localizedDescription : nil
+        // An open dialog shows a definite rejection itself (clearing an earlier retry-owed one, as a
+        // successful retry does); an Inbox error would outlive the dialog's Cancel.
+        inboxReadError = retryNeeded || !inboxBulkOrganizePresented ? failure.localizedDescription : nil
         inboxBulkOrganizeCurrent = false; inboxBulkOrganizePickerCurrent = false
         inboxBulkOrganizeReadError = failure.localizedDescription
     }
