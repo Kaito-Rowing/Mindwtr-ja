@@ -264,7 +264,8 @@ final class CoreModel: ObservableObject {
             }
         }
     }
-    @Published private(set) var inbox: CoreObject = [:]
+    @Published private(set) var inbox: CoreObject = [:] { didSet { inboxItemIndexCache = nil } }
+    private var inboxItemIndexCache: [[String]: Int]?
     @Published private(set) var inboxCurrent = false
     @Published private(set) var inboxGroupPresented = false
     @Published private(set) var inboxReadError: String?
@@ -296,7 +297,12 @@ final class CoreModel: ObservableObject {
     private var inboxFilterPickerNeedsRead = false
     private var inboxGeneration = 0
     @Published private(set) var inboxSelectionMode = false
-    @Published private(set) var inboxSelectedIDs: [String] = []
+    @Published private(set) var inboxSelectedIDs: [String] = [] {
+        didSet { inboxSelectedIDBytes = Set(inboxSelectedIDs.map { Data($0.utf8) }) }
+    }
+    private var inboxSelectedIDBytes: Set<Data> = []
+    /// Byte-exact, as the former linear `utf8.elementsEqual` scan.
+    func inboxTaskSelected(_ id: String) -> Bool { inboxSelectedIDBytes.contains(Data(id.utf8)) }
     @Published private(set) var inboxBulk: CoreObject = [:]
     private var inboxSelectedRevisions: CoreObject = [:]
     private var inboxAnchorID: String?
@@ -20569,6 +20575,13 @@ final class CoreModel: ObservableObject {
     func inboxItemIdentity(_ item: CoreObject) -> [String] {
         [inbox.text("groupBy"), item.text("type"), item.text("id"), item.text("groupId"), item.object("row").text("id")]
     }
+    /// First index of an identity, as `items.firstIndex`, built once per `inbox` value.
+    private func inboxItemIndex(_ identity: [String]) -> Int? {
+        if inboxItemIndexCache == nil {
+            inboxItemIndexCache = Dictionary(items.enumerated().map { (inboxItemIdentity($1), $0) }, uniquingKeysWith: { first, _ in first })
+        }
+        return inboxItemIndexCache?[identity]
+    }
 
     private func inboxFoldIDs(_ value: Any?) -> [String]? {
         guard let ids = value as? [String], ids.count <= 200,
@@ -28730,7 +28743,7 @@ final class CoreModel: ObservableObject {
         let params = inboxParams, generation = inboxGeneration
         let selectionGeneration = inboxSelectionGeneration, selected = inboxSelectedIDs
         if let automaticRow {
-            guard let index = items.firstIndex(where: { inboxItemIdentity($0) == automaticRow }),
+            guard let index = inboxItemIndex(automaticRow),
                   index >= max(0, offset - 5),
                   inboxAutomaticPageAttempt?.generation != generation || inboxAutomaticPageAttempt?.offset != offset else { return }
             // Busy callbacks rearm a missed appearance, but a failed admitted window waits for More.

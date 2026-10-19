@@ -375,7 +375,7 @@ struct InboxScreen: View {
                             if item.text("type") == "section" { inboxSection(item) }
                             else if item.text("type") == "task" {
                                 let row = item.object("row")
-                                let selected = model.inboxSelectedIDs.contains { $0.utf8.elementsEqual(row.text("id").utf8) }
+                                let selected = model.inboxTaskSelected(row.text("id"))
                                 HStack(spacing: 8) {
                                     if model.inboxSelectionMode, !row.flag("readOnly") {
                                         Button { Task { await model.selectInboxTask(row) } } label: {
