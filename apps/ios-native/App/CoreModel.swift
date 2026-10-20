@@ -392,6 +392,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var processInboxView: CoreObject = [:]
     @Published private(set) var processInboxNotice: CoreObject = [:]
     @Published private(set) var processInboxToast = ""
+    @Published private(set) var processInboxUndoLabel = ""
     @Published private(set) var processInboxError: String?
     @Published private(set) var processInboxReadError: String?
     @Published private(set) var processInboxInputs: [String: String] = [:]
@@ -1855,6 +1856,7 @@ final class CoreModel: ObservableObject {
                 settingsAIProofTask?.cancel(); settingsAIProofState = ""; settingsAIProofReadAttempts = 0
                 #endif
                 // Warm list ownership never crosses a Host replacement; durable recovery routes by source.
+                clearProcessInboxUndoOffer()
                 retireTaskListSortHost()
                 clearInboxTaskSelection()
                 inboxSelectionReadOwner = nil; inboxSelectionReading = false
@@ -2135,6 +2137,17 @@ final class CoreModel: ObservableObject {
     private var processInboxRequestID: String?
     private var processInboxRequestTaskID: String?
     private var processInboxAfterRequestID: String?
+    private struct ProcessInboxUndoOwner {
+        let host: CoreHost
+        let session: String
+        let decisionID: String
+        let taskID: String
+        let kind: String
+        let expiresAt: TimeInterval
+    }
+    private var processInboxUndoOffer: ProcessInboxUndoOwner?
+    private var processInboxUndoPending: ProcessInboxUndoOwner?
+    private var processInboxUndoExpiry: Task<Void, Never>?
     private var processInboxPendingEdits: [CoreObject] = []
     private var processInboxEditTask: Task<Void, Never>?
     private var processInboxTransitioning = false
@@ -2620,6 +2633,14 @@ final class CoreModel: ObservableObject {
         return ready && processInboxPresented && selectedSurface == caller && !processInboxView.isEmpty
             && !busy && !retryNeeded && !processInboxTransitioning && processInboxRequest == nil
             && processInboxAfterRequestID == nil && processInboxReadError == nil
+    }
+    var processInboxUndoEnabled: Bool {
+        guard let offer = processInboxUndoOffer else { return false }
+        return ready && processInboxPresented && host === offer.host && processInboxSessionID == offer.session
+            && ProcessInfo.processInfo.systemUptime < offer.expiresAt && !processInboxUndoLabel.isEmpty
+            && !busy && !retryNeeded && !processInboxTransitioning && processInboxRequest == nil
+            && processInboxAfterRequestID == nil && processInboxReadError == nil
+            && !appLock.concealed && UIApplication.shared.applicationState == .active
     }
     var processInboxCloseEnabled: Bool {
         processInboxPresented && !busy && !retryNeeded && processInboxRequest == nil
@@ -7302,6 +7323,7 @@ final class CoreModel: ObservableObject {
     // Observe the actual scene episode before concealment clears presentation.
     // Inactive/authentication alone cannot manufacture a resume opportunity.
     func observeForegroundSyncScene(_ phase: ScenePhase, token: UUID?) {
+        if phase != .active { clearProcessInboxUndoOffer() }
         if phase == .active {
             foregroundSyncBackgroundObserved = false
             return
@@ -9589,6 +9611,7 @@ final class CoreModel: ObservableObject {
         guard diagnosticsLockObserver == nil else { return }
         diagnosticsLockObserver = appLock.$enabled.combineLatest(appLock.$locked).sink { [weak self] enabled, locked in
             if enabled == nil || locked {
+                self?.clearProcessInboxUndoOffer()
                 self?.clearInboxTaskSelection()
                 self?.inboxGeneration += 1
                 self?.inboxCurrent = false
@@ -31634,6 +31657,7 @@ final class CoreModel: ObservableObject {
 
     func openProcessInbox() async {
         guard !inboxBulkCompositionBlocked else { return }
+        observeDiagnosticsConcealment()
         guard selectedSurface != .inbox || !inboxSelectionMode else { return }
         let caller = selectedSurface
         let fromInbox = caller == .inbox && inboxActionsEnabled && !inbox.object("process").text("label").isEmpty
@@ -31657,6 +31681,7 @@ final class CoreModel: ObservableObject {
             guard !view.isEmpty ? view.text("sessionId") == session && !session.isEmpty : true else {
                 throw CocoaError(.coderReadCorrupt)
             }
+            clearProcessInboxUndoOffer()
             processInboxCaller = caller
             processInboxSessionID = session.isEmpty ? nil : session
             processInboxView = view
@@ -31864,6 +31889,7 @@ final class CoreModel: ObservableObject {
             processInboxRequestMethod = nil
             processInboxRequestID = nil
             processInboxRequestTaskID = nil
+            processInboxUndoPending = nil
             retryNeeded = false
             processInboxError = failure.localizedDescription
         } else {
@@ -31882,6 +31908,7 @@ final class CoreModel: ObservableObject {
         processInboxView = next
         processInboxNotice = result.object("notice")
         processInboxToast = result.object("toast").text("message")
+        try installProcessInboxUndoOffer(result.object("toast"))
         processInboxError = nil
         processInboxReadError = nil
         processInboxPendingEdits = []
@@ -31918,13 +31945,122 @@ final class CoreModel: ObservableObject {
         }
     }
 
+    private func clearProcessInboxUndoOffer() {
+        processInboxUndoExpiry?.cancel()
+        processInboxUndoExpiry = nil
+        processInboxUndoOffer = nil
+        processInboxUndoLabel = ""
+    }
+
+    private func installProcessInboxUndoOffer(_ toast: CoreObject) throws {
+        let descriptor = toast.object("undo")
+        guard !descriptor.isEmpty else { clearProcessInboxUndoOffer(); return }
+        let decisionID = descriptor.text("decisionRequestId"), taskID = descriptor.text("taskId")
+        let kind = descriptor.text("kind")
+        guard Set(descriptor.keys) == Set(["decisionRequestId", "taskId", "kind"]),
+              UUID(uuidString: decisionID)?.uuidString.lowercased() == decisionID,
+              decisionID == processInboxAfterRequestID,
+              !taskID.isEmpty, ["filed", "completed", "discarded"].contains(kind),
+              !toast.text("undoLabel").isEmpty,
+              let ownerHost = host, let session = processInboxSessionID else { throw CocoaError(.coderReadCorrupt) }
+        if processInboxUndoOffer?.decisionID == decisionID { return }
+        clearProcessInboxUndoOffer()
+        guard !appLock.concealed, UIApplication.shared.applicationState == .active else { return }
+        let offer = ProcessInboxUndoOwner(host: ownerHost, session: session, decisionID: decisionID,
+            taskID: taskID, kind: kind, expiresAt: ProcessInfo.processInfo.systemUptime + 5.2)
+        processInboxUndoOffer = offer
+        processInboxUndoLabel = toast.text("undoLabel")
+        processInboxUndoExpiry = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 5_200_000_000) } catch { return }
+            guard let self, self.processInboxUndoOffer?.decisionID == decisionID,
+                  self.processInboxUndoOffer?.host === ownerHost else { return }
+            self.clearProcessInboxUndoOffer()
+        }
+    }
+
+    func undoProcessInboxDecision() async {
+        guard processInboxUndoEnabled, let offer = processInboxUndoOffer else { return }
+        processInboxTransitioning = true
+        busy = true
+        defer {
+            if host === offer.host {
+                processInboxTransitioning = false
+                finishOperation()
+            }
+        }
+        guard await waitForProcessInboxEdits(), host === offer.host,
+              processInboxSessionID == offer.session, processInboxUndoOffer?.decisionID == offer.decisionID,
+              ProcessInfo.processInfo.systemUptime < offer.expiresAt,
+              !appLock.concealed, UIApplication.shared.applicationState == .active else { return }
+        do {
+            let requestID = UUID().uuidString.lowercased()
+            let request = try json(["requestId": requestID, "decisionRequestId": offer.decisionID, "taskId": offer.taskID])
+            processInboxUndoPending = offer
+            processInboxRequest = request
+            processInboxRequestMethod = "inboxUndo"
+            processInboxRequestID = requestID
+            processInboxRequestTaskID = offer.taskID
+            processInboxError = nil
+            clearProcessInboxUndoOffer()
+            let result = try await query("inboxUndo", [request], beforeDispatch: {
+                self.host === offer.host && self.processInboxSessionID == offer.session
+                    && !self.appLock.concealed && UIApplication.shared.applicationState == .active
+            })
+            guard host === offer.host, processInboxRequest == request else { return }
+            try await acknowledgeProcessInboxUndo(result)
+        } catch {
+            guard host === offer.host else { return }
+            handleProcessInboxWriteError(error)
+        }
+    }
+
+    private func acknowledgeProcessInboxUndo(_ result: CoreObject) async throws {
+        guard processInboxRequestMethod == "inboxUndo", processInboxRequest != nil,
+              let owner = processInboxUndoPending, host === owner.host,
+              Set(result.keys) == Set(["taskId", "decisionRequestId", "kind"]),
+              result.text("taskId").utf8.elementsEqual(owner.taskID.utf8),
+              result.text("decisionRequestId").utf8.elementsEqual(owner.decisionID.utf8),
+              result.text("kind") == owner.kind else { throw CocoaError(.coderReadCorrupt) }
+        processInboxRequest = nil
+        processInboxRequestMethod = nil
+        processInboxRequestID = nil
+        processInboxRequestTaskID = nil
+        processInboxUndoPending = nil
+        retryNeeded = false
+        processInboxError = nil
+        processInboxToast = ""
+        guard processInboxPresented, processInboxSessionID == owner.session,
+              !processInboxView.isEmpty, !appLock.concealed else { return }
+        do {
+            // Refresh the current step; Undo does not rewind the queue or discard its draft.
+            let next = try await query("inboxStep", [try processInboxStepInput()])
+            guard host === owner.host, processInboxSessionID == owner.session,
+                  next.text("sessionId") == owner.session,
+                  next.text("taskId") == processInboxView.text("taskId") else { return }
+            processInboxView = next
+            syncProcessInboxInputs()
+        } catch {
+            guard host === owner.host, processInboxSessionID == owner.session else { return }
+            processInboxReadError = error.localizedDescription
+        }
+    }
+
     private func readProcessInboxAfterCommit() async {
-        guard let session = processInboxSessionID, let requestID = processInboxAfterRequestID else { return }
+        guard let ownerHost = host, let session = processInboxSessionID,
+              let requestID = processInboxAfterRequestID else { return }
+        func current() -> Bool {
+            host === ownerHost && processInboxPresented && processInboxSessionID == session
+                && processInboxAfterRequestID == requestID
+        }
         do {
             let result = try await query("inboxAfterCommit", [try json(["sessionId": session, "requestId": requestID])])
+            guard current() else { return }
             try installProcessInboxResult(result)
             processInboxAfterRequestID = nil
-        } catch { processInboxReadError = error.localizedDescription }
+        } catch {
+            guard current() else { return }
+            processInboxReadError = error.localizedDescription
+        }
     }
 
     func retryProcessInboxRead() async {
@@ -31967,6 +32103,7 @@ final class CoreModel: ObservableObject {
                 catch { if !isDefiniteRejection(error) { throw error } }
             }
             let caller = processInboxCaller
+            clearProcessInboxUndoOffer()
             processInboxPresented = false
             processInboxCaller = nil
             processInboxSessionID = nil
@@ -32553,6 +32690,7 @@ final class CoreModel: ObservableObject {
         guard !busy, !projectRenameEditing || projectRenameRequest != nil else { return }
         guard ready else { await start(); return }
         guard let retryHost = host else { return }
+        guard processInboxUndoPending == nil || processInboxUndoPending?.host === retryHost else { return }
         let inboxRetryHost = inboxBulkMutationHost
         let inboxRetrySelection = inboxSelectionGeneration, inboxRetryForeground = foregroundSyncGeneration
         let inboxRetrySurface = selectedSurface
@@ -32904,9 +33042,13 @@ final class CoreModel: ObservableObject {
                 let wrapper: CoreObject
                 if let acknowledgment { wrapper = try decode(acknowledgment) }
                 else if let method = processInboxRequestMethod, let request = processInboxRequest {
-                    wrapper = try await query(method, [request])
+                    wrapper = try await query(method == "inboxUndo" ? "inboxUndoRetryOutcome" : method, [request])
                 } else { throw CocoaError(.coderValueNotFound) }
-                try await acceptProcessInboxResponse(wrapper)
+                if processInboxRequestMethod == "inboxUndo" {
+                    try await acknowledgeProcessInboxUndo(wrapper)
+                } else {
+                    try await acceptProcessInboxResponse(wrapper)
+                }
                 return
             }
             if let request = projectRenameRequest {
@@ -34052,6 +34194,7 @@ final class CoreModel: ObservableObject {
                     processInboxRequestMethod = nil
                     processInboxRequestID = nil
                     processInboxRequestTaskID = nil
+                    processInboxUndoPending = nil
                     processInboxError = error.localizedDescription
                 }
                 reviewTaskWritePending = false

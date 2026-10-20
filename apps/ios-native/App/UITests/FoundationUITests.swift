@@ -5456,6 +5456,77 @@ final class FoundationUITests: XCTestCase {
         waitForExpectations(timeout: 10)
     }
 
+    func testProcessInboxUndoNormalPublicDecisionsAndColdRead() throws {
+        try processInboxUndoPublicDecisions("NORMAL", largest: false)
+    }
+
+    func testProcessInboxUndoLargestPublicDecisionsAndColdRead() throws {
+        try processInboxUndoPublicDecisions("LARGEST", largest: true)
+    }
+
+    private func processInboxUndoPublicDecisions(_ role: String, largest: Bool) throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let library = try task371Library(role, prefix: "MINDWTR_PROCESS_UNDO_UI_")
+        app.launchArguments = ["--native-ui-test-library", library,
+            "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US", "-AppleInterfaceStyle", "Light"]
+        if largest {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        }
+        app.launch()
+        boardEnabled(app.buttons["tab-inbox"], timeout: 30)
+        let titles = ["Undo filed original", "Undo completed original", "Undo discarded original", "Undo expired original"]
+        for title in titles {
+            boardTap(app, "capture-open")
+            app.textViews["capture-input"].typeText(title)
+            boardTap(app, "capture-save")
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.textViews["capture-input"])
+            waitForExpectations(timeout: 15)
+        }
+        boardTap(app, "inbox-process-primary")
+        boardTap(app, "process-inbox-mode")
+        let title = app.textFields["process-inbox-title"]
+        let scroll = app.scrollViews["process-inbox-scroll"]
+        for (index, choice) in ["reference", "done", "trash"].enumerated() {
+            boardEnabled(title)
+            XCTAssertEqual(title.value as? String, titles[index])
+            if index == 0 {
+                replaceTextView(title, with: "Undo filed edited")
+            }
+            let button = app.buttons["process-inbox-choice-" + choice]
+            revealPagedElement(app, button, in: scroll)
+            boardTap(app, button.identifier)
+            let undo = app.buttons["process-inbox-undo"]
+            XCTAssertTrue(undo.waitForExistence(timeout: 3))
+            XCTAssertTrue(undo.isEnabled)
+            XCTAssertTrue(undo.isHittable, "Undo stays visible above the scrolling next task")
+            undo.tap()
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: undo)
+            waitForExpectations(timeout: 10)
+            XCTAssertFalse(app.staticTexts["process-inbox-error"].exists)
+            expectation(for: NSPredicate(format: "value == %@", titles[index + 1]), evaluatedWith: title)
+            waitForExpectations(timeout: 15)
+        }
+        let reference = app.buttons["process-inbox-choice-reference"]
+        revealPagedElement(app, reference, in: scroll)
+        boardTap(app, reference.identifier)
+        let undo = app.buttons["process-inbox-undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 3), "The final decision still offers Undo")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: undo)
+        waitForExpectations(timeout: 8)
+        XCTAssertFalse(app.staticTexts["process-inbox-error"].exists)
+        boardTap(app, "process-inbox-close")
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["inbox-process-primary"], timeout: 30)
+        boardTap(app, "inbox-process-primary")
+        boardEnabled(title)
+        XCTAssertEqual(title.value as? String, titles[0], "Filed Undo restores the original title through cold load")
+        XCTAssertEqual(app.staticTexts["process-inbox-progress"].label, "0/3 tasks")
+        XCTAssertFalse(app.buttons["process-inbox-undo"].exists, "Cold startup cannot recreate a transient Undo offer")
+        boardTap(app, "process-inbox-close")
+        app.terminate()
+    }
+
     func testProcessInboxEditsSkipConversionAndReviewReturn() {
         let app = XCUIApplication()
         let library = UUID().uuidString.lowercased()
@@ -30089,6 +30160,83 @@ extension FoundationUITests {
 
     // Task738 libraries are staged by root; these tests exercise read-only session filters.
     func testInboxFiltersNormalAndColdRead() throws { try task738InboxFilters("NORMAL") }
+    func testLegacyTokenFiltersNormalAndColdRead() throws { try legacyTokenFilters("NORMAL") }
+    func testLegacyTokenFiltersLargestAndColdRead() throws { try legacyTokenFilters("LARGEST", largest: true) }
+
+    private func legacyTokenFilters(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_LEGACY_TOKENS_UI_" + role + "_LIBRARY"],
+              UUID(uuidString: library)?.uuidString.lowercased() == library else {
+            throw XCTSkip("A fresh externally seeded legacy-token library is required")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)",
+            "-AppleLocale", "en_US", "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); defer { app.terminate() }
+        func openPage(_ prefix: String) {
+            if prefix == "inbox" { task736OpenInbox(app) }
+            else {
+                boardTap(app, "tab-menu"); boardTap(app, "menu-history")
+                boardEnabled(app.buttons["history-tab-done"])
+                if !app.buttons["history-tab-done"].isSelected { boardTap(app, "history-tab-done") }
+            }
+        }
+        func openTokens(_ prefix: String) {
+            if prefix == "inbox" { boardTap(app, "inbox-filters-open") }
+            else { boardTap(app, "done-overflow-button"); boardTap(app, "done-filter-action") }
+            let tokens = app.buttons[prefix + "-filter-tokens"]
+            if !tokens.isHittable { revealPagedElement(app, tokens, in: app.scrollViews[prefix + "-filter-overview-scroll"]) }
+            boardEnabled(tokens); tokens.tap()
+        }
+        func rows(_ prefix: String, target: Bool, others: Bool) {
+            let scroll = app.descendants(matching: .any)[prefix + "-scroll"].firstMatch
+            let suffixes = ["target", "other", "empty"]
+            let expected = Set(suffixes.filter { $0 == "target" ? target : others })
+            for suffix in expected {
+                let row = app.buttons["task-title-legacy-" + prefix + "-" + suffix]
+                if !row.isHittable { revealPagedElement(app, row, in: scroll) }
+                boardEnabled(row); XCTAssertTrue(row.isHittable)
+            }
+            // Traverse the entire three-row fixture; a virtualized offscreen row is not proof of exclusion.
+            scroll.swipeDown(); scroll.swipeDown()
+            var observed = Set<String>()
+            for step in 0..<4 {
+                for suffix in suffixes where app.buttons["task-title-legacy-" + prefix + "-" + suffix].exists {
+                    observed.insert(suffix)
+                }
+                if step < 3 { scroll.swipeUp() }
+            }
+            XCTAssertEqual(observed, expected)
+        }
+        for prefix in ["inbox", "done"] {
+            openPage(prefix); rows(prefix, target: true, others: true)
+            // Only the target has bare office/desk and admin/team; no prefixed duplicate or taxonomy entry.
+            for (parent, child, bare) in [("@office", "@office/desk", "office"), ("#admin", "#admin/team", "admin")] {
+                for state in 1...3 {
+                    openTokens(prefix)
+                    let search = app.textFields[prefix + "-filter-picker-search"]
+                    boardEnabled(search); search.tap()
+                    let previous = search.value as? String ?? ""
+                    search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previous.count) + parent + "\n")
+                    let token = app.buttons[prefix + "-filter-token-" + parent]
+                    if !token.isHittable { revealPagedElement(app, token, in: app.scrollViews[prefix + "-filter-picker-scroll"]) }
+                    boardEnabled(token)
+                    XCTAssertEqual(app.buttons.matching(identifier: token.identifier).count, 1)
+                    XCTAssertEqual(app.buttons.matching(identifier: prefix + "-filter-token-" + child).count, 1)
+                    XCTAssertFalse(app.buttons[prefix + "-filter-token-" + bare].exists)
+                    task738TokenState(token, selected: state == 2, value: state == 3 ? "Excluded" : "")
+                    token.tap()
+                    task738TokenState(token, selected: state == 1, value: state == 2 ? "Excluded" : "")
+                    boardTap(app, prefix + "-filters-close")
+                    rows(prefix, target: state != 2, others: state != 1)
+                }
+            }
+        }
+        app.terminate(); app.launch()
+        for prefix in ["inbox", "done"] { openPage(prefix); rows(prefix, target: true, others: true) }
+    }
+
     func testInboxFiltersLargestTextAndColdRead() throws { try task738InboxFilters("LARGEST", largest: true) }
 
     func testInboxFiltersNormalSelectedTokenHitPointProbe() throws {

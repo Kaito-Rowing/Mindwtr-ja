@@ -65,6 +65,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'source', 'documentFocused', 'activationSupported', 'activationActive', 'clipboardAvailable', 'errorKind',
     // task-copy-input: click trust and coarse pointer/keyboard-or-assistive classification only.
     'inputTrusted', 'inputKind',
+    // ios-process-inbox-undo reuses releaseCheck, kind, and outcome below.
     // ios-inbox-filters reuses releaseCheck, operation, and count below.
     // ios-inbox-bulk-trash reuses releaseCheck, count, and outcome below.
     // ios-inbox-group: fixed grouping choice and aggregate folded headings.

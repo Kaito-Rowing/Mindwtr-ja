@@ -105,6 +105,9 @@ import {
     type NativeInboxDurableResult,
     type NativePreparedInboxWrite,
 } from './native-host-contract-process-inbox';
+import { canonicalInboxJSON, createInboxUndoMethods, nativeInboxDecisionPayload, nativeInboxUndoOffer,
+    type NativeInboxUndoOffer } from './native-host-contract-process-inbox-undo';
+import type { NativeRequestReceipts } from './native-request-receipts';
 import { isCustomTimeEstimate as isCustomInboxTimeEstimate, TIME_ESTIMATE_OPTIONS as INBOX_TIME_ESTIMATES } from './calendar-scheduling';
 import { resolveProcessInboxPlan } from './process-inbox-plan';
 import {
@@ -1661,7 +1664,7 @@ export function createNativeHostContract(options: {
 
     // Built before the contract object: Process Inbox's Clarify reads the current step's draft.
     const inboxProcessingMethods = createInboxProcessingMethods({
-        readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
+        readiness, save, receipts, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
         revision: (now) => `${revision()}:${displayRevision(now)}`,
     });
 
@@ -3421,12 +3424,13 @@ export type NativeInboxProcessingResult = {
     /** A message the step shows instead of moving on, like "Choose a start date". */
     notice: ProcessInboxNotice | null;
     /** The confirmation shown after a decision lands, with its Undo label. */
-    toast: { message: string; undoLabel: string } | null;
+    toast: { message: string; undoLabel: string; undo?: NativeInboxUndoOffer } | null;
 };
 
 type InboxProcessingDeps = {
     readiness: () => NativeHostResult<null>;
     save: () => Promise<NativeHostResult<null>>;
+    receipts: NativeRequestReceipts;
     revision: (now: Date) => string;
     t: () => (key: string) => string;
     formatDate: () => DateFormatter;
@@ -3727,6 +3731,7 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
     };
 
     return {
+        ...createInboxUndoMethods({ readiness: deps.readiness, receipts: deps.receipts }),
         /** Open the queue: Inbox items and returning Someday items, in store order. */
         startInboxProcessing(input: { mode?: ProcessInboxMode } = {}): NativeHostResult<{
             sessionId: string | null;
@@ -3976,10 +3981,19 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
             if (!ready.ok) return ready;
             const prepared = readNativePreparedInboxWrite(input);
             if (!prepared) return fail('INVALID_INPUT', 'Prepared Inbox request or journal does not match');
+            const envelope = { request: prepared.request, prepared };
+            const payload = nativeInboxDecisionPayload(envelope);
+            const saved = deps.receipts.saved<NativeInboxDurableResult>(prepared.request.requestId, payload);
+            if (saved) {
+                if (saved.ok && canonicalInboxJSON(saved.value) !== canonicalInboxJSON(prepared.result))
+                    return fail('INVALID_INPUT', 'Saved Process Inbox result does not match its journal');
+                if (saved.ok) markAllSaved();
+                return saved;
+            }
             const entry = sessions.get(prepared.request.sessionId);
             const previous = entry?.prepared.get(prepared.request.requestId);
-            if (previous && (JSON.stringify(previous.request) !== JSON.stringify(prepared.request)
-                || previous.preparedJSON !== JSON.stringify(prepared))) {
+            if (previous && (canonicalInboxJSON(previous.request) !== canonicalInboxJSON(prepared.request)
+                || canonicalInboxJSON(JSON.parse(previous.preparedJSON)) !== canonicalInboxJSON(prepared))) {
                 return fail('INVALID_INPUT', 'Request ID already belongs to another Inbox change');
             }
             // Freeze the warm transition while the pre-write queue still contains
@@ -3995,31 +4009,34 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
                     selectedProjectId = prepared.kind === 'projectCreate' ? prepared.result.createdProjectId ?? null : null;
                 }
             }
-            const applied = await useTaskStore.getState().commitPreparedInboxEffect(prepared.effect);
-            if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Inbox change conflicts with current data');
-            if (entry && !previous && (nextSession || selectedProjectId)) {
-                if (entry.prepared.size >= 20) {
-                    const oldest = Array.from(entry.prepared.entries()).find(([, receipt]) => receipt.saved && receipt.advanced)?.[0];
-                    if (oldest) entry.prepared.delete(oldest);
-                }
-                entry.prepared.set(prepared.request.requestId, {
-                    request: prepared.request, result: prepared.result, saved: false, advanced: false,
-                    preparedJSON: JSON.stringify(prepared),
-                    nextSession, selectedProjectId, committed: prepared.witness.committed,
-                    title: prepared.witness.draft.title.trim() || prepared.witness.source.title,
-                });
-            }
+            let outcome = 'replayed';
             try {
-                if (useTaskStore.getState().persistenceFailure) await useTaskStore.getState().retryPersistence();
-                const saved = await deps.save();
-                if (!saved.ok) return saved;
+                const committed = await deps.receipts.run<NativeInboxDurableResult>(prepared.request.requestId, payload, async () => {
+                    const applied = await useTaskStore.getState().commitPreparedInboxEffect(prepared.effect);
+                    if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Inbox change conflicts with current data');
+                    outcome = applied.outcome ?? 'applied';
+                    if (entry && !previous && (nextSession || selectedProjectId)) {
+                        if (entry.prepared.size >= 20) {
+                            const oldest = Array.from(entry.prepared.entries()).find(([, receipt]) => receipt.saved && receipt.advanced)?.[0];
+                            if (oldest) entry.prepared.delete(oldest);
+                        }
+                        entry.prepared.set(prepared.request.requestId, {
+                            request: prepared.request, result: prepared.result, saved: false, advanced: false,
+                            preparedJSON: JSON.stringify(prepared),
+                            nextSession, selectedProjectId, committed: prepared.witness.committed,
+                            title: prepared.witness.draft.title.trim() || prepared.witness.source.title,
+                        });
+                    }
+                    return { ok: true, value: prepared.result };
+                });
+                if (!committed.ok) return committed;
                 markAllSaved();
             } catch (error) {
                 return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
             }
             logInfo('Native prepared Process Inbox saved', { scope: 'native-host', category: 'storage',
                 context: { releaseCheck: 'v1.3.3/native-prepared-process-inbox',
-                    outcome: applied.outcome ?? 'applied', action: prepared.kind } });
+                    outcome, action: prepared.kind } });
             return { ok: true, value: prepared.result };
         },
 
@@ -4046,9 +4063,11 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
                 }
             }
             const t = deps.t();
+            const prepared = JSON.parse(receipt.preparedJSON) as NativePreparedInboxWrite;
+            const undo = nativeInboxUndoOffer(prepared);
             return { ok: true, value: result(entry, null, receipt.committed
                 ? { message: formatProcessInboxCommitMessage(t, receipt.committed, receipt.title),
-                    undoLabel: tFallback(t, 'common.undo', 'Undo') } : null) };
+                    undoLabel: tFallback(t, 'common.undo', 'Undo'), ...(undo ? { undo } : {}) } : null) };
         },
 
         /** Close the session. Nothing is written; a write still waiting for its save stays retryable. */

@@ -2867,6 +2867,10 @@ private final class Engine: @unchecked Sendable {
     private var preparedSomedaySectionTaskEnvelope: Data?
     private var confirmedTaskCancellationEnvelope: String?
     private var confirmedTaskCompletionEnvelope: String?
+    // Only a warm, durably acknowledged decision can authorize a fresh public Undo.
+    // The UI owns the offer deadline; a journal or settled Undo owns exact retry.
+    private var confirmedInboxDecisionEnvelope: String?
+    private var confirmedInboxUndoEnvelope: String?
     private var confirmedDoneTaskStatusEnvelope: String?
     private var confirmedReferenceTaskBackdateEnvelope: String?
     private var confirmedReferenceTaskDestinationEnvelope: String?
@@ -2997,6 +3001,7 @@ private final class Engine: @unchecked Sendable {
     private var startupProjectDateResult: String?
     private var startupProjectAreaResult: String?
     private var startupInboxResult: String?
+    private var startupInboxUndoResult: String?
     private var startupChecklistResult: String?
     private var startupFocusGroupResult: String?
     private var startupTaskListSortResult: String?
@@ -3097,9 +3102,10 @@ private final class Engine: @unchecked Sendable {
         "mindSweepGuide": 1, "mindSweepAdd": 1,
         "inboxStart": 1, "inboxStep": 1, "inboxEnd": 1,
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
+        "inboxUndo": 1, "inboxUndoRetryOutcome": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["iosAIRequestTimeout", "iosAIReasoningEffort", "iosAIGeminiThinkingBudget", "pomodoroTransitionWrite", "calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "inboxTasksAddTagWrite", "inboxTasksRemoveTagWrite", "inboxTasksOrganizeWrite", "inboxOrganizeDestinationCreateWrite", "referenceTasksMoveWrite", "inboxTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "captureLinesSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["iosAIRequestTimeout", "iosAIReasoningEffort", "iosAIGeminiThinkingBudget", "pomodoroTransitionWrite", "calendarSubscriptionAdd", "calendarSubscriptionSetting", "deviceCalendarSetting", "reminderSnoozeCommit", "reminderCompletionCommit", "notificationSetting", "dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "inboxTasksAddTagWrite", "inboxTasksRemoveTagWrite", "inboxTasksOrganizeWrite", "inboxOrganizeDestinationCreateWrite", "referenceTasksMoveWrite", "inboxTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "captureLinesSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "calendarEventTaskCreate", "mindSweepAdd", "inboxCommit", "inboxSkip", "inboxUndo", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectFileRemoveWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -3164,6 +3170,26 @@ private final class Engine: @unchecked Sendable {
             throw HostFailure("Invalid pending command journal")
         }
         guard saved.version == 2 else { throw HostFailure("Unsupported pending command journal; raw captures cannot be safely replanned") }
+        if saved.method == "inboxUndoCommit" {
+            guard try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)),
+                  Set(raw.keys) == Set(["version", "method", "argumentsJSON"])
+                    || Set(raw.keys) == Set(["version", "method", "argumentsJSON", "terminal"]) else {
+                throw HostFailure("INVALID_INPUT: Malformed Process Inbox Undo journal")
+            }
+            if let terminal = raw["terminal"] {
+                guard let encoded = terminal as? [String: Any], encoded.count == 1,
+                      let name = encoded.keys.first, ["success", "rejected"].contains(name),
+                      let payload = encoded[name] as? [String: Any], Set(payload.keys) == Set(["_0"]),
+                      let value = payload["_0"] as? String, value.utf8.count <= 4096 else {
+                    throw HostFailure("INVALID_INPUT: Malformed Process Inbox Undo terminal")
+                }
+                if name == "success" {
+                    guard try NativeJSON.hasUniqueObjectKeys(value) else {
+                        throw HostFailure("INVALID_INPUT: Malformed Process Inbox Undo terminal")
+                    }
+                }
+            }
+        }
         if boardOrderEnvelope(saved) != nil {
             guard journalData.count <= Self.boardOrderJournalLimit,
                   try NativeJSON.hasUniqueObjectKeys(String(decoding: journalData, as: UTF8.self)) else {
@@ -3773,6 +3799,10 @@ private final class Engine: @unchecked Sendable {
                 _ = try invoke("inboxPreparedValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
             }
+            if let command = pending, command.method == "inboxUndoCommit" {
+                _ = try invoke("inboxUndoValidate", arguments: inboxUndoJournalArguments(command))
+                if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
             if let command = pending, command.method == "taskCancellationUndoCommit" {
                 _ = try invoke("taskCancellationUndoValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
@@ -4174,6 +4204,8 @@ private final class Engine: @unchecked Sendable {
         let recoveringProjectDate = pending?.method == "projectDateCommit"
         let recoveringProjectArea = pending?.method == "projectAreaCommit"
         let recoveringInbox = pending?.method == "inboxPreparedCommit"
+        let recoveringInboxUndo = pending?.method == "inboxUndoCommit"
+        let owedInboxRequestIDs = try pending.map(inboxRetainedRequestIDs) ?? []
         let recoveringChecklist = pending?.method == "checklistPreparedCommit"
         let recoveringFocusGroup = pending?.method == "focusGroupWrite"
         let recoveringTaskListSort = pending?.method == "taskListSortWrite"
@@ -4299,6 +4331,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringProjectDate, let terminal, case .success(let value) = terminal { startupProjectDateResult = value }
         if recoveringProjectArea, let terminal, case .success(let value) = terminal { startupProjectAreaResult = value }
         if recoveringInbox, let terminal, case .success(let value) = terminal { startupInboxResult = value }
+        if recoveringInboxUndo, let terminal, case .success(let value) = terminal { startupInboxUndoResult = value }
         if recoveringChecklist, let terminal, case .success(let value) = terminal { startupChecklistResult = value }
         if recoveringFocusGroup, let terminal, case .success(let value) = terminal { startupFocusGroupResult = value }
         if recoveringTaskListSort, let terminal, case .success(let value) = terminal { startupTaskListSortResult = value }
@@ -4311,7 +4344,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringSomedaySectionMove, let terminal, case .success(let value) = terminal { startupSomedaySectionMoveResult = value }
         if recoveringSomedaySectionUndo, let terminal, case .success(let value) = terminal { startupSomedaySectionUndoResult = value }
         try resumeActivationIfNeeded()
-        _ = try invoke("iosPruneReceipts", arguments: [retentionJSON, (owedAppleReminderRequestID ?? owedPomodoroRequestID).map { $0 as Any } ?? NSNull()])
+        _ = try invoke("iosPruneReceipts", arguments: [retentionJSON, (owedAppleReminderRequestID ?? owedPomodoroRequestID).map { $0 as Any } ?? NSNull(), owedInboxRequestIDs])
         let value = try invoke("window", arguments: [0, 50, ""])
         let recoveredAreas = startupAreaCreateResult ?? startupAreaColorResult ?? startupAreaRenameResult
             ?? startupAreaOrderResult ?? startupAreaDeleteResult
@@ -4340,7 +4373,7 @@ private final class Engine: @unchecked Sendable {
         let recoveredReminderCommands = startupReminderCompletionResult ?? startupReminderSnoozeResult
         let recoveredCompletion = recoveredTaskCompletion ?? recoveredReminderCommands
         let recoveredLists = recoveredCompletion
-            ?? startupInboxResult ?? startupChecklistResult ?? startupTaskListSortResult
+            ?? startupInboxUndoResult ?? startupInboxResult ?? startupChecklistResult ?? startupTaskListSortResult
             ?? recoveredManage ?? recoveredSomedaySections
             ?? startupSomedaySectionMoveResult ?? startupSomedaySectionUndoResult
         let recoveredArchiveDelete = startupArchivedTasksDeleteResult ?? startupArchivedTasksDeleteUndoResult
@@ -4421,7 +4454,7 @@ private final class Engine: @unchecked Sendable {
                 : startupCalendarUnscheduleResult != nil ? "calendarUnscheduleCommit"
                 : startupSavedSearchResult != nil ? "savedSearchCommit"
                 : startupFocusSavedFilterResult != nil ? "focusSavedFilterCommit"
-                : startupInboxResult != nil ? "inboxPreparedCommit" : startupChecklistResult != nil ? "checklistPreparedCommit"
+                : startupInboxUndoResult != nil ? "inboxUndoCommit" : startupInboxResult != nil ? "inboxPreparedCommit" : startupChecklistResult != nil ? "checklistPreparedCommit"
                 : startupTaskListSortResult != nil ? "taskListSortWrite"
                 : startupPersonCreateResult != nil ? "managePersonCreateCommit"
                 : startupAppLockResult != nil ? "appLockCommit"
@@ -4594,6 +4627,7 @@ private final class Engine: @unchecked Sendable {
         startupProjectDateResult = nil
         startupProjectAreaResult = nil
         startupInboxResult = nil
+        startupInboxUndoResult = nil
         startupChecklistResult = nil
         startupFocusGroupResult = nil
         startupTaskListSortResult = nil
@@ -11264,6 +11298,12 @@ private final class Engine: @unchecked Sendable {
                 throw CoreHostRejection(message: "INVALID_INPUT: Reference destination cannot carry an editor draft")
             }
         }
+        if method == "inboxUndo" {
+            let savedEditor = try editorDrafts.read()
+            guard editorAttempt == nil, savedEditor == nil else {
+                throw CoreHostRejection(message: "INVALID_INPUT: Process Inbox Undo cannot replace a saved editor draft")
+            }
+        }
         if method == "referenceTasksMoveWrite" {
             guard editorAttempt == nil, try editorDrafts.read() == nil else {
                 throw CoreHostRejection(message: "INVALID_INPUT: Reference bulk Move cannot carry an editor draft")
@@ -11339,7 +11379,7 @@ private final class Engine: @unchecked Sendable {
             if (Self.historyTaskWritePrefix(method) != nil || ["referenceTasksRemoveTagWrite", "referenceTasksRemoveTagRetryOutcome", "referenceTasksAddTagWrite", "inboxTasksAddTagWrite", "inboxTasksRemoveTagWrite", "inboxTasksOrganizeWrite", "inboxOrganizeDestinationCreateWrite", "referenceTasksAddTagRetryOutcome", "inboxTasksAddTagRetryOutcome", "inboxTasksRemoveTagRetryOutcome", "inboxTasksOrganizeRetryOutcome", "inboxOrganizeDestinationCreateRetryOutcome", "referenceTasksMoveWrite", "referenceTasksMoveRetryOutcome", "referenceTasksMoveNotice", "inboxTasksMoveWrite", "inboxTasksMoveRetryOutcome", "inboxTasksMoveNotice"].contains(method)), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
-            if ["archivedTaskRestoreWrite", "archivedTaskRestoreRetryOutcome", "archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "trashItemsRestoreRetryOutcome", "trashItemsPurgeRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome", "archivedTasksDeleteUndoWrite", "archivedTasksDeleteUndoRetryOutcome", "reviewTaskWrite", "taskCancellationUndo", "taskCompletion", "taskCompletionUndo", "taskCompletionRetryOutcome", "taskCompletionUndoRetryOutcome", "taskDelete", "taskDeleteReceiptOutcome", "taskDeleteUndo", "taskDeleteUndoReceiptOutcome", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteReceiptOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome", "projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method), pending == nil {
+            if ["archivedTaskRestoreWrite", "archivedTaskRestoreRetryOutcome", "archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "trashItemsRestoreWrite", "trashItemsPurgeWrite", "trashItemsRestoreRetryOutcome", "trashItemsPurgeRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome", "archivedTasksDeleteUndoWrite", "archivedTasksDeleteUndoRetryOutcome", "reviewTaskWrite", "taskCancellationUndo", "taskCompletion", "taskCompletionUndo", "taskCompletionRetryOutcome", "taskCompletionUndoRetryOutcome", "inboxUndo", "inboxUndoRetryOutcome", "taskDelete", "taskDeleteReceiptOutcome", "taskDeleteUndo", "taskDeleteUndoReceiptOutcome", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteReceiptOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome", "projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
             if ["unassignedAreaColorOptions", "unassignedAreaColorWrite", "unassignedAreaColorRetryOutcome"].contains(method), pending == nil {
@@ -11358,7 +11398,7 @@ private final class Engine: @unchecked Sendable {
             // Mind Sweep has no journal or write before argument validation.
             // Its UI may release an oversized draft only on a definite refusal.
             // With an older command still owed, keep every error uncertain.
-            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "notificationSetting", "deviceCalendarSetting", "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdPomodoroOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "savedSearchOptions", "focusSavedFilterWrite", "savedSearchWrite", "focusSavedFilterRetryOutcome", "savedSearchRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectFileRemoveWrite", "projectAttachmentWriteRetryOutcome", "projectFileRemoveWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
+            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "inboxUndo", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "notificationSetting", "deviceCalendarSetting", "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdPomodoroOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "savedSearchOptions", "focusSavedFilterWrite", "savedSearchWrite", "focusSavedFilterRetryOutcome", "savedSearchRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectFileRemoveWrite", "projectAttachmentWriteRetryOutcome", "projectFileRemoveWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
             throw error
         }
         if pomodoroOwned {
@@ -11450,6 +11490,9 @@ private final class Engine: @unchecked Sendable {
             }
             if ["taskCompletionRetryOutcome", "taskCompletionUndoRetryOutcome"].contains(method) {
                 return try taskCompletionReceiptOutcome(method: method, arguments: args)
+            }
+            if method == "inboxUndoRetryOutcome" {
+                return try inboxUndoReceiptOutcome(arguments: args)
             }
             if method == "trashTaskRestoreRetryOutcome" {
                 // The journal is the only replay authority. A visible target or an
@@ -11575,6 +11618,7 @@ private final class Engine: @unchecked Sendable {
                     throw CoreHostRejection(message: failure.message)
                 }
             }
+            if ["inboxStart", "inboxEnd"].contains(method) { confirmedInboxDecisionEnvelope = nil }
             if method == "taskShare" {
                 guard value.utf8.count <= 2_000_000,
                       let share = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
@@ -13464,6 +13508,10 @@ private final class Engine: @unchecked Sendable {
             try allowRetainedOrdinaryPreparation()
             do { command = try prepareTaskCompletionCommand(method, args: args) }
             catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "inboxUndo" {
+            try allowRetainedOrdinaryPreparation()
+            do { command = try prepareInboxUndoCommand(arguments: args) }
+            catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "inboxTasksMoveWrite" {
             try allowRetainedOrdinaryPreparation()
             do { command = try prepareInboxTasksMoveCommand(arguments: args) }
@@ -13831,6 +13879,7 @@ private final class Engine: @unchecked Sendable {
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if ["inboxCommit", "inboxSkip"].contains(method) {
             try allowRetainedOrdinaryPreparation()
+            confirmedInboxDecisionEnvelope = nil
             do {
                 let value = try invoke(method == "inboxCommit" ? "inboxCommitPrepare" : "inboxSkipPrepare", arguments: args)
                 guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
@@ -14662,6 +14711,15 @@ private final class Engine: @unchecked Sendable {
             _ = try invoke("inboxPreparedValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
         }
+        if command.method == "inboxUndoCommit" {
+            _ = try invoke("inboxUndoValidate", arguments: inboxUndoJournalArguments(command))
+            if case .success(let value) = terminal {
+                let proven = try invoke("inboxUndoOutcome", arguments: inboxUndoJournalArguments(command))
+                guard proven != "null" else { throw HostFailure("SAVE_FAILED: Process Inbox Undo has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: proven)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
+        }
         if command.method == "taskCancellationUndoCommit" {
             _ = try invoke("taskCancellationUndoValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
@@ -14959,6 +15017,9 @@ private final class Engine: @unchecked Sendable {
         if ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(command.method), case .success = terminal {
             // Retain the exact validated envelope even if terminal persistence or cleanup fails.
             rememberConfirmedTaskCompletion(command)
+        }
+        if ["inboxPreparedCommit", "inboxUndoCommit"].contains(command.method), case .success = terminal {
+            rememberConfirmedInboxCommand(command)
         }
         var finished = command
         finished.terminal = terminal
@@ -15333,6 +15394,18 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("processInboxWrite")
 #endif
             NSLog("Native iOS Process Inbox choice saved releaseCheck=v1.3.3/native-ios-process-inbox-write")
+        }
+        if command.method == "inboxUndoCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("processInboxUndo")
+#endif
+            if let args = try? inboxUndoJournalArguments(command), let raw = args.first as? String,
+               let envelope = try? NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+               let prepared = envelope["prepared"] as? [String: Any],
+               let result = prepared["result"] as? [String: Any], let kind = result["kind"] as? String,
+               let context = try? Self.ownedJSON(["releaseCheck": "v1.3.7/ios-process-inbox-undo", "kind": kind, "outcome": "persisted"]) {
+                _ = try? invoke("logLine", arguments: ["Native iOS Process Inbox Undo persisted", context])
+            }
         }
         if command.method == "checklistPreparedCommit", case .success = terminal {
 #if DEBUG
@@ -15736,7 +15809,7 @@ private final class Engine: @unchecked Sendable {
             || (["reminderCompletionCommit", "reminderSnoozeCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["doneTaskStatusCommit", "doneTaskCompletedAtCommit", "archiveTaskCompletedAtCommit", "referenceTaskBackdateCommit", "referenceTaskDestinationCommit", "referenceProjectNextActionCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["referenceTasksRemoveTagCommit", "referenceTasksAddTagCommit", "inboxTasksAddTagCommit", "inboxTasksRemoveTagCommit", "inboxTasksOrganizeCommit", "inboxOrganizeDestinationCreateCommit", "referenceTasksMoveCommit", "inboxTasksMoveCommit", "archivedTaskRestoreCommit", "archivedTasksRestoreCommit", "trashItemsRestoreCommit", "trashItemsPurgeCommit", "archivedTasksDeleteCommit", "archivedTasksDeleteUndoCommit", "taskCompletionCommit", "taskCompletionUndoCommit", "taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit", "projectDuplicateCommit", "projectLifecycleCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
-            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "calendarEventTaskCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "notificationSettingCommit", "iosAIRequestTimeoutCommit", "iosAIReasoningEffortCommit", "iosAIGeminiThinkingBudgetCommit", "deviceCalendarSettingCommit", "calendarSubscriptionSettingCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectFileRemoveWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "calendarEventTaskCommit", "mindSweepCommit", "inboxPreparedCommit", "inboxUndoCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "notificationSettingCommit", "iosAIRequestTimeoutCommit", "iosAIReasoningEffortCommit", "iosAIGeminiThinkingBudgetCommit", "deviceCalendarSettingCommit", "calendarSubscriptionSettingCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectFileRemoveWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionOrderWrite", "backupDocumentCommit", "captureLinesCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
@@ -17455,6 +17528,26 @@ private final class Engine: @unchecked Sendable {
         confirmedTaskCompletionUndoEnvelope = nil
         confirmedTaskCompletionEnvelope = encoded
         rememberReferenceProjectNextActionOrigin(kind: "completion", envelope: encoded)
+    }
+
+    private func rememberConfirmedInboxCommand(_ command: PendingCommand) {
+        guard let encoded = (try? journalArguments(command))?.first as? String else { return }
+        if command.method == "inboxUndoCommit" {
+            confirmedInboxDecisionEnvelope = nil
+            confirmedInboxUndoEnvelope = encoded
+        } else if command.method == "inboxPreparedCommit" {
+            // A recovered forward write settles debt but must not create a fresh Undo offer.
+            guard !recoveryActivationPending,
+                  let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  let prepared = envelope["prepared"] as? [String: Any],
+                  let witness = prepared["witness"] as? [String: Any],
+                  let committed = witness["committed"] as? String,
+                  ["next", "waiting", "someday", "reference", "done", "trash"].contains(committed) else {
+                confirmedInboxDecisionEnvelope = nil
+                return
+            }
+            confirmedInboxDecisionEnvelope = encoded
+        }
     }
 
     private static func archivedTasksDeletePrefix(_ method: String) -> String? {
@@ -19359,6 +19452,99 @@ private final class Engine: @unchecked Sendable {
         return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "confirmed", "result": result], options: [.sortedKeys]), as: UTF8.self)
     }
 
+    private func inboxUndoReceiptOutcome(arguments args: [Any]) throws -> String {
+        guard let raw = args.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              let confirmed = confirmedInboxUndoEnvelope,
+              let envelope = try NativeJSON.jsonObject(with: Data(confirmed.utf8)) as? [String: Any],
+              Self.equalJSON(envelope["request"], request) else {
+            throw CoreHostRejection(message: "STALE_REVISION: Process Inbox Undo has no exact confirmed request")
+        }
+        let command = PendingCommand(version: 2, method: "inboxUndoCommit",
+            argumentsJSON: String(decoding: try JSONSerialization.data(withJSONObject: [confirmed]), as: UTF8.self))
+        let arguments = try inboxUndoJournalArguments(command)
+        _ = try invoke("inboxUndoValidate", arguments: arguments)
+        let proven = try invoke("inboxUndoOutcome", arguments: arguments)
+        guard proven != "null" else {
+            throw CoreHostRejection(message: "STALE_REVISION: Process Inbox Undo has no exact saved receipt")
+        }
+        try validatePreparedAcknowledgment(command, value: proven)
+        return proven
+    }
+
+    private func prepareInboxUndoCommand(arguments args: [Any]) throws -> PendingCommand {
+        guard let raw = args.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              let confirmed = confirmedInboxDecisionEnvelope,
+              let decision = try NativeJSON.jsonObject(with: Data(confirmed.utf8)) as? [String: Any],
+              let original = decision["request"] as? [String: Any],
+              Self.equalJSON(request["decisionRequestId"], original["requestId"]),
+              Self.equalJSON(request["taskId"], original["taskId"]) else {
+            throw HostFailure("INVALID_INPUT: Process Inbox Undo needs the exact confirmed decision")
+        }
+        let input = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "decision": decision], options: [.sortedKeys]), as: UTF8.self)
+        let value = try invoke("inboxUndoPrepare", arguments: [input])
+        guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+              let prepared = response["prepared"] as? [String: Any],
+              Self.equalJSON(prepared["request"], request), Self.equalJSON(prepared["decision"], decision) else {
+            throw HostFailure("INVALID_INPUT: Malformed Process Inbox Undo preparation")
+        }
+        let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+        guard envelope.utf8.count <= 4_500_000 else { throw HostFailure("INVALID_INPUT: Process Inbox Undo journal is too large") }
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+        guard encoded.utf8.count <= 27_010_000 else { throw HostFailure("INVALID_INPUT: Process Inbox Undo journal is too large") }
+        let command = PendingCommand(version: 2, method: "inboxUndoCommit", argumentsJSON: encoded)
+        _ = try invoke("inboxUndoValidate", arguments: inboxUndoJournalArguments(command))
+        return command
+    }
+
+    private func inboxUndoJournalArguments(_ command: PendingCommand) throws -> [Any] {
+        guard command.method == "inboxUndoCommit", command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= 27_010_000,
+              try NativeJSON.hasUniqueObjectKeys(command.argumentsJSON),
+              let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+              args.count == 1, args[0].utf8.count <= 4_500_000,
+              try NativeJSON.hasUniqueObjectKeys(args[0]),
+              let envelope = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+              Set(envelope.keys) == Set(["request", "prepared"]),
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              Set(prepared.keys) == Set(["version", "kind", "request", "decision", "witness", "effect", "result"]),
+              Self.isInteger(prepared["version"], equalTo: 1), prepared["kind"] as? String == "inboxUndo",
+              Self.equalJSON(prepared["request"], request),
+              let decision = prepared["decision"] as? [String: Any], Set(decision.keys) == Set(["request", "prepared"]),
+              let original = decision["request"] as? [String: Any],
+              Self.equalJSON(request["decisionRequestId"], original["requestId"]),
+              Self.equalJSON(request["taskId"], original["taskId"]),
+              prepared["witness"] is [String: Any], prepared["effect"] is [String: Any],
+              let result = prepared["result"] as? [String: Any],
+              Set(result.keys) == Set(["taskId", "decisionRequestId", "kind"]),
+              Self.equalJSON(result["taskId"], request["taskId"]),
+              Self.equalJSON(result["decisionRequestId"], request["decisionRequestId"]),
+              ["filed", "completed", "discarded"].contains(result["kind"] as? String ?? "") else {
+            throw HostFailure("INVALID_INPUT: Malformed prepared Process Inbox Undo journal")
+        }
+        let publicRequest = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+        _ = try arguments("inboxUndo", String(decoding: try JSONSerialization.data(withJSONObject: [publicRequest]), as: UTF8.self))
+        let originalJSON = String(decoding: try JSONSerialization.data(withJSONObject: decision, options: [.sortedKeys]), as: UTF8.self)
+        let originalArguments = String(decoding: try JSONSerialization.data(withJSONObject: [originalJSON]), as: UTF8.self)
+        _ = try journalArguments(PendingCommand(version: 2, method: "inboxPreparedCommit", argumentsJSON: originalArguments))
+        return args
+    }
+
+    private func inboxRetainedRequestIDs(_ command: PendingCommand) throws -> [String] {
+        guard ["inboxPreparedCommit", "inboxUndoCommit"].contains(command.method) else { return [] }
+        let args = try journalArguments(command)
+        guard let raw = args.first as? String,
+              let envelope = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any], let id = request["requestId"] as? String else {
+            throw HostFailure("INVALID_INPUT: Malformed Process Inbox receipt retention")
+        }
+        if command.method == "inboxUndoCommit", let original = request["decisionRequestId"] as? String { return [id, original] }
+        return [id]
+    }
+
     private func taskCompletionReceiptOutcome(method: String, arguments args: [Any]) throws -> String {
         guard let encodedRequest = args.first as? String,
               let request = try NativeJSON.jsonObject(with: Data(encodedRequest.utf8)) as? [String: Any],
@@ -19741,6 +19927,11 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func validatePreparedAcknowledgment(_ command: PendingCommand, value: String) throws {
+        if command.method == "inboxUndoCommit" {
+            guard value.utf8.count <= 4096, try NativeJSON.hasUniqueObjectKeys(value) else {
+                throw HostFailure("INVALID_INPUT: Malformed Process Inbox Undo acknowledgment")
+            }
+        }
         if ["inboxTasksMoveCommit", "inboxTasksAddTagCommit", "inboxTasksRemoveTagCommit", "inboxTasksOrganizeCommit", "inboxOrganizeDestinationCreateCommit"].contains(command.method) {
             guard value.utf8.count <= 2_000_000, try NativeJSON.hasUniqueObjectKeys(value),
                   Self.referenceTasksMoveJSONIsLossless(try NativeJSON.jsonObject(with: Data(value.utf8))) else {
@@ -19762,6 +19953,15 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("Malformed checklist acknowledgment")
             }
             try validateChecklistResult(result, request: request, kind: kind)
+        }
+        if command.method == "inboxUndoCommit" {
+            guard let request = envelope["request"] as? [String: Any],
+                  Set(result.keys) == Set(["taskId", "decisionRequestId", "kind"]),
+                  Self.equalJSON(result["taskId"], request["taskId"]),
+                  Self.equalJSON(result["decisionRequestId"], request["decisionRequestId"]),
+                  ["filed", "completed", "discarded"].contains(result["kind"] as? String ?? "") else {
+                throw HostFailure("INVALID_INPUT: Malformed Process Inbox Undo acknowledgment")
+            }
         }
         if let prefix = Self.historyTaskWritePrefix(command.method), prefix != "referenceProjectNextAction", command.method == prefix + "Commit" {
             guard let request = envelope["request"] as? [String: Any], Set(result.keys) == Set(["id"]),
@@ -20344,6 +20544,7 @@ private final class Engine: @unchecked Sendable {
         if ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(command.method) {
             return try taskCompletionJournalArguments(command)
         }
+        if command.method == "inboxUndoCommit" { return try inboxUndoJournalArguments(command) }
         if let attempt = command.editorDraft {
             guard UUID(uuidString: attempt.id)?.uuidString.lowercased() == attempt.id,
                   UUID(uuidString: attempt.sessionID)?.uuidString.lowercased() == attempt.sessionID,
@@ -21797,7 +21998,7 @@ private final class Engine: @unchecked Sendable {
         if method == "taskOpenTab", json.utf8.count > 4_096 {
             throw HostFailure("INVALID_INPUT: Task open tab request is too large")
         }
-        if ["archivedTaskRestoreWrite", "archivedTaskRestoreRetryOutcome", "taskCancellationUndo", "taskCompletion", "taskCompletionUndo", "taskCompletionRetryOutcome", "taskCompletionUndoRetryOutcome", "taskDelete", "taskDeleteReceiptOutcome", "taskDeleteUndo", "taskDeleteUndoReceiptOutcome", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteReceiptOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome"].contains(method), json.utf8.count > 4_096 {
+        if ["archivedTaskRestoreWrite", "archivedTaskRestoreRetryOutcome", "taskCancellationUndo", "taskCompletion", "taskCompletionUndo", "taskCompletionRetryOutcome", "taskCompletionUndoRetryOutcome", "inboxUndo", "inboxUndoRetryOutcome", "taskDelete", "taskDeleteReceiptOutcome", "taskDeleteUndo", "taskDeleteUndoReceiptOutcome", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteReceiptOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome"].contains(method), json.utf8.count > 4_096 {
             throw HostFailure("INVALID_INPUT: Task mutation request too large")
         }
         if method == "taskPromote", json.utf8.count > 2_000_000 {
@@ -21899,6 +22100,9 @@ private final class Engine: @unchecked Sendable {
         }
         if method == "inboxStep" && json.utf8.count > 12_000_000 {
             throw HostFailure("INVALID_INPUT: Process Inbox step is too large")
+        }
+        if ["inboxUndo", "inboxUndoRetryOutcome"].contains(method) && json.utf8.count > 4_096 {
+            throw HostFailure("INVALID_INPUT: Process Inbox Undo request is too large")
         }
     }
 
@@ -23417,6 +23621,18 @@ private final class Engine: @unchecked Sendable {
                   let taskID = request["id"] as? String, !taskID.isEmpty, taskID.utf16.count <= 500,
                   let revision = request["taskRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 200 else {
                 throw HostFailure("INVALID_INPUT: Completion needs a displayed task revision and lowercase UUID")
+            }
+        }
+        if ["inboxUndo", "inboxUndoRetryOutcome"].contains(method) {
+            guard let text = args.first as? String, text.utf8.count <= 4096,
+                  try NativeJSON.hasUniqueObjectKeys(json), try NativeJSON.hasUniqueObjectKeys(text),
+                  let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                  Set(request.keys) == Set(["requestId", "decisionRequestId", "taskId"]),
+                  let id = request["requestId"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+                  let decision = request["decisionRequestId"] as? String, UUID(uuidString: decision)?.uuidString.lowercased() == decision,
+                  id != decision, let task = request["taskId"] as? String,
+                  !task.isEmpty, task.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Process Inbox Undo needs distinct lowercase request UUIDs and one bounded task ID")
             }
         }
         if method == "taskCompletionUndo" || method == "taskCompletionUndoRetryOutcome" {
@@ -28235,6 +28451,9 @@ private final class Engine: @unchecked Sendable {
         startupCalendarResult = nil
         startupMindSweepResult = nil
         startupInboxResult = nil
+        startupInboxUndoResult = nil
+        confirmedInboxDecisionEnvelope = nil
+        confirmedInboxUndoEnvelope = nil
         startupChecklistResult = nil
         startupFocusGroupResult = nil
         context = nil
