@@ -1370,15 +1370,18 @@ export function sortTasksBySavedPreference<T extends Task>(
         const byCreatedDesc = () => safeTime(b.createdAt, 0) - safeTime(a.createdAt, 0);
         const byTitle = () => textCollator.compare(a.title, b.title);
         const byId = () => textCollator.compare(a.id, b.id);
-        const byDue = () => safeDueTime(a.dueDate, Number.POSITIVE_INFINITY) - safeDueTime(b.dueDate, Number.POSITIVE_INFINITY);
-        const byStart = () => safeTime(a.startTime, Number.POSITIVE_INFINITY) - safeTime(b.startTime, Number.POSITIVE_INFINITY);
-        const byReview = () => safeTime(a.reviewAt, Number.POSITIVE_INFINITY) - safeTime(b.reviewAt, Number.POSITIVE_INFINITY);
+        // Two missing values are both +Infinity: compare them as equal, never as
+        // Infinity - Infinity = NaN, which would skip every fallback below.
+        const byNumber = (x: number, y: number) => (x === y ? 0 : x - y);
+        const byDue = () => byNumber(safeDueTime(a.dueDate, Number.POSITIVE_INFINITY), safeDueTime(b.dueDate, Number.POSITIVE_INFINITY));
+        const byStart = () => byNumber(safeTime(a.startTime, Number.POSITIVE_INFINITY), safeTime(b.startTime, Number.POSITIVE_INFINITY));
+        const byReview = () => byNumber(safeTime(a.reviewAt, Number.POSITIVE_INFINITY), safeTime(b.reviewAt, Number.POSITIVE_INFINITY));
         const byUpdated = () => safeTime(b.updatedAt, 0) - safeTime(a.updatedAt, 0);
         const byPriority = () => (TASK_PRIORITY_SORT_RANK[b.priority as TaskPriority] || 0)
             - (TASK_PRIORITY_SORT_RANK[a.priority as TaskPriority] || 0);
         const byEnergy = () => (TASK_ENERGY_SORT_RANK[b.energyLevel as NonNullable<Task['energyLevel']>] || 0)
             - (TASK_ENERGY_SORT_RANK[a.energyLevel as NonNullable<Task['energyLevel']>] || 0);
-        const byTimeEstimate = () => timeEstimateSortRank(a.timeEstimate) - timeEstimateSortRank(b.timeEstimate);
+        const byTimeEstimate = () => byNumber(timeEstimateSortRank(a.timeEstimate), timeEstimateSortRank(b.timeEstimate));
         const byProject = () => {
             const orderA = a.projectId ? (projectOrder.get(a.projectId) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
             const orderB = b.projectId ? (projectOrder.get(b.projectId) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
