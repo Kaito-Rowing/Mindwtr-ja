@@ -35,16 +35,24 @@ const commit = (host: ReturnType<typeof createNativeHostContract>, prepared: Nat
 afterEach(async () => { await flushPendingSave(); resetForTests(); vi.useRealTimers(); });
 
 describe('native prepared Board nonterminal moves', () => {
-    it('prepares one normalized task without writes and durably moves without touching peers/settings', async () => {
+    it('prepares without writes and matches RN settings retention while preserving peers', async () => {
+        await open();
+        const initialSettings = clone(useTaskStore.getState().settings);
+        await useTaskStore.getState().updateTask('n-draft', { status: 'waiting' });
+        await flushPendingSave();
+        const rnSettings = clone(useTaskStore.getState().settings);
         const { host, recorder } = await open();
+        // Reuse the same freshly initialized device and analytics identities for both writers.
+        useTaskStore.setState({ settings: initialSettings });
         const tasks = clone(useTaskStore.getState()._allTasks); const settings = clone(useTaskStore.getState().settings);
         const prepared = prepare(host); expect(recorder.log).toEqual([]);
+        expect(useTaskStore.getState().settings).toEqual(settings);
         expect(useTaskStore.getState()._allTasks).toEqual(tasks); expect(prepared.after.status).toBe('waiting');
         expect(prepared.after.boardOrder).toBeUndefined(); expect(prepared.deviceIdToInitialize).toBeNull();
         expect(value(await commit(host, prepared))).toEqual({ changed: true, open: null });
         expect(useTaskStore.getState()._tasksById.get('n-draft')).toEqual(prepared.after);
         expect(useTaskStore.getState()._allTasks.filter(row => row.id !== 'n-draft')).toEqual(tasks.filter(row => row.id !== 'n-draft'));
-        expect(useTaskStore.getState().settings).toEqual(settings);
+        expect(useTaskStore.getState().settings).toEqual(rnSettings);
     });
     it('returns admitted same-status no-op and refuses a card not shown under the request filters', async () => {
         const { host, recorder } = await open();

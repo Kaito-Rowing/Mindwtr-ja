@@ -10,6 +10,8 @@ import AVFoundation
 struct BoardOrderDragCapture: Equatable {
     let nonce: String
     let generation: Int
+    let hostID: ObjectIdentifier
+    let moveAllowed: Bool
     let taskID: String
     let status: String
     let displayedJSON: String
@@ -17424,8 +17426,39 @@ final class CoreModel: ObservableObject {
         await performBoardAction(request)
     }
 
-    func captureBoardOrderDrag(_ displayed: CoreObject, column: CoreObject, filters: CoreObject) -> BoardOrderDragCapture? {
-        guard boardOrderActions(displayed, column: column, filters: filters).count == 2,
+    func boardMoveDragDestinations(_ displayed: CoreObject, column: CoreObject, filters: CoreObject) -> [CoreObject] {
+        let row = displayed.object("row"), status = column.text("status")
+        guard !appLock.concealed, taskCompletionRequest == nil, taskActionUndoRequest == nil,
+              !referenceProjectNextActionPending, ["inbox", "next", "waiting", "someday"].contains(status),
+              row.text("status").utf8.elementsEqual(status.utf8),
+              !row.text("id").isEmpty, row.text("id").utf16.count <= 500,
+              !row.text("taskRevision").isEmpty, row.text("taskRevision").utf16.count <= 4096,
+              !filters.isEmpty, let frozenFilters = try? json(filters),
+              let currentFilters = try? json(boardView.object("filters")),
+              frozenFilters.utf8.elementsEqual(currentFilters.utf8) else { return [] }
+        let columns = boardView.objects("columns").filter { $0.text("status").utf8.elementsEqual(status.utf8) }
+        guard columns.count == 1 else { return [] }
+        let ids = column.objects("cards").map { $0.object("row").text("id") }
+        let currentIDs = columns[0].objects("cards").map { $0.object("row").text("id") }
+        let current = columns[0].objects("cards").filter { $0.object("row").text("id").utf8.elementsEqual(row.text("id").utf8) }
+        guard !ids.contains(""), Set(ids).count == ids.count, ids.count == currentIDs.count,
+              zip(ids, currentIDs).allSatisfy({ $0.0.utf8.elementsEqual($0.1.utf8) }), current.count == 1,
+              let frozenCard = try? json(displayed), let currentCard = try? json(current[0]),
+              frozenCard.utf8.elementsEqual(currentCard.utf8) else { return [] }
+        return boardMoveDestinations(displayed).filter { destination in
+            boardView.objects("columns").filter { $0.text("status") == destination.text("status") }.count == 1
+        }
+    }
+
+    func boardDragAvailable(_ displayed: CoreObject, column: CoreObject, filters: CoreObject) -> Bool {
+        boardOrderActions(displayed, column: column, filters: filters).count == 2
+            || !boardMoveDragDestinations(displayed, column: column, filters: filters).isEmpty
+    }
+
+    func captureBoardDrag(_ displayed: CoreObject, column: CoreObject, filters: CoreObject) -> BoardOrderDragCapture? {
+        let moveAllowed = !boardMoveDragDestinations(displayed, column: column, filters: filters).isEmpty
+        guard let host, !appLock.concealed,
+              moveAllowed || boardOrderActions(displayed, column: column, filters: filters).count == 2,
               let displayedJSON = try? json(displayed), let columnJSON = try? json(column),
               let filtersJSON = try? json(filters) else { return nil }
         let cards = column.objects("cards"), ids = cards.map { $0.object("row").text("id") }
@@ -17436,16 +17469,45 @@ final class CoreModel: ObservableObject {
                   boardOrderActions(item, column: column, filters: filters).count == 2 else { return nil }
             return item.object("row").text("id")
         }
-        return BoardOrderDragCapture(nonce: UUID().uuidString, generation: boardGeneration,
+        return BoardOrderDragCapture(nonce: UUID().uuidString, generation: boardGeneration, hostID: ObjectIdentifier(host), moveAllowed: moveAllowed,
             taskID: displayed.object("row").text("id"), status: column.text("status"),
             displayedJSON: displayedJSON, columnJSON: columnJSON, filtersJSON: filtersJSON, ids: ids, headID: headID)
     }
 
     func boardOrderDragIsCurrent(_ capture: BoardOrderDragCapture) -> Bool {
-        guard capture.generation == boardGeneration,
+        guard let host, capture.hostID == ObjectIdentifier(host), !appLock.concealed,
+              capture.generation == boardGeneration,
               let displayed = try? decode(capture.displayedJSON), let column = try? decode(capture.columnJSON),
               let filters = try? decode(capture.filtersJSON) else { return false }
         return boardOrderActions(displayed, column: column, filters: filters).count == 2
+    }
+
+    func boardMoveDragIsCurrent(_ capture: BoardOrderDragCapture, status: String) -> Bool {
+        guard let host, capture.hostID == ObjectIdentifier(host), capture.generation == boardGeneration,
+              capture.moveAllowed, capture.status != status, let displayed = try? decode(capture.displayedJSON),
+              let column = try? decode(capture.columnJSON), let filters = try? decode(capture.filtersJSON),
+              capture.taskID.utf8.elementsEqual(displayed.object("row").text("id").utf8),
+              capture.status.utf8.elementsEqual(column.text("status").utf8) else { return false }
+        return boardMoveDragDestinations(displayed, column: column, filters: filters).contains { $0.text("status") == status }
+    }
+
+    /// Consume the gesture and retain its exact Move before any asynchronous work.
+    @discardableResult
+    func moveBoardCard(_ capture: BoardOrderDragCapture, status: String, consume: () -> Bool) -> Bool {
+        guard boardMoveDragIsCurrent(capture, status: status),
+              let displayed = try? decode(capture.displayedJSON), let filters = try? decode(capture.filtersJSON),
+              let request = try? json(["requestId": UUID().uuidString, "action": [
+                "type": "moveCard", "taskId": capture.taskID, "status": status,
+                "taskRevision": displayed.object("row").text("taskRevision"), "filters": filters]]), consume() else { return false }
+        retainBoardAction(request)
+        let submittedHost = host
+        Task {
+            // Submission is separate from the existing durable Move acknowledgement.
+            _ = try? await submittedHost?.call("logLine", argumentsJSON: json([
+                "Native iOS Board cross-column drag submitted", #"{"releaseCheck":"v1.3.7/ios-board-cross-column-drag"}"#]))
+            await runBoardAction(request)
+        }
+        return true
     }
 
     /// Diagnostic-only: never enters the operation owner or changes published UI state.

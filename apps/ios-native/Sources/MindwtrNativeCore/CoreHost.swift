@@ -21837,6 +21837,8 @@ private final class Engine: @unchecked Sendable {
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-inbox-view-boundary", "outcome": "rendered"])
         case "Native iOS Board drag submitted":
             valid = Self.equalJSON(context, ["releaseCheck": "v1.3.5/ios-board-drag"])
+        case "Native iOS Board cross-column drag submitted":
+            valid = Self.equalJSON(context, ["releaseCheck": "v1.3.7/ios-board-cross-column-drag"])
         case "Native iOS Board drag stage":
             let reasons = [
                 "begin": ["scene", "admission", "geometry-missing", "geometry-ineligible", "ready"],

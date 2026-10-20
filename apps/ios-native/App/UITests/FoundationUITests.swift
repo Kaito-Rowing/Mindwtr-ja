@@ -5908,6 +5908,114 @@ final class FoundationUITests: XCTestCase {
         XCTAssertEqual(cards.count, 1)
     }
 
+    func testBoardCrossColumnDragNormalAndColdRead() throws {
+        try boardCrossColumnRoundTrip("NORMAL")
+    }
+
+    func testBoardCrossColumnDragLargestTextAndColdRead() throws {
+        try boardCrossColumnRoundTrip("LARGEST", largest: true)
+    }
+
+    private let boardCrossSource = "board-cross-source"
+    private let boardCrossPeer = "board-cross-peer"
+
+    private func boardCrossBody(_ app: XCUIApplication, _ status: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "board-drop-" + status).firstMatch
+    }
+
+    private func boardCrossAssert(_ app: XCUIApplication, status: String) {
+        boardEnabled(app.buttons["board-filter-open"])
+        for column in ["inbox", "next", "waiting", "someday", "done"] {
+            let expected = (column == status ? 1 : 0) + (column == "waiting" ? 1 : 0)
+            XCTAssertEqual(app.staticTexts["board-count-" + column].label, String(expected))
+            XCTAssertEqual(boardCrossBody(app, column).buttons["board-task-" + boardCrossSource].exists, column == status)
+        }
+        XCTAssertTrue(boardCrossBody(app, "waiting").buttons["board-task-" + boardCrossPeer].exists)
+        XCTAssertFalse(app.buttons["task-view-close"].exists)
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+    }
+
+    private func boardCrossDrag(_ app: XCUIApplication, from source: String, to destination: String) throws {
+        let handle = app.images["board-drag-" + boardCrossSource]
+        let body = boardCrossBody(app, destination)
+        let scroll = app.scrollViews["board-scroll"]
+        boardEnabled(handle); boardEnabled(body)
+        func finite(_ frame: CGRect) -> Bool {
+            [frame.minX, frame.minY, frame.width, frame.height, frame.maxX, frame.maxY].allSatisfy { $0.isFinite }
+                && frame.width > 0 && frame.height > 0
+        }
+        func targetPoint(_ sourceFrame: CGRect, _ target: CGRect) -> CGPoint {
+            let inset = min(CGFloat(24), target.height / 2)
+            return CGPoint(x: target.midX, y: sourceFrame.midY < target.midY ? target.minY + inset : target.maxY - inset)
+        }
+        // Scroll before admission only. Changing the viewport during a drag cancels it.
+        for _ in 0..<8 {
+            let viewport = app.frame.intersection(scroll.frame), sourceFrame = handle.frame, target = body.frame
+            guard finite(viewport), finite(sourceFrame), finite(target) else {
+                XCTFail("Cross-column drag requires finite measured source, body and viewport")
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let point = targetPoint(sourceFrame, target)
+            let required = sourceFrame.union(CGRect(x: point.x - 1, y: point.y - 1, width: 2, height: 2))
+            guard required.height < viewport.height, required.minX >= viewport.minX, required.maxX <= viewport.maxX else {
+                XCTFail("The externally seeded adjacent source and destination must fit at this text size")
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if viewport.contains(sourceFrame), viewport.contains(point) { break }
+            let shift = viewport.midY - required.midY, distance = min(abs(shift), viewport.height * 0.4)
+            let start = CGPoint(x: viewport.minX + 4, y: viewport.minY + viewport.height * (shift > 0 ? 0.3 : 0.7))
+            let end = CGPoint(x: start.x, y: start.y + (shift > 0 ? distance : -distance))
+            try task735Coordinate(app, start).press(forDuration: 0.05, thenDragTo: task735Coordinate(app, end),
+                withVelocity: .slow, thenHoldForDuration: 0.2)
+        }
+        var prior: [CGRect] = []
+        let stable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let viewport = app.frame.intersection(scroll.frame), frames = [handle.frame, body.frame, viewport]
+            let settled = prior == frames; prior = frames
+            return settled && frames.allSatisfy(finite) && viewport.contains(handle.frame)
+                && viewport.contains(targetPoint(handle.frame, body.frame)) && handle.isHittable
+        }, object: nil)
+        guard XCTWaiter.wait(for: [stable], timeout: 10) == .completed else {
+            XCTFail("Cross-column source and destination must settle before admission")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let origin = try task735Coordinate(app, CGPoint(x: handle.frame.midX, y: handle.frame.midY))
+        let target = try task735Coordinate(app, targetPoint(handle.frame, body.frame))
+        origin.press(forDuration: 0.8, thenDragTo: target, withVelocity: .slow, thenHoldForDuration: 0.2)
+        let moved = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !self.boardCrossBody(app, source).buttons["board-task-" + self.boardCrossSource].exists
+                && self.boardCrossBody(app, destination).buttons["board-task-" + self.boardCrossSource].exists
+                && app.buttons["board-filter-open"].isEnabled
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 20), .completed)
+        boardCrossAssert(app, status: destination)
+    }
+
+    private func boardCrossColumnRoundTrip(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_BOARD_CROSS_COLUMN_UI_" + role + "_LIBRARY"] else {
+            throw XCTSkip("An externally staged isolated Board cross-column library is required")
+        }
+        guard UUID(uuidString: library)?.uuidString.lowercased() == library else {
+            XCTFail("The isolated library must be a canonical lowercase UUID")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let app = XCUIApplication(); defer { app.terminate() }
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US",
+            "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardSelectAllAreas(app); boardOpen(app); boardCrossAssert(app, status: "next")
+        // Next starts with one card; Waiting has a protected peer; Inbox/Someday are empty.
+        var source = "next"
+        for destination in ["waiting", "someday", "waiting", "next", "inbox", "next"] {
+            try boardCrossDrag(app, from: source, to: destination); source = destination
+        }
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); boardCrossAssert(app, status: "next")
+    }
+
     func testBoardDragNormalRoundTripAndColdRead() throws {
         try task735RoundTrip("NORMAL")
     }

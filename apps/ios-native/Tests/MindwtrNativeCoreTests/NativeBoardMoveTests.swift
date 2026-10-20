@@ -974,6 +974,17 @@ final class NativeBoardMoveTests: XCTestCase {
         await expectFailure("INVALID_INPUT") {
             _ = try await core.call("logLine", argumentsJSON: json([message, json(["releaseCheck": "v1.3.5/ios-board-order"])]))
         }
+        let moveMessage = "Native iOS Board cross-column drag submitted"
+        let moveContext = ["releaseCheck": "v1.3.7/ios-board-cross-column-drag"]
+        let moveResult = try await core.call("logLine", argumentsJSON: json([moveMessage, json(moveContext)]))
+        XCTAssertEqual(moveResult, "{}")
+        for extra in ["nonce", "taskId", "text", "status", "filters", "geometry", "outcome"] {
+            var forged = moveContext; forged[extra] = extra == "outcome" ? "saved" : "private"
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([moveMessage, json(forged)])) }
+        }
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("logLine", argumentsJSON: json([moveMessage, json(context)]))
+        }
         let stageMessage = "Native iOS Board drag stage", stageTag = "v1.3.5/ios-board-drag-stage"
         let stageReasons = [
             "begin": ["scene", "admission", "geometry-missing", "geometry-ineligible", "ready"],
@@ -1072,6 +1083,11 @@ final class NativeBoardMoveTests: XCTestCase {
         let submitted = lines.filter { $0["message"] as? String == message }
         XCTAssertEqual(submitted.count, 1)
         XCTAssertEqual(try json(XCTUnwrap(submitted.first?["context"])), try json(context))
+        let crossColumn = lines.filter { $0["message"] as? String == moveMessage }
+        XCTAssertEqual(crossColumn.count, 1)
+        XCTAssertEqual(crossColumn.first?["scope"] as? String, "native-ios")
+        XCTAssertEqual(try json(XCTUnwrap(crossColumn.first?["context"])), try json(moveContext))
+        XCTAssertFalse(lines.contains { $0["message"] as? String == "Native iOS Board move saved" })
         let stages = lines.filter { $0["message"] as? String == stageMessage }
         XCTAssertEqual(stages.count, stageContexts.count)
         XCTAssertEqual(try stages.map { try json(XCTUnwrap($0["context"])) }.sorted(), try stageContexts.map { try json($0) }.sorted())
