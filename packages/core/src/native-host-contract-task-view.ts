@@ -441,7 +441,7 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
             const task = findTask(input.id);
             if (!isTask(task)) return task;
             if (deps.isReadOnly(task)) return fail('INVALID_INPUT', 'Task is read-only while its project is archived');
-            const result = edit ? applyTaskChecklistEdit(checklist, edit, { isReference: draft.status === 'reference', newId: generateUUID }) : null;
+            const result = edit ? applyTaskChecklistEdit(checklist, edit, { newId: generateUUID }) : null;
             let nextDraft = draft;
             if (result) {
                 const status = getChecklistEditStatus({ taskMode: task.taskMode, status: draft.status, checklist: result.checklist });

@@ -1206,7 +1206,7 @@ export function TaskItemFieldRenderer({
                         t={t}
                         taskId={taskId}
                         checklist={task.checklist}
-                        plainList={editStatus === 'reference'}
+                        isReference={editStatus === 'reference'}
                         resetTaskChecklist={resetTaskChecklist}
                     />
                 </div>

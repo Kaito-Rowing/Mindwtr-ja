@@ -1502,7 +1502,7 @@ describe('TaskItemDisplay', () => {
         expect(openAttachment).toHaveBeenCalledWith(imageAttachment);
     });
 
-    it('renders preserved reference checklists as ordered plain lists without completion behavior', () => {
+    it('renders a reference list with checkboxes that tick its entries, without a progress count (#1416)', () => {
         const onToggleChecklistItem = vi.fn();
         const openSpy = vi.spyOn(window, 'open').mockReturnValue({} as Window);
         const referenceTask: Task = {
@@ -1545,21 +1545,18 @@ describe('TaskItemDisplay', () => {
             </LanguageProvider>
         );
 
-        const list = getByRole('list');
-        const items = Array.from(list.querySelectorAll('li'));
         expect(queryByText('1/2')).not.toBeInTheDocument();
         expect(getByText('Existing description')).toBeInTheDocument();
-        expect(items).toHaveLength(2);
-        expect(items.map((item) => item.textContent)).toEqual(['Finished source', 'First line\nsecond line']);
+        const boxes = Array.from(container.querySelectorAll('[aria-pressed]'));
+        expect(boxes.map((box) => box.getAttribute('aria-pressed'))).toEqual(['true', 'false']);
+        expect(container.querySelector('.line-through')?.textContent).toBe('Finished source');
         const sourceLink = getByRole('link', { name: 'source' });
-        expect(sourceLink).toBeInTheDocument();
-        expect(container.querySelector('[aria-pressed]')).not.toBeInTheDocument();
-        expect(items[0]).not.toHaveClass('line-through');
 
         fireEvent.click(sourceLink);
         expect(openSpy).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer');
-        fireEvent.click(items[0]);
         expect(onToggleChecklistItem).not.toHaveBeenCalled();
+        fireEvent.click(boxes[1]);
+        expect(onToggleChecklistItem).toHaveBeenCalledWith(1);
     });
 
     it('renders Reference as a memo summary without task-only metadata or controls', () => {

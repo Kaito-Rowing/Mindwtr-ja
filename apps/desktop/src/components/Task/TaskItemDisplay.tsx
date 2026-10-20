@@ -993,24 +993,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                             )}
                             {hasMetadata && renderMetadataRow("gap-3 mt-2", true)}
 
-                            {isReference && (task.checklist || []).length > 0 && (
-                                <ul
-                                    className="mt-3 list-disc space-y-1 pl-6 text-xs text-muted-foreground"
-                                    onPointerDown={(event) => event.stopPropagation()}
-                                    onClick={(event) => event.stopPropagation()}
-                                >
-                                    {(task.checklist || []).map((item, index) => (
-                                        <li
-                                            key={item.id || index}
-                                            className="whitespace-pre-wrap break-words pl-0.5"
-                                        >
-                                            <InlineMarkdown markdown={item.title} />
-                                        </li>
-                                    ))}
-                                </ul>
-                            )}
-
-                            {!isReference && (task.checklist || []).length > 0 && (
+                            {(task.checklist || []).length > 0 && (
                                 <div
                                     className="mt-3 space-y-1 pl-1"
                                     onPointerDown={(e) => e.stopPropagation()}

@@ -576,7 +576,7 @@ describe('TaskItemFieldRenderer date clear buttons', () => {
         expect(view.queryByRole('checkbox', { name: 'taskEdit.resetChecklistOnRepeat' })).toBeNull();
     });
 
-    it('uses the effective draft status to edit a retained reference checklist as a plain list', () => {
+    it('uses the effective draft status to label a retained reference checklist List, with checkboxes and Reset (#1416)', () => {
         const task: Task = {
             ...baseTask,
             status: 'next',
@@ -590,8 +590,8 @@ describe('TaskItemFieldRenderer date clear buttons', () => {
         );
 
         expect(getByText('List')).toBeInTheDocument();
-        expect(queryByRole('button', { name: 'Checklist 1' })).not.toBeInTheDocument();
-        expect(queryByText('taskEdit.resetChecklist')).not.toBeInTheDocument();
+        expect(queryByRole('button', { name: 'List 1' })).toBeInTheDocument();
+        expect(queryByText('taskEdit.resetChecklist')).toBeInTheDocument();
     });
 
     it('shows a date-coherence note on conflicting start and due date fields', () => {
