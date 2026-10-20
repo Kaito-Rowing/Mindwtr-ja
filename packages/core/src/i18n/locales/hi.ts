@@ -649,6 +649,7 @@ export const hiOverrides: Record<string, string> = {
         'projects.moveUp': 'बढ़ाना',
         'projects.moveDown': 'नीचे की ओर',
         'focus.reorderPosition': '{{title}}. {{count}} में से स्थान {{position}}',
+        'focus.hiddenByArea': "अन्य क्षेत्रों में {{count}} चयनित",
         'focus.reorderHint': 'क्रम बदलने के लिए देर तक दबाकर खींचें',
         'projects.tagFilter': 'टैग फ़िल्टर',
         'projects.allTags': 'सभी टैग',

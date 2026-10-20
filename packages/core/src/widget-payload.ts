@@ -1,3 +1,4 @@
+import { taskMatchesAreaFilterSelection } from './area-filter';
 import { format } from 'date-fns';
 import {
     createDateFormatter,
@@ -590,13 +591,12 @@ export function createWidgetPayloadProjection(
         return { ...item, upcomingDate, upcomingLabel, dueLabel: `${upcomingLabel} ${label}`, dueTone: 'normal', dueEmphasis: false };
     };
     // The Focus screen's own pools through the shared derivation (#1173),
-    // narrowed by exactly what the screen is filtering and sorting by. Today's
-    // Focus keeps drawing from every starred task, as it does on the screen:
-    // area visibility and start times must never eat one of its slots.
+    // narrowed by the screen's area selection, filters and sort.
     const focusFilter = options?.focusFilter ?? NO_FOCUS_WIDGET_FILTER;
     const pools = buildFocusPools({
         tasks: undeletedActionableTasks,
         visibleTasks: activeTasks,
+        isAreaVisible: (task) => taskMatchesAreaFilterSelection(task, areaVisibility.resolvedAreaFilter, projectById, areaVisibility.areaById),
         projects,
         criteria: focusFilter.criteria,
         now,
@@ -728,7 +728,7 @@ export function createWidgetPayloadProjection(
                 subtitle: subtitleParts.join(' · '),
                 inboxLabel: tr['nav.inbox'] ?? 'Inbox',
                 inboxCount,
-                focusedCount: lists.focusedTasks.length,
+                focusedCount: pools.selection.globalCount,
                 items,
                 sections,
                 lists: listPayloads,

@@ -73,6 +73,8 @@ export type PreparedTaskFocus = {
 
 /** Frozen visible Focus rows and the sparse, stamped order change. */
 export type PreparedFocusOrder = {
+    /** Absent on historical v1 journals, which retain their original 0..n effect. */
+    version?: 1 | 2;
     request: { requestId: string; controls: FocusControlState; ids: string[]; expectedOrder: string };
     scope: { tasks: Task[] };
     effect: { tasks: Array<{ before: Task; after: Task }> };

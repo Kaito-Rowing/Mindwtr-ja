@@ -827,6 +827,7 @@ export const csOverrides: Record<string, string> = {
         'projects.moveUp': 'Posunout nahoru',
         'projects.moveDown': 'Posunout dolů',
         'focus.reorderPosition': '{{title}}. Pozice {{position}} z {{count}}',
+        'focus.hiddenByArea': "{{count}} vybráno v jiných oblastech",
         'focus.reorderHint': 'Dlouze stiskněte a přetažením změňte pořadí',
         'projects.tagFilter': 'Filtr štítků',
         'projects.allTags': 'Všechny štítky',

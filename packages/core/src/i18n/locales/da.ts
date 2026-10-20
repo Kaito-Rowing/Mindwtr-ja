@@ -912,6 +912,7 @@ export const daOverrides: Record<string, string> = {
     'projects.moveDown': 'Flyt ned',
     'projects.reorderSections': 'Omarranger sektioner',
     'focus.reorderPosition': '{{title}}. Position {{position}} på {{count}}',
+    'focus.hiddenByArea': "{{count}} valgt i andre områder",
     'focus.reorderHint': 'Langt tryk og træk for at omarrangere',
     'focus.reorderScreenHint': 'Åbner en separat skærm, hvor du kan ændre rækkefølgen af disse opgaver',
     'projects.tagFilter': 'Tagfilter',

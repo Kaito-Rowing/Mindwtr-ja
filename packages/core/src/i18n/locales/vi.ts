@@ -852,6 +852,7 @@ export const viOverrides: Record<string, string> = {
         'projects.moveUp': 'Di chuyển lên',
         'projects.moveDown': 'Di chuyển xuống',
         'focus.reorderPosition': '{{title}}. Vị trí {{position}} trên {{count}}',
+        'focus.hiddenByArea': "{{count}} được chọn ở các lĩnh vực khác",
         'focus.reorderHint': 'Nhấn giữ rồi kéo để sắp xếp lại',
         'projects.tagFilter': 'Bộ lọc thẻ',
         'projects.allTags': 'Tất cả thẻ',

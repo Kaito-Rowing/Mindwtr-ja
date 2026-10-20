@@ -892,6 +892,7 @@ export const ukOverrides: Record<string, string> = {
     "projects.moveDown": "Рухатися вниз",
     "projects.reorderSections": "Змінити порядок розділів",
     "focus.reorderPosition": "{{title}}. Позиція {{position}} з {{count}}",
+    'focus.hiddenByArea': "Вибрано в інших сферах: {{count}}",
     "focus.reorderHint": "Натисніть і перетягніть, щоб змінити порядок",
     "focus.reorderScreenHint": "Відкриває окремий екран, щоб змінити порядок цих завдань",
     "projects.tagFilter": "Фільтр тегів",

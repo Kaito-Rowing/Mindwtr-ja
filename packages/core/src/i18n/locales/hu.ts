@@ -891,6 +891,7 @@ export const huOverrides: Record<string, string> = {
     'projects.moveDown': 'Mozgatás lefelé',
     'projects.reorderSections': 'Szakaszok átrendezése',
     'focus.reorderPosition': '{{title}}. {{position}}. pozíció, összesen {{count}}',
+    'focus.hiddenByArea': "{{count}} kiválasztva más területeken",
     'focus.reorderHint': 'Tartsa lenyomva és húzza az átrendezéshez',
     'focus.reorderScreenHint': 'Külön képernyőt nyit ezeknek a feladatoknak az átrendezéséhez',
     'projects.tagFilter': 'Címkeszűrő',

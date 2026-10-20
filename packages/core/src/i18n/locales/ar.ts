@@ -708,6 +708,7 @@ export const arOverrides: Record<string, string> = {
         'projects.moveUp': 'تحرك للأعلى',
         'projects.moveDown': 'تحرك للأسفل',
         'focus.reorderPosition': '{{title}}. الموضع {{position}} من {{count}}',
+        'focus.hiddenByArea': "تم تحديد {{count}} في مجالات أخرى",
         'focus.reorderHint': 'اضغط مطولاً واسحب لإعادة الترتيب',
         'projects.tagFilter': 'مرشح العلامة',
         'projects.allTags': 'جميع العلامات',

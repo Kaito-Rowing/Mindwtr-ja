@@ -907,6 +907,7 @@ export const svOverrides: Record<string, string> = {
         'projects.moveDown': 'Flytta ner',
         'projects.reorderSections': 'Ändra ordning på sektioner',
         'focus.reorderPosition': '{{title}}. Position {{position}} av {{count}}',
+        'focus.hiddenByArea': "{{count}} valda i andra områden",
         'focus.reorderHint': 'Håll och dra för att ändra ordning',
         'focus.reorderScreenHint': 'Öppnar en egen skärm där du kan ändra ordning på de här uppgifterna',
         'projects.tagFilter': 'Taggfilter',

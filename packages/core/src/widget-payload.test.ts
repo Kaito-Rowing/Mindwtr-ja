@@ -163,3 +163,23 @@ describe('widget times', () => {
         }
     });
 });
+
+
+describe('Focus widget area selection', () => {
+    it('keeps only selected-area stars while the occupied count remains global before criteria', () => {
+        const stamp = '2026-10-01T12:00:00.000Z';
+        const task = (id: string, extra: Partial<Task> = {}): Task => ({ id, title: id, status: 'next',
+            tags: [], contexts: [], isFocusedToday: true, createdAt: stamp, updatedAt: stamp, ...extra });
+        const data: AppData = { tasks: [task('direct', { areaId: 'work' }), task('project', { projectId: 'p' }),
+            task('home', { areaId: 'home' })], projects: [{ id: 'p', title: 'P', areaId: 'work', status: 'active',
+                color: '#123456', order: 0, tagIds: [], createdAt: stamp, updatedAt: stamp }], sections: [],
+            areas: ['work', 'home'].map((id, order) => ({ id, name: id, order, createdAt: stamp, updatedAt: stamp })),
+            settings: { filters: { areaIds: ['work'] } } };
+        const payload = createWidgetPayloadProjection(data, 'en').build(10);
+        expect(payload.items.map((row) => row.id)).toEqual(['direct', 'project']);
+        expect(payload.focusedCount).toBe(3);
+        const filtered = createWidgetPayloadProjection(data, 'en', { focusFilter: { criteria: { hasDescription: true }, sortBy: 'default' } }).build(10);
+        expect(filtered.items).toEqual([]);
+        expect(filtered.focusedCount).toBe(3);
+    });
+});

@@ -23246,6 +23246,51 @@ final class CoreHostTests: XCTestCase {
         return try object(XCTUnwrap(args.first))
     }
 
+    func testFocusAreaSubsetOrderColdJournalKeepsHiddenSlot() async throws {
+        try await seedFocusOrderRows()
+        let sqlite = try SQLiteBridge(url: database)
+        let at = recentAreaTestTime()
+        for (index, id) in ["focus-work", "focus-home"].enumerated() {
+            _ = try sqlite.execute("INSERT INTO areas (id, name, orderNum, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)",
+                                   parametersJSON: json([id, id, index, at, at]))
+        }
+        _ = try sqlite.execute("UPDATE projects SET areaId = 'focus-work' WHERE id = 'focus-target'")
+        _ = try sqlite.execute("UPDATE tasks SET projectId = NULL, areaId = 'focus-work', focusOrder = 0 WHERE id = 'task-focus-target'")
+        _ = try sqlite.execute("UPDATE tasks SET focusOrder = 2 WHERE id = 'task-focus-sibling'")
+        _ = try sqlite.execute("UPDATE tasks SET projectId = NULL, areaId = 'focus-home', isFocusedToday = 1, focusOrder = 1 WHERE id = 'task-focus-unrelated'")
+        let settingsRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sqlite.execute("SELECT data FROM settings WHERE id = 1").utf8)) as? [[String: Any]])
+        var settings = try object(XCTUnwrap(settingsRows.first?["data"] as? String))
+        settings["filters"] = ["areaIds": ["focus-work"], "excludedAreaIds": []]
+        _ = try sqlite.execute("UPDATE settings SET data = ? WHERE id = 1", parametersJSON: json([json(settings)]))
+        sqlite.close()
+        let hidden = try json(storedTask("task-focus-unrelated"))
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let focus = try object(await writer.call("focus", argumentsJSON: "[50]"))
+        let sections = try XCTUnwrap(focus["sections"] as? [[String: Any]])
+        let section = try XCTUnwrap(sections.first { $0["key"] as? String == "focus" })
+        XCTAssertEqual(section["total"] as? Int, 3)
+        XCTAssertEqual(section["rowTotal"] as? Int, 2)
+        XCTAssertEqual(section["hiddenByAreaLabel"] as? String, "1 selected in other areas")
+        let options = try await focusOrderOptions(writer)
+        let rows = try XCTUnwrap(options["rows"] as? [[String: Any]])
+        XCTAssertEqual(rows.compactMap { $0["id"] as? String }, ["task-focus-target", "task-focus-sibling"])
+        let request = try focusOrderRequest(options)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Focus subset COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("focusOrderWrite", argumentsJSON: json([json(request)])) }
+        let envelope = try focusOrderEnvelope()
+        XCTAssertEqual((envelope["prepared"] as? [String: Any])?["version"] as? Int, 2)
+        await writer.close()
+        let reopened = host()
+        let startup = try object(await reopened.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "focusOrderCommit")
+        XCTAssertEqual(try storedTask("task-focus-sibling")["focusOrder"] as? Int, 0)
+        XCTAssertEqual(try storedTask("task-focus-target")["focusOrder"] as? Int, 2)
+        XCTAssertEqual(try json(storedTask("task-focus-unrelated")), hidden)
+        await reopened.close()
+    }
+
     func testFocusOrderAppliedNoopAndExactRows() async throws {
         try await seedFocusOrderRows()
         let faults = HostIOFaults()

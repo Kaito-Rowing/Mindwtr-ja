@@ -565,7 +565,11 @@ struct InboxScreen: View {
                     ForEach(focusSections.indices, id: \.self) { index in
                         let section = focusSections[index]
                         let key = section.text("key")
-                        focusSectionHeader(key: key, title: section.text("title"), count: section.number("total"), first: index == 0)
+                        focusSectionHeader(key: key, title: section.text("title"), count: section.number("total"), first: index == 0, countLabel: section.text("countLabel"))
+                        if !section.text("hiddenByAreaLabel").isEmpty {
+                            Text(section.text("hiddenByAreaLabel")).rnFont(12).foregroundStyle(palette.secondary)
+                                .padding(.bottom, 10)
+                        }
                         if !model.collapsedFocusSections.contains(key) {
                             let rows = section.objects("rows")
                             ForEach(rows.indices, id: \.self) { rowIndex in
@@ -780,20 +784,21 @@ struct InboxScreen: View {
         .padding(.top, 6)
     }
 
-    private func focusSectionHeader(key: String, title: String, count: Int, first: Bool) -> some View {
+    private func focusSectionHeader(key: String, title: String, count: Int, first: Bool, countLabel: String = "") -> some View {
         let open = !model.collapsedFocusSections.contains(key)
+        let countText = countLabel.isEmpty ? String(count) : countLabel
         return HStack(spacing: 8) {
             Button { model.toggleFocusSection(key) } label: {
                 HStack(spacing: 10) {
                     Text(open ? "▾" : "▸").rnFont(12).frame(width: 14)
                     Text(title.uppercased()).rnFont(12, .bold, maxScale: 1.2).tracking(1).lineLimit(2)
-                    Text("(\(count))").rnFont(12, .semibold, maxScale: 1.2)
+                    Text("(\(countText))").rnFont(12, .semibold, maxScale: 1.2)
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(palette.secondary).frame(minHeight: 44).contentShape(Rectangle())
             }
             .buttonStyle(.plain).disabled(!model.focusControlsEnabled)
-            .accessibilityLabel(title + " · \(count)")
+            .accessibilityLabel(title + " · " + countText)
             .accessibilityValue(model.label(open ? "markdown.collapse" : "markdown.expand"))
             .accessibilityAddTraits(.isHeader)
             .accessibilityIdentifier("focus-section-" + key)

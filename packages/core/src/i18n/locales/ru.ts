@@ -647,6 +647,7 @@ export const ruOverrides: Record<string, string> = {
         'projects.moveUp': 'Вверх',
         'projects.moveDown': 'Двигаться вниз',
         'focus.reorderPosition': '{{title}}. Позиция {{position}} из {{count}}',
+        'focus.hiddenByArea': "Выбрано в других областях: {{count}}",
         'focus.reorderHint': 'Нажмите и удерживайте, затем перетащите для изменения порядка',
         'projects.tagFilter': 'Фильтр тегов',
         'projects.allTags': 'Все теги',

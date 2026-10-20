@@ -13,6 +13,8 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // focus-area-selection: aggregate selected slots only.
+    'globalCount', 'hiddenByAreaCount',
     // android-widget-capture-status: bounded creation status and picker origin; kind/outcome below.
     'destination', 'selection',
     // quick-capture-description reuses releaseCheck, kind and outcome; no captured text.

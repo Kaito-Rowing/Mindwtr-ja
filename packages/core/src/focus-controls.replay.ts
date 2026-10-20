@@ -249,10 +249,10 @@ export function createCoreFocusDriver(t: Translate, now: () => Date) {
         if (reorderDraft && !current.canReorder) reorderDraft = null;
         const split = splitTodayTasksByStartTime(lists.schedule, now());
         const sections = current.hasTasks ? [
-            ...buildFocusTaskSections(lists, t).map((section) => ({
+            ...buildFocusTaskSections(lists, t, current.selection.globalCount).map((section) => ({
                 type: section.key,
                 title: section.title,
-                total: section.items.length,
+                total: section.key === 'focus' ? current.selection.globalCount : section.items.length,
                 items: (section.key === 'schedule'
                     ? buildFocusScheduleItems(split, t)
                     : section.key === 'next'

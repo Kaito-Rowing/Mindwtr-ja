@@ -15,7 +15,7 @@ import {
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { shallow, useTaskStore, TaskPriority, TimeEstimate, TIME_ESTIMATE_OPTIONS, buildFocusPools, compareProjectsByOrder, planFocusFilterCriterionRemoval, formatFocusTaskLimitText,
-    getFocusStarBlockedText, formatTimeEstimateLabel, generateUUID, getUsedTaskTokens, deriveFocusTaskLists, getProjectDeadlineBoostLabel, getTaskMetadataFilterVisibility, isTaskFutureFocusCandidate, markSavedFilterDeleted, normalizeFocusTaskLimit, resolveFeatureFlags, resolveTaskPerspectiveForFeatures, safeFormatDate, safeParseDate, selectFocusSavedFilters, isDueForReview, shouldShowTaskForStart, splitTodayTasksByStartTime, translateWithFallback, tFallback, updateSettingsFromLatest } from '@mindwtr/core';
+    getFocusHiddenByAreaLabel, logInfo, getFocusStarBlockedText, formatTimeEstimateLabel, generateUUID, getUsedTaskTokens, deriveFocusTaskLists, getProjectDeadlineBoostLabel, getTaskMetadataFilterVisibility, isTaskFutureFocusCandidate, markSavedFilterDeleted, normalizeFocusTaskLimit, resolveFeatureFlags, resolveTaskPerspectiveForFeatures, safeFormatDate, safeParseDate, selectFocusSavedFilters, isDueForReview, shouldShowTaskForStart, splitTodayTasksByStartTime, translateWithFallback, tFallback, updateSettingsFromLatest } from '@mindwtr/core';
 import { DEFAULT_FOCUS_SORT_BY } from '@mindwtr/core';
 import type { MultiValueFilterMatchMode, SavedFilter, SortField, Task, TaskEnergyLevel } from '@mindwtr/core';
 import { useTaskFilterSelections } from '@mindwtr/core/task-filter-selections';
@@ -27,7 +27,7 @@ import { AlertCircle, CalendarDays, ChevronDown, ChevronRight, Clock, ArrowRight
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { checkBudget } from '../../config/performanceBudgets';
-import { isTaskVisibleInArea, projectMatchesAreaFilterSelection } from '@mindwtr/core';
+import { isTaskVisibleInArea, taskMatchesAreaFilterSelection, projectMatchesAreaFilterSelection } from '@mindwtr/core';
 import { useAreaVisibility } from '../../hooks/useVisibleTaskContext';
 import { usePersistedViewState } from '../../hooks/usePersistedViewState';
 import { PomodoroPanel } from './PomodoroPanel';
@@ -396,6 +396,7 @@ export function AgendaView() {
     const {
         activeTasksByStatus,
         focusedCount,
+        focusedTasks: globalFocusedTasks,
         projectMap,
         tasksById,
     } = getDerivedState();
@@ -657,11 +658,9 @@ export function AgendaView() {
         void futureStartTick;
         const now = new Date();
         const pools = buildFocusPools({
-            // The starred pool must not inherit the area-visibility narrowing,
-            // so it reads the pre-visibility list; everything else reads the
-            // visible one.
-            tasks: derivedActiveTasks,
+            tasks: globalFocusedTasks,
             visibleTasks: baseActiveTasks,
+            isAreaVisible: (task) => taskMatchesAreaFilterSelection(task, resolvedAreaFilter, projectMap, areaById),
             projects,
             criteria: effectiveFilterCriteria,
             now,
@@ -683,7 +682,16 @@ export function AgendaView() {
                     .map((task) => [task.id, safeFormatDate(task.startTime, 'p')]),
             ),
         };
-    }, [baseActiveTasks, derivedActiveTasks, effectiveFilterCriteria, futureStartTick, localDayKey, matchesSearchQuery, projects]);
+    }, [areaById, baseActiveTasks, effectiveFilterCriteria, futureStartTick, globalFocusedTasks, localDayKey, matchesSearchQuery, projectMap, projects, resolvedAreaFilter]);
+
+    const focusHiddenByAreaLabel = getFocusHiddenByAreaLabel(focusPools.selection, t);
+    useEffect(() => {
+        if (!focusPools.selection.hiddenByAreaCount) return;
+        void logInfo('Focus area selection projected', { scope: 'focus', force: true, context: {
+            releaseCheck: 'v1.3.7/focus-area-selection',
+            globalCount: focusPools.selection.globalCount, hiddenByAreaCount: focusPools.selection.hiddenByAreaCount,
+        } });
+    }, [focusPools.selection.globalCount, focusPools.selection.hiddenByAreaCount]);
 
     const getUpcomingAppearsAtLabel = useCallback(
         (taskId: string) => upcomingAppearsAtById.get(taskId),
@@ -960,7 +968,7 @@ export function AgendaView() {
         }));
     }, [collapseOtherSections, setPersistedViewState]);
     const nextActionsCount = sections.nextActions.length;
-    const hasAgendaContent = focusedTasks.length > 0
+    const hasAgendaContent = focusedCount > 0
         || sections.schedule.length > 0
         || sections.nextActions.length > 0
         || sections.upcoming.length > 0
@@ -1059,7 +1067,7 @@ export function AgendaView() {
         </div>
     );
 
-    const todaysFocusSection = focusedTasks.length > 0 ? (
+    const todaysFocusSection = focusedCount > 0 ? (
         <div
             data-testid="todays-focus-section"
             className="rounded-xl border border-border/70 border-l-4 border-l-amber-400 bg-card/70 p-6 shadow-sm dark:border-border/60 dark:border-l-amber-400/80 dark:bg-card/60"
@@ -1083,6 +1091,7 @@ export function AgendaView() {
                 </button>
             </h3>
 
+            {focusHiddenByAreaLabel && <p className="mb-3 text-sm text-muted-foreground" data-testid="focus-hidden-by-area">{focusHiddenByAreaLabel}</p>}
             {expandedSections.focus && <div id="agenda-section-focus">{focusListBody}</div>}
         </div>
     ) : null;

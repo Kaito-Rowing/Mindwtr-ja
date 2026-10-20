@@ -94,6 +94,30 @@ describe('native host contract: Focus controls', () => {
         },
     );
 
+    it('keeps globally occupied Focus slots and pages only visible rows under area and criteria filters', async () => {
+        freezeClock();
+        const host = await openHost();
+        const state = useTaskStore.getState();
+        const focused = state.tasks.filter((task) => task.isFocusedToday);
+        expect(focused).toHaveLength(3);
+        await state.updateTask(focused[0].id, { areaId: 'a-work' });
+        await state.updateTask(focused[1].id, { areaId: 'a-home' });
+        await state.updateTask(focused[2].id, { areaId: 'a-home' });
+        await state.updateSettings({ filters: { areaIds: ['a-work'] }, gtd: { ...state.settings.gtd, focusTaskLimit: 3 } });
+        const controls = DEFAULT_FOCUS_CONTROL_STATE;
+        const view = value(host.getFocus({ limit: 100, controls }));
+        const section = view.sections.find((item) => item.key === 'focus')!;
+        expect(section).toMatchObject({ total: 3, rowTotal: 1, countLabel: '3/3', hiddenByAreaLabel: '2 selected in other areas' });
+        expect(section.rows.map((row) => row.id)).toEqual([focused[0].id]);
+        const filtered = value(host.getFocus({ limit: 100, controls: { ...controls, preservedCriteria: { hasDescription: true } } }));
+        const filteredSection = filtered.sections.find((item) => item.key === 'focus')!;
+        expect(filteredSection).toMatchObject({ total: 3, rowTotal: 0, countLabel: '3/3', hiddenByAreaLabel: '2 selected in other areas' });
+        expect(filtered.controls.empty).toBeNull();
+        const page = value(host.getFocusSectionWindow({ key: 'focus', offset: 0, limit: 100,
+            revision: filtered.revision, controls: filtered.controls.state }));
+        expect(page).toMatchObject({ total: 3, rowTotal: 0, rows: [] });
+    });
+
     it('pages Pomodoro choices from all four RN Focus pools under the same controls and revision', async () => {
         freezeClock();
         const host = await openHost();

@@ -724,6 +724,7 @@ export const itOverrides: Record<string, string> = {
         'projects.moveUp': 'Sposta su',
         'projects.moveDown': 'Sposta giù',
         'focus.reorderPosition': '{{title}}. Posizione {{position}} di {{count}}',
+        'focus.hiddenByArea': "{{count}} selezionate in altre aree",
         'focus.reorderHint': 'Tieni premuto e trascina per riordinare',
         'projects.tagFilter': 'Filtro tag',
         'projects.allTags': 'Tutti i tag',

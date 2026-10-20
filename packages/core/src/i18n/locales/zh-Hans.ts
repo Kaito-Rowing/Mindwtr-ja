@@ -907,6 +907,7 @@ export const zhHans: Record<string, string> = {
         'projects.moveDown': '下移',
         'projects.reorderSections': '重新排序分区',
         'focus.reorderPosition': '{{title}}。第{{position}}项，共{{count}}项',
+        'focus.hiddenByArea': "其他领域已选择 {{count}} 项",
         'focus.reorderHint': '长按并拖动以重新排序',
         'focus.reorderScreenHint': '打开专门的排序界面来调整这些任务的顺序',
         'projects.tagFilter': '标签筛选',

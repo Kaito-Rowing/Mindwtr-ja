@@ -15,7 +15,7 @@
  * as plain data, and `resolveFocusFilterState` / `applyFocusControlEdit` mirror
  * the hook for a host that keeps it itself.
  */
-import { isTaskVisibleInArea, projectMatchesAreaFilterSelection, resolveAreaFilterSelection } from './area-filter';
+import { isTaskVisibleInArea, projectMatchesAreaFilterSelection, resolveAreaFilterSelection, taskMatchesAreaFilterSelection } from './area-filter';
 import { TIME_ESTIMATE_OPTIONS } from './calendar-scheduling';
 import { hasTimeComponent, safeParseDueDate } from './date';
 import { countActiveFilterCriteria, criteriaFromSelections, selectionsFromCriteria } from './filter-criteria';
@@ -27,6 +27,7 @@ import {
     getReviewDueProjects,
     type FocusPools,
     type FocusTaskLists,
+    type FocusSelection,
 } from './focus-sections';
 import { formatI18nTemplate, tFallback } from './i18n';
 import {
@@ -43,8 +44,9 @@ import { resolveFeatureFlags } from './resolve-feature-flags';
 import { FOCUS_SORT_OPTIONS } from './task-list-sort-options';
 import { getTaskMetadataFilterVisibility, type TaskMetadataFilterVisibility } from './task-metadata-filter-visibility';
 import { isTaskActionable } from './task-status';
+import { isTaskCountedAsFocused } from './store-helpers';
 import { getUsedTaskTokens } from './task-token-usage';
-import { resolveTaskPerspectiveForFeatures, shouldShowTaskForStart, type TaskPerspectiveFeatureState } from './task-utils';
+import { resolveTaskPerspectiveForFeatures, shouldShowTaskForStart, sortTasksByFocusOrder, type TaskPerspectiveFeatureState } from './task-utils';
 import type {
     AppSettings,
     Area,
@@ -288,12 +290,26 @@ export function buildFocusAdvancedFilterChips(input: {
 }
 
 /**
- * Manual Today's Focus order is a whole-list concept: reordering a filtered
- * subset would renumber only the visible rows and corrupt the hidden ones'
- * positions. So reorder needs the default sort, no active filter, and a star.
+ * Manual order needs the default sort, no criteria filter, and a visible star.
+ * The writer preserves hidden areas' slots when an area subset is reordered.
  */
 export function canReorderFocusTasks(input: { effectiveSortBy: SortField; hasActiveFilters: boolean; focusedCount: number }): boolean {
     return input.effectiveSortBy === DEFAULT_FOCUS_SORT_BY && !input.hasActiveFilters && input.focusedCount > 0;
+}
+
+/** Replace only the shown slots in the global order; hidden rows keep their positions. */
+export function mergeFocusReorderIds(currentIds: readonly string[], orderedIds: readonly string[]): string[] {
+    const current = new Set(currentIds);
+    const shown = [...new Set(orderedIds)].filter((id) => current.has(id));
+    const shownIds = new Set(shown);
+    let index = 0;
+    return currentIds.map((id) => shownIds.has(id) ? shown[index++] : id);
+}
+
+export function getFocusHiddenByAreaLabel(selection: FocusSelection, t: Translate): string | null {
+    return selection.hiddenByAreaCount > 0
+        ? formatI18nTemplate(tFallback(t, 'focus.hiddenByArea', '{{count}} selected in other areas'), { count: selection.hiddenByAreaCount })
+        : null;
 }
 
 /** The dragged order kept against the live list: gone tasks drop out, new ones join at the end. */
@@ -602,6 +618,8 @@ export type FocusControlsModel = {
     prioritiesEnabled: boolean;
     pools: FocusPools;
     lists: FocusTaskLists;
+    selection: FocusSelection;
+    globalFocusedTasks: Task[];
     reviewProjects: Project[];
     advancedChips: FocusAdvancedFilterChip[];
     canReorder: boolean;
@@ -668,7 +686,9 @@ export function buildFocusControlsModel(input: {
         hasCurrentCriteria: filter.hasCurrentCriteria,
         activeSavedFilterId: filter.state.savedFilterId,
     });
-    const pools = buildFocusPools({ tasks: actionableTasks, visibleTasks: baseActiveTasks, projects: input.projects, criteria: filter.criteria, now });
+    const pools = buildFocusPools({ tasks: actionableTasks, visibleTasks: baseActiveTasks, projects: input.projects, criteria: filter.criteria, now,
+        isAreaVisible: (task) => taskMatchesAreaFilterSelection(task, resolvedAreaFilter, projectById, areaById),
+    });
     const lists = deriveFocusTaskLists(pools, {
         now,
         projects: input.projects,
@@ -679,7 +699,7 @@ export function buildFocusControlsModel(input: {
         focusIncludeStartDates: settings.gtd?.focusIncludeStartDates,
     });
     const reviewProjects = getReviewDueProjects(visibleProjects, now);
-    const hasTasks = lists.focusedTasks.length > 0 || lists.schedule.length > 0 || lists.nextActions.length > 0
+    const hasTasks = pools.selection.globalCount > 0 || lists.schedule.length > 0 || lists.nextActions.length > 0
         || lists.upcoming.length > 0 || lists.reviewDue.length > 0 || reviewProjects.length > 0;
     return {
         options: { tokens, projects, timeEstimates: TIME_ESTIMATE_OPTIONS, visibility },
@@ -689,6 +709,8 @@ export function buildFocusControlsModel(input: {
         prioritiesEnabled: flags.priorities,
         pools,
         lists,
+        selection: pools.selection,
+        globalFocusedTasks: sortTasksByFocusOrder(input.tasks.filter((task) => isTaskCountedAsFocused(task, now))),
         reviewProjects,
         advancedChips: buildFocusAdvancedFilterChips({
             activeSavedFilter: filter.activeSavedFilter, criteria: filter.criteria, areaById, t, formatDate: input.formatDate,

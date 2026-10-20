@@ -20,7 +20,7 @@ import { settingsWithPurgedParentAttachmentDeletes } from './attachment-cleanup'
 import type { StorageAdapter, TaskQueryOptions } from './storage';
 import { taskMatchesQuery } from './task-query';
 import type { PreparedAreaAuthority, PreparedBoardMove, PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedChecklistWriteOptions, PreparedFocusOrder, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, PreparedTaskFocus, PreparedTaskPromotion, StoreActionResult, TaskFocusWitnessRow, TaskStore } from './store-types';
-import { buildFocusControlsModel } from './focus-controls';
+import { buildFocusControlsModel, canReorderFocusTasks, mergeFocusReorderIds } from './focus-controls';
 import {
     applyTaskProjectReactivationTransition,
     applyTaskUpdates,
@@ -33,6 +33,7 @@ import {
     getNextProjectOrder,
     getTaskOrder,
     matchesDuplicateSource,
+    isTaskCountedAsFocused,
     isRestorableProjectArchiveSection,
     nextRevision,
     normalizeTaskUpdate,
@@ -56,7 +57,7 @@ import { buildNextRecurringTask, canSkipRecurringTaskOccurrence, createNextRecur
     normalizeRecurrenceForLoad, type RecurrenceProjection } from './recurrence';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import { resolveProcessInboxPlan } from './process-inbox-plan';
-import { boardOrderForDuplicate, countFocusedTasksBeforeBoundary, isTaskFutureFocusCandidate,
+import { boardOrderForDuplicate, countFocusedTasksBeforeBoundary, isTaskFutureFocusCandidate, sortTasksByFocusOrder,
     type FocusDateLookup } from './task-utils';
 import { sameTaskSqliteRow, sameSectionDeleteJson } from './store-projects/section-actions';
 import { trashItemsRestoreScope, trashItemsRestoreEffect } from './native-host-contract-trash-bulk-restore';
@@ -324,10 +325,11 @@ const changedFocusOrder = (task: Task, targets: ReadonlyMap<string, number>): nu
 
 /** Exactly the task stamps used by reorderFocusedTasks through mutateTasks. */
 export const focusOrderEffect = (scope: PreparedFocusOrder['scope'], ids: readonly string[],
-    deviceId: string, preparedAt: string): PreparedFocusOrder['effect'] => {
+    deviceId: string, preparedAt: string, preserveHidden = false): PreparedFocusOrder['effect'] => {
     const byId = new Map(scope.tasks.map((task) => [task.id, task]));
-    const targets = focusOrderTargets(ids);
-    return { tasks: ids.flatMap((id) => {
+    const order = preserveHidden ? mergeFocusReorderIds(scope.tasks.map((task) => task.id), ids) : ids;
+    const targets = focusOrderTargets(order);
+    return { tasks: order.flatMap((id) => {
         const before = byId.get(id);
         const target = before && changedFocusOrder(before, targets);
         return before && target !== undefined ? [{ before, after: compactPurgedTaskForLocalStorage({
@@ -341,7 +343,10 @@ const currentFocusOrder = (state: TaskStore, controls: PreparedFocusOrder['reque
     const model = buildFocusControlsModel({ state: controls, tasks: state.tasks,
         projects: state.projects, areas: state.areas, sections: state.sections,
         settings: state.settings, now: new Date(), t: (key) => key });
-    return { canReorder: model.canReorder, tasks: model.lists.focusedTasks };
+    return { canReorder: model.canReorder, legacyCanReorder: canReorderFocusTasks({
+        effectiveSortBy: model.perspective.effectiveSortBy, hasActiveFilters: model.filter.hasActive,
+        focusedCount: model.globalFocusedTasks.length,
+    }), tasks: model.globalFocusedTasks, visibleTasks: model.lists.focusedTasks };
 };
 
 export const sanitizeRestoredTaskContainerReferences = (
@@ -2360,7 +2365,9 @@ export function createTaskActions({ set, get, getStorage, debouncedSave, flushPe
                 return state;
             }
             const live = currentFocusOrder(state, input.request.controls);
-            if (!live.canReorder || live.tasks.length > 100
+            if (!(input.version === 2 ? live.canReorder : live.legacyCanReorder) || live.tasks.length > 100
+                || (input.version === 2 && (input.request.ids.length !== live.visibleTasks.length
+                    || input.request.ids.some((id) => !live.visibleTasks.some((task) => task.id === id))))
                 || focusOrderToken(live.tasks) !== input.request.expectedOrder
                 || !sameSectionDeleteJson(live.tasks, input.scope.tasks)
                 || (state.settings.deviceId ?? null) !== input.deviceIdBefore
@@ -2370,7 +2377,7 @@ export function createTaskActions({ set, get, getStorage, debouncedSave, flushPe
                     return !current || !sameTaskSqliteRow(current, before) || !sameSectionDeleteJson(current, before);
                 })) return state;
             const planned = focusOrderEffect(input.scope, input.request.ids,
-                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.preparedAt);
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.preparedAt, input.version === 2);
             if (!sameSectionDeleteJson(planned, input.effect)) return state;
             const tasks = replaceEntitiesInArray(state._allTasks, affected.map(({ after }) => after));
             const settings = input.deviceIdToInitialize
@@ -3254,7 +3261,9 @@ export function createTaskActions({ set, get, getStorage, debouncedSave, flushPe
 
     reorderFocusedTasks: async (orderedIds: string[]) => {
         if (orderedIds.length === 0) return actionOk();
-        const targetOrderById = focusOrderTargets(orderedIds);
+        const now = new Date();
+        const current = sortTasksByFocusOrder(get().tasks.filter((task) => isTaskCountedAsFocused(task, now)));
+        const targetOrderById = focusOrderTargets(mergeFocusReorderIds(current.map((task) => task.id), orderedIds));
         return mutateTasks({ set, debouncedSave }, {
             selectTasks: (state) => state._allTasks.filter((task) => {
                 if (task.deletedAt) return false;

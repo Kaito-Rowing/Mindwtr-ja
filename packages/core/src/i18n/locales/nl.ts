@@ -123,6 +123,7 @@ export const nlOverrides: Record<string, string> = {
         'projects.taskMovedTo': 'Verplaatst naar {{name}}',
         'projects.taskMoveFailed': 'Taak verplaatsen mislukt',
         'focus.reorderPosition': '{{title}}. Positie {{position}} van {{count}}',
+        'focus.hiddenByArea': "{{count}} geselecteerd in andere gebieden",
         'focus.reorderHint': 'Houd ingedrukt en sleep om opnieuw te ordenen',
         'nav.contexts': 'Contexten',
         'nav.next': 'Volgende acties',

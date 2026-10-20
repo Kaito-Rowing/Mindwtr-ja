@@ -646,6 +646,7 @@ export const plOverrides: Record<string, string> = {
         'projects.moveUp': 'Przenieś w górę',
         'projects.moveDown': 'Przenieś w dół',
         'focus.reorderPosition': '{{title}}. Pozycja {{position}} z {{count}}',
+        'focus.hiddenByArea': "{{count}} wybranych w innych obszarach",
         'focus.reorderHint': 'Naciśnij i przytrzymaj, a następnie przeciągnij, aby zmienić kolejność',
         'projects.tagFilter': 'Filtr tagów',
         'projects.allTags': 'Wszystkie tagi',

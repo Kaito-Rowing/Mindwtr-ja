@@ -1,3 +1,4 @@
+import { getFocusHiddenByAreaLabel } from './focus-controls';
 import { getPomodoroTaskChoices } from './pomodoro';
 import { createReferenceProjectNextActionMethods } from './native-host-contract-project-next-action';
 import { MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
@@ -506,14 +507,17 @@ export type NativeSearchView = {
 export type NativeFocusSection = {
     key: FocusTaskSectionKey;
     title: string;
-    /** The header count: the section's tasks. */
+    /** The header count: globally occupied slots for Focus, visible tasks for other sections. */
     total: number;
+    /** Focus's global occupied slots / cap, independent of its visible rows. */
+    countLabel?: string;
+    hiddenByAreaLabel?: string | null;
     rows: NativeTaskRow[];
     focusBlockedLabel: string | null;
     /**
-     * Only on a read that sends `controls`. The rows to page through: `total`, except
-     * that under a grouping a task in two groups is listed twice. A read without
-     * `controls` keeps the flat rows it always had: each task once, never grouped.
+     * Visible rows to page through. Present with `controls`, and for Focus when
+     * its global occupied count differs from its visible rows. Under grouping
+     * a task in two groups is listed twice. Without `controls` rows stay flat.
      */
     rowTotal?: number;
     /**
@@ -1241,7 +1245,8 @@ export function createNativeHostContract(options: {
             cachedFocusSections = buildFocusTaskSections(lists, (key) => {
                 const value = translate(key);
                 return value === key ? undefined : value;
-            }).map((section): CachedFocusSection => {
+            }, model.selection.globalCount).map((section): CachedFocusSection => {
+                if (section.key === 'focus') return { ...section, total: model.selection.globalCount, groups: null };
                 if (section.key === 'schedule') {
                     return { ...section, items: [...schedule.ready, ...schedule.laterToday], total: section.items.length, groups: null };
                 }
@@ -2325,15 +2330,22 @@ export function createNativeHostContract(options: {
             if (!read) return fail('INVALID_INPUT', 'The Focus controls or control edit are not valid');
             const { controls } = read;
             const { model, revision: currentRevision } = focusModel(controls, now);
+            if (model.selection.hiddenByAreaCount) void logInfo('Focus area selection projected', {
+                scope: 'focus', force: true, context: { releaseCheck: 'v1.3.7/focus-area-selection', ...model.selection },
+            });
             const sections = focusSections(focusRevision(now), now, controls).map((section) => ({
                 key: section.key,
                 title: section.title,
                 total: section.total,
+                ...(section.key === 'focus' ? {
+                    countLabel: `${model.selection.globalCount}/${normalizeFocusTaskLimit(useTaskStore.getState().settings.gtd?.focusTaskLimit)}`,
+                    hiddenByAreaLabel: getFocusHiddenByAreaLabel(model.selection, translate),
+                } : {}),
                 rows: focusRows(section, 0, input.limit, now),
                 focusBlockedLabel: section.key === 'upcoming'
                     ? getFocusStarBlockedText(translate, { blockedReason: 'deferred' }, normalizeFocusTaskLimit(useTaskStore.getState().settings.gtd?.focusTaskLimit))
                     : null,
-                ...(controls ? { rowTotal: section.items.length, groups: windowGroups(section, 0, input.limit) } : {}),
+                ...(controls || (section.key === 'focus' && section.total !== section.items.length) ? { rowTotal: section.items.length, groups: windowGroups(section, 0, input.limit) } : {}),
             }));
             const { projectTaskSummaryById: summaries, focusedProjectCount } = useTaskStore.getState().getDerivedState();
             const formatDate = createDateFormatter(dateFormatting());
@@ -2777,7 +2789,7 @@ export function createNativeHostContract(options: {
                     key: section.key,
                     total: section.total,
                     rows: focusRows(section, input.offset, input.limit, now),
-                    ...(controls ? { rowTotal: section.items.length, groups: windowGroups(section, input.offset, input.limit) } : {}),
+                    ...(controls || (section.key === 'focus' && section.total !== section.items.length) ? { rowTotal: section.items.length, groups: windowGroups(section, input.offset, input.limit) } : {}),
                 },
             };
         },

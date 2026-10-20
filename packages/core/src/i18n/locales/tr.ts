@@ -659,6 +659,7 @@ export const trOverrides: Record<string, string> = {
         'projects.moveUp': 'Yukarı taşı',
         'projects.moveDown': 'Aşağı taşı',
         'focus.reorderPosition': '{{title}}. {{count}} içinde {{position}}. konum',
+        'focus.hiddenByArea': "Diğer alanlarda {{count}} seçili",
         'focus.reorderHint': 'Yeniden sıralamak için basılı tutup sürükleyin',
         'projects.tagFilter': 'Etiket filtresi',
         'projects.allTags': 'Tüm etiketler',

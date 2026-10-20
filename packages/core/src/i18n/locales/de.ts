@@ -704,6 +704,7 @@ export const deOverrides: Record<string, string> = {
         'projects.moveUp': 'Nach oben verschieben',
         'projects.moveDown': 'Nach unten verschieben',
         'focus.reorderPosition': '{{title}}. Position {{position}} von {{count}}',
+        'focus.hiddenByArea': "{{count}} in anderen Bereichen ausgewählt",
         'focus.reorderHint': 'Lange drücken und zum Neuanordnen ziehen',
         'projects.tagFilter': 'Schlagwörter filtern',
         'projects.allTags': 'Alle Schlagwörter',

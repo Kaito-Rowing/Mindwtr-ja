@@ -20832,7 +20832,7 @@ private final class Engine: @unchecked Sendable {
                   Set(input.keys) == Set(["request", "prepared"]),
                   let request = input["request"] as? [String: Any],
                   let prepared = input["prepared"] as? [String: Any],
-                  Self.isInteger(prepared["version"], equalTo: 1),
+                  (Self.isInteger(prepared["version"], equalTo: 1) || Self.isInteger(prepared["version"], equalTo: 2)),
                   let original = prepared["request"] as? [String: Any],
                   Self.equalJSON(request, original) else {
                 throw HostFailure("Malformed prepared Focus order journal")

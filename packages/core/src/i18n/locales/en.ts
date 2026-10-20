@@ -926,6 +926,7 @@ export const en: Record<string, string> = {
         'projects.moveDown': 'Move down',
         'projects.reorderSections': 'Reorder sections',
         'focus.reorderPosition': '{{title}}. Position {{position}} of {{count}}',
+        'focus.hiddenByArea': "{{count}} selected in other areas",
         'focus.reorderHint': 'Long press and drag to reorder',
         'focus.reorderScreenHint': 'Opens a focused screen for reordering these tasks',
         'projects.tagFilter': 'Tag filter',

@@ -685,6 +685,7 @@ export const ptOverrides: Record<string, string> = {
         'projects.moveUp': 'Subir',
         'projects.moveDown': 'Mover para baixo',
         'focus.reorderPosition': '{{title}}. Posição {{position}} de {{count}}',
+        'focus.hiddenByArea': "{{count}} selecionadas em outras áreas",
         'focus.reorderHint': 'Mantenha premido e arraste para reordenar',
         'projects.tagFilter': 'Filtro de tags',
         'projects.allTags': 'Todas as tags',
