@@ -2049,8 +2049,10 @@ describe('cloud server api', () => {
         const body = JSON.stringify({ tasks, projects: [], sections: [], areas: [], people: [], settings: {} });
         expect(body.length).toBeGreaterThan(3_000_000);
 
+        // Keep limit checks independent of Bun's pooled sockets after an early body rejection.
         const dataResponse = await fetch(`${baseUrl}/v1/data`, {
             method: 'PUT',
+            keepalive: false,
             headers: { ...authHeaders, 'content-type': 'application/json' },
             body,
         });
@@ -2058,6 +2060,7 @@ describe('cloud server api', () => {
 
         const taskResponse = await fetch(`${baseUrl}/v1/tasks`, {
             method: 'POST',
+            keepalive: false,
             headers: { ...authHeaders, 'content-type': 'application/json' },
             body: JSON.stringify({ title: 'Too big', description: 'x'.repeat(3_000_000) }),
         });
@@ -2066,6 +2069,7 @@ describe('cloud server api', () => {
 
         const captureResponse = await fetch(`${baseUrl}/v1/capture`, {
             method: 'POST',
+            keepalive: false,
             headers: { ...authHeaders, 'content-type': 'application/json' },
             // A short transcription: only the small JSON cap refuses this, not the attachment cap.
             body: JSON.stringify({ transcription: 'Short note', pad: 'x'.repeat(3_000_000) }),
