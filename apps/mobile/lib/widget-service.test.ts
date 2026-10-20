@@ -285,7 +285,10 @@ describe('widget-service', () => {
         expect(payload.palette.background).toMatch(/^#/);
         expect(payload.quickCapture).toMatchObject({
             title: 'Quick capture',
-            placeholder: 'Add task to inbox...',
+            placeholder: 'Add a task… use @context +Project #tag',
+            statusLabel: 'Status',
+            statusLabels: { inbox: 'Inbox', next: 'Next Actions', waiting: 'Waiting For', someday: 'Someday/Maybe' },
+            queued: 'Saved. Your task will be added when Mindwtr opens.',
             save: 'Save',
             cancel: 'Cancel',
             added: 'Task added to Mindwtr.',
