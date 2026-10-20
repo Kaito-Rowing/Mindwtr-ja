@@ -296,6 +296,39 @@ describe('native host contract: the Inbox view', () => {
         expect(value(host.getInboxView({ offset: 0, limit: 100 })).revision).not.toBe(after.revision);
     });
 
+    it('cycles legacy bare Inbox token picker edits through real include and exclude filters without saving', async () => {
+        freezeClock();
+        const { host, writes } = await openHost(scenario('base'));
+        const template = useTaskStore.getState()._allTasks.find((task) => task.status === 'inbox')!;
+        const tasks: Task[] = [
+            { ...template, id: 'bare', title: 'Bare', contexts: ['office'], tags: ['admin'] },
+            { ...template, id: 'other', title: 'Other', contexts: ['@home'], tags: ['#other'] },
+        ];
+        useTaskStore.setState({ tasks, _allTasks: tasks, _tasksById: new Map(tasks.map((task) => [task.id, task])), lastDataChangeAt: Date.now() });
+        const before = JSON.stringify(useTaskStore.getState()._allTasks);
+        const first = value(host.getInboxView({ offset: 0, limit: 100 }));
+        const rows = (view: typeof first) => view.items.flatMap((item) => item.type === 'task' ? [item.row.id] : []);
+        for (const token of ['#admin', '@office']) {
+            const picker = value(host.getInboxFilterTokens({ offset: 0, limit: 100, revision: first.revision, query: token.slice(1) }));
+            const edit = picker.items.find((item) => item.value === token)?.edit;
+            expect(edit).toEqual({ type: 'toggleToken', value: token });
+            const included = value(host.getInboxView({ offset: 0, limit: 100, filterEdit: edit }));
+            expect(rows(included)).toEqual(['bare']);
+            expect(included.filterActiveCount).toBe(1);
+            expect(included.filters.tokens.items.find((item) => item.value === token)?.state).toBe('included');
+            const excluded = value(host.getInboxView({ offset: 0, limit: 100, filters: included.filters.state, filterEdit: edit }));
+            expect(rows(excluded)).toEqual(['other']);
+            expect(excluded.filterActiveCount).toBe(1);
+            expect(excluded.chips).toMatchObject([{ label: token, excluded: true }]);
+            const cleared = value(host.getInboxView({ offset: 0, limit: 100, filters: excluded.filters.state, filterEdit: edit }));
+            expect(new Set(rows(cleared))).toEqual(new Set(['bare', 'other']));
+            expect(cleared.hasActiveFilters).toBe(false);
+        }
+        await flushPendingSave();
+        expect(writes).toEqual([]);
+        expect(JSON.stringify(useTaskStore.getState()._allTasks)).toBe(before);
+    });
+
     it('searches the complete Inbox token pool and keeps filter reads out of SQLite', async () => {
         freezeClock();
         const tokens = Array.from({ length: 103 }, (_, index) => `@context-${String(index).padStart(3, '0')}`);

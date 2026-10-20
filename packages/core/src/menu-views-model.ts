@@ -575,7 +575,10 @@ export function buildStatusListFilterOptions(input: {
     }
     const features = resolveFeatureFlags(input.settings);
     return {
-        tokens: withTokens ? getUsedTaskTokens([...input.tasks], (task) => [...(task.contexts ?? []), ...(task.tags ?? [])], { includeAncestors: true }) : [],
+        tokens: withTokens ? getUsedTaskTokens([...input.tasks], (task) => [
+            ...(task.contexts ?? []).map((token) => normalizeBulkTaskTokenInput(token, 'contexts')),
+            ...(task.tags ?? []).map((token) => normalizeBulkTaskTokenInput(token, 'tags')),
+        ], { includeAncestors: true }) : [],
         projects: null,
         timeEstimates: TIME_ESTIMATE_OPTIONS,
         visibility: getTaskMetadataFilterVisibility(input.tasks, {
