@@ -70,3 +70,25 @@ describe('native Android widget publisher on leaving the app', () => {
         expect(healthy.calls.published).toHaveLength(2);
     });
 });
+
+describe('native Android widget publisher and the widget chooser', () => {
+    afterEach(() => resetForTests());
+
+    it('builds a list the chooser picked at the next publication, with no store change', () => {
+        resetForTests();
+        const now = new Date().toISOString();
+        useTaskStore.setState({ _allTasks: [{ id: 't-desk', title: 'Desk', status: 'next', tags: [], contexts: ['@desk'], createdAt: now, updatedAt: now }] } as never);
+        const { value, calls } = bridge();
+        const widgets = createWidgetPublisher(value);
+        widgets.publish();
+        const first = JSON.parse(calls.published[0]);
+        // The chooser offers every context by name; the list comes only for a placed choice (core's androidWidgetProjectionOptions).
+        expect(first.contexts.map((option: { id: string }) => option.id)).toEqual(['context:@desk']);
+        expect(first.lists['context:@desk']).toBeUndefined();
+
+        value.inputs = () => ({ systemColorScheme: 'light', systemLocale: 'en-US', listSelections: ['context:@desk'] });
+        expect(widgets.publish()).toBe(true);
+        const next = JSON.parse(calls.published[1]);
+        expect(next.lists['context:@desk'].items.map((item: { id: string }) => item.id)).toEqual(['t-desk']);
+    });
+});

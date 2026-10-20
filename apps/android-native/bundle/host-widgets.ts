@@ -86,7 +86,11 @@ export const createWidgetPublisher = (bridge: WidgetBridge) => {
         last = payload;
         logInfo('Android widget context and tag snapshots published', {
             scope: 'widget', force: true,
-            context: { releaseCheck: 'v1.3.7/widget-context-selection', count: (publication.contexts?.length ?? 0) + (publication.tags?.length ?? 0) },
+            context: {
+                releaseCheck: 'v1.3.7/widget-context-selection', count: (publication.contexts?.length ?? 0) + (publication.tags?.length ?? 0),
+                // Lists built for placed widgets' context, tag and saved-filter choices only.
+                lists: Object.keys(publication.lists).filter((id) => /^(context|tag|filter):/.test(id)).length,
+            },
         });
         logInfo('Upcoming widget snapshot published', {
             scope: 'widget',

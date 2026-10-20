@@ -80,7 +80,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'axis', 'collapsedCount',
     // ios-search-publication reuses releaseCheck, operation, outcome, enabled, and count below.
     // ios-search-snapshot reuses releaseCheck and count below.
-    // widget-context-selection reuses releaseCheck and count below.
+    // widget-context-selection reuses releaseCheck and count below; lists counts the built context/tag/filter lists.
+    'lists',
     // widget-upcoming reuses releaseCheck, platform, and count below.
     // task-date-filter reuses releaseCheck, count, and outcome below; no content or IDs.
     // ios-entity-link reuses releaseCheck, kind, and outcome below.
