@@ -185,6 +185,9 @@ export interface AndroidQuickCaptureLabels {
     save: string;
     cancel: string;
     added: string;
+    statusLabel: string;
+    statusLabels: Record<'inbox' | 'next' | 'waiting' | 'someday', string>;
+    queued: string;
     audioEnabled: boolean;
     audioRecord: string;
     audioStop: string;
@@ -219,7 +222,10 @@ export function buildAndroidQuickCaptureLabels(language: Language, audioEnabled 
     return {
         descriptionPlaceholder: t('taskEdit.descriptionPlaceholder'),
         title: resolveI18nText(t, 'widget.capture', { fallback: 'Quick capture' }),
-        placeholder: resolveI18nText(t, 'inbox.addPlaceholder', { fallback: 'Add task to inbox...' }),
+        placeholder: t('quickAdd.placeholder'),
+        statusLabel: t('taskEdit.statusLabel'),
+        statusLabels: { inbox: t('nav.inbox'), next: t('nav.next'), waiting: t('nav.waiting'), someday: t('nav.someday') },
+        queued: t('quickAdd.textQueued'),
         save: resolveI18nText(t, 'common.save', { fallback: 'Save' }),
         cancel: resolveI18nText(t, 'common.cancel', { fallback: 'Cancel' }),
         added: resolveI18nText(t, 'obsidian.bringIntoMindwtrSuccess', { fallback: 'Task added to Mindwtr.' }),

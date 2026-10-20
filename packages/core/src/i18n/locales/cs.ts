@@ -206,6 +206,7 @@ export const csOverrides: Record<string, string> = {
         'quickAdd.audioRecording': 'Nahrávání…',
         'quickAdd.audioReady': 'Nahrávka je připravena k uložení.',
         'quickAdd.audioQueued': 'Uloženo. Zvuk se přepíše při otevření Mindwtr.',
+        'quickAdd.textQueued': "Uloženo. Úkol se přidá při otevření Mindwtr.",
         'quickAdd.audioProcessing': 'Zpracování hlasového záznamu…',
         'quickAdd.audioSavingSpeechToText': 'Ukládání nahrávky a převod řeči na text.',
         'quickAdd.audioNoteTitle': 'Zvuková poznámka',

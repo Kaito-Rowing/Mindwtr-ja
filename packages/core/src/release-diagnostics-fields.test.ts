@@ -13,6 +13,8 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // android-widget-capture-status: bounded creation status and picker origin; kind/outcome below.
+    'destination', 'selection',
     // quick-capture-description reuses releaseCheck, kind and outcome; no captured text.
     // restore-attachment-presence reuses releaseCheck and count below; no names or paths.
     // ios-reminder-actions reuses releaseCheck, stage, action, reason, and appState below.

@@ -266,6 +266,7 @@ export const zhHans: Record<string, string> = {
         'quickAdd.audioRecording': '正在录音...',
         'quickAdd.audioReady': '录音已准备好，可以保存。',
         'quickAdd.audioQueued': '已保存。打开 Mindwtr 后将转写录音。',
+        'quickAdd.textQueued': "已保存。打开 Mindwtr 后将添加任务。",
         'quickAdd.audioProcessing': '正在处理语音记录...',
         'quickAdd.audioSavingSpeechToText': '正在保存录音并转换为文本。',
         'quickAdd.audioNoteTitle': '语音记录',

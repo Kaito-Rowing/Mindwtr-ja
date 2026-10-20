@@ -215,6 +215,7 @@ export const viOverrides: Record<string, string> = {
         'quickAdd.audioRecording': 'Đang ghi âm...',
         'quickAdd.audioReady': 'Bản ghi âm đã sẵn sàng để lưu.',
         'quickAdd.audioQueued': 'Đã lưu. Âm thanh sẽ được chuyển thành văn bản khi bạn mở Mindwtr.',
+        'quickAdd.textQueued': "Đã lưu. Nhiệm vụ sẽ được thêm khi bạn mở Mindwtr.",
         'quickAdd.audioProcessing': 'Đang xử lý bản ghi âm...',
         'quickAdd.audioSavingSpeechToText': 'Đang lưu bản ghi và chuyển giọng nói thành văn bản.',
         'quickAdd.audioNoteTitle': 'Ghi chú âm thanh',

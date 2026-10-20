@@ -266,6 +266,7 @@ export const zhHant: Record<string, string> = {
         'quickAdd.audioRecording': '正在錄音...',
         'quickAdd.audioReady': '錄音已準備好，可以儲存。',
         'quickAdd.audioQueued': '已儲存。開啟 Mindwtr 後將轉寫錄音。',
+        'quickAdd.textQueued': "已儲存。開啟 Mindwtr 後將新增任務。",
         'quickAdd.audioProcessing': '正在處理語音記錄...',
         'quickAdd.audioSavingSpeechToText': '正在儲存錄音並轉換為文字。',
         'quickAdd.audioNoteTitle': '語音記錄',

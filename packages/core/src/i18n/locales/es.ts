@@ -195,6 +195,7 @@ export const esOverrides: Record<string, string> = {
 'quickAdd.audioRecording': "Grabando...",
         'quickAdd.audioReady': 'Grabación lista para guardar.',
         'quickAdd.audioQueued': 'Guardado. El audio se transcribirá cuando abras Mindwtr.',
+        'quickAdd.textQueued': "Guardado. Tu tarea se añadirá cuando abras Mindwtr.",
 'quickAdd.audioProcessing': "Procesando captura de audio...",
 'quickAdd.audioSavingSpeechToText': "Guardando la grabación y aplicando voz a texto.",
 'quickAdd.audioNoteTitle': "Nota de audio",

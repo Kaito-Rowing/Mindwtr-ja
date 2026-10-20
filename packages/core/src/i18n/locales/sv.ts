@@ -196,6 +196,7 @@ export const svOverrides: Record<string, string> = {
         'quickAdd.audioRecording': 'Spelar in...',
         'quickAdd.audioReady': 'Inspelningen är klar att spara.',
         'quickAdd.audioQueued': 'Sparat. Ljudet transkriberas när du öppnar Mindwtr.',
+        'quickAdd.textQueued': "Sparat. Din uppgift läggs till när du öppnar Mindwtr.",
         'quickAdd.audioProcessing': 'Bearbetar ljudinspelning...',
         'quickAdd.audioSavingSpeechToText': 'Sparar inspelningen och omvandlar tal till text.',
         'quickAdd.audioNoteTitle': 'Ljudanteckning',

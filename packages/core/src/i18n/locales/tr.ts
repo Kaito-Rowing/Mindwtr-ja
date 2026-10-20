@@ -170,6 +170,7 @@ export const trOverrides: Record<string, string> = {
         'quickAdd.audioRecording': 'Kayıt...',
         'quickAdd.audioReady': 'Kayıt kaydedilmeye hazır.',
         'quickAdd.audioQueued': 'Kaydedildi. Mindwtr’ı açtığınızda ses metne dönüştürülecek.',
+        'quickAdd.textQueued': "Kaydedildi. Mindwtr açıldığında göreviniz eklenecek.",
         'quickAdd.audioProcessing': 'Ses kaydı işleniyor...',
         'quickAdd.audioSavingSpeechToText': 'Kayıt kaydediliyor ve konuşma metne dönüştürülüyor.',
         'quickAdd.audioNoteTitle': 'Sesli Not',

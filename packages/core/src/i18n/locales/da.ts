@@ -197,6 +197,7 @@ export const daOverrides: Record<string, string> = {
     'quickAdd.audioRecording': 'Optager...',
     'quickAdd.audioReady': 'Optagelse klar til at gemme.',
     'quickAdd.audioQueued': 'Gemt. Lyden vil blive transskriberet, når du åbner Mindwtr.',
+    'quickAdd.textQueued': "Gemt. Din opgave tilføjes, når du åbner Mindwtr.",
     'quickAdd.audioProcessing': 'Behandler lydoptagelse...',
     'quickAdd.audioSavingSpeechToText': 'Gemmer optagelsen og anvender tale-til-tekst.',
     'quickAdd.audioNoteTitle': 'Lydnote',

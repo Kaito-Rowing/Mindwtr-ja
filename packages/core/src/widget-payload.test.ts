@@ -3,12 +3,24 @@ import { loadTranslations } from './i18n/i18n-loader';
 import type { AppData, AppSettings, Task } from './types';
 import {
     buildAndroidWidgetPublication,
+    buildAndroidQuickCaptureLabels,
     buildWidgetPayload,
     createWidgetPayloadProjection,
     IOS_WIDGET_FAMILY_CACHE_ITEMS,
     iosWidgetProjectionOptions,
     resolveWidgetLanguage,
 } from './widget-payload';
+
+describe('Android quick capture destinations', () => {
+    it('publishes localized creation choices and queue feedback without an Inbox-only placeholder', async () => {
+        await loadTranslations('de');
+        const labels = buildAndroidQuickCaptureLabels('de');
+        expect(labels.statusLabels).toEqual({ inbox: 'Eingang', next: 'Nächste Aktionen', waiting: 'Warten', someday: 'Irgendwann/Vielleicht' });
+        expect(labels.statusLabel).toBe('Status');
+        expect(labels.placeholder).not.toContain('Eingang');
+        expect(buildAndroidQuickCaptureLabels('en').queued).toContain('will be added');
+    });
+});
 
 describe('resolveWidgetLanguage', () => {
     it('falls back to the device language, as the app does, when no language was chosen', () => {

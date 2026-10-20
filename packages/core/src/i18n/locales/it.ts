@@ -168,6 +168,7 @@ export const itOverrides: Record<string, string> = {
         'quickAdd.audioRecording': 'Registrazione in corso...',
         'quickAdd.audioReady': 'Registrazione pronta da salvare.',
         'quickAdd.audioQueued': 'Salvato. L’audio verrà trascritto quando apri Mindwtr.',
+        'quickAdd.textQueued': "Salvato. L’attività verrà aggiunta quando apri Mindwtr.",
         'quickAdd.audioProcessing': 'Elaborazione acquisizione audio...',
         'quickAdd.audioSavingSpeechToText': 'Salvataggio della registrazione e trascrizione vocale.',
         'quickAdd.audioNoteTitle': 'Nota audio',

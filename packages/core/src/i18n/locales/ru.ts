@@ -164,6 +164,7 @@ export const ruOverrides: Record<string, string> = {
         'quickAdd.audioRecording': 'Запись...',
         'quickAdd.audioReady': 'Запись готова к сохранению.',
         'quickAdd.audioQueued': 'Сохранено. Аудио будет преобразовано в текст при открытии Mindwtr.',
+        'quickAdd.textQueued': "Сохранено. Задача будет добавлена при открытии Mindwtr.",
         'quickAdd.audioProcessing': 'Обработка аудиозаписи...',
         'quickAdd.audioSavingSpeechToText': 'Сохранение записи и преобразование речи в текст.',
         'quickAdd.audioNoteTitle': 'Аудио-заметка',

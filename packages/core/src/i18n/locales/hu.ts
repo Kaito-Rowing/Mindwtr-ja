@@ -195,6 +195,7 @@ export const huOverrides: Record<string, string> = {
     'quickAdd.audioRecording': 'Felvétel…',
     'quickAdd.audioReady': 'A felvétel készen áll a mentésre.',
     'quickAdd.audioQueued': 'Mentve. A hangfelvétel átirata a Mindwtr következő megnyitásakor készül el.',
+    'quickAdd.textQueued': "Mentve. A feladat a Mindwtr megnyitásakor kerül hozzáadásra.",
     'quickAdd.audioProcessing': 'Hangfelvétel feldolgozása…',
     'quickAdd.audioSavingSpeechToText': 'A felvétel mentése és a beszéd szöveggé alakítása folyamatban.',
     'quickAdd.audioNoteTitle': 'Hangjegyzet',

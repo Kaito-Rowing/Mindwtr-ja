@@ -1,7 +1,9 @@
 package tech.dongdongbh.mindwtr.androidwidget
 
 import android.Manifest
+import android.appwidget.AppWidgetManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
@@ -19,6 +21,7 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.ViewModel
@@ -38,6 +41,7 @@ class QuickCaptureActivity : AppCompatActivity() {
   private lateinit var cancel: Button
   private lateinit var audio: ImageButton
   private lateinit var audioStatus: TextView
+  private lateinit var statusButton: Button
   private lateinit var labels: WidgetPayload.QuickCaptureLabels
   private lateinit var audioSession: QuickCaptureAudioSession
   private var observerToken: Any? = null
@@ -46,9 +50,13 @@ class QuickCaptureActivity : AppCompatActivity() {
   private val microphonePermissionOwner = QuickCapturePermissionOwner()
 
   private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-    val requestId = microphonePermissionOwner.consumeResult() ?: return@registerForActivityResult
+    onMicrophonePermissionResult(granted)
+  }
+
+  internal fun onMicrophonePermissionResult(granted: Boolean) {
+    val requestId = microphonePermissionOwner.consumeResult() ?: return
     if (audioSession.snapshot.state != QuickCaptureAudioSession.State.PERMISSION || isFinishing || isDestroyed) {
-      return@registerForActivityResult
+      return
     }
     if (granted && visible) {
       hideKeyboard()
@@ -63,7 +71,7 @@ class QuickCaptureActivity : AppCompatActivity() {
     setContentView(R.layout.mindwtr_quick_capture)
     val payload = WidgetPayloadStore.read(this)
     labels = payload.quickCapture
-    audioSession = obtainAudioSession()
+    audioSession = obtainAudioSession(savedInstanceState)
     // ActivityResultRegistry may redeliver a permission result after a config
     // recreation. The ViewModel/session survives, so restore its request token
     // before this Activity reaches STARTED and callbacks can run.
@@ -91,6 +99,21 @@ class QuickCaptureActivity : AppCompatActivity() {
     }
     audio = findViewById(R.id.mindwtr_quick_capture_audio)
     audioStatus = findViewById(R.id.mindwtr_quick_capture_audio_status)
+    statusButton = findViewById<Button>(R.id.mindwtr_quick_capture_status).apply {
+      setOnClickListener {
+        val statuses = PendingCaptureWriter.CREATION_STATUSES
+        AlertDialog.Builder(this@QuickCaptureActivity)
+          .setTitle(labels.statusLabel)
+          .setSingleChoiceItems(statuses.map { labels.statusLabels.getValue(it) }.toTypedArray(),
+            statuses.indexOf(audioSession.captureStatus ?: audioSession.defaultStatus)) { dialog, position ->
+            // A click is explicit even when Inbox was already selected initially.
+            audioSession.selectCaptureStatus(statuses[position])
+            dialog.dismiss()
+          }
+          .setNegativeButton(labels.cancel, null)
+          .show()
+      }
+    }
     findViewById<View>(R.id.mindwtr_quick_capture_audio_row).visibility =
       if (labels.audioEnabled) View.VISIBLE else View.GONE
     audio.setOnClickListener {
@@ -120,7 +143,7 @@ class QuickCaptureActivity : AppCompatActivity() {
     })
     observerToken = audioSession.attach(::render)
     val cleanupFilesDir = filesDir
-    val activeIds = audioSession.activeIds
+    val activeIds = QuickCaptureAudioSessionStore.activeIds()
     CAPTURE_IO.execute { QuickCaptureAudioCleanup.sweep(cleanupFilesDir, activeIds) }
     input.requestFocus()
   }
@@ -132,6 +155,35 @@ class QuickCaptureActivity : AppCompatActivity() {
     microphonePermissionOwner.onStarting()
     super.onStart()
   }
+
+  override fun onNewIntent(nextIntent: Intent) {
+    super.onNewIntent(nextIntent)
+    if (captureOwner(nextIntent) == captureOwner(intent)) return
+    // singleTask can deliver another widget/shortcut while this draft is open.
+    // Retire its UI/permission owner before background publication can complete.
+    visible = false
+    microphonePermissionOwner.onStopped()
+    observerToken?.let(audioSession::detach)
+    observerToken = null
+    audioSession.updateTitle(input.text?.toString().orEmpty())
+    audioSession.updateNote(description.text?.toString().orEmpty())
+    audioSession.onHostStopped()
+    val origin = widgetOrigin(nextIntent)
+    val launch = origin?.let { (kind, id) -> WidgetRenderer.captureIntent(this, id, kind) }
+      ?: Intent(this, QuickCaptureActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    finish()
+    startActivity(launch)
+  }
+
+  private fun widgetOrigin(launch: Intent): Pair<WidgetKind, Int>? {
+    val id = launch.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+    if (id < 0) return null
+    val kind = WidgetKind.entries.firstOrNull { it.name == launch.getStringExtra(WidgetRenderer.EXTRA_KIND) } ?: return null
+    return kind to id
+  }
+
+  private fun captureOwner(launch: Intent): String =
+    widgetOrigin(launch)?.let { (kind, id) -> "${kind.name}/$id" } ?: "standalone"
 
   override fun onStop() {
     visible = false
@@ -148,7 +200,13 @@ class QuickCaptureActivity : AppCompatActivity() {
     super.onDestroy()
   }
 
-  private fun obtainAudioSession(): QuickCaptureAudioSession {
+  override fun onSaveInstanceState(outState: Bundle) {
+    outState.putString(STATE_DEFAULT_STATUS, audioSession.defaultStatus)
+    outState.putString(STATE_CAPTURE_STATUS, audioSession.captureStatus)
+    super.onSaveInstanceState(outState)
+  }
+
+  private fun obtainAudioSession(savedInstanceState: Bundle?): QuickCaptureAudioSession {
     val appContext = applicationContext
     val captureFilesDir = filesDir
     val mainExecutor = ContextCompat.getMainExecutor(appContext)
@@ -156,7 +214,9 @@ class QuickCaptureActivity : AppCompatActivity() {
       @Suppress("UNCHECKED_CAST")
       override fun <T : ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(AudioSessionModel::class.java))
-        val session = QuickCaptureAudioSessionStore.acquire {
+        val widgetId = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+        val kind = intent.getStringExtra(WidgetRenderer.EXTRA_KIND)
+        val session = QuickCaptureAudioSessionStore.acquire(captureOwner(intent)) {
           lateinit var retainedSession: QuickCaptureAudioSession
           retainedSession = QuickCaptureAudioSession(
             startRecorder = { callback ->
@@ -181,7 +241,8 @@ class QuickCaptureActivity : AppCompatActivity() {
             publishAudio = { draft, typedTitle, typedNote, complete ->
               CAPTURE_IO.execute {
                 val saved = try {
-                  PendingCaptureWriter.publishAudio(captureFilesDir, draft, typedTitle, typedNote)
+                  PendingCaptureWriter.publishAudio(captureFilesDir, draft, typedTitle, typedNote,
+                    retainedSession.defaultStatus, retainedSession.captureStatus)
                   Log.i(TAG, "Native quick capture audio queued")
                   true
                 } catch (_: Exception) {
@@ -195,6 +256,12 @@ class QuickCaptureActivity : AppCompatActivity() {
               CAPTURE_IO.execute { PendingCaptureWriter.discardAudioDraft(captureFilesDir, draft) }
             },
             onTerminal = { QuickCaptureAudioSessionStore.release(retainedSession) },
+            defaultStatus = if (savedInstanceState != null) {
+              PendingCaptureWriter.creationStatus(savedInstanceState.getString(STATE_DEFAULT_STATUS)) ?: "inbox"
+            } else if (widgetId >= 0 && kind == WidgetKind.TASKS.name) {
+              PendingCaptureWriter.creationStatus(WidgetListStore.read(appContext, widgetId)) ?: "inbox"
+            } else "inbox",
+            initialCaptureStatus = savedInstanceState?.getString(STATE_CAPTURE_STATUS),
           )
           retainedSession
         }
@@ -256,12 +323,13 @@ class QuickCaptureActivity : AppCompatActivity() {
     audio.contentDescription = if (recording) labels.audioStop else labels.audioRecord
     input.isEnabled = editable || recording || snapshot.state == QuickCaptureAudioSession.State.STOPPING
     description.isEnabled = input.isEnabled
+    statusButton.isEnabled = input.isEnabled
+    val captureStatus = audioSession.captureStatus ?: audioSession.defaultStatus
+    statusButton.text = "${labels.statusLabel}: ${labels.statusLabels.getValue(captureStatus)}"
 
     if (snapshot.state == QuickCaptureAudioSession.State.SAVED) {
       if (audioSession.consumeSaved()) {
         Toast.makeText(applicationContext, labels.audioSaved, Toast.LENGTH_LONG).show()
-        WidgetPayloadStore.incrementInboxCount(applicationContext)
-        WidgetRenderer.refreshAll(applicationContext)
       }
       finish()
     } else if (snapshot.state == QuickCaptureAudioSession.State.CLOSED) {
@@ -283,6 +351,7 @@ class QuickCaptureActivity : AppCompatActivity() {
     save.setTextColor(palette.onAccent)
     audio.imageTintList = ColorStateList.valueOf(palette.accent)
     audioStatus.setTextColor(palette.mutedText)
+    statusButton.setTextColor(palette.accent)
   }
 
   private fun tint(view: View, color: Int) {
@@ -300,7 +369,8 @@ class QuickCaptureActivity : AppCompatActivity() {
     }
     val title = input.text?.toString().orEmpty()
     val written = try {
-      PendingCaptureWriter.write(filesDir, title, note = description.text?.toString().orEmpty())
+      PendingCaptureWriter.write(filesDir, title, note = description.text?.toString().orEmpty(),
+        defaultStatus = audioSession.defaultStatus, status = audioSession.captureStatus)
     } catch (error: IOException) {
       Log.w(TAG, "quick capture write failed: ${error.message}")
       Toast.makeText(this, error.message ?: "Could not save", Toast.LENGTH_SHORT).show()
@@ -312,9 +382,7 @@ class QuickCaptureActivity : AppCompatActivity() {
     }
     audioSession.completeTextCapture()
     Log.i(TAG, "quick capture queued ${written.name}")
-    Toast.makeText(this, labels.added, Toast.LENGTH_SHORT).show()
-    WidgetPayloadStore.incrementInboxCount(this)
-    WidgetRenderer.refreshAll(this)
+    Toast.makeText(this, labels.queued, Toast.LENGTH_SHORT).show()
     CaptureSyncHeadlessService.start(this)
   }
 
@@ -326,6 +394,8 @@ class QuickCaptureActivity : AppCompatActivity() {
 
   companion object {
     private const val TAG = "Mindwtr"
+    private const val STATE_DEFAULT_STATUS = "captureDefaultStatus"
+    private const val STATE_CAPTURE_STATUS = "captureStatus"
     private val CAPTURE_IO = Executors.newSingleThreadExecutor { work -> Thread(work, "MindwtrCaptureSave") }
   }
 }

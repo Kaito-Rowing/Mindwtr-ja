@@ -65,6 +65,17 @@
                 android:textColorHint="@color/mindwtr_widget_muted_text"
                 android:textSize="14sp" />
 
+            <Button
+                android:id="@+id/mindwtr_quick_capture_status"
+                style="?attr/borderlessButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="start|center_vertical"
+                android:minHeight="48dp"
+                android:textAllCaps="false"
+                android:textColor="@color/mindwtr_widget_accent" />
+
             <LinearLayout
                 android:id="@+id/mindwtr_quick_capture_audio_row"
                 android:layout_width="match_parent"

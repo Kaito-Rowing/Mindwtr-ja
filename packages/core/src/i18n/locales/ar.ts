@@ -141,6 +141,7 @@ export const arOverrides: Record<string, string> = {
         'quickAdd.audioRecording': 'تسجيل...',
         'quickAdd.audioReady': 'التسجيل جاهز للحفظ.',
         'quickAdd.audioQueued': 'تم الحفظ. سيُحوَّل الصوت إلى نص عند فتح Mindwtr.',
+        'quickAdd.textQueued': "تم الحفظ. ستُضاف مهمتك عند فتح Mindwtr.",
         'quickAdd.audioProcessing': 'جارٍ معالجة التسجيل الصوتي...',
         'quickAdd.audioSavingSpeechToText': 'جارٍ حفظ التسجيل وتطبيق تحويل الكلام إلى نص.',
         'quickAdd.audioNoteTitle': 'ملاحظة صوتية',

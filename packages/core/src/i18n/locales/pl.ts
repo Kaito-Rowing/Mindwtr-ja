@@ -165,6 +165,7 @@ export const plOverrides: Record<string, string> = {
         'quickAdd.audioRecording': 'Nagranie...',
         'quickAdd.audioReady': 'Nagranie gotowe do zapisania.',
         'quickAdd.audioQueued': 'Zapisano. Dźwięk zostanie przepisany po otwarciu Mindwtr.',
+        'quickAdd.textQueued': "Zapisano. Zadanie zostanie dodane po otwarciu Mindwtr.",
         'quickAdd.audioProcessing': 'Przetwarzanie nagrania głosowego...',
         'quickAdd.audioSavingSpeechToText': 'Zapisywanie nagrania i zamiana mowy na tekst.',
         'quickAdd.audioNoteTitle': 'Notatka dźwiękowa',
