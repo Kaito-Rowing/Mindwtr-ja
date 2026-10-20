@@ -3996,6 +3996,10 @@ export function holdNativeBackupUndoAttachments(snapshotText, snapshotName) {
   globalThis.backupInputs.push(JSON.stringify(['undoHold', snapshotText.length, snapshotName]));
   return true;
 }
+export function buildNativeBackupNoUndoConfirmation(t) {
+  return { title: t('settings.backupMobile.undoUnavailableTitle'), message: t('settings.backupMobile.undoUnavailableConfirm'),
+    confirmLabel: t('settings.backupMobile.undoUnavailableContinue'), cancelLabel: t('common.cancel') };
+}
 export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName, t) {
   globalThis.backupInputs.push(JSON.stringify(['restoreModel', snapshotName]));
   return { title: t('settings.undoImportConfirmTitle'), message: t('settings.undoImportConfirm', { snapshotName }),

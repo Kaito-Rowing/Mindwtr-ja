@@ -2128,7 +2128,7 @@ export const viOverrides: Record<string, string> = {
                 'settings.backupMobile.restoreBackup': 'Khôi phục sao lưu?',
         'settings.backupMobile.restoreComplete': 'Khôi phục hoàn tất',
         'settings.backupMobile.undoUnavailableTitle': 'Sẽ không thể hoàn tác',
-        'settings.backupMobile.undoUnavailableConfirm': 'Thư viện này quá lớn để hoàn tác thay đổi này. Một bản chụp khôi phục vẫn được lưu trong Cài đặt › Dữ liệu. Tiếp tục?',
+        'settings.backupMobile.undoUnavailableConfirm': 'Thư viện này quá lớn để hoàn tác thay đổi này. Một ảnh chụp khôi phục vẫn được lưu trước. Tiếp tục?',
         'settings.backupMobile.undoUnavailableContinue': 'Tiếp tục',
         'settings.backupMobile.undoUnavailableResult': 'Không thể hoàn tác thay đổi này: thư viện quá lớn.',
         'settings.backupMobile.restoreFailed': 'Khôi phục thất bại',

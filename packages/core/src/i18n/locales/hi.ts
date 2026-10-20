@@ -979,7 +979,7 @@ export const hiOverrides: Record<string, string> = {
         'settings.backupMobile.importMindwtrCsvData': 'Mindwtr CSV डेटा आयात करें?',
         'settings.backupMobile.importedTaskProjectSectionAreaCounts': '{{taskCount}} कार्य, {{projectCount}} प्रोजेक्ट, {{sectionCount}} सेक्शन और {{areaCount}} क्षेत्र आयात किए गए।',
         'settings.backupMobile.undoUnavailableTitle': 'पूर्ववत करना उपलब्ध नहीं होगा',
-        'settings.backupMobile.undoUnavailableConfirm': 'यह लाइब्रेरी इस बदलाव को पूर्ववत करने के लिए बहुत बड़ी है। फिर भी एक रिकवरी स्नैपशॉट सेटिंग्स › डेटा में सहेजा जाता है। जारी रखें?',
+        'settings.backupMobile.undoUnavailableConfirm': 'यह लाइब्रेरी इस बदलाव को पूर्ववत करने के लिए बहुत बड़ी है। फिर भी पहले एक रिकवरी स्नैपशॉट सहेजा जाता है। जारी रखें?',
         'settings.backupMobile.undoUnavailableContinue': 'जारी रखें',
         'settings.backupMobile.undoUnavailableResult': 'इस बदलाव के लिए पूर्ववत करना उपलब्ध नहीं है: लाइब्रेरी बहुत बड़ी है।',
         'settings.backupMobile.theSelectedFileIsNotASupportedMindwtrCsvFile': 'चुनी गई फ़ाइल समर्थित Mindwtr CSV फ़ाइल नहीं है।',

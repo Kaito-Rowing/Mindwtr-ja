@@ -2340,7 +2340,7 @@ export const en: Record<string, string> = {
         'settings.backupMobile.restoreBackup': 'Restore backup?',
         'settings.backupMobile.restoreComplete': 'Restore complete',
         'settings.backupMobile.undoUnavailableTitle': 'Undo will not be available',
-        'settings.backupMobile.undoUnavailableConfirm': 'This library is too large to undo this change. A recovery snapshot is still saved in Settings › Data. Continue?',
+        'settings.backupMobile.undoUnavailableConfirm': 'This library is too large to undo this change. A recovery snapshot is still saved first. Continue?',
         'settings.backupMobile.undoUnavailableContinue': 'Continue',
         'settings.backupMobile.undoUnavailableResult': 'Undo is not available for this change: the library is too large.',
         'settings.backupMobile.restoreFailed': 'Restore failed',

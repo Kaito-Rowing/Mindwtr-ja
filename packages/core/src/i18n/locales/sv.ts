@@ -2304,7 +2304,7 @@ export const svOverrides: Record<string, string> = {
         'settings.backupMobile.restoreBackup': 'Återställ säkerhetskopia?',
         'settings.backupMobile.restoreComplete': 'Återställningen är klar',
         'settings.backupMobile.undoUnavailableTitle': 'Ångra kommer inte att vara tillgängligt',
-        'settings.backupMobile.undoUnavailableConfirm': 'Det här biblioteket är för stort för att ångra den här ändringen. En återställningsögonblicksbild sparas ändå under Inställningar › Data. Fortsätta?',
+        'settings.backupMobile.undoUnavailableConfirm': 'Det här biblioteket är för stort för att ångra den här ändringen. En återställningsögonblicksbild sparas ändå först. Fortsätta?',
         'settings.backupMobile.undoUnavailableContinue': 'Fortsätt',
         'settings.backupMobile.undoUnavailableResult': 'Ångra är inte tillgängligt för den här ändringen: biblioteket är för stort.',
         'settings.backupMobile.restoreFailed': 'Återställningen misslyckades',

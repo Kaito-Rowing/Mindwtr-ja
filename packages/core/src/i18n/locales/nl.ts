@@ -436,7 +436,7 @@ export const nlOverrides: Record<string, string> = {
         'settings.backupMobile.importMindwtrCsvData': 'Mindwtr CSV-gegevens importeren?',
         'settings.backupMobile.importedTaskProjectSectionAreaCounts': '{{taskCount}} taak/taken, {{projectCount}} project(en), {{sectionCount}} sectie(s) en {{areaCount}} gebied(en) geïmporteerd.',
         'settings.backupMobile.undoUnavailableTitle': 'Ongedaan maken is niet beschikbaar',
-        'settings.backupMobile.undoUnavailableConfirm': 'Deze bibliotheek is te groot om deze wijziging ongedaan te maken. Er wordt nog steeds een herstelsnapshot bewaard in Instellingen › Gegevens. Doorgaan?',
+        'settings.backupMobile.undoUnavailableConfirm': 'Deze bibliotheek is te groot om deze wijziging ongedaan te maken. Er wordt eerst nog steeds een herstelsnapshot bewaard. Doorgaan?',
         'settings.backupMobile.undoUnavailableContinue': 'Doorgaan',
         'settings.backupMobile.undoUnavailableResult': 'Deze wijziging kan niet ongedaan worden gemaakt: de bibliotheek is te groot.',
         'settings.backupMobile.theSelectedFileIsNotASupportedMindwtrCsvFile': 'Het geselecteerde bestand is geen ondersteund Mindwtr CSV-bestand.',

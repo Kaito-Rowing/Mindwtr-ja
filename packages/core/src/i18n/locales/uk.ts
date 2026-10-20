@@ -2274,7 +2274,7 @@ export const ukOverrides: Record<string, string> = {
     "settings.backupMobile.restoreBackup": "Відновити резервну копію?",
     "settings.backupMobile.restoreComplete": "Відновлення завершено",
     'settings.backupMobile.undoUnavailableTitle': 'Скасування буде недоступне',
-    'settings.backupMobile.undoUnavailableConfirm': 'Ця бібліотека завелика, щоб скасувати цю зміну. Знімок для відновлення все одно зберігається в Налаштування › Дані. Продовжити?',
+    'settings.backupMobile.undoUnavailableConfirm': 'Ця бібліотека завелика, щоб скасувати цю зміну. Знімок для відновлення все одно спершу зберігається. Продовжити?',
     'settings.backupMobile.undoUnavailableContinue': 'Продовжити',
     'settings.backupMobile.undoUnavailableResult': 'Цю зміну не можна скасувати: бібліотека завелика.',
     "settings.backupMobile.restoreFailed": "Не вдалося відновити",

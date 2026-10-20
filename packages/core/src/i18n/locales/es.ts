@@ -2273,7 +2273,7 @@ export const esOverrides: Record<string, string> = {
 'settings.backupMobile.restoreBackup': "¿Restaurar la copia de seguridad?",
 'settings.backupMobile.restoreComplete': "Restauración completada",
         'settings.backupMobile.undoUnavailableTitle': 'No se podrá deshacer',
-        'settings.backupMobile.undoUnavailableConfirm': 'Esta biblioteca es demasiado grande para deshacer este cambio. Aun así, se guarda una instantánea de recuperación en Ajustes › Datos. ¿Continuar?',
+        'settings.backupMobile.undoUnavailableConfirm': 'Esta biblioteca es demasiado grande para deshacer este cambio. Aun así, primero se guarda una instantánea de recuperación. ¿Continuar?',
         'settings.backupMobile.undoUnavailableContinue': 'Continuar',
         'settings.backupMobile.undoUnavailableResult': 'No se puede deshacer este cambio: la biblioteca es demasiado grande.',
 'settings.backupMobile.restoreFailed': "Error al restaurar",

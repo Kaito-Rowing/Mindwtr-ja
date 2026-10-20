@@ -2273,7 +2273,7 @@ export const huOverrides: Record<string, string> = {
     'settings.backupMobile.restoreBackup': 'Visszaállítja a biztonsági mentést?',
     'settings.backupMobile.restoreComplete': 'Visszaállítás befejezve',
     'settings.backupMobile.undoUnavailableTitle': 'A visszavonás nem lesz elérhető',
-    'settings.backupMobile.undoUnavailableConfirm': 'Ez a könyvtár túl nagy ahhoz, hogy ez a módosítás visszavonható legyen. Helyreállítási pillanatkép így is mentésre kerül a Beállítások › Adatok alatt. Folytatja?',
+    'settings.backupMobile.undoUnavailableConfirm': 'Ez a könyvtár túl nagy ahhoz, hogy ez a módosítás visszavonható legyen. Előtte így is mentésre kerül egy helyreállítási pillanatkép. Folytatja?',
     'settings.backupMobile.undoUnavailableContinue': 'Folytatás',
     'settings.backupMobile.undoUnavailableResult': 'Ez a módosítás nem vonható vissza: a könyvtár túl nagy.',
     'settings.backupMobile.restoreFailed': 'A visszaállítás sikertelen',

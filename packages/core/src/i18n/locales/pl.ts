@@ -970,7 +970,7 @@ export const plOverrides: Record<string, string> = {
         'settings.backupMobile.importMindwtrCsvData': 'Zaimportować dane Mindwtr CSV?',
         'settings.backupMobile.importedTaskProjectSectionAreaCounts': 'Zaimportowano {{taskCount}} zadań, {{projectCount}} projektów, {{sectionCount}} sekcji i {{areaCount}} obszarów.',
         'settings.backupMobile.undoUnavailableTitle': 'Cofnięcie nie będzie dostępne',
-        'settings.backupMobile.undoUnavailableConfirm': 'Ta biblioteka jest za duża, aby cofnąć tę zmianę. Migawka odzyskiwania i tak zostanie zapisana w Ustawienia › Dane. Kontynuować?',
+        'settings.backupMobile.undoUnavailableConfirm': 'Ta biblioteka jest za duża, aby cofnąć tę zmianę. Migawka odzyskiwania i tak zostanie najpierw zapisana. Kontynuować?',
         'settings.backupMobile.undoUnavailableContinue': 'Kontynuuj',
         'settings.backupMobile.undoUnavailableResult': 'Tej zmiany nie można cofnąć: biblioteka jest za duża.',
         'settings.backupMobile.theSelectedFileIsNotASupportedMindwtrCsvFile': 'Wybrany plik nie jest obsługiwanym plikiem Mindwtr CSV.',

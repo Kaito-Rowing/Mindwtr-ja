@@ -1243,7 +1243,7 @@ export const frOverrides: Record<string, string> = {
         'settings.backupMobile.importMindwtrCsvData': 'Importer les données Mindwtr CSV ?',
         'settings.backupMobile.importedTaskProjectSectionAreaCounts': '{{taskCount}} tâche(s), {{projectCount}} projet(s), {{sectionCount}} section(s) et {{areaCount}} domaine(s) importé(s).',
         'settings.backupMobile.undoUnavailableTitle': 'L’annulation ne sera pas disponible',
-        'settings.backupMobile.undoUnavailableConfirm': 'Cette bibliothèque est trop volumineuse pour annuler cette modification. Un instantané de récupération est tout de même enregistré dans Réglages › Données. Continuer ?',
+        'settings.backupMobile.undoUnavailableConfirm': 'Cette bibliothèque est trop volumineuse pour annuler cette modification. Un snapshot de récupération est tout de même enregistré avant. Continuer ?',
         'settings.backupMobile.undoUnavailableContinue': 'Continuer',
         'settings.backupMobile.undoUnavailableResult': 'Impossible d’annuler cette modification : la bibliothèque est trop volumineuse.',
         'settings.backupMobile.theSelectedFileIsNotASupportedMindwtrCsvFile': 'Le fichier sélectionné n\'est pas un fichier Mindwtr CSV pris en charge.',

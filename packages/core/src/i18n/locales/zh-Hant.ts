@@ -2279,7 +2279,7 @@ export const zhHant: Record<string, string> = {
         'settings.backupMobile.restoreBackup': '恢復備份？',
         'settings.backupMobile.restoreComplete': '恢復完成',
         'settings.backupMobile.undoUnavailableTitle': '將無法復原',
-        'settings.backupMobile.undoUnavailableConfirm': '此資料庫過大，無法復原此變更。復原快照仍會儲存在 設定 › 資料 中。要繼續嗎？',
+        'settings.backupMobile.undoUnavailableConfirm': '此資料庫過大，無法復原此變更。仍會先儲存一份恢復快照。要繼續嗎？',
         'settings.backupMobile.undoUnavailableContinue': '繼續',
         'settings.backupMobile.undoUnavailableResult': '無法復原此變更：資料庫過大。',
         'settings.backupMobile.restoreFailed': '恢復失敗',

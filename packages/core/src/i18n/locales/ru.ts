@@ -975,7 +975,7 @@ export const ruOverrides: Record<string, string> = {
         'settings.backupMobile.importMindwtrCsvData': 'Импортировать данные Mindwtr CSV?',
         'settings.backupMobile.importedTaskProjectSectionAreaCounts': 'Импортировано задач: {{taskCount}}, проектов: {{projectCount}}, разделов: {{sectionCount}}, областей: {{areaCount}}.',
         'settings.backupMobile.undoUnavailableTitle': 'Отмена будет недоступна',
-        'settings.backupMobile.undoUnavailableConfirm': 'Эта библиотека слишком велика, чтобы отменить это изменение. Снимок для восстановления всё равно сохраняется в Настройки › Данные. Продолжить?',
+        'settings.backupMobile.undoUnavailableConfirm': 'Эта библиотека слишком велика, чтобы отменить это изменение. Снимок для восстановления всё равно сохраняется заранее. Продолжить?',
         'settings.backupMobile.undoUnavailableContinue': 'Продолжить',
         'settings.backupMobile.undoUnavailableResult': 'Это изменение нельзя отменить: библиотека слишком велика.',
         'settings.backupMobile.theSelectedFileIsNotASupportedMindwtrCsvFile': 'Выбранный файл не является поддерживаемым файлом Mindwtr CSV.',

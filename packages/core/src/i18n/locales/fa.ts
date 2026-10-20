@@ -2310,7 +2310,7 @@ export const faOverrides: Record<string, string> = {
         'settings.backupMobile.restoreBackup': 'پشتیبان بازگردانی شود؟',
         'settings.backupMobile.restoreComplete': 'بازگردانی کامل شد',
         'settings.backupMobile.undoUnavailableTitle': 'واگرد در دسترس نخواهد بود',
-        'settings.backupMobile.undoUnavailableConfirm': 'این کتابخانه برای واگرد این تغییر بیش از حد بزرگ است. با این حال یک اسنپ‌شات بازیابی در تنظیمات › داده‌ها ذخیره می‌شود. ادامه می‌دهید؟',
+        'settings.backupMobile.undoUnavailableConfirm': 'این کتابخانه برای واگرد این تغییر بیش از حد بزرگ است. با این حال ابتدا یک عکس فوری بازیابی ذخیره می‌شود. ادامه می‌دهید؟',
         'settings.backupMobile.undoUnavailableContinue': 'ادامه',
         'settings.backupMobile.undoUnavailableResult': 'واگرد برای این تغییر در دسترس نیست: کتابخانه بیش از حد بزرگ است.',
         'settings.backupMobile.restoreFailed': 'بازگردانی ناموفق بود',

@@ -441,7 +441,8 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 is Leftover.Result -> {
                     // Its Undo comes back with this toast: core holds that Undo's attachment files again first, as the commit did
                     // in the process that died (a sync's cleanup must not delete them before the Undo is taken).
-                    leftover.undo?.let { name ->
+                    // A result without Undo (large-library pass b: its toast says so) has nothing to hold.
+                    leftover.undo?.takeIf { leftover.model.optString("undoLabel").isNotEmpty() }?.let { name ->
                         val held = runCatching { runtime.backupUndoHold(File(snapshots, name)).optBoolean("held") }
                             .onFailure { Log.w(CoreHost.TAG, "Leftover Undo hold failed ${failureForLog(it)}") }.getOrDefault(false)
                         runCatching {

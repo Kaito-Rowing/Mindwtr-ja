@@ -1032,7 +1032,7 @@ export const ptOverrides: Record<string, string> = {
         'settings.backupMobile.importMindwtrCsvData': 'Importar dados do Mindwtr CSV?',
         'settings.backupMobile.importedTaskProjectSectionAreaCounts': 'Importados {{taskCount}} tarefa(s), {{projectCount}} projeto(s), {{sectionCount}} seção(ões) e {{areaCount}} área(s).',
         'settings.backupMobile.undoUnavailableTitle': 'Não será possível desfazer',
-        'settings.backupMobile.undoUnavailableConfirm': 'Esta biblioteca é grande demais para desfazer esta alteração. Ainda assim, um instantâneo de recuperação é salvo em Configurações › Dados. Continuar?',
+        'settings.backupMobile.undoUnavailableConfirm': 'Esta biblioteca é grande demais para desfazer esta alteração. Ainda assim, um instantâneo de recuperação é salvo antes. Continuar?',
         'settings.backupMobile.undoUnavailableContinue': 'Continuar',
         'settings.backupMobile.undoUnavailableResult': 'Não é possível desfazer esta alteração: a biblioteca é grande demais.',
         'settings.backupMobile.theSelectedFileIsNotASupportedMindwtrCsvFile': 'O arquivo selecionado não é um arquivo Mindwtr CSV compatível.',

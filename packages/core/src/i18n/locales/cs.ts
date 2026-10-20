@@ -1907,7 +1907,7 @@ export const csOverrides: Record<string, string> = {
         'settings.backupMobile.restoreBackup': 'Obnovit zálohu?',
         'settings.backupMobile.restoreComplete': 'Obnova dokončena',
         'settings.backupMobile.undoUnavailableTitle': 'Vrácení nebude k dispozici',
-        'settings.backupMobile.undoUnavailableConfirm': 'Tato knihovna je příliš velká, aby šla tato změna vrátit. Snímek pro obnovení se přesto uloží v Nastavení › Data. Pokračovat?',
+        'settings.backupMobile.undoUnavailableConfirm': 'Tato knihovna je příliš velká, aby šla tato změna vrátit. Záchranný snímek se přesto nejprve uloží. Pokračovat?',
         'settings.backupMobile.undoUnavailableContinue': 'Pokračovat',
         'settings.backupMobile.undoUnavailableResult': 'Tuto změnu nelze vrátit: knihovna je příliš velká.',
         'settings.backupMobile.restoreFailed': 'Obnova selhala',

@@ -77,10 +77,11 @@ class BackupInputError extends Error {}
 function invalid(message = 'Invalid backup document input'): never { throw new BackupInputError(`INVALID_INPUT: ${message}`); }
 function tooLarge(message: string): never { throw new BackupInputError(`TOO_LARGE: ${message}`); }
 const UNDO_TOO_LARGE = 'TOO_LARGE: The imported library would be too large to undo';
-// ponytail: Undo's room is judged before the save: today's SQLite bytes (SQLite keeps its pages when rows go) plus the planned JSON's
-// growth at 1.3 SQLite bytes per JSON byte (step 0 run 6: a 10.7 MiB rows backup left a 13.9 MiB library), times 1.25 so it rarely
-// says Undo fits when it does not. A save that still ends larger lands without Undo and says so (it is never rolled back).
-const SQLITE_BYTES_PER_JSON_BYTE = 1.3;
+// ponytail: Undo's room is judged before the save: today's SQLite bytes (SQLite keeps its pages when rows go) plus the planned
+// compact JSON's growth at 1.8 SQLite bytes per compact JSON byte (step 0 run 6: a 10.7 MiB pretty rows backup left a 13.9 MiB
+// library, 1.3 per pretty byte; compact JSON is 0.74 of pretty, so about 1.76), times 1.25 so it rarely says Undo fits when it
+// does not. A save that still ends larger lands without Undo and says so (it is never rolled back).
+const SQLITE_BYTES_PER_JSON_BYTE = 1.8;
 const UNDO_ESTIMATE_MARGIN = 1.25;
 const logUndoUnavailable = (operation: string, outcome: 'estimate' | 'after-save'): void => {
     try {
@@ -585,7 +586,8 @@ async function commitPlan(adapter: NativeReceiptSqliteAdapter, reference: Native
             }
             const reply = matchedReply(result.reply, kept);
             if (reply.undo === false && kept.reply.undo !== false && !result.replayed) logUndoUnavailable(kept.mode, 'after-save');
-            if (undoReferences) holdRestoreUndoAttachments(undoReferences);
+            // An operation that ran without Undo offers none: nothing to hold.
+            if (undoReferences && reply.undo !== false) holdRestoreUndoAttachments(undoReferences);
             try {
                 markNextLoadAsDocumentReplacement();
                 // Maintenance resumes only after the native journal has been cleared.

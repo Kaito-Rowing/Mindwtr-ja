@@ -605,6 +605,8 @@ const sampledRun = async (act, done) => {
             if (!pid()) { outcome = 'died'; break; }
             const nodes = await screen().catch(() => []);
             if (done(nodes)) { outcome = 'done'; toast = nodes; break; }
+            // Large-library pass b: an operation whose Undo will not fit asks first; a measured row runs it (Continue).
+            if (hasText(nodes, en['settings.backupMobile.undoUnavailableTitle']) && confirmButton(nodes)) { await tap(confirmButton(nodes)); continue; }
             const failed = nodes.find((node) => /failed|too large|too long/i.test(node.text ?? ''));
             if (failed) { outcome = `failed: ${failed.text}`; toast = nodes; break; }
             await sleep(1000);
@@ -1584,6 +1586,7 @@ try {
         && hasText(current, en['settings.backupMobile.undoUnavailableConfirm']);
     await importPick('mindwtr-csv', expansion);
     await confirmQuestion(en['settings.backupMobile.importMindwtrCsvData']);
+    const snapshotsBefore = snapshots().length;
     const asked = await waitFor('the no-Undo question', noUndoQuestion, 600_000);
     await tap(asked.find((node) => [node.text, node['content-desc']].some((text) => (text ?? '').toUpperCase() === en['common.cancel'].toUpperCase()))
         ?? fail('no Cancel on the no-Undo question'));
@@ -1591,6 +1594,8 @@ try {
     await until('(I5) the journal and the operation folder to empty', () => journal().length === 0 && operations().length === 0, 60_000);
     check(!taggedRows(pullDb('i5-cancel')).some((row) => row.title.startsWith('d1x')), '(I5) Cancel on the no-Undo question landed nothing');
     check(receiptCount('i5-cancel', 'csv') === csvReceipts, '(I5) and wrote no receipt');
+    check(snapshots().length === snapshotsBefore && !listing('files/snapshots').some((name) => name.endsWith('.pending')),
+        '(I5) and published no recovery snapshot, leaving no pending one');
     await importPick('mindwtr-csv', expansion);
     await confirmQuestion(en['settings.backupMobile.importMindwtrCsvData']);
     await confirmQuestion(en['settings.backupMobile.undoUnavailableTitle']);
@@ -1601,8 +1606,10 @@ try {
     check(receiptCount('i5-after', 'csv') === csvReceipts + 1, '(I5) with one receipt');
     check(allLogs().includes('v1.3.7/large-library-no-undo'), '(I5) the log names the no-Undo run (v1.3.7/large-library-no-undo)');
     await until('(I5) the journal and the operation folder to empty', () => journal().length === 0 && operations().length === 0, 60_000);
+    // The 60 000 rows stay; I6 and on need a small library again (its recovery snapshot alone passes the limit).
     setProp('transfer_limit_mb', '');
     sh(`rm -f ${PHONE_DIR}/${expansion.name}`);
+    await fresh();
 
     // I6: sentinels in a dropped repeat rule, a renamed project and a skipped archive entry's name. The durable files are read
     // while the process is dead at the two points they exist: right after the commit's reply (journal entry, plan, manifest and

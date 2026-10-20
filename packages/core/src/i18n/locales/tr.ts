@@ -990,7 +990,7 @@ export const trOverrides: Record<string, string> = {
         'settings.backupMobile.importMindwtrCsvData': 'Mindwtr CSV verileri içe aktarılsın mı?',
         'settings.backupMobile.importedTaskProjectSectionAreaCounts': '{{taskCount}} görev, {{projectCount}} proje, {{sectionCount}} bölüm ve {{areaCount}} alan içe aktarıldı.',
         'settings.backupMobile.undoUnavailableTitle': 'Geri alma kullanılamayacak',
-        'settings.backupMobile.undoUnavailableConfirm': 'Bu kitaplık, bu değişikliği geri almak için çok büyük. Yine de Ayarlar › Veriler bölümüne bir kurtarma anlık görüntüsü kaydedilir. Devam edilsin mi?',
+        'settings.backupMobile.undoUnavailableConfirm': 'Bu kitaplık, bu değişikliği geri almak için çok büyük. Yine de önce bir kurtarma anlık görüntüsü kaydedilir. Devam edilsin mi?',
         'settings.backupMobile.undoUnavailableContinue': 'Devam et',
         'settings.backupMobile.undoUnavailableResult': 'Bu değişiklik geri alınamaz: kitaplık çok büyük.',
         'settings.backupMobile.theSelectedFileIsNotASupportedMindwtrCsvFile': 'Seçilen dosya desteklenen bir Mindwtr CSV dosyası değil.',

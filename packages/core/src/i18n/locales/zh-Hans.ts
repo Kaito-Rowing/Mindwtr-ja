@@ -2279,7 +2279,7 @@ export const zhHans: Record<string, string> = {
         'settings.backupMobile.restoreBackup': '恢复备份？',
         'settings.backupMobile.restoreComplete': '恢复完成',
         'settings.backupMobile.undoUnavailableTitle': '将无法撤销',
-        'settings.backupMobile.undoUnavailableConfirm': '此资料库过大，无法撤销此更改。恢复快照仍会保存在 设置 › 数据 中。要继续吗？',
+        'settings.backupMobile.undoUnavailableConfirm': '此资料库过大，无法撤销此更改。仍会先保存一份恢复快照。要继续吗？',
         'settings.backupMobile.undoUnavailableContinue': '继续',
         'settings.backupMobile.undoUnavailableResult': '无法撤销此更改：资料库过大。',
         'settings.backupMobile.restoreFailed': '恢复失败',

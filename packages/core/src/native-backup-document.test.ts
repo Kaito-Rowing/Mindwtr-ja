@@ -440,6 +440,24 @@ describe('an import whose Undo could not be admitted is refused before COMMIT (D
         expect(await readNativeBackupDocumentOutcome(env.adapter, reference, planJSON, NAME)).toMatchObject({ undo: false });
     });
 
+    it('an old plan\'s undo bound still refuses, a stored reply never drops a planned undo: false, and only false is a reply\'s undo', async () => {
+        const env = await open();
+        const text = serializeBackupData(incoming);
+        const prepared = await prepareNativeBackupDocument(env.adapter, { ...input(text, 'merge'), admission: { sourceBytes: strToU8(text).length, maxTransferBytes: 512 * MIB } });
+        // A plan written before large-library pass b carried maxLibraryBytes for a merge: its replay still rolls back.
+        const { undoLibraryBytes: _room, ...legacy } = JSON.parse(prepared.planJSON);
+        const before = await env.state();
+        await expect(commitNativeBackupDocument(env.adapter, reference, JSON.stringify({ ...legacy, maxLibraryBytes: 1 }), NAME))
+            .rejects.toThrow('TOO_LARGE: The imported library would be too large to undo');
+        expect(await env.state()).toEqual(before);
+        await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        const planned = JSON.parse(prepared.planJSON);
+        await expect(readNativeBackupDocumentOutcome(env.adapter, reference, JSON.stringify({ ...planned, reply: { ...planned.reply, undo: false } }), NAME))
+            .rejects.toThrow('SAVE_FAILED:');
+        expect(() => buildNativeBackupDocumentResult({ ...planned.reply, undo: true }, t)).toThrow('INVALID_INPUT:');
+        expect(() => buildNativeBackupDocumentResult({ version: 1, operation: 'restore', snapshotName: NAME, added: 0, updated: 0, undo: false }, t)).toThrow('INVALID_INPUT:');
+    });
+
     it('the question before an operation without Undo uses its own words', () => {
         expect(buildNativeBackupNoUndoConfirmation(t)).toEqual({ title: t('settings.backupMobile.undoUnavailableTitle'),
             message: t('settings.backupMobile.undoUnavailableConfirm'), confirmLabel: t('settings.backupMobile.undoUnavailableContinue'),

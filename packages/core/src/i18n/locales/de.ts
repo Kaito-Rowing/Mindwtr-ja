@@ -2163,7 +2163,7 @@ export const deOverrides: Record<string, string> = {
         'settings.backupMobile.restoreBackup': 'Sicherung wiederherstellen?',
         'settings.backupMobile.restoreComplete': 'Wiederherstellung abgeschlossen',
         'settings.backupMobile.undoUnavailableTitle': 'Rückgängig wird nicht verfügbar sein',
-        'settings.backupMobile.undoUnavailableConfirm': 'Diese Bibliothek ist zu groß, um diese Änderung rückgängig zu machen. Ein Wiederherstellungs-Snapshot wird trotzdem unter Einstellungen › Daten gespeichert. Fortfahren?',
+        'settings.backupMobile.undoUnavailableConfirm': 'Diese Bibliothek ist zu groß, um diese Änderung rückgängig zu machen. Ein Wiederherstellungs-Schnappschuss wird trotzdem zuerst gespeichert. Fortfahren?',
         'settings.backupMobile.undoUnavailableContinue': 'Fortfahren',
         'settings.backupMobile.undoUnavailableResult': 'Rückgängig ist für diese Änderung nicht verfügbar: Die Bibliothek ist zu groß.',
         'settings.backupMobile.restoreFailed': 'Wiederherstellung fehlgeschlagen',
