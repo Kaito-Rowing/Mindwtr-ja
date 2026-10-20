@@ -1,6 +1,7 @@
 import {
     filterNotDeleted,
     isArchiveRetentionDays,
+    isTaxonomyCatalog,
     isTaskSectionProjectArchiveReference,
     normalizeCancellationTimestamp,
     normalizeRecurrenceForLoad,
@@ -229,6 +230,8 @@ export function validateAppData(
     if (areas !== undefined && !Array.isArray(areas)) return { ok: false, error: 'Invalid data: areas must be an array' };
     if (people !== undefined && !Array.isArray(people)) return { ok: false, error: 'Invalid data: people must be an array' };
     if (settings !== undefined && !isRecord(settings)) return { ok: false, error: 'Invalid data: settings must be an object' };
+    if (isRecord(settings) && settings.taxonomy !== undefined && !isTaxonomyCatalog(settings.taxonomy))
+        return { ok: false, error: 'Invalid data: settings.taxonomy must contain valid saved contexts and tags' };
     if (tasks.length > MAX_ITEMS_PER_COLLECTION) return { ok: false, error: `Invalid data: tasks exceeds limit (${MAX_ITEMS_PER_COLLECTION})` };
     if (projects.length > MAX_ITEMS_PER_COLLECTION) return { ok: false, error: `Invalid data: projects exceeds limit (${MAX_ITEMS_PER_COLLECTION})` };
     if (Array.isArray(sections) && sections.length > MAX_ITEMS_PER_COLLECTION) {

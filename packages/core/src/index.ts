@@ -416,3 +416,5 @@ export type { NativeInboxTasksOrganizeRequest, NativeInboxTasksOrganizePrepared,
 export type { NativeInboxOrganizeDestinationCreateRequest, NativeInboxOrganizeDestinationCreatePrepared,
     NativeInboxOrganizeDestinationCreateEnvelope, NativeInboxOrganizeDestinationCreateResult,
     NativeInboxOrganizeDestinationCreatePreparation } from './native-host-contract-inbox-organize-create';
+
+export { getSavedTaxonomyTokens, normalizeTaxonomyToken, isTaxonomyCatalog, mergeTaxonomyCatalog } from './taxonomy-catalog';

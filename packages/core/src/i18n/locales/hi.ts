@@ -522,6 +522,8 @@ export const hiOverrides: Record<string, string> = {
         'next.noContext': 'इसके साथ कोई अगली कार्रवाई नहीं',
         'next.warningCount': 'अगली कार्रवाइयों में आइटम',
         'next.warningHint': 'कम परियोजनाओं पर ध्यान केंद्रित करने पर विचार करें। GTD स्पष्टता के लिए अगली कार्रवाइयों को 10-15 आइटम तक रखने की अनुशंसा करता है।',
+    'contexts.new': 'नया संदर्भ',
+    'tags.new': 'नया टैग',
         'contexts.title': 'संदर्भों',
         'contexts.filter': 'संदर्भ के आधार पर कार्यों को फ़िल्टर करें',
         'filters.label': 'फिल्टर',

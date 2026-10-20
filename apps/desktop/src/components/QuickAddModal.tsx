@@ -15,6 +15,7 @@ import {
     buildQuickAddParseOptions,
     buildQuickAddPreviewEntries,
     getRetainedTaskContexts,
+    getSavedTaxonomyTokens,
     parseQuickAdd,
     normalizeFocusTaskLimit,
     getDefaultTaskAreaMode,
@@ -196,8 +197,8 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
         [allContexts, allTags]
     );
     const contextHistory = useMemo(
-        () => retainedTasks ? getRetainedTaskContexts(retainedTasks) : [],
-        [retainedTasks],
+        () => retainedTasks ? Array.from(new Set([...getRetainedTaskContexts(retainedTasks), ...getSavedTaxonomyTokens(settings, 'context')])) : [],
+        [retainedTasks, settings],
     );
     const { t } = useLanguage();
     const [value, setValue] = useState('');

@@ -49,7 +49,8 @@ import { findSelectableProjectByTitleAndArea, isSelectableProjectForTaskAssignme
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { isSandboxMode } from './sandbox';
 import { flushPendingSave, getStorageAdapter, useTaskStore } from './store';
-import type { Project, Task, TaskPriority } from './types';
+import type { AppSettings, Project, Task, TaskPriority } from './types';
+import { getSavedTaxonomyTokens } from './taxonomy-catalog';
 import { buildNewTask } from './task-creation';
 import { buildNewProject } from './store-projects/project-actions';
 import { createProjectOrderReserver, ensureDeviceId, getReferenceTaskFieldClears } from './store-helpers';
@@ -607,13 +608,17 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
         }
         return { ...ctx, projects };
     };
-    const contextChoices = () => getQuickCaptureContextChoices(useTaskStore.getState().tasks);
-    let cachedContextHistory: { tasks: Task[]; choices: string[] } | null = null;
+    const contextChoices = () => {
+        const state = useTaskStore.getState();
+        return getQuickCaptureContextChoices(state.tasks, getSavedTaxonomyTokens(state.settings, 'context'));
+    };
+    let cachedContextHistory: { tasks: Task[]; taxonomy: AppSettings['taxonomy']; choices: string[] } | null = null;
     const contextHistory = () => {
-        const tasks = useTaskStore.getState()._allTasks;
-        if (cachedContextHistory?.tasks === tasks) return cachedContextHistory.choices;
-        const choices = getQuickCaptureContextChoices(tasks);
-        cachedContextHistory = { tasks, choices };
+        const { _allTasks: tasks, settings } = useTaskStore.getState();
+        const { taxonomy } = settings;
+        if (cachedContextHistory?.tasks === tasks && cachedContextHistory.taxonomy === taxonomy) return cachedContextHistory.choices;
+        const choices = getQuickCaptureContextChoices(tasks, getSavedTaxonomyTokens(settings, 'context'));
+        cachedContextHistory = { tasks, taxonomy, choices };
         return choices;
     };
     const freshOptions = (addAnother: boolean) => {

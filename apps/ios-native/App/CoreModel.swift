@@ -1099,7 +1099,7 @@ final class CoreModel: ObservableObject {
     private var settingsTaxonomySaveDisabled = true
     private var settingsTaxonomyNameGeneration = 0
     var settingsTaxonomyActive: Bool { settingsTaxonomyKind != nil }
-    var settingsTaxonomyPresented: Bool { settingsTaxonomyActive && settingsTaxonomyAction == "rename" }
+    var settingsTaxonomyPresented: Bool { settingsTaxonomyActive && settingsTaxonomyAction != "delete" }
     var settingsTaxonomyCanCancel: Bool {
         settingsTaxonomyActive && !busy && !retryNeeded && settingsTaxonomyRequest == nil && !settingsTaxonomyAcknowledged
     }
@@ -15467,13 +15467,13 @@ final class CoreModel: ObservableObject {
         if fromProject { dismissProjectAreaPresentation() }
     }
 
-    func openSettingsTaxonomy(kind: String, index: Int, deleting: Bool) async {
-        guard manageInventoryActionsEnabled, ["context", "tag"].contains(kind),
-              let rows = managedInventoryRows[kind == "context" ? "contexts" : "tags"],
-              rows.indices.contains(index), !rows[index].text("value").isEmpty else { return }
+    func openSettingsTaxonomy(kind: String, index: Int = -1, deleting: Bool = false, creating: Bool = false) async {
+        guard manageInventoryActionsEnabled, ["context", "tag"].contains(kind) else { return }
+        let rows = managedInventoryRows[kind == "context" ? "contexts" : "tags"] ?? []
+        guard creating || (rows.indices.contains(index) && !rows[index].text("value").isEmpty) else { return }
         settingsTaxonomyKind = kind
-        settingsTaxonomyAction = deleting ? "delete" : "rename"
-        settingsTaxonomyOriginalName = rows[index].text("value")
+        settingsTaxonomyAction = creating ? "create" : deleting ? "delete" : "rename"
+        settingsTaxonomyOriginalName = creating ? "" : rows[index].text("value")
         settingsTaxonomyName = settingsTaxonomyOriginalName
         settingsTaxonomyOptions = [:]
         settingsTaxonomyAcknowledged = false
@@ -15491,7 +15491,9 @@ final class CoreModel: ObservableObject {
 
     private func readSettingsTaxonomyOptions(preserveDraft: Bool) async throws {
         guard let kind = settingsTaxonomyKind else { throw CocoaError(.coderReadCorrupt) }
-        let options = try await query("manageTaxonomyOptions", [try json(["kind": kind, "name": settingsTaxonomyOriginalName])])
+        var input: CoreObject = ["kind": kind, "name": settingsTaxonomyOriginalName]
+        if settingsTaxonomyAction == "create" { input["action"] = "create" }
+        let options = try await query("manageTaxonomyOptions", [try json(input)])
         guard options.count == 6, options.text("kind") == kind,
               options.text("name").utf8.elementsEqual(settingsTaxonomyOriginalName.utf8),
               !options.object("expected").isEmpty, options.object("draft")["name"] is String else {
@@ -15568,8 +15570,8 @@ final class CoreModel: ObservableObject {
         let request: String
         do {
             request = try json(["requestId": UUID().uuidString.lowercased(), "kind": kind,
-                "action": settingsTaxonomyAction, "name": settingsTaxonomyOriginalName,
-                "to": settingsTaxonomyAction == "delete" ? NSNull() : settingsTaxonomyName as Any,
+                "action": settingsTaxonomyAction, "name": settingsTaxonomyAction == "create" ? settingsTaxonomyName : settingsTaxonomyOriginalName,
+                "to": settingsTaxonomyAction == "rename" ? settingsTaxonomyName as Any : NSNull(),
                 "expected": settingsTaxonomyOptions.object("expected")])
             settingsTaxonomyRequest = request
         } catch { settingsTaxonomyReadError = error.localizedDescription; return }
@@ -15581,7 +15583,7 @@ final class CoreModel: ObservableObject {
     private func acknowledgeSettingsTaxonomy(_ result: CoreObject) throws {
         guard settingsTaxonomyRequest != nil, let kind = settingsTaxonomyKind,
               result.count == 4, result.text("kind") == kind, result.text("action") == settingsTaxonomyAction,
-              result.text("name").utf8.elementsEqual(settingsTaxonomyOriginalName.utf8),
+              result.text("name").utf8.elementsEqual((settingsTaxonomyAction == "create" ? settingsTaxonomyName : settingsTaxonomyOriginalName).utf8),
               settingsTaxonomyAction == "delete" ? result["to"] is NSNull : result["to"] is String else {
             throw CocoaError(.coderReadCorrupt)
         }

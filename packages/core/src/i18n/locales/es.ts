@@ -669,6 +669,8 @@ export const esOverrides: Record<string, string> = {
 'next.noContext': "No hay siguientes acciones en el contexto",
 'next.warningCount': "elementos en Siguientes acciones",
 'next.warningHint': "Considera enfocarte en menos proyectos. Por claridad, GTD recomienda que tengas 10-15 elementos en Siguientes acciones.",
+    'contexts.new': 'Nuevo contexto',
+    'tags.new': 'Nueva etiqueta',
 'contexts.title': "Contextos",
 'contexts.filter': "Filtrar tareas por contexto",
 'contexts.dropAdd': "Añadir {context}",

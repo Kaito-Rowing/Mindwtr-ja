@@ -23,6 +23,7 @@ import { buildProjectOrderMap,
     getDefaultTaskAreaMode,
     getPersonOptionNames,
     getRetainedTaskContexts,
+    getSavedTaxonomyTokens,
     getUsedTaskTokens,
     resolveDefaultNewTaskAreaId,
     formatQuickAddHelp,
@@ -388,8 +389,8 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         [people, tasks],
     );
     const quickAddContextHistory = useMemo(
-        () => retainedQuickAddTasks ? getRetainedTaskContexts(retainedQuickAddTasks) : [],
-        [retainedQuickAddTasks],
+        () => retainedQuickAddTasks ? Array.from(new Set([...getRetainedTaskContexts(retainedQuickAddTasks), ...getSavedTaxonomyTokens(settings, 'context')])) : [],
+        [retainedQuickAddTasks, settings],
     );
     const quickAddParseOptions = useMemo(
         () => buildQuickAddParseOptions(settings, { tasks, _allTasks: retainedQuickAddTasks ?? undefined, people }),

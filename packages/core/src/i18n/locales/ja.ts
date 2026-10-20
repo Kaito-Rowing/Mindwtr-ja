@@ -711,6 +711,8 @@ export const jaOverrides: Record<string, string> = {
         'next.warningHint': 'プロジェクトを絞ることを検討しましょう。GTD では、見通しを保つために次のアクションを10〜15件ほどに抑えることを勧めています。',
 
         // Contact / Contexts (Mobile updates)
+    'contexts.new': '新しいコンテキスト',
+    'tags.new': '新しいタグ',
         'contexts.title': 'コンテキスト',
         'contexts.filter': 'コンテキストでタスクを絞り込む',
         'contexts.dropAdd': '{context} を追加',

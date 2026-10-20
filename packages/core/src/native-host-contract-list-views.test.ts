@@ -351,6 +351,22 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         expect(saved.projects.find(({ id }) => id === 'p-shelved')?.status).toBe('active');
     });
 
+    it('forwards saved unused tokens to Contexts Add and keeps Remove selected-only', async () => {
+        const { host } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const stamp = '2026-10-20T00:00:00.000Z';
+        useTaskStore.setState({ settings: { ...useTaskStore.getState().settings, taxonomy: {
+            contexts: [{ token: '@unused', rev: 1, revBy: 'test', updatedAt: stamp }],
+            tags: [{ token: '#unused', rev: 1, revBy: 'test', updatedAt: stamp }],
+        } } });
+        const view = value(host.getContextsView({ selectedIds: ['c-call'], offset: 0, limit: 100 }));
+        for (const [field, token] of [['contexts', '@unused'], ['tags', '#unused']] as const) {
+            expect(view.bulk?.tokenActions.find((action) => action.field === field && action.mode === 'add')?.tokens).toContain(token);
+            expect(view.bulk?.tokenActions.find((action) => action.field === field && action.mode === 'remove')?.tokens)
+                .toEqual(useTaskStore.getState()._tasksById.get('c-call')![field]);
+            expect(view.chips.map((chip) => chip.id)).not.toContain(token);
+        }
+    });
+
     it('searches the bulk bar\'s token pickers as mobile\'s token picker does, one window at a time under the view\'s revision', async () => {
         const { host } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
         const selectedIds = ['c-call', 'c-email'];

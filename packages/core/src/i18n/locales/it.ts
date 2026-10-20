@@ -576,6 +576,8 @@ export const itOverrides: Record<string, string> = {
         'next.warningHint': 'Valuta di concentrarti su meno progetti. GTD consiglia di mantenere le Prossime azioni tra i 10 e i 15 elementi per avere maggiore chiarezza.',
 
         // Contact / Contexts (Mobile updates)
+    'contexts.new': 'Nuovo contesto',
+    'tags.new': 'Nuova etichetta',
         'contexts.title': 'Contesti',
         'contexts.filter': 'Filtra attività per contesto',
         'filters.label': 'Filtri',

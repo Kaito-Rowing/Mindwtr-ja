@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { Area, Project, Task } from '@mindwtr/core';
 import { safeFormatDate, useTaskStore } from '@mindwtr/core';
 import * as core from '@mindwtr/core';
@@ -714,6 +714,24 @@ describe('ContextsView', () => {
         expect(getByRole('heading', { name: '#ERP' })).toBeInTheDocument();
         expect(getByText('Plan launch')).toBeInTheDocument();
         expect(window.localStorage.getItem(CONTEXTS_VIEW_STATE_STORAGE_KEY)).toContain('"selectedContexts":["#ERP"]');
+    });
+
+    it.each([
+        ['Add context', 'Remove context', '@unused'],
+        ['Add tag', 'Remove tag', '#unused'],
+    ])('offers saved unused tokens in %s while Remove stays assigned-only', (add, remove, token) => {
+        useTaskStore.setState({ settings: { taxonomy: {
+            contexts: [{ token: '@unused', rev: 1, revBy: 'test', updatedAt: now }],
+            tags: [{ token: '#unused', rev: 1, revBy: 'test', updatedAt: now }],
+        } } });
+        const view = renderContextsView();
+        fireEvent.click(view.getByRole('button', { name: 'Select' }));
+        fireEvent.click(view.getByRole('button', { name: 'Select All' }));
+        fireEvent.click(view.getByRole('button', { name: add }));
+        expect(within(view.getByRole('dialog')).getByRole('button', { name: token })).toBeInTheDocument();
+        fireEvent.click(within(view.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+        fireEvent.click(view.getByRole('button', { name: remove }));
+        expect(within(view.getByRole('dialog')).queryByRole('button', { name: token })).toBeNull();
     });
 
     it('selects and clears all visible tasks in context selection mode', () => {

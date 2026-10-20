@@ -5,6 +5,7 @@ import type { StoreActionResult, TaskStore } from './store-types';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
 import { isTaskFinished } from './task-status';
 import { getFrequentTaskTokens, getUsedTaskTokens } from './task-token-usage';
+import { getSavedTaxonomyTokens } from './taxonomy-catalog';
 import { baseTextCollator, sortTasksBy } from './task-utils';
 import type { AppSettings, Task, TaskSortBy, TaskStatus } from './types';
 
@@ -221,12 +222,13 @@ export function getContextsMatchModeLabels(t: (key: string) => string): { label:
     };
 }
 
-/** Tokens the add pickers offer: the 12 most used, then every other one in use. */
-export function getContextsAddTokenOptions(activeTasks: Task[], field: BulkTaskTokenField): string[] {
+/** Tokens the add pickers offer: the 12 most used, then every other used or saved token. */
+export function getContextsAddTokenOptions(activeTasks: Task[], field: BulkTaskTokenField, settings: AppSettings = {}): string[] {
     const prefix = field === 'tags' ? '#' : '@';
     return Array.from(new Set([
         ...getFrequentTaskTokens(activeTasks, (task) => task[field], 12, { prefix }),
         ...getUsedTaskTokens(activeTasks, (task) => task[field], { prefix }),
+        ...getSavedTaxonomyTokens(settings, field === 'tags' ? 'tag' : 'context'),
     ]));
 }
 
@@ -251,6 +253,7 @@ export function getContextsTokenPicker({
     field,
     action,
     activeTasks,
+    settings,
     selectedIds,
     tasksById,
     t,
@@ -258,6 +261,7 @@ export function getContextsTokenPicker({
     field: BulkTaskTokenField;
     action: BulkTaskTokenMode;
     activeTasks: Task[];
+    settings?: AppSettings;
     selectedIds: string[];
     tasksById: Record<string, Task>;
     t: (key: string) => string;
@@ -266,7 +270,7 @@ export function getContextsTokenPicker({
         title: getContextsTokenPickerTitle(field, action, t),
         placeholder: field === 'tags' ? t('taskEdit.tagsPlaceholder') : t('taskEdit.contextsPlaceholder'),
         tokens: action === 'add'
-            ? getContextsAddTokenOptions(activeTasks, field)
+            ? getContextsAddTokenOptions(activeTasks, field, settings)
             : collectBulkTaskTokens(selectedIds, tasksById, field),
         allowCustomValue: action === 'add',
         multiSelect: action === 'remove',

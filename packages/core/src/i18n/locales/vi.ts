@@ -1,4 +1,6 @@
 export const viOverrides: Record<string, string> = {
+    'contexts.new': 'Ngữ cảnh mới',
+    'tags.new': 'Thẻ mới',
     "projects.convertBlocked.destination-section-sequence": "Chọn dự án đích đặt thành Tuần tự → Trong các phần. Phần mới giữ nguyên thứ tự công việc; các phần khác tiếp tục độc lập.",
     'timeline.moveTaskDates': "Di chuyển ngày của công việc",
     'timeline.moveProjectDates': "Di chuyển ngày của dự án",

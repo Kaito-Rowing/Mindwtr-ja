@@ -685,6 +685,8 @@ export const daOverrides: Record<string, string> = {
     'next.warningCount': 'elementer i Næste handlinger',
     'next.warningHint':
         'Overvej at fokusere på færre projekter. GTD anbefaler 10-15 næste handlinger for at bevare overblikket.',
+    'contexts.new': 'Ny kontekst',
+    'tags.new': 'Nyt tag',
     'contexts.title': 'Kontekster',
     'contexts.filter': 'Filtrer opgaver efter kontekst',
     'contexts.dropAdd': 'Tilføj {context}',

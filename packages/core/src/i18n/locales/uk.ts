@@ -1,5 +1,7 @@
 // Ukrainian app strings. Keep placeholders and slash-command syntax in sync with en.ts.
 export const ukOverrides: Record<string, string> = {
+    'contexts.new': 'Новий контекст',
+    'tags.new': 'Нова мітка',
     'settings.importDiagnostics.unknownColumns': "Пропущено невідомих стовпців: {{count}}.",
         'quickAdd.textQueued': "Збережено. Завдання буде додано, коли ви відкриєте Mindwtr.",
     'settings.importDiagnostics.csvLocation': "рядок {{row}}, стовпець {{column}}",

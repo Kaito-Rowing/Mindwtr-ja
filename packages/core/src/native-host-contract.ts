@@ -23,6 +23,8 @@ import { isRecurrenceRule, parseRRuleString } from './recurrence';
 import { createTaskDraft, isTaskDraftDateInputBaseline, resolveTaskDraftTitle, serializeTaskDraftTokens, TASK_DRAFT_FIELD_KEYS, type TaskDraft, type TaskDraftField } from './task-draft';
 import { getTaskReminderPolicy } from './task-reminder-policy';
 import { getRetainedTaskContexts, getUsedTaskTokens } from './task-token-usage';
+import { getSavedTaxonomyTokens } from './taxonomy-catalog';
+import type { AppSettings } from './types';
 import {
     applyTaskDraftPatch,
     buildTaskDraftDestinationPicker,
@@ -1048,12 +1050,13 @@ export function createNativeHostContract(options: {
     let cachedFilteredProjects: NativeFilteredProjectsView | null = null;
     let cachedProjectDetailKey = '';
     let cachedProjectDetail: ProjectDetailCache | null = null;
-    let cachedContextHistory: { tasks: Task[]; tokens: string[] } | null = null;
+    let cachedContextHistory: { tasks: Task[]; taxonomy: AppSettings['taxonomy']; tokens: string[] } | null = null;
     let cachedMarkdownLookup: { tasks: Task[]; projects: Project[]; lookup: ReturnType<typeof createMarkdownLinkLookup> } | null = null;
     const retainedContexts = (tasks: Task[]): string[] => {
-        if (cachedContextHistory?.tasks === tasks) return cachedContextHistory.tokens;
-        const tokens = getRetainedTaskContexts(tasks);
-        cachedContextHistory = { tasks, tokens };
+        const { taxonomy } = useTaskStore.getState().settings;
+        if (cachedContextHistory?.tasks === tasks && cachedContextHistory.taxonomy === taxonomy) return cachedContextHistory.tokens;
+        const tokens = [...new Set([...getRetainedTaskContexts(tasks), ...getSavedTaxonomyTokens({ taxonomy }, 'context')])];
+        cachedContextHistory = { tasks, taxonomy, tokens };
         return tokens;
     };
     let cachedProjectNotesKey = '';
@@ -4590,7 +4593,7 @@ function createListViewMethods(deps: ListViewDeps) {
                         exitLabel: t('bulk.exitSelect'),
                         statuses: CONTEXTS_BULK_STATUSES.map((status) => ({ status, label: t(`status.${status}`) })),
                         tokenActions: (['tags', 'contexts'] as const).flatMap((field) => (['add', 'remove'] as const).map((mode) => {
-                            const picker = getContextsTokenPicker({ field, action: mode, activeTasks: model.activeTasks, selectedIds: selected, tasksById, t });
+                            const picker = getContextsTokenPicker({ field, action: mode, activeTasks: model.activeTasks, settings: state.settings, selectedIds: selected, tasksById, t });
                             return { ...picker, field, mode, enabled: mode === 'add' || picker.tokens.length > 0 };
                         })),
                         deleteLabel: t('common.delete'),

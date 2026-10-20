@@ -204,6 +204,7 @@ export function ContextsView() {
     ? getContextsTokenPicker({
       ...bulkTokenPicker,
       activeTasks: model.activeTasks,
+      settings,
       selectedIds: selectedIdsArray,
       tasksById,
       t,

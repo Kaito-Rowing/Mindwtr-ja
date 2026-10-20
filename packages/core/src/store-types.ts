@@ -925,12 +925,14 @@ export interface TaskStore {
     restorePerson: (id: string) => Promise<StoreActionResult>;
 
     // Tag Actions
+    addTag: (name: string) => Promise<void>;
     /** Delete a tag from tasks and projects */
     deleteTag: (tagId: string) => Promise<void>;
     /** Rename a tag across all tasks and projects */
     renameTag: (oldTagId: string, newTagId: string) => Promise<void>;
 
     // Context Actions
+    addContext: (name: string) => Promise<void>;
     /** Delete a context from all tasks */
     deleteContext: (context: string) => Promise<void>;
     /** Rename a context across all tasks */
@@ -972,6 +974,7 @@ export type DerivedState = {
 };
 
 export type DerivedCache = {
+    taxonomyRef?: AppData['settings']['taxonomy'];
     visibleTasksRef: Task[];
     taskLookupRef: Map<string, Task>;
     projectLookupRef: Map<string, Project>;

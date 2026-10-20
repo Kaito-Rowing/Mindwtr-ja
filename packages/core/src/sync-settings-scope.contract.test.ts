@@ -13,6 +13,7 @@ type Settings = AppData['settings'];
 // travelling between devices without someone deciding that it should.
 
 const SYNCED_TOP_LEVEL_KEYS = [
+    'taxonomy',                 // always: saved contexts and tags are shared dataset data
     'syncPreferences',          // always: the choice of what to sync
     'syncPreferencesUpdatedAt', // always: the timestamps behind that choice
     'analyticsProfileId',       // always: one dataset = one anonymous profile
@@ -95,6 +96,7 @@ const stampAll = (settings: Settings, at: string): Settings => ({
 
 // One settings object with a non-default value for every classified key.
 const fullSettings = (): Settings => ({
+    taxonomy: { contexts: [{ token: '@Shared', rev: 1, revBy: 'scope-device', updatedAt: OLDER }] },
     // synced
     syncPreferences: {
         appearance: true, language: true, gtd: true, externalCalendars: true, ai: true, savedFilters: true,

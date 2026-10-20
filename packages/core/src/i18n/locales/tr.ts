@@ -1,5 +1,7 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const trOverrides: Record<string, string> = {
+    'contexts.new': 'Yeni bağlam',
+    'tags.new': 'Yeni etiket',
     'settings.cleartextSyncDismiss': 'Bu eşitleme hedefi için gizle',
     'settings.importDiagnostics.unknownColumns': "{{count}} bilinmeyen sütun yok sayıldı.",
     'settings.importDiagnostics.csvLocation': "satır {{row}}, sütun {{column}}",

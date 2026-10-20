@@ -526,6 +526,8 @@ export const arOverrides: Record<string, string> = {
         'next.noContext': 'لا توجد إجراءات تالية مع',
         'next.warningCount': 'العناصر في الإجراءات التالية',
         'next.warningHint': 'فكر في التركيز على عدد أقل من المشاريع. GTD يوصي بالاحتفاظ بالإجراءات التالية من 10 إلى 15 عنصرًا للتوضيح.',
+    'contexts.new': 'سياق جديد',
+    'tags.new': 'وسم جديد',
         'contexts.title': 'السياقات',
         'contexts.filter': 'تصفية المهام حسب السياق',
         'filters.label': 'المرشحات',

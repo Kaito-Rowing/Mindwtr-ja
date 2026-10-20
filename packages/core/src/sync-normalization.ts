@@ -1,4 +1,5 @@
 import { normalizeTaskReminderPolicy } from './task-reminder-policy';
+import { isTaxonomyCatalog } from './taxonomy-catalog';
 import { runToEnd, SLICE_ITEMS, type CooperativePass } from './cooperative';
 import type { AppData, Area, Attachment, Person, Project, Section, Task } from './types';
 import { isSha256Hex } from './attachment-hash';
@@ -637,6 +638,8 @@ export function* validateMergedSyncDataPass(data: AppData): CooperativePass<stri
     if (!Array.isArray(data.areas)) errors.push('areas must be an array');
     if (data.people !== undefined && !Array.isArray(data.people)) errors.push('people must be an array');
     if (!isObjectRecord(data.settings)) errors.push('settings must be an object');
+    else if (data.settings.taxonomy !== undefined && !isTaxonomyCatalog(data.settings.taxonomy))
+        errors.push('settings.taxonomy must contain valid saved contexts and tags');
 
     if (Array.isArray(data.tasks)) yield* validateEntityShape(data.tasks as unknown[], 'tasks', errors);
     if (Array.isArray(data.projects)) yield* validateEntityShape(data.projects as unknown[], 'projects', errors);
@@ -889,5 +892,7 @@ export const validateSyncPayloadShape = (data: unknown, source: 'local' | 'remot
     if (record.settings !== undefined && !isObjectRecord(record.settings)) {
         errors.push(`${source} payload field "settings" must be an object when present`);
     }
+    if (isObjectRecord(record.settings) && record.settings.taxonomy !== undefined && !isTaxonomyCatalog(record.settings.taxonomy))
+        errors.push(`${source} payload field "settings.taxonomy" must contain valid saved contexts and tags`);
     return errors;
 };

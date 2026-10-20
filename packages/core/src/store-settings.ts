@@ -2,7 +2,7 @@ import { nativeAIGeminiThinkingBudgetWitness, readNativeAIGeminiThinkingBudgetRe
 import { nativeAIReasoningEffortWitness, readNativeAIReasoningEffortRequest } from './native-ai-reasoning-effort-request';
 import { nativeAIRequestTimeoutWitness, readNativeAIRequestTimeoutRequest } from './native-ai-request-timeout-request';
 import { logInfo, logWarn } from './logger';
-import { summarizeTaskLifecycleCounts } from './task-utils';
+import { baseTextCollator, summarizeTaskLifecycleCounts } from './task-utils';
 import { markCoreStartupPhase, measureCoreStartupPhase } from './startup-profiler';
 import { normalizeTaskForLoad } from './task-status';
 import { normalizeProjectLifecycleFields } from './project-status';
@@ -46,6 +46,7 @@ import { notificationSettingWitness } from './notification-settings-model';
 import { taskEditValuesEqual } from './json-value-equality';
 import { backfillArchiveClocks, getArchiveRetentionPreview, isArchiveRetentionDays } from './archive-retention';
 import { calendarSubscriptionModules } from './store-calendar-subscription-modules';
+import { getSavedTaxonomyTokens, normalizeTaxonomyToken } from './taxonomy-catalog';
 
 const STORAGE_TIMEOUT_MS = 15_000;
 let storageTimeoutMs = STORAGE_TIMEOUT_MS;
@@ -1641,6 +1642,7 @@ export const createSettingsActions = ({
             && derivedCache.visibleTasksRef === state.tasks
             && derivedCache.taskLookupRef === state._tasksById
             && derivedCache.projectLookupRef === state._projectsById
+            && derivedCache.taxonomyRef === state.settings.taxonomy
             && derivedCache.day === day
         ) {
             return derivedCache.value;
@@ -1651,6 +1653,7 @@ export const createSettingsActions = ({
             derivedCache
                 && derivedCache.visibleTasksRef === state.tasks
                 && derivedCache.taskLookupRef === state._tasksById
+                && derivedCache.taxonomyRef === state.settings.taxonomy
                 && derivedCache.day === day
                 && previous
                 ? {
@@ -1681,8 +1684,13 @@ export const createSettingsActions = ({
         const derived = {
             ...projectDerived,
             ...taskDerived,
+            allContexts: Array.from(new Map([...taskDerived.allContexts, ...getSavedTaxonomyTokens(state.settings, 'context')]
+                .map((token) => [normalizeTaxonomyToken('context', token).toLowerCase(), token])).values()).sort(baseTextCollator.compare),
+            allTags: Array.from(new Map([...taskDerived.allTags, ...getSavedTaxonomyTokens(state.settings, 'tag')]
+                .map((token) => [normalizeTaxonomyToken('tag', token).toLowerCase(), token])).values()).sort(baseTextCollator.compare),
         };
         derivedCache = {
+            taxonomyRef: state.settings.taxonomy,
             visibleTasksRef: state.tasks,
             taskLookupRef: state._tasksById,
             projectLookupRef: state._projectsById,

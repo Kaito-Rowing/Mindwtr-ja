@@ -16266,10 +16266,31 @@ private final class Engine: @unchecked Sendable {
         }
     }
 
+    private static func validTaxonomyCatalogue(_ value: Any?) -> Bool {
+        guard let catalogue = value as? [String: Any], Set(catalogue.keys).isSubset(of: ["contexts", "tags"]) else { return false }
+        for field in ["contexts", "tags"] {
+            guard let value = catalogue[field] else { continue }
+            guard let rows = value as? [[String: Any]] else { return false }
+            for row in rows {
+                guard Set(row.keys).isSubset(of: ["token", "rev", "revBy", "updatedAt", "deletedAt"]),
+                      let token = row["token"] as? String, !token.isEmpty, token.utf16.count <= 500,
+                      let writer = row["revBy"] as? String, !writer.isEmpty, writer.utf16.count <= 500,
+                      isInteger(row["rev"]), let revision = row["rev"] as? NSNumber,
+                      (1...9_007_199_254_740_991).contains(revision.doubleValue),
+                      let updated = row["updatedAt"] as? String, !updated.isEmpty, updated.utf16.count <= 500,
+                      row["deletedAt"] == nil || (row["deletedAt"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true else { return false }
+            }
+        }
+        return true
+    }
+
     private static func validTaxonomyExpected(_ value: Any?, kind: String) -> Bool {
-        guard let scope = value as? [String: Any], Set(scope.keys) == Set(["tasks", "projects"]),
+        guard let scope = value as? [String: Any],
+              Set(scope.keys) == Set(scope["catalogue"] == nil ? ["tasks", "projects"] : ["tasks", "projects", "catalogue"]),
               let tasks = scope["tasks"] as? [[String: Any]], let projects = scope["projects"] as? [[String: Any]],
-              kind != "context" || projects.isEmpty, !tasks.isEmpty || !projects.isEmpty else { return false }
+              kind != "context" || projects.isEmpty,
+              scope["catalogue"] != nil || !tasks.isEmpty || !projects.isEmpty,
+              scope["catalogue"] == nil || scope["catalogue"] is NSNull || validTaxonomyCatalogue(scope["catalogue"]) else { return false }
         return [tasks, projects].allSatisfy { rows in
             let ids = rows.compactMap { $0["id"] as? String }
             return ids.count == rows.count && Set(ids).count == ids.count
@@ -20524,7 +20545,7 @@ private final class Engine: @unchecked Sendable {
                   Set(input.keys) == Set(["request", "prepared"]),
                   let request = input["request"] as? [String: Any],
                   let prepared = input["prepared"] as? [String: Any],
-                  Self.isInteger(prepared["version"], equalTo: 1),
+                  (Self.isInteger(prepared["version"], equalTo: 1) || Self.isInteger(prepared["version"], equalTo: 2)),
                   let original = prepared["request"] as? [String: Any], Self.equalJSON(request, original) else {
                 throw HostFailure("Malformed prepared taxonomy journal")
             }
@@ -22975,17 +22996,20 @@ private final class Engine: @unchecked Sendable {
         if ["manageTaxonomyOptions", "manageTaxonomy", "manageTaxonomyRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
-                  Set(input.keys) == (method == "manageTaxonomyOptions" ? Set(["kind", "name"])
+                  Set(input.keys) == (method == "manageTaxonomyOptions" ? Set(input["action"] == nil ? ["kind", "name"] : ["kind", "name", "action"])
                     : Set(["requestId", "kind", "action", "name", "to", "expected"])),
                   let kind = input["kind"] as? String, ["context", "tag"].contains(kind),
-                  let name = input["name"] as? String, !name.isEmpty, name.utf16.count <= 2_000_000 else {
+                  let name = input["name"] as? String, name.utf16.count <= 2_000_000,
+                  !name.isEmpty || (method == "manageTaxonomyOptions" && input["action"] as? String == "create"),
+                  method != "manageTaxonomyOptions" || input["action"] == nil || input["action"] as? String == "create" else {
                 throw HostFailure("INVALID_INPUT: Taxonomy needs a bounded kind and name")
             }
             if method != "manageTaxonomyOptions" {
                 guard let requestID = input["requestId"] as? String, UUID(uuidString: requestID)?.uuidString.lowercased() == requestID,
-                      let action = input["action"] as? String, ["rename", "delete"].contains(action),
+                      let action = input["action"] as? String, ["create", "rename", "delete"].contains(action),
                       Self.validTaxonomyExpected(input["expected"], kind: kind),
-                      action == "delete" ? input["to"] is NSNull
+                      action != "create" || (input["expected"] as? [String: Any])?["catalogue"] != nil,
+                      action != "rename" ? input["to"] is NSNull
                         : (input["to"] as? String).map({ $0.utf16.count <= 2_000_000 }) == true else {
                     throw HostFailure("INVALID_INPUT: Taxonomy needs full carriers and a lowercase UUID")
                 }

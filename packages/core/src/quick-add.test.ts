@@ -1620,6 +1620,16 @@ describe('quick-add', () => {
     });
 
     describe('buildQuickAddParseOptions', () => {
+        it('parses unused saved multiword contexts and tags through the shared options builder', () => {
+            const at = '2026-10-20T12:00:00.000Z';
+            const options = buildQuickAddParseOptions({ quickAddAutoClean: true,
+                taxonomy: { contexts: [{ token: '@Seasonal Planning', rev: 1, revBy: 'device', updatedAt: at }],
+                    tags: [{ token: '#Deep Work', rev: 1, revBy: 'device', updatedAt: at }] } });
+            const parsed = parseQuickAdd('Plan @Seasonal Planning #Deep Work', undefined, new Date(at), undefined, options);
+            expect(parsed.props.contexts).toEqual(['@Seasonal Planning']);
+            expect(parsed.props.tags).toEqual(['#Deep Work']);
+            expect(parsed.title).toBe('Plan');
+        });
         const task = (props: Partial<Task>): Task => ({
             id: 't1',
             title: 'T',

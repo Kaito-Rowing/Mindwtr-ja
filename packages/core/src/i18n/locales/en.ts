@@ -698,6 +698,8 @@ export const en: Record<string, string> = {
         'next.warningHint': 'Consider focusing on fewer projects. GTD recommends keeping Next Actions to 10-15 items for clarity.',
 
         // Contact / Contexts (Mobile updates)
+    'contexts.new': 'New context',
+    'tags.new': 'New tag',
         'contexts.title': 'Contexts',
         'contexts.filter': 'Filter tasks by context',
         'contexts.dropAdd': 'Add {context}',

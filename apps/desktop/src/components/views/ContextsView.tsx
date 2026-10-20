@@ -6,8 +6,7 @@ import {
     shallow,
     sortTasksBy,
     TaskStatus,
-    getFrequentTaskTokens,
-    getUsedTaskTokens,
+    getContextsAddTokenOptions,
     buildContextsTokenIndex,
     buildContextsViewFilterSections,
     getContextsTokenCount,
@@ -293,18 +292,12 @@ export function ContextsView() {
         },
     });
     const addTagOptions = useMemo(
-        () => Array.from(new Set([
-            ...getFrequentTaskTokens(activeTasks, (task) => task.tags, 12, { prefix: '#' }),
-            ...getUsedTaskTokens(activeTasks, (task) => task.tags, { prefix: '#' }),
-        ])),
-        [activeTasks]
+        () => getContextsAddTokenOptions(activeTasks, 'tags', settings),
+        [activeTasks, settings]
     );
     const addContextOptions = useMemo(
-        () => Array.from(new Set([
-            ...getFrequentTaskTokens(activeTasks, (task) => task.contexts, 12, { prefix: '@' }),
-            ...getUsedTaskTokens(activeTasks, (task) => task.contexts, { prefix: '@' }),
-        ])),
-        [activeTasks]
+        () => getContextsAddTokenOptions(activeTasks, 'contexts', settings),
+        [activeTasks, settings]
     );
 
     const [selectedTaskIndex, setSelectedTaskIndex] = useState(0);

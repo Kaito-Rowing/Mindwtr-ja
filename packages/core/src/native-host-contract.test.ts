@@ -2062,6 +2062,14 @@ describe('native host contract', () => {
                 .toMatchObject({ ok: true, value: { matches: [] } });
             expect(host.getTaskEditorSuggestions({ id: 'edit', field: 'contexts', query: 'Seas', limit: 4 }))
                 .toMatchObject({ ok: true, value: { matches: [{ value: '@Seasonal Planning', text: '@Seasonal Planning, ' }] } });
+            const retainedTasks = useTaskStore.getState()._allTasks;
+            await useTaskStore.getState().addContext('saved unused');
+            await useTaskStore.getState().addTag('saved unused');
+            expect(useTaskStore.getState()._allTasks).toBe(retainedTasks);
+            expect(host.getTaskEditorSuggestions({ id: 'edit', field: 'contexts', query: 'saved', limit: 4 }))
+                .toMatchObject({ ok: true, value: { matches: [{ value: '@saved unused', text: '@saved unused, ' }] } });
+            expect(host.getTaskEditorSuggestions({ id: 'edit', field: 'tags', query: 'saved', limit: 4 }))
+                .toMatchObject({ ok: true, value: { matches: [{ value: '#saved unused', text: '#saved unused, ' }] } });
             expect(contexts.ok && contexts.value.draftValue).toBe('@o');
             expect(host.getTaskEditorSuggestions({ id: 'edit', field: 'tags', query: '', limit: 4 }))
                 .toMatchObject({ ok: true, value: { matches: [], quick: [{ value: '#launch', selected: false, text: '#launch' }] } });

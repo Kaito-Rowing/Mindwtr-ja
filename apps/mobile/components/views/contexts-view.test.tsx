@@ -256,6 +256,40 @@ describe('ContextsView', () => {
     expect(tree.root.findAllByType(Pressable).filter((node) => node.props.accessibilityRole === 'radio')).toHaveLength(0);
   });
 
+  it.each([
+    ['contexts', '@unused', 'bulk.addContext', 'bulk.removeContext'],
+    ['tags', '#unused', 'bulk.addTag', 'Remove tag'],
+  ] as const)('forwards saved %s to Add without leaking them into Remove', async (field, token, addLabel, removeLabel) => {
+    const previous = storeState.settings;
+    storeState.tasks = [{ ...makeTask('selected', 'Selected'), tags: ['#assigned'] }];
+    storeState._tasksById = new Map(storeState.tasks.map((task) => [task.id, task]));
+    storeState.settings = { ...previous, taxonomy: {
+      contexts: [{ token: '@unused', rev: 1, revBy: 'test', updatedAt: now }],
+      tags: [{ token: '#unused', rev: 1, revBy: 'test', updatedAt: now }],
+    } };
+    let tree!: ReactTestRenderer;
+    try {
+      await act(async () => { tree = create(<ContextsView />); });
+      const row = tree.root.find((node) => (node.type as unknown) === 'SwipeableTaskItem');
+      await act(async () => { row.props.actions.toggleSelect(row.props.task); });
+      const press = async (label: string) => {
+        const button = tree.root.findAllByType(TouchableOpacity).find((node) => node.findAllByProps({ children: label }).length > 0)!;
+        await act(async () => { button.props.onPress(); });
+      };
+      const picker = () => tree.root.find((node) => (node.type as unknown) === 'TokenPickerModal');
+      await press(addLabel);
+      expect(picker().props.tokens).toContain(token);
+      await act(async () => { picker().props.onClose(); });
+      await press(removeLabel);
+      expect(picker().props.tokens).toEqual(storeState.tasks[0][field]);
+    } finally {
+      await act(async () => { tree?.unmount(); });
+      storeState.settings = previous;
+      storeState.tasks = [];
+      storeState._tasksById = new Map();
+    }
+  });
+
   it('adds a tag to the row a sync save published while the bulk write waited behind it', async () => {
     const setTasks = (tasks: Task[]) => {
       storeState.tasks = tasks;

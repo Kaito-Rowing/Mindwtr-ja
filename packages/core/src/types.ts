@@ -564,7 +564,21 @@ export interface MigrationSettings {
     legacyReferenceRecoveryVersion?: number;
 }
 
+export interface TaxonomyCatalogEntry {
+    token: string;
+    rev: number;
+    revBy: string;
+    updatedAt: string;
+    deletedAt?: string;
+}
+
+export interface TaxonomyCatalog {
+    contexts?: TaxonomyCatalogEntry[];
+    tags?: TaxonomyCatalogEntry[];
+}
+
 export interface AppSettings extends NotificationSettings {
+    taxonomy?: TaxonomyCatalog;
     gtd?: GtdSettings;
     attachments?: AttachmentSettings;
     features?: FeatureSettings;

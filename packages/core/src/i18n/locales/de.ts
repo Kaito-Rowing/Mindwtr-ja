@@ -570,6 +570,8 @@ export const deOverrides: Record<string, string> = {
         'next.warningHint': 'Überlege Dir, Dich auf weniger Projekte zu konzentrieren. GTD empfiehlt, höchstens 10-15 Elemente in Nächste Aktionen zu lassen für eine bessere Übersicht.',
 
         // Contact / Contexts (Mobile updates)
+    'contexts.new': 'Neuer Kontext',
+    'tags.new': 'Neues Tag',
         'contexts.title': 'Kontexte',
         'contexts.filter': 'Aufgaben nach Kontexten filtern',
         'filters.label': 'Filter',

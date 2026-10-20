@@ -9,6 +9,7 @@ import { getActiveLanguage, getMonthNamesForLanguage, isActiveDateFormatDayFirst
 import type { Language } from './i18n/i18n-types';
 import { getRetainedTaskContexts, getUsedTaskTokens } from './task-token-usage';
 import { getPersonOptionNames } from './people';
+import { getSavedTaxonomyTokens } from './taxonomy-catalog';
 import { minutesToTimeEstimate, parseTimeEstimateInput } from './calendar-scheduling';
 
 // The live capture preview rides this module's barrel line
@@ -73,6 +74,7 @@ export function isNaturalLanguageDatesEnabled(
 
 /** The settings a capture surface reads to configure quick-add parsing. */
 export interface QuickAddParseSettings {
+    taxonomy?: AppSettings['taxonomy'];
     quickAddAutoClean?: boolean;
     gtd?: {
         defaultScheduleTime?: string | null;
@@ -100,8 +102,10 @@ export function buildQuickAddParseOptions(
 ): QuickAddParseOptions {
     const tasks = source.tasks ?? [];
     return {
-        knownContexts: getRetainedTaskContexts(source._allTasks ?? tasks),
-        knownTags: getUsedTaskTokens(tasks, (task) => task.tags, { prefix: '#' }),
+        knownContexts: [...new Set([...getRetainedTaskContexts(source._allTasks ?? tasks),
+            ...getSavedTaxonomyTokens({ taxonomy: settings?.taxonomy }, 'context')])],
+        knownTags: [...new Set([...getUsedTaskTokens(tasks, (task) => task.tags, { prefix: '#' }),
+            ...getSavedTaxonomyTokens({ taxonomy: settings?.taxonomy }, 'tag')])],
         knownPeople: getPersonOptionNames(source.people, tasks),
         defaultScheduleTime: normalizeClockTimeInput(settings?.gtd?.defaultScheduleTime) || undefined,
         preserveText: settings?.quickAddAutoClean !== true,

@@ -299,7 +299,7 @@ export function createContextsCoreBackend(t: Translate): ContextsBackend {
                     }))),
                     delete: t('common.delete'),
                 },
-                picker: (field, mode) => getContextsTokenPicker({ field, action: mode, activeTasks: model.activeTasks, selectedIds: state.selected, tasksById, t }),
+                picker: (field, mode) => getContextsTokenPicker({ field, action: mode, activeTasks: model.activeTasks, settings: store.settings, selectedIds: state.selected, tasksById, t }),
                 deleteConfirmation: getBulkTrashConfirmation(t),
             };
         },

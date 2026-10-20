@@ -23,6 +23,7 @@ import {
     isProjectedRecurringTask,
     buildQuickAddParseOptions,
     getRetainedTaskContexts,
+    getSavedTaxonomyTokens,
     hasTimeComponent,
     isCalendarAllDayItem,
     resolveAreaFilterSelection,
@@ -200,7 +201,7 @@ export function useDesktopCalendarController() {
         () => Array.from(new Set([...allContexts, ...allTags])).sort(),
         [allContexts, allTags]
     );
-    const quickAddContextHistory = useMemo(() => getRetainedTaskContexts(allTasks), [allTasks]);
+    const quickAddContextHistory = useMemo(() => Array.from(new Set([...getRetainedTaskContexts(allTasks), ...getSavedTaxonomyTokens(settings, 'context')])), [allTasks, settings]);
 
     useEffect(() => {
         if (!perf.enabled) return;

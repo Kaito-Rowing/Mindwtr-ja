@@ -2415,6 +2415,20 @@ struct SettingsScreen: View {
                     .accessibilityIdentifier("manage-person-create-open")
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 56)
+            } else {
+                let create = model.manageSettings.object(key).object("create")
+                HStack(spacing: 12) {
+                    Text(create.text("label")).rnFont(15, .semibold).foregroundStyle(palette.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button { Task { await model.openSettingsTaxonomy(kind: key == "contexts" ? "context" : "tag", creating: true) } } label: {
+                        Image(systemName: "plus").font(.system(size: 18))
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.manageInventoryActionsEnabled)
+                    .accessibilityLabel(create.text("label"))
+                    .accessibilityIdentifier("manage-\(key == "contexts" ? "context" : "tag")-create-open")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 56)
             }
         }
     }
@@ -2625,8 +2639,10 @@ struct SettingsScreen: View {
     }
 
     private var taxonomyEditorSheet: some View {
+        let type = model.settingsTaxonomyAction == "create"
+            ? (model.settingsTaxonomyKind == "tag" ? "newTag" : "newContext") : (model.settingsTaxonomyKind ?? "context")
         let copy = model.settingsTaxonomyOptions.object("text").isEmpty
-            ? model.manageSettings.object("editor").object("text").object(model.settingsTaxonomyKind ?? "context")
+            ? model.manageSettings.object("editor").object("text").object(type)
             : model.settingsTaxonomyOptions.object("text")
         return NavigationStack {
             ScrollView {

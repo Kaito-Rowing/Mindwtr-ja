@@ -687,6 +687,8 @@ export const faOverrides: Record<string, string> = {
         'next.warningCount': 'مورد در اقدامات بعدی',
         'next.warningHint': 'تمرکز روی پروژه‌های کمتر را در نظر بگیرید. GTD توصیه می‌کند اقدامات بعدی برای شفافیت بین ۱۰ تا ۱۵ مورد نگه داشته شود.',
 
+    'contexts.new': 'زمینه جدید',
+    'tags.new': 'برچسب جدید',
         'contexts.title': 'زمینه‌ها',
         'contexts.filter': 'فیلتر کارها بر اساس زمینه',
         'contexts.dropAdd': 'افزودن {context}',

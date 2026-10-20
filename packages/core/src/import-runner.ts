@@ -46,6 +46,7 @@ import {
     type TodoistImportParseResult,
 } from './todoist-import';
 import type { AppData, Attachment } from './types';
+import { retainTaxonomyEffects } from './taxonomy-catalog';
 
 export type ImportSourceId = 'backup' | 'backup-merge' | 'dgt' | 'mindwtr-csv' | 'omnifocus' | 'ticktick' | 'todoist';
 export type ImportPickerSourceId = Exclude<ImportSourceId, 'backup' | 'backup-merge'>;
@@ -352,7 +353,22 @@ export function applyImportSource<S extends ImportSourceId>(
     currentData: AppData,
     parsed: ImportTypeMap[S]['parsed'],
 ): DataTransferApplication<ImportTypeMap[S]['result']> {
-    return IMPORT_DESCRIPTORS[source].apply(currentData, parsed);
+    const applied = IMPORT_DESCRIPTORS[source].apply(currentData, parsed);
+    if (source === 'backup') return applied;
+    const tasksBefore = new Map(currentData.tasks.map((row) => [row.id, row]));
+    const projectsBefore = new Map(currentData.projects.map((row) => [row.id, row]));
+    const taskPairs = [];
+    for (const task of applied.data.tasks) {
+        const before = tasksBefore.get(task.id);
+        if (task !== before) taskPairs.push({ before, after: task });
+    }
+    const projectPairs = [];
+    for (const project of applied.data.projects) {
+        const before = projectsBefore.get(project.id);
+        if (project !== before) projectPairs.push({ before, after: project });
+    }
+    const settings = retainTaxonomyEffects(applied.data.settings, taskPairs, projectPairs);
+    return settings === applied.data.settings ? applied : { ...applied, data: { ...applied.data, settings } };
 }
 
 // Closing this on `source` (rather than two free type parameters the caller had to spell out)

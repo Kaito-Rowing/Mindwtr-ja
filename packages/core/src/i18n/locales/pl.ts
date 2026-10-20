@@ -1,5 +1,7 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const plOverrides: Record<string, string> = {
+    'contexts.new': 'Nowy kontekst',
+    'tags.new': 'Nowy tag',
     'settings.cleartextSyncDismiss': 'Ukryj dla tego miejsca synchronizacji',
     "projects.convertBlocked.destination-section-sequence": "Wybierz projekt docelowy z ustawieniem Sekwencyjny → W obrębie sekcji. Nowa sekcja zachowuje kolejność zadań; pozostałe sekcje mogą działać niezależnie.",
     'timeline.moveTaskDates': "Przesuń daty zadania",

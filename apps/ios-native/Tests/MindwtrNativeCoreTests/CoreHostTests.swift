@@ -15584,6 +15584,7 @@ final class CoreHostTests: XCTestCase {
         let device = try XCTUnwrap(prepared["deviceIdBefore"] as? String ?? prepared["deviceIdToInitialize"] as? String)
         func assertEffect(_ before: [String], _ after: [String]) throws {
             var expected = before
+            var actual = after
             let values = action == "delete" ? [destination, kind == "context" ? "@Keep96" : "#Keep96"]
                 : kind == "context" ? ["@New96", "@OLD96", "@Keep96"] : ["#OLD96", "#New96", "#Keep96"]
             for table in kind == "tag" ? [0, 1] : [0] {
@@ -15595,7 +15596,16 @@ final class CoreHostTests: XCTestCase {
                 }
                 expected[table] = try json(rows)
             }
-            XCTAssertEqual(try personEditSemanticTables(after, changedTaskIDs: Set(taskIDs)),
+            let catalogue = try XCTUnwrap((prepared["effect"] as? [String: Any])?["catalogue"] as? [String: Any])
+            var expectedSettings = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[5].utf8)) as? [[String: Any]])
+            var settings = try object(XCTUnwrap(expectedSettings[0]["data"] as? String))
+            settings["taxonomy"] = try XCTUnwrap(catalogue["after"])
+            expectedSettings[0]["data"] = settings
+            expected[5] = try json(expectedSettings)
+            var actualSettings = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(after[5].utf8)) as? [[String: Any]])
+            actualSettings[0]["data"] = try object(XCTUnwrap(actualSettings[0]["data"] as? String))
+            actual[5] = try json(actualSettings)
+            XCTAssertEqual(try personEditSemanticTables(actual, changedTaskIDs: Set(taskIDs)),
                            try personEditSemanticTables(expected, changedTaskIDs: Set(taskIDs)))
         }
         faults.beforeSQL = nil
@@ -15655,6 +15665,62 @@ final class CoreHostTests: XCTestCase {
     func testManageTaxonomyContextDeleteRecoveryPreservesRawRows() async throws { try await exerciseTaxonomyRecovery(kind: "context", action: "delete") }
     func testManageTaxonomyTagRenameRecoveryPreservesRawRows() async throws { try await exerciseTaxonomyRecovery(kind: "tag", action: "rename") }
     func testManageTaxonomyTagDeleteRecoveryPreservesRawRows() async throws { try await exerciseTaxonomyRecovery(kind: "tag", action: "delete") }
+
+    func testManageTaxonomySavedOnlyCreateFailureRetryRenameAndDelete() async throws {
+        for kind in ["context", "tag"] {
+            let faults = HostIOFaults(), core = host(faults)
+            _ = try await core.start()
+            let name = kind == "context" ? "@Unused catalogue context" : "#Unused catalogue tag"
+            let field = kind == "context" ? "contexts" : "tags"
+            let options = try object(await core.call("manageTaxonomyOptions", argumentsJSON: json([json(["kind": kind, "action": "create", "name": ""])])))
+            let expected = try XCTUnwrap(options["expected"] as? [String: Any])
+            XCTAssertNotNil(expected["catalogue"])
+            XCTAssertEqual((expected["tasks"] as? [Any])?.count, 0)
+            XCTAssertEqual((expected["projects"] as? [Any])?.count, 0)
+            let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "kind": kind,
+                "action": "create", "name": name, "to": NSNull(), "expected": expected]
+            let before = try calendarPreferenceSettings()
+            faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected saved taxonomy COMMIT failure") } }
+            await expectFailure("SAVE_FAILED") { _ = try await core.call("manageTaxonomy", argumentsJSON: json([json(request)])) }
+            XCTAssertEqual(try json(calendarPreferenceSettings()), try json(before))
+            let frozen = try Data(contentsOf: journal), saved = try object(String(decoding: frozen, as: UTF8.self))
+            let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+            let prepared = try XCTUnwrap(object(XCTUnwrap(args.first))["prepared"] as? [String: Any])
+            XCTAssertEqual(prepared["version"] as? Int, 2)
+            let effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+            XCTAssertEqual((effect["tasks"] as? [Any])?.count, 0)
+            XCTAssertEqual((effect["projects"] as? [Any])?.count, 0)
+            let catalogue = try XCTUnwrap(effect["catalogue"] as? [String: Any])
+            XCTAssertEqual(try json([XCTUnwrap(catalogue["before"])]), try json([XCTUnwrap(expected["catalogue"])]))
+            faults.beforeSQL = nil
+            let pendingResult = try await core.retryPending()
+            let result = try object(XCTUnwrap(pendingResult))
+            XCTAssertEqual(result["action"] as? String, "create")
+            XCTAssertEqual(result["to"] as? String, name)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            let created = try XCTUnwrap(calendarPreferenceSettings()["taxonomy"] as? [String: Any])
+            let entries = try XCTUnwrap(created[field] as? [[String: Any]])
+            XCTAssertTrue(entries.contains { $0["token"] as? String == name && $0["deletedAt"] == nil })
+            await core.close()
+            // Cold replay of the frozen request observes the exact catalogue after-state and writes nothing.
+            try frozen.write(to: journal)
+            let replay = host()
+            _ = try await replay.start()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            XCTAssertEqual(try json(XCTUnwrap(calendarPreferenceSettings()["taxonomy"])), try json(created))
+            for action in ["rename", "delete"] {
+                let oldName = action == "rename" ? name : name + " renamed"
+                let current = try object(await replay.call("manageTaxonomyOptions", argumentsJSON: json([json(["kind": kind, "name": oldName])])))
+                let input: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "kind": kind,
+                    "action": action, "name": oldName, "to": action == "rename" ? name + " renamed" as Any : NSNull(),
+                    "expected": try XCTUnwrap(current["expected"])]
+                _ = try await replay.call("manageTaxonomy", argumentsJSON: json([json(input)]))
+            }
+            let removed = try XCTUnwrap(calendarPreferenceSettings()["taxonomy"] as? [String: Any])
+            XCTAssertFalse((removed[field] as? [[String: Any]] ?? []).contains { $0["deletedAt"] == nil && ($0["token"] as? String)?.hasPrefix(name) == true })
+            await replay.close()
+        }
+    }
 
     private enum AreaDurableCase: String {
         case rename, merge, delete, restore, fresh

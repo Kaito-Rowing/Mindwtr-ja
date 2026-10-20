@@ -717,6 +717,8 @@ export const koOverrides: Record<string, string> = {
         'next.warningHint': '더 적은 수의 프로젝트에 집중하는 것을 고려해보세요. GTD에서는 명확성을 위해 다음 행동을 10~15개 항목으로 유지할 것을 권장합니다.',
 
         // Contact / Contexts (Mobile updates)
+    'contexts.new': '새 상황',
+    'tags.new': '새 태그',
         'contexts.title': '상황',
         'contexts.filter': '상황별 할 일 필터링',
         'filters.label': '필터',

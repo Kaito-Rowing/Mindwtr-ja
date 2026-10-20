@@ -13,6 +13,7 @@ import { Task,
     buildTaskEditorMonthlyCustomRRule,
     getTaskEditorMonthlyCustom,
     getRetainedTaskContexts,
+    getSavedTaxonomyTokens,
     isTaskEditorTimeSpentEnabled,
     getTaskEditorBackdatedCompletionStart,
     resolveAutoTextDirection,
@@ -254,8 +255,8 @@ function TaskEditModalInner({
         [allTasks, task],
     );
     const contextHistory = useMemo(
-        () => getRetainedTaskContexts(allTasks),
-        [allTasks],
+        () => Array.from(new Set([...getRetainedTaskContexts(allTasks), ...getSavedTaxonomyTokens(settings, 'context')])),
+        [allTasks, settings],
     );
     const { t, language } = useLanguage();
     // Already identity-stable: resolveThemeTokens caches its result on the theme,

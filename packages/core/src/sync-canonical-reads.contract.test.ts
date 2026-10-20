@@ -40,6 +40,7 @@ import { normalizeTaskForSyncMerge, validateMergedSyncData } from './sync-normal
 import { getMergeComparableSignature, normalizeTaskForContentComparison } from './sync-signatures';
 import { createNextRecurringTask } from './recurrence';
 import { toStableSyncJson } from './sync-helpers';
+import { retainTaxonomyEffects } from './taxonomy-catalog';
 import { flushPendingSave, getStorageAdapter, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
 import { createNativeAIRequestTimeoutMethods } from './native-ai-request-timeout';
@@ -207,6 +208,16 @@ const diffDocuments = (before: AppData, after: AppData, limit = 8): DiffEntry[] 
         limit,
     );
     return out;
+};
+
+const expectRetainedSettings = (written: AppData, before: AppData) => {
+    const oldTasks = new Map(before.tasks.map((row) => [row.id, row]));
+    const oldProjects = new Map(before.projects.map((row) => [row.id, row]));
+    const tasks = written.tasks.filter((row) => JSON.stringify(row) !== JSON.stringify(oldTasks.get(row.id)))
+        .map((after) => ({ before: oldTasks.get(after.id), after }));
+    const projects = written.projects.filter((row) => JSON.stringify(row) !== JSON.stringify(oldProjects.get(row.id)))
+        .map((after) => ({ before: oldProjects.get(after.id), after }));
+    expect(written.settings).toEqual(retainTaxonomyEffects(before.settings, tasks, projects));
 };
 
 /** `surface.field: before -> after (xN)`, so a per-entity difference reads as one line. */
@@ -1216,7 +1227,7 @@ describe('canonical local reads contract', () => {
                     expect(written.tasks).toEqual(before.tasks.map((row) => after.get(row.id) ?? row));
                     expect(written.projects).toEqual(before.projects);
                     expect(written.sections).toEqual(before.sections);
-                    expect(written.settings).toEqual(before.settings);
+                    expectRetainedSettings(written, before);
                 });
                 expect(await useTaskStore.getState().commitPreparedInboxTasksOrganize(planned.prepared, durable.authority))
                     .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
@@ -1254,7 +1265,7 @@ describe('canonical local reads contract', () => {
                 control.expectPersisted((written) => {
                     expect(written.tasks).toEqual(before.tasks.map((row) => after.get(row.id) ?? row));
                     expect(written.projects).toEqual(before.projects);
-                    expect(written.settings).toEqual(before.settings);
+                    expectRetainedSettings(written, before);
                 });
                 expect(nativeValue(await host.commitPreparedTrashItemsRestore({ request, prepared: planned.prepared }))).toEqual({ count: 1 });
             },
@@ -1593,7 +1604,7 @@ describe('canonical local reads contract', () => {
                     expect(written.tasks).toEqual(before.tasks.map((row) => after.get(row.id) ?? row));
                     expect(written.projects).toEqual(before.projects);
                     expect(written.sections).toEqual(before.sections);
-                    expect(written.settings).toEqual(before.settings);
+                    expectRetainedSettings(written, before);
                 });
                 control.resetBaseline();
                 expect(await useTaskStore.getState().commitPreparedArchivedTasksMutation({
@@ -1629,7 +1640,7 @@ describe('canonical local reads contract', () => {
                     expect(written.tasks).toEqual(before.tasks.map((row) => moved.get(row.id) ?? row));
                     expect(written.projects).toEqual(before.projects);
                     expect(written.sections).toEqual(before.sections);
-                    expect(written.settings).toEqual(before.settings);
+                    expectRetainedSettings(written, before);
                 });
                 control.resetBaseline();
                 expect(await useTaskStore.getState().commitPreparedInboxTasksMove(planned.prepared, durable.authority))
@@ -1663,7 +1674,7 @@ describe('canonical local reads contract', () => {
                     expect(written.tasks).toEqual(before.tasks.map((row) => moved.get(row.id) ?? row));
                     expect(written.projects).toEqual(before.projects);
                     expect(written.sections).toEqual(before.sections);
-                    expect(written.settings).toEqual(before.settings);
+                    expectRetainedSettings(written, before);
                 });
                 control.resetBaseline();
                 expect(await useTaskStore.getState().commitPreparedReferenceTasksMove(planned.prepared, durable.authority))
@@ -1707,7 +1718,7 @@ describe('canonical local reads contract', () => {
                     expect(written.sections).toEqual(before.sections);
                     expect(written.areas).toEqual(before.areas);
                     expect(written.people).toEqual(before.people);
-                    expect(written.settings).toEqual(before.settings);
+                    expectRetainedSettings(written, before);
                 });
                 control.resetBaseline();
                 expect(await useTaskStore.getState().commitPreparedInboxTasksAddTag(planned.prepared, durable.authority))
@@ -1754,7 +1765,7 @@ describe('canonical local reads contract', () => {
                     expect(written.sections).toEqual(before.sections);
                     expect(written.areas).toEqual(before.areas);
                     expect(written.people).toEqual(before.people);
-                    expect(written.settings).toEqual(before.settings);
+                    expectRetainedSettings(written, before);
                 });
                 control.resetBaseline();
                 expect(await useTaskStore.getState().commitPreparedReferenceTasksAddTag(planned.prepared, durable.authority))
@@ -1800,7 +1811,7 @@ describe('canonical local reads contract', () => {
                     expect(written.sections).toEqual(before.sections);
                     expect(written.areas).toEqual(before.areas);
                     expect(written.people).toEqual(before.people);
-                    expect(written.settings).toEqual(before.settings);
+                    expectRetainedSettings(written, before);
                 });
                 control.resetBaseline();
                 expect(await useTaskStore.getState().commitPreparedInboxTasksRemoveTag(planned.prepared, durable.authority))
@@ -1847,7 +1858,7 @@ describe('canonical local reads contract', () => {
                     expect(written.sections).toEqual(before.sections);
                     expect(written.areas).toEqual(before.areas);
                     expect(written.people).toEqual(before.people);
-                    expect(written.settings).toEqual(before.settings);
+                    expectRetainedSettings(written, before);
                 });
                 control.resetBaseline();
                 expect(await useTaskStore.getState().commitPreparedReferenceTasksRemoveTag(planned.prepared, durable.authority))
@@ -1879,7 +1890,7 @@ describe('canonical local reads contract', () => {
                     expect(written.tasks).toEqual(before.tasks.map((row) => restored.get(row.id) ?? row));
                     expect(written.projects).toEqual(before.projects);
                     expect(written.sections).toEqual(before.sections);
-                    expect(written.settings).toEqual(before.settings);
+                    expectRetainedSettings(written, before);
                 });
                 control.resetBaseline();
                 expect(await useTaskStore.getState().commitPreparedArchivedTasksRestore(planned.prepared, durable.authority))
@@ -2715,10 +2726,12 @@ describe('canonical local reads contract', () => {
             },
             convertTaskToSection: () => call('convertTaskToSection', projectTaskIds[0]),
             deleteArea: () => call('deleteArea', areaId),
+            addContext: () => call('addContext', '@contract-unused'),
             deleteContext: () => call('deleteContext', '@home'),
             deletePerson: () => call('deletePerson', personId),
             deleteProject: () => call('deleteProject', projectId),
             deleteSection: () => call('deleteSection', sectionId),
+            addTag: () => call('addTag', '#contract-unused'),
             deleteTag: () => call('deleteTag', '#admin'),
             deleteTask: () => call('deleteTask', taskId),
             duplicateProject: () => call('duplicateProject', projectId),
@@ -2892,7 +2905,7 @@ describe('canonical local reads contract', () => {
                 expect(written.sections).toEqual(before.sections);
                 expect(written.areas).toEqual(before.areas);
                 expect(written.people).toEqual(before.people);
-                expect(written.settings).toEqual(before.settings);
+                expectRetainedSettings(written, before);
             });
             control.resetBaseline();
             expect(nativeValue(await host.commitPreparedDoneTaskStatus({ request, prepared: planned.prepared }))).toEqual({ id: source.id });
@@ -2936,7 +2949,7 @@ describe('canonical local reads contract', () => {
                         ...effect.tasks.filter((row) => row.before === null).map((row) => row.after)]);
                     expect(written.projects).toEqual(before.projects); expect(written.sections).toEqual(before.sections);
                     expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people);
-                    expect(written.settings).toEqual(before.settings);
+                    expectRetainedSettings(written, before);
                 });
                 if (undo) expect(nativeValue(await host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: undo }))).toEqual(undo.result);
                 else if (completion) expect(nativeValue(await host.commitPreparedTaskCompletion(completion))).toEqual(completion.prepared.result);
@@ -2980,7 +2993,7 @@ describe('canonical local reads contract', () => {
                     expect(written.tasks).toEqual([...before.tasks.map(row => tasks.get(row.id) ?? row), ...taskEffects.filter(row => row.before === null).map(row => row.after)]);
                     expect(written.projects).toEqual(before.projects.map(row => projectEffects.find(effect => effect.after.id === row.id)?.after ?? row));
                     expect(written.sections).toEqual(before.sections?.map(row => sectionEffects.find(effect => effect.after.id === row.id)?.after ?? row));
-                    expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people); expect(written.settings).toEqual(before.settings);
+                    expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people); expectRetainedSettings(written, before);
                 });
                 expect(nativeValue(await host.commitPreparedReferenceProjectNextAction(envelope))).toEqual(prepared.result);
                 if (op.kind === 'choose') expect(useTaskStore.getState()._tasksById.get(candidateId)?.rev).toBe(op.effect.tasks[0].after.rev);
@@ -3007,7 +3020,7 @@ describe('canonical local reads contract', () => {
             control.resetBaseline(); control.expectPersisted(written => {
                 expect(written.tasks).toEqual(before.tasks.map(row => row.id === source.id ? effect.tasks[0].after : row));
                 expect(written.projects).toEqual(before.projects); expect(written.sections).toEqual(before.sections);
-                expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people); expect(written.settings).toEqual(before.settings);
+                expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people); expectRetainedSettings(written, before);
             });
             expect(nativeValue(await host.commitPreparedReferenceTaskDestination(envelope))).toEqual({ id: source.id });
             expect(useTaskStore.getState()._tasksById.get(source.id)).toEqual(effect.tasks[0].after);
@@ -3033,7 +3046,7 @@ describe('canonical local reads contract', () => {
                 expect(written.tasks).toEqual([...before.tasks.map(row => affected.get(row.id) ?? row),
                     ...effect.tasks.filter(row => row.before === null).map(row => row.after)]);
                 expect(written.projects).toEqual(before.projects); expect(written.sections).toEqual(before.sections);
-                expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people); expect(written.settings).toEqual(before.settings);
+                expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people); expectRetainedSettings(written, before);
             });
             expect(nativeValue(await host.commitPreparedReferenceTaskBackdate(envelope))).toEqual({ id: source.id });
             expect(useTaskStore.getState()._tasksById.get(source.id)).toEqual(affected.get(source.id));

@@ -624,6 +624,8 @@ export const csOverrides: Record<string, string> = {
         'next.noContext': 'Žádné Další kroky s',
         'next.warningCount': 'položek v Dalších krocích',
         'next.warningHint': 'Zvažte soustředění na méně projektů. GTD doporučuje držet Další kroky na 10–15 položkách pro přehlednost.',
+    'contexts.new': 'Nový kontext',
+    'tags.new': 'Nový štítek',
         'contexts.title': 'Kontexty',
         'contexts.filter': 'Filtrovat úkoly podle kontextu',
         'filters.label': 'Filtry',

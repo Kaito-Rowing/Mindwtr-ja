@@ -1,5 +1,7 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const nlOverrides: Record<string, string> = {
+    'contexts.new': 'Nieuwe context',
+    'tags.new': 'Nieuwe tag',
     'settings.cleartextSyncDismiss': 'Verbergen voor deze synchronisatiebestemming',
     'widget.upcomingStarts': 'Begint',
     'widget.upcomingReturns': 'Keert terug',

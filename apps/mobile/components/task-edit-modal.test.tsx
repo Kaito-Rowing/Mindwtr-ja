@@ -573,6 +573,7 @@ describe('TaskEditModal', () => {
     const deleted = task('deleted', 'next', ['@deleted-only'], timestamp);
     taskEditStore.current!.tasks = [editing, active, done];
     taskEditStore.current!._allTasks = [editing, active, done, archived, bare, deleted];
+    taskEditStore.current!.settings = { ...taskEditStore.current!.settings, taxonomy: { contexts: [{ token: '@arch-saved', rev: 1, revBy: 'test', updatedAt: timestamp }] } };
     taskEditStore.current!.getDerivedState = () => ({
       allContexts: ['@active-only', '@arch', '@done-only'], allTags: [],
       contextTokenUsage: [{ token: '@active-only', count: 1, lastUsedAt: 0 }], tagTokenUsage: [],
@@ -588,7 +589,7 @@ describe('TaskEditModal', () => {
     });
     const form = tree.root.findByType('TaskEditFormTab' as any);
     const contextField = form.props.renderField('contexts');
-    expect(contextField.props.contextTokenSuggestions).toEqual(['@archived-only']);
+    expect(contextField.props.contextTokenSuggestions).toEqual(['@arch-saved', '@archived-only']);
     expect(contextField.props.frequentContextSuggestions).toEqual(['@active-only']);
   });
 

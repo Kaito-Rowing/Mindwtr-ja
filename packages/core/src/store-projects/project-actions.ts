@@ -1,3 +1,4 @@
+import { retainProjectTaxonomy, retainTaxonomyEffects } from '../taxonomy-catalog';
 import { getAttachmentUnrecoverablePatch } from '../mobile-attachment-availability';
 import {
     applyProjectLifecycleTransition,
@@ -760,14 +761,15 @@ export const createProjectCoreActions = ({
             });
             createdProject = newProject;
             const newAllProjects = [...state._allProjects, newProject];
+            const settings = retainProjectTaxonomy(deviceState.settings, undefined, newProject);
             persist(set, debouncedSave, state, {
                 projects: newAllProjects,
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                settings,
             });
             return {
                 _allProjects: newAllProjects,
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                settings,
             };
         });
         if (existingProject) {
@@ -800,8 +802,8 @@ export const createProjectCoreActions = ({
             if (max !== input.orderMax
                 || findSelectableProjectByTitleAndArea(state._allProjects, input.project.title, area?.id)) return state;
             const projects = [...state._allProjects, input.project];
-            const settings = input.deviceIdToInitialize
-                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            const settings = retainProjectTaxonomy(input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings, undefined, input.project);
             persist(set, debouncedSave, state, { projects,
                 ...(settings !== state.settings ? { settings } : {}) });
             result = { success: true, id: input.project.id, outcome: 'applied' };
@@ -979,8 +981,8 @@ export const createProjectCoreActions = ({
                 input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
             if (!planned || !taskEditValuesEqual(planned, input.effect)) return state;
             const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
-            const settings = input.deviceIdToInitialize
-                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            const settings = retainProjectTaxonomy(input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings, current, planned.project.after);
             persist(set, debouncedSave, state, { projects,
                 ...(settings !== state.settings ? { settings } : {}) });
             result = { success: true, id: current.id, outcome: 'applied' };
@@ -1378,9 +1380,14 @@ export const createProjectCoreActions = ({
                     : {}),
             };
 
+            let settings = deviceState.settings;
+            const retainUpdatedProject = (after: Project) => {
+                settings = retainProjectTaxonomy(settings, oldProject, after);
+                return after;
+            };
             const newAllProjects = allProjects.map(project =>
                 project.id === id
-                    ? {
+                    ? retainUpdatedProject({
                         ...normalizeProjectLifecycleFields({
                             ...project,
                             ...finalProjectUpdates,
@@ -1388,7 +1395,7 @@ export const createProjectCoreActions = ({
                             rev: nextRevision(project.rev),
                             revBy: deviceState.deviceId,
                         }),
-                    }
+                    })
                     : project
             );
 
@@ -1396,14 +1403,14 @@ export const createProjectCoreActions = ({
                 tasks: newAllTasks,
                 projects: newAllProjects,
                 sections: newAllSections,
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                settings,
             });
             return {
                 _allProjects: newAllProjects,
                 _allTasks: newAllTasks,
                 _allSections: newAllSections,
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                settings,
             };
         });
 
@@ -1448,18 +1455,19 @@ export const createProjectCoreActions = ({
             const newAllSections = replaceEntitiesInArray(state._allSections, effect.sections.map((row) => row.after));
             const newAllTasks = replaceEntitiesInArray(state._allTasks, effect.tasks.map((row) => row.after));
             clearDerivedCache();
+            const settings = retainTaxonomyEffects(deviceState.settings, effect.tasks, [effect.project]);
             persist(set, debouncedSave, state, {
                 tasks: newAllTasks,
                 projects: newAllProjects,
                 sections: newAllSections,
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                settings,
             });
             return {
                 _allProjects: newAllProjects,
                 _allTasks: newAllTasks,
                 _allSections: newAllSections,
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                settings,
             };
         });
         if (missingProject) {
@@ -1602,18 +1610,19 @@ export const createProjectCoreActions = ({
             const newAllSections = replaceEntitiesInArray(state._allSections, effect.sections.map((row) => row.after));
             const newAllTasks = replaceEntitiesInArray(state._allTasks, effect.tasks.map((row) => row.after));
             clearDerivedCache();
+            const settings = retainTaxonomyEffects(deviceState.settings, effect.tasks, [effect.project]);
             persist(set, debouncedSave, state, {
                 tasks: newAllTasks,
                 projects: newAllProjects,
                 sections: newAllSections,
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                settings,
             });
             return {
                 _allProjects: newAllProjects,
                 _allSections: newAllSections,
                 _allTasks: newAllTasks,
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                settings,
             };
         });
         return missingProject ? actionFail('Project not found') : actionOk();
@@ -1841,8 +1850,8 @@ export const createProjectCoreActions = ({
             const projects = [...state._allProjects, created.project];
             const nextSections = [...state._allSections, ...created.sections];
             const nextTasks = [...state._allTasks, ...created.tasks];
-            const settings = input.deviceIdToInitialize
-                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            const settings = retainTaxonomyEffects(input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings, created.tasks.map((after) => ({ after })), [{ after: created.project }]);
             clearDerivedCache();
             persist(set, debouncedSave, state, { projects, sections: nextSections, tasks: nextTasks,
                 ...(settings !== state.settings ? { settings } : {}) });
@@ -1873,18 +1882,19 @@ export const createProjectCoreActions = ({
             const newAllProjects = [...state._allProjects, effect.project];
             const newAllSections = [...state._allSections, ...effect.sections];
             const newAllTasks = [...state._allTasks, ...effect.tasks];
+            const settings = retainTaxonomyEffects(deviceState.settings, effect.tasks.map((after) => ({ after })), [{ after: effect.project }]);
             persist(set, debouncedSave, state, {
                 tasks: newAllTasks,
                 projects: newAllProjects,
                 sections: newAllSections,
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                settings,
             });
             return {
                 _allProjects: newAllProjects,
                 _allSections: newAllSections,
                 _allTasks: newAllTasks,
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                settings,
             };
         });
         return createdProject;
