@@ -1013,6 +1013,39 @@ const largeImports = async () => {
         check(undone === before, `(LI ${item.key}) the Undo brings the library back: ${after} -> ${undone} (before: ${before})`);
     }
 };
+/**
+ * Large-library pass b's memory rows (D1C_PART=no-undo): at the 15 MiB limit, a merge over a library whose recovery snapshot
+ * plus the library left after comes to about 14.9 and about 20 MiB (the coordinator's ruling C). Each row restores the base
+ * library on a fresh install, then merges the file, answering the no-Undo question with Continue when it comes; it logs the
+ * recovery snapshot's size and whether the question came.
+ */
+const NO_UNDO_ROWS = [['rows', 2.8, 6.3, 14.9], ['rows', 4, 8, 20], ['notes', 3, 8.5, 14.9], ['notes', 5, 9.5, 20]];
+const noUndoRows = async () => {
+    const limitMiB = 15;
+    for (const [shape, baseMiB, mergeMiB, targetMiB] of NO_UNDO_ROWS) {
+        await measureFreshInstall(limitMiB);
+        const base = measureFixture(`d1-nu-${shape}-base-${baseMiB}-${run}.json`, baseMiB, shape, 'd1nb');
+        push(base);
+        await restoreFile(base);
+        await restoredOrStop();
+        const file = measureFixture(`d1-nu-${shape}-merge-${mergeMiB}-${run}.json`, mergeMiB, shape, 'd1nm');
+        push(file);
+        let asked = false;
+        const { row } = await measureRun(shape, `no-undo-${targetMiB}`, limitMiB, async () => {
+            await merge(file);
+            await answerQuestion();
+            const next = await waitFor('the no-Undo question or the merge\'s result', (current) => hasText(current, en['settings.backupMobile.undoUnavailableTitle'])
+                || (hasText(current, en['settings.mergeBackup']) && !confirmButton(current)) || current.some((node) => /failed|too large/i.test(node.text ?? '')), 900_000);
+            if (hasText(next, en['settings.backupMobile.undoUnavailableTitle'])) { asked = true; await tap(confirmButton(next)); }
+        }, (nodes) => hasText(nodes, en['settings.mergeBackup']) && !confirmButton(nodes), { sourceBytes: bytesOf(file) });
+        const newest = [...snapshots()].sort().at(-1);
+        const recoveryMiB = newest ? Math.round(Number(runAs(`stat -c %s files/snapshots/${newest}`)) / MIB * 10) / 10 : null;
+        console.log(`no-undo ${shape} target ${targetMiB}: recovery ${recoveryMiB} MiB + library after ${row.libraryAfterMiB} MiB; question ${asked ? 'asked' : 'not asked'}; native ${row.nativeMiB} / Java ${row.javaMiB} MiB; ${row.outcome}`);
+        sh(`rm -f ${PHONE_DIR}/${base.name} ${PHONE_DIR}/${file.name}`);
+    }
+    setProp('transfer_limit_mb', '');
+    writeFileSync(resolve(work, `no-undo-${run}.json`), JSON.stringify(measured, null, 2));
+};
 const measure = async () => {
     console.log(`heap limits: dalvik.vm.heapgrowthlimit=${sh('getprop dalvik.vm.heapgrowthlimit')} heapsize=${sh('getprop dalvik.vm.heapsize')}; ${sh('grep MemTotal /proc/meminfo')}`);
     const shapes = (process.env.D1_MEASURE_SHAPES ?? MEASURE_SHAPES.join(',')).split(',');
@@ -1079,6 +1112,12 @@ try {
         sh('settings put system accelerometer_rotation 0');
         await deadlineRows(process.env.D1C_PART === 'deadlines-1' ? 1 : 2);
         console.log('Settings › Data deadline rows passed');
+        break steps;
+    }
+    if (process.env.D1C_PART === 'no-undo') {
+        sh('settings put system accelerometer_rotation 0');
+        await noUndoRows();
+        console.log('Settings › Data no-Undo memory rows finished');
         break steps;
     }
     if (process.env.D1C_PART === 'large-import') {
