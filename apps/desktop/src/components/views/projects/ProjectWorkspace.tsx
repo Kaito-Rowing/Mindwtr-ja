@@ -22,6 +22,7 @@ import { Attachment,
     parseAttachmentLinkBatch,
     getInlineMarkdownPreview,
     stripMarkdown,
+    PROJECT_TASK_SORT_OPTIONS,
     resolveTaskSortByForFeatures,
     sortTasksBy,
     splitCompletedTasks, tFallback, undoProjectDelete, updateProjectFromDraft, useTaskStore, } from '@mindwtr/core';
@@ -1928,6 +1929,7 @@ export function ProjectWorkspace({
                                                 <SortBySelect
                                                     value={projectTaskSortBy}
                                                     defaultValue="default"
+                                                    options={PROJECT_TASK_SORT_OPTIONS}
                                                     onChange={handleProjectTaskSortByChange}
                                                     t={t}
                                                 />

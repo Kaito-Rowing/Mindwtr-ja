@@ -353,7 +353,9 @@ function observe(root: ReactTestInstance, seen: { alerts: number; toasts: number
   const flatList = hostsOf(root, 'FlatList')[0];
   const emptyIcon = flatList.findAll((node) => String(node.type).startsWith('Icon:'))[0];
   const empty = rows.length === 0 && emptyIcon ? [String(emptyIcon.type), ...textsIn(flatList)] : null;
-  const bulkButtons = hostsOf(root, 'TouchableOpacity');
+  // The search row's Sort button (#1415) is not part of the bulk bar.
+  const bulkButtons = hostsOf(root, 'TouchableOpacity')
+    .filter((node) => !node.findAll((child) => String(child.type) === 'Icon:ArrowUpDown').length);
   const bulk = bulkButtons.length > 0
     ? bulkButtons.map((node) => [buttonName(node), node.props.disabled === true])
     : null;

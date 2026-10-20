@@ -23,11 +23,14 @@ import {
   getContextsRouteTokens,
   getContextsTokenPicker,
   getContextsTokenPickerTitle,
+  getTaskListHeaderText,
+  getTaskSortByLabel,
   resolveContextsMatchMode,
   runStoreCommand,
   selectContextsRouteTokens,
   toggleContextsNoContext,
   toggleContextsToken,
+  TASK_LIST_SORT_OPTIONS,
   type ContextOrTagMatchMode,
   type Task,
   type TaskStatus,
@@ -49,6 +52,8 @@ import { Tag, CheckCircle2, X } from 'lucide-react-native';
 import { styles as bulkStyles } from '../task-list/task-list.styles';
 import { assertBulkActionSucceeded, useTaskListSelection } from '../use-task-list-selection';
 import { TASK_LIST_WINDOWING_PROPS } from '../task-list-windowing';
+import { TaskListSortButton } from '../task-list/TaskListSortButton';
+import { TaskListSortModal } from '../task-list/TaskListSortModal';
 
 type BulkTokenPickerState = {
   field: 'tags' | 'contexts';
@@ -65,6 +70,7 @@ export function ContextsView() {
     batchDeleteTasks,
     batchUpdateTasks,
     settings,
+    updateSettings,
   } = useTaskStore((state) => ({
     tasks: state.tasks,
     updateTask: state.updateTask,
@@ -74,6 +80,7 @@ export function ContextsView() {
     batchDeleteTasks: state.batchDeleteTasks,
     batchUpdateTasks: state.batchUpdateTasks,
     settings: state.settings,
+    updateSettings: state.updateSettings,
   }), shallow);
   const { isDark } = useTheme();
   const { t } = useLanguage();
@@ -83,6 +90,7 @@ export function ContextsView() {
   const [searchQuery, setSearchQuery] = useState('');
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [bulkTokenPicker, setBulkTokenPicker] = useState<BulkTokenPickerState>(null);
+  const [sortModalVisible, setSortModalVisible] = useState(false);
 
   const tc = useThemeColors();
   const { showToast } = useToast();
@@ -208,6 +216,13 @@ export function ContextsView() {
     : t('taskEdit.contextsPlaceholder');
   const matchModeLabels = getContextsMatchModeLabels(t);
   const emptyState = getContextsEmptyState({ hasTokens: model.hasTokens, selectedTokens: selectedContexts }, t);
+  // The shared list sort (settings.taskSortBy), as Inbox's direct Sort control shows it (#1415).
+  const sortAccessibilityLabel = getTaskListHeaderText({
+    sortByLabel: getTaskSortByLabel(model.sortBy, t),
+    hasActiveFilters: false,
+    filterActiveCount: 0,
+    t,
+  }).sortAccessibilityLabel;
 
   const handleBulkTokenConfirm = async (values: string[]) => {
     if (!bulkTokenPicker || !hasSelection) return;
@@ -244,6 +259,11 @@ export function ContextsView() {
             placeholderTextColor={tc.secondaryText}
             value={searchQuery}
             onChangeText={setSearchQuery}
+          />
+          <TaskListSortButton
+            accessibilityLabel={sortAccessibilityLabel}
+            onPress={() => setSortModalVisible(true)}
+            themeColors={tc}
           />
         </View>
 
@@ -515,6 +535,19 @@ export function ContextsView() {
           }}
         />
 
+        <TaskListSortModal
+          onClose={() => setSortModalVisible(false)}
+          onSelect={(option) => {
+            void updateSettings({ taskSortBy: option });
+            setSortModalVisible(false);
+          }}
+          sortBy={model.sortBy}
+          sortOptions={TASK_LIST_SORT_OPTIONS}
+          t={t}
+          themeColors={tc}
+          visible={sortModalVisible}
+        />
+
         {/* Task Edit Modal */}
         <TaskEditModal
           visible={editingTask !== null}
@@ -537,12 +570,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#F9FAFB',
   },
   searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     padding: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
   },
   searchInput: {
+    flex: 1,
     height: 40,
     borderRadius: 8,
     paddingHorizontal: 12,

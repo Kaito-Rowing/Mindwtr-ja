@@ -6,7 +6,7 @@ import { DEFAULT_PROJECT_COLOR } from './color-constants';
 import { flushPendingSave, getPersistenceStatus, getStorageAdapter, useTaskStore } from './store';
 import { gateStoreCommands } from './store-write-gate';
 import { noopStorage, type StorageAdapter } from './storage';
-import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
+import { getTaskSortByLabel, getVisibleTaskSortOptions, resolveNonDoneTaskSortBy, TASK_LIST_SORT_OPTIONS } from './task-list-sort-options';
 import { getProjectSectionsForView, getSequentialProjectTaskCues, isSelectableProjectForTaskAssignment, type ProjectSequenceTaskCue } from './project-utils';
 import { getProjectDetailsPresentation, type ProjectDetailsMetadata } from './project-details-presentation';
 import {
@@ -213,7 +213,7 @@ import {
 } from './contexts-view-model';
 import { formatTimeEstimateLabel } from './calendar-scheduling';
 import { applyListFilterEdit, resolveListFilterState, type ListFilterEdit, type ListFilterState, type ResolvedListFilter } from './list-filter-state';
-import { isStatusListTaskReadOnly, type ListFilterOptions } from './menu-views-model';
+import { getTaskListHeaderText, isStatusListTaskReadOnly, type ListFilterOptions } from './menu-views-model';
 import { getProjectAccentColor } from './task-accent-color';
 import { formatListItemCount } from './list-count';
 import type { ContextOrTagMatchMode } from './hierarchy-utils';
@@ -4096,6 +4096,8 @@ export type NativeContextsView = {
     searchPlaceholder: string;
     chips: NativeContextsChip[];
     matchMode: { label: string; options: { mode: ContextOrTagMatchMode; label: string; selected: boolean }[] } | null;
+    /** RN's Sort control beside the search: the shared list sort (settings.taskSortBy); choose with setTaskListSort. */
+    sort: { title: string; accessibilityLabel: string; options: { value: TaskSortBy; label: string; selected: boolean }[] };
     total: number;
     rows: NativeTaskRow[];
     empty: ReturnType<typeof getContextsEmptyState> | null;
@@ -4574,6 +4576,14 @@ function createListViewMethods(deps: ListViewDeps) {
                         label: labels.label,
                         options: (['all', 'any'] as const).map((mode) => ({ mode, label: mode === 'all' ? labels.all : labels.any, selected: matchMode === mode })),
                     } : null,
+                    sort: {
+                        title: t('sort.label'),
+                        accessibilityLabel: getTaskListHeaderText({
+                            sortByLabel: getTaskSortByLabel(model.sortBy, t), hasActiveFilters: false, filterActiveCount: 0, t,
+                        }).sortAccessibilityLabel,
+                        options: getVisibleTaskSortOptions(TASK_LIST_SORT_OPTIONS, state.settings)
+                            .map((value) => ({ value, label: getTaskSortByLabel(value, t), selected: value === model.sortBy })),
+                    },
                     empty: model.tasks.length === 0 ? getContextsEmptyState({ hasTokens: model.hasTokens, selectedTokens: tokens }, t) : null,
                     bulk: selected.length === 0 ? null : {
                         countLabel: `${selected.length} ${t('bulk.selected')}`,
@@ -4596,6 +4606,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 searchPlaceholder: t('contexts.search'),
                 chips: view.chips,
                 matchMode: view.matchMode,
+                sort: view.sort,
                 total: view.model.tasks.length,
                 rows: view.model.tasks.slice(input.offset, input.offset + input.limit).map((task) => toNativeTaskRow(task, view.titles, deps.rowMeta(task, now))),
                 empty: view.empty,

@@ -27,6 +27,7 @@ import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from
 import { noopStorage } from './storage';
 import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup } from './task-row-meta';
 import { buildTrashTimeline } from './task-utils';
+import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
 import { generateUUID } from './uuid';
 
 const fixture = loadListViewsFixture();
@@ -122,6 +123,34 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         expect(second.ok && second.value.rows.map((row) => row.id)).toEqual(model.tasks.slice(2, 4).map((task) => task.id));
         expect(host.getContextsView({ offset: 2, limit: 2 })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(host.getContextsView({ offset: 0, limit: 101 })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    // RN's Contexts shows the shared list sort beside its search (#1415).
+    it('offers Contexts the shared list sort, with Priority while Priorities is on', async () => {
+        const { host } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const read = () => {
+            const result = host.getContextsView({ offset: 0, limit: 100 });
+            if (!result.ok) throw new Error(result.error.message);
+            return result.value;
+        };
+        const selected = () => read().sort.options.filter((option) => option.selected).map((option) => option.value);
+        expect(read().sort.options.map((option) => option.value)).toContain('priority');
+        expect(read().sort.options.find((option) => option.value === 'priority')?.label).toBe('Priority');
+        expect(selected()).toEqual([resolveNonDoneTaskSortBy(useTaskStore.getState().settings.taskSortBy, useTaskStore.getState().settings)]);
+
+        expect(await host.setTaskListSort({ sortBy: 'priority' })).toMatchObject({ ok: true, value: { sortBy: 'priority' } });
+        expect(selected()).toEqual(['priority']);
+        expect(read().sort.accessibilityLabel).toBe('Sort: Priority');
+        const state = useTaskStore.getState();
+        const ranked = buildContextsViewModel({ index: buildContextsTokenIndex(state.tasks), settings: state.settings, selectedTokens: [], matchMode: 'all', searchQuery: '' });
+        expect(ranked.sortBy).toBe('priority');
+        // The host leaves out parked projects' tasks (mobile's visible tasks); the rest keep core's priority order.
+        const rows = read().rows.map((row) => row.id);
+        expect(rows).toEqual(ranked.tasks.map((task) => task.id).filter((id) => rows.includes(id)));
+
+        await useTaskStore.getState().updateSettings({ features: { ...useTaskStore.getState().settings.features, priorities: false } });
+        expect(read().sort.options.map((option) => option.value)).not.toContain('priority');
+        expect(selected()).toEqual(['default']);
     });
 
     it('builds Archive groups and rows with core\'s functions and the host date formatter', async () => {

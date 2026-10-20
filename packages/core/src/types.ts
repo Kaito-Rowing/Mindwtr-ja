@@ -9,7 +9,8 @@ export type TimeEstimatePreset = '5min' | '10min' | '15min' | '30min' | '1hr' | 
 export type CustomTimeEstimate = `custom:${number}`;
 export type TimeEstimate = TimeEstimatePreset | CustomTimeEstimate;
 
-export type TaskSortBy = 'default' | 'due' | 'start' | 'review' | 'title' | 'timeEstimate' | 'created' | 'created-desc' | 'completed';
+// 'priority' is a shared-list sort only: Project.taskSortBy never stores it (project-utils.ts).
+export type TaskSortBy = 'default' | 'due' | 'start' | 'review' | 'title' | 'timeEstimate' | 'priority' | 'created' | 'created-desc' | 'completed';
 
 export type TaskMode = 'task' | 'list';
 

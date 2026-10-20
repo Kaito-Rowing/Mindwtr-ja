@@ -1216,6 +1216,25 @@ export function sortTasksBy(tasks: Task[], sortBy: TaskSortBy = 'default'): Task
             // instead of Infinity - Infinity = NaN, so unestimated tasks land last
             // in a stable order (#1107).
             return byDateThenCreated((task) => timeEstimateSortRank(task.timeEstimate));
+        case 'priority':
+            // Focus's priority order (sortTasksBySavedPreference): rank high to low, no
+            // priority last, then due, start and created. Equality guards keep two
+            // missing dates (Infinity) from comparing as NaN.
+            return sortByPrecomputedKey(
+                tasks,
+                (task) => ({
+                    rank: TASK_PRIORITY_SORT_RANK[task.priority as TaskPriority] || 0,
+                    due: dueOrInfinity(task.dueDate),
+                    start: timeOrInfinity(task.startTime),
+                    created: timeOrZero(task.createdAt),
+                }),
+                (a, b) => {
+                    if (a.rank !== b.rank) return b.rank - a.rank;
+                    if (a.due !== b.due) return a.due - b.due;
+                    if (a.start !== b.start) return a.start - b.start;
+                    return a.created - b.created;
+                }
+            );
         case 'created':
             return sortByPrecomputedKey(tasks, (task) => timeOrZero(task.createdAt), (a, b) => a - b);
         case 'created-desc':

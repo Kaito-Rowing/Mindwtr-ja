@@ -1,4 +1,4 @@
-import { act, fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { Area, Project, Task } from '@mindwtr/core';
 import { safeFormatDate, useTaskStore } from '@mindwtr/core';
 import * as core from '@mindwtr/core';
@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LanguageProvider } from '../../contexts/language-context';
 import { ContextsView } from './ContextsView';
 import { CONTEXTS_VIEW_STATE_STORAGE_KEY, dispatchContextsTokenSelection } from '../../lib/contexts-view-state';
-import { selectToolbarOption } from '../../test/toolbar-select';
+import { openToolbarSelect, selectToolbarOption } from '../../test/toolbar-select';
 import { expectScrolledEndGap } from '../../test/list-end-gap';
 import * as dataTransfer from '../../lib/data-transfer';
 import { useUiStore } from '../../store/ui-store';
@@ -676,6 +676,32 @@ describe('ContextsView', () => {
         const text = container.textContent ?? '';
         expect(text.indexOf('Archive notes')).toBeLessThan(text.indexOf('Plan launch'));
         expect(text.indexOf('Plan launch')).toBeLessThan(text.indexOf('Write brief'));
+    });
+
+    // #1415: Priority joins the shared list sort while Priorities is on.
+    it('offers the Priority sort while Priorities is on and stores it as the shared list sort', () => {
+        const tasks = [
+            makeTask('task-low', { title: 'Low task', contexts: ['@Office'], priority: 'low' }),
+            makeTask('task-none', { title: 'Unranked task', contexts: ['@Office'] }),
+            makeTask('task-high', { title: 'High task', contexts: ['@Office'], priority: 'high' }),
+        ];
+        useTaskStore.setState({ tasks, _allTasks: tasks, projects: [], areas: [], settings: {} });
+
+        const { container } = renderContextsView();
+        selectToolbarOption('Sort', 'Priority');
+
+        expect(useTaskStore.getState().settings.taskSortBy).toBe('priority');
+        const text = container.textContent ?? '';
+        expect(text.indexOf('High task')).toBeLessThan(text.indexOf('Low task'));
+        expect(text.indexOf('Low task')).toBeLessThan(text.indexOf('Unranked task'));
+    });
+
+    it('hides the Priority sort while Priorities is off', () => {
+        useTaskStore.setState({ settings: { features: { priorities: false } } });
+        renderContextsView();
+        openToolbarSelect('Sort');
+        expect(screen.queryByRole('option', { name: 'Priority' })).not.toBeInTheDocument();
+        expect(screen.getByRole('option', { name: 'Title' })).toBeInTheDocument();
     });
 
     it('applies task token navigation while the context view is mounted', () => {

@@ -53,8 +53,8 @@ import org.json.JSONObject
 
 /**
  * RN's Contexts (components/views/contexts-view.tsx), as a stack screen or the quick-access tab, on core's getContextsView and
- * runContextsAction: the chip search, core's chips (All, No context, each context and tag, with core's counts), core's All/Any
- * switch, the bulk bar while rows are selected (core's statuses, token actions and Delete), core's rows, and core's empty
+ * runContextsAction: the chip search with RN's direct Sort control beside it (core's shared list sort), core's chips (All,
+ * No context, each context and tag, with core's counts), core's All/Any switch, the bulk bar while rows are selected (core's statuses, token actions and Delete), core's rows, and core's empty
  * state. A row swipes right to core's status action, left to Delete with core's Undo, and a long-press selects it.
  */
 @Composable
@@ -69,9 +69,14 @@ fun ContextsList(model: InboxViewModel) = with(model.menu) {
     BackHandler(enabled = bulk != null && dialog == null && model.failedAction == null) { endSelection(); reload() }
     LazyColumn(Modifier.fillMaxSize().testTag("contexts-list"), contentPadding = PaddingValues(bottom = 16.dp)) {
         item(key = "search") {
-            Box(Modifier.fillMaxWidth().background(c.cardBg).hairline(c.border, top = false).padding(12.dp)) {
-                ListSearchField(own("contexts").optString("searchQuery"), view.getString("searchPlaceholder"), Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().background(c.cardBg).hairline(c.border, top = false).padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                ListSearchField(own("contexts").optString("searchQuery"), view.getString("searchPlaceholder"), Modifier.weight(1f)) {
                     typeSearch("contexts", "searchQuery", it)
+                }
+                // RN's TaskListSortButton: core's "Sort: <current>" label; the choice is core's setTaskListSort (#1415).
+                view.optJSONObject("sort")?.let { sort ->
+                    DirectControl(Lucide.ArrowUpDown, sort.getString("accessibilityLabel"), null, null, idle) { openDialog("sort") }
                 }
             }
         }

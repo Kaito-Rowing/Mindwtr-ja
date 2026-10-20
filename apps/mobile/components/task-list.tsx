@@ -24,6 +24,7 @@ import {
   taskMatchesAreaFilterSelection,
   DONE_TASK_LIST_SORT_OPTIONS,
   TASK_LIST_SORT_OPTIONS,
+  getTaskSortByLabel,
   TIME_ESTIMATE_OPTIONS,
   buildStatusListFilterOptions,
   buildStatusListFilterSummary,
@@ -1620,7 +1621,7 @@ function TaskListComponent({
       showHeader={false}
       showFilterButton={showFilterButton}
       showSort={showSort}
-      sortByLabel={t(`sort.${sortBy}`)}
+      sortByLabel={getTaskSortByLabel(sortBy, t)}
       t={t}
       themeColors={themeColors}
       title={title}
@@ -1662,7 +1663,7 @@ function TaskListComponent({
         showFilterButton={showFilterButton}
         showOverflow={overflowPlacement !== 'navigation'}
         showSort={showSort}
-        sortByLabel={t(`sort.${sortBy}`)}
+        sortByLabel={getTaskSortByLabel(sortBy, t)}
         t={t}
         themeColors={themeColors}
         title={title}

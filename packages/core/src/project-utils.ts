@@ -8,20 +8,26 @@ export function normalizeProjectSequentialScope(value: unknown): Project['sequen
     return undefined;
 }
 
-/** Every task sort mode, including 'default' (= manual project order).
- *  Wire-level allowlist: the cloud server validates against this, so it must
- *  stay a superset of what any client can persist. */
+/** Every task sort mode a project may store, including 'default' (= manual project order).
+ *  Wire-level allowlist: the cloud server validates project taskSortBy against this, so it
+ *  must stay a superset of what any client can persist on a project. 'priority' is left out
+ *  on purpose: it is a shared-list sort only (settings.taskSortBy), because older clients
+ *  normalize an unknown project sort to undefined and would erase it (#1415). */
 export const TASK_SORT_BY_VALUES = [
     'default', 'due', 'start', 'review', 'title', 'timeEstimate', 'created', 'created-desc', 'completed',
 ] as const;
+
+/** Task sorts a project never stores; see TASK_SORT_BY_VALUES. */
+type SharedListOnlyTaskSortBy = 'priority';
 
 export const TASK_SORT_BY_VALUE_SET: ReadonlySet<TaskSortBy> =
     new Set<TaskSortBy>(TASK_SORT_BY_VALUES);
 
 // Compile-time exhaustiveness assertion: adding a member to the TaskSortBy
-// union in types.ts without updating TASK_SORT_BY_VALUES is a typecheck error.
+// union in types.ts without updating TASK_SORT_BY_VALUES (or naming it shared-list
+// only) is a typecheck error.
 type _TaskSortByValuesAreExhaustive =
-    Exclude<TaskSortBy, (typeof TASK_SORT_BY_VALUES)[number]> extends never ? true : never;
+    Exclude<TaskSortBy, (typeof TASK_SORT_BY_VALUES)[number] | SharedListOnlyTaskSortBy> extends never ? true : never;
 const _assertTaskSortByValuesAreExhaustive: _TaskSortByValuesAreExhaustive = true;
 void _assertTaskSortByValuesAreExhaustive;
 

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runStoreCommand, runSyncStoreSave, type Task } from '@mindwtr/core';
 import { Pressable, ScrollView, TouchableOpacity } from 'react-native';
 import { ContextsView } from './contexts-view';
+import { TaskListSortModal } from '../task-list/TaskListSortModal';
 
 const now = '2026-06-11T00:00:00.000Z';
 
@@ -21,7 +22,8 @@ const storeState = vi.hoisted(() => ({
   tasks: [] as Task[],
   _tasksById: new Map<string, Task>(),
   projects: [],
-  settings: { appearance: {}, taskSortBy: 'default' },
+  settings: { appearance: {}, taskSortBy: 'default' } as Record<string, unknown>,
+  updateSettings: vi.fn(async (_next: Record<string, unknown>) => undefined),
   updateTask: vi.fn(async () => undefined),
   deleteTask: vi.fn(async () => undefined),
   restoreTask: vi.fn(async () => undefined),
@@ -104,6 +106,7 @@ vi.mock('react-native-gesture-handler', () => ({
 }));
 
 vi.mock('lucide-react-native', () => ({
+  ArrowUpDown: (props: any) => React.createElement('ArrowUpDown', props),
   CheckCircle2: (props: any) => React.createElement('CheckCircle2', props),
   Tag: (props: any) => React.createElement('Tag', props),
   X: (props: any) => React.createElement('X', props),
@@ -128,6 +131,57 @@ vi.mock('react-native', async (importOriginal) => {
 });
 
 describe('ContextsView', () => {
+  // Contexts follows the shared list sort, so it offers the same Sort control as the task lists (#1415).
+  it('shows the shared list sort, writes settings.taskSortBy, and orders rows by it', async () => {
+    const original = { settings: storeState.settings, updateSettings: storeState.updateSettings };
+    storeState.tasks = [
+      { ...makeTask('b', 'Bravo'), createdAt: '2026-06-10T00:00:00.000Z' },
+      { ...makeTask('a', 'Alpha'), priority: 'high' },
+    ];
+    storeState.updateSettings = vi.fn(async (next: Record<string, unknown>) => {
+      storeState.settings = { ...storeState.settings, ...next };
+    });
+    let tree!: ReactTestRenderer;
+    try {
+      await act(async () => { tree = create(<ContextsView />); });
+      const titles = () => tree.root.findAll((node) => (node.type as unknown) === 'SwipeableTaskItem')
+        .map((node) => node.props.task.title);
+      const sortModal = () => tree.root.findByType(TaskListSortModal);
+      const options = () => sortModal().findAllByType(Pressable)
+        .map((node) => node.props.testID).filter((id): id is string => Boolean(id?.startsWith('sort-option-')));
+      expect(titles()).toEqual(['Bravo', 'Alpha']);
+      expect(sortModal().props.visible).toBe(false);
+
+      const sort = tree.root.findAllByType(TouchableOpacity).find((node) => node.props.accessibilityLabel === 'sort.label: sort.default')!;
+      expect(sort.props.accessibilityRole).toBe('button');
+      await act(async () => { sort.props.onPress(); });
+      expect(sortModal().props.visible).toBe(true);
+      expect(sortModal().props.sortBy).toBe('default');
+      expect(options()).toContain('sort-option-priority');
+
+      const title = tree.root.findAllByType(Pressable).find((node) => node.props.testID === 'sort-option-title')!;
+      await act(async () => { title.props.onPress(); });
+      expect(storeState.updateSettings).toHaveBeenCalledWith({ taskSortBy: 'title' });
+      expect(sortModal().props.visible).toBe(false);
+      await act(async () => { tree.update(<ContextsView />); });
+      expect(titles()).toEqual(['Alpha', 'Bravo']);
+      expect(tree.root.findAllByType(TouchableOpacity).some((node) => node.props.accessibilityLabel === 'sort.label: sort.title')).toBe(true);
+
+      // Priorities off: the option is hidden and a stored priority sort orders as default.
+      storeState.settings = { ...storeState.settings, taskSortBy: 'priority', features: { priorities: false } };
+      await act(async () => { tree.update(<ContextsView />); });
+      expect(titles()).toEqual(['Bravo', 'Alpha']);
+      const reopened = tree.root.findAllByType(TouchableOpacity).find((node) => node.props.accessibilityLabel === 'sort.label: sort.default')!;
+      await act(async () => { reopened.props.onPress(); });
+      expect(options()).not.toContain('sort-option-priority');
+      expect(options()).toContain('sort-option-title');
+    } finally {
+      storeState.settings = original.settings;
+      storeState.updateSettings = original.updateSettings;
+      storeState.tasks = [];
+    }
+  });
+
   it('keeps a parent chip selected when its last child task completes', async () => {
     storeState.tasks = [
       { ...makeTask('tool', 'Excavator'), contexts: ['@tools/excavator'] },

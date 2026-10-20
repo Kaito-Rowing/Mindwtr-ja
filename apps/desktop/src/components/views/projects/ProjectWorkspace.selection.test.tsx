@@ -1,4 +1,4 @@
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { archiveSectionForProjectArchive, useTaskStore, type Project, type Section, type Task } from '@mindwtr/core';
@@ -7,7 +7,7 @@ import { useUiStore } from '../../../store/ui-store';
 import { DndContext } from '@dnd-kit/core';
 import { LanguageProvider } from '../../../contexts/language-context';
 import { KeybindingProvider } from '../../../contexts/keybinding-context';
-import { selectToolbarOption } from '../../../test/toolbar-select';
+import { openToolbarSelect, selectToolbarOption } from '../../../test/toolbar-select';
 import { expectScrolledEndGap } from '../../../test/list-end-gap';
 import { holdSyncSave } from '../../../test/hold-sync-save';
 import { ProjectWorkspace } from './ProjectWorkspace';
@@ -1011,6 +1011,15 @@ describe('ProjectWorkspace Select mode', () => {
         selectToolbarOption('Sort', 'Due date');
 
         expect(updateProject).toHaveBeenCalledWith('project-1', { taskSortBy: 'due' });
+    });
+
+    // Project.taskSortBy syncs; older clients erase a project sort they do not know,
+    // so Priority stays a shared-list sort only (#1415).
+    it('never offers the shared-list-only Priority sort for a project', () => {
+        renderWorkspace({ allTasks: sortSampleTasks() });
+        openToolbarSelect('Sort');
+        expect(screen.getByRole('option', { name: 'Due date' })).toBeInTheDocument();
+        expect(screen.queryByRole('option', { name: /priority/i })).not.toBeInTheDocument();
     });
 
     it('shows the direct sort control and falls back to manual order without a persisted sort', () => {

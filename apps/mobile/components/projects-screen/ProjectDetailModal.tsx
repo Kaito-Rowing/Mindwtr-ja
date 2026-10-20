@@ -30,7 +30,7 @@ import {
     type TaskSortBy,
     getSequentialProjectTaskCues,
     resolveTaskSortByForFeatures,
-    TASK_LIST_SORT_OPTIONS,
+    PROJECT_TASK_SORT_OPTIONS,
     safeFormatDate,
     safeParseDate,
     shallow,
@@ -1768,7 +1768,7 @@ export function ProjectDetailModal({
                                     onClose={() => setProjectSortModalVisible(false)}
                                     onSelect={handleProjectTaskSortSelect}
                                     sortBy={projectTaskSortBy}
-                                    sortOptions={TASK_LIST_SORT_OPTIONS}
+                                    sortOptions={PROJECT_TASK_SORT_OPTIONS}
                                     t={t}
                                     themeColors={tc}
                                     visible={projectSortModalVisible}
