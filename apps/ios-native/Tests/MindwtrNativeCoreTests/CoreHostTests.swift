@@ -18202,7 +18202,8 @@ final class CoreHostTests: XCTestCase {
         XCTAssertTrue(saved["areaId"] is NSNull)
         XCTAssertTrue(saved["areaTitle"] is NSNull)
         XCTAssertEqual(saved["rev"] as? Int, (live["rev"] as? Int ?? 0) + 1)
-        let projectChanges: Set<String> = ["areaId", "areaTitle", "rev", "revBy", "updatedAt"]
+        XCTAssertEqual(saved["color"] as? String, "#94a3b8")
+        let projectChanges: Set<String> = ["areaId", "areaTitle", "color", "rev", "revBy", "updatedAt"]
         XCTAssertEqual(try json(saved.filter { !projectChanges.contains($0.key) }),
                        try json(live.filter { !projectChanges.contains($0.key) }))
         for (id, before) in [("delete-direct", direct), ("delete-trashed", trashed)] {
@@ -18219,6 +18220,76 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try json(storedTask("delete-unrelated")), unrelated)
         XCTAssertEqual(diagnostics.filter { $0 == "manageAreaDeleteApplied" }.count, 1)
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testAreaRetainedV1AndV2DeleteAndColorlessRenameJournalsColdRecover() async throws {
+        for operation in ["delete", "rename"] {
+            for version in [1, 2] {
+                let parent = directory!
+                directory = parent.appendingPathComponent("color-\(operation)-v\(version)")
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                if operation == "delete" {
+                    try await seedManageAreaDeleteRows()
+                } else {
+                    try await seedAreaRenameRows()
+                    let edit = try SQLiteBridge(url: database)
+                    _ = try edit.execute("UPDATE areas SET color = NULL WHERE id = ?",
+                                         parametersJSON: json(["rename-destination"]))
+                    edit.close()
+                }
+                let faults = HostIOFaults()
+                let writer = host(faults)
+                _ = try await writer.start()
+                var request: [String: Any]
+                if operation == "delete" {
+                    request = try await areaDeleteRequest(writer)
+                    request["detachProjects"] = true
+                } else {
+                    let destination = try XCTUnwrap(areaRows("rename-destination").first)
+                    request = try await areaRenameRequest(writer, name: XCTUnwrap(destination["name"] as? String))
+                }
+                faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected retained Area color retry") } }
+                let method = operation == "delete" ? "manageAreaDelete" : "areaRename"
+                await expectFailure("SAVE_FAILED") {
+                    _ = try await writer.call(method, argumentsJSON: json([json(request)]))
+                }
+                await writer.close()
+                var retained = try object(String(contentsOf: journal))
+                let encoded = try XCTUnwrap(retained["argumentsJSON"] as? String)
+                let arguments = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String])
+                var envelope = try object(XCTUnwrap(arguments.first))
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                XCTAssertEqual(prepared["version"] as? Int, 2)
+                prepared["version"] = version
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                var pairs = try XCTUnwrap(effect["projects"] as? [[String: Any]])
+                for index in pairs.indices {
+                    let before = try XCTUnwrap(pairs[index]["before"] as? [String: Any])
+                    var after = try XCTUnwrap(pairs[index]["after"] as? [String: Any])
+                    if version == 1, before["areaId"] as? String == request["areaId"] as? String {
+                        after["color"] = before["color"]
+                        pairs[index]["after"] = after
+                    }
+                }
+                effect["projects"] = pairs
+                prepared["effect"] = effect
+                envelope["prepared"] = prepared
+                retained["argumentsJSON"] = try json([json(envelope)])
+                try json(retained).write(to: journal, atomically: true, encoding: .utf8)
+                let reopened = host()
+                let startup = try object(await reopened.start())
+                XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String,
+                               operation == "delete" ? "manageAreaDeleteCommit" : "areaRenameCommit")
+                for pair in pairs {
+                    let after = try XCTUnwrap(pair["after"] as? [String: Any])
+                    let id = try XCTUnwrap(after["id"] as? String)
+                    XCTAssertEqual(try projectRows(id).first?["color"] as? String, after["color"] as? String)
+                }
+                XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+                await reopened.close()
+                directory = parent
+            }
+        }
     }
 
     func testManageAreaDeleteExactUUIDSurvivesTwoFailuresAndColdRecovery() async throws {
@@ -21381,7 +21452,7 @@ final class CoreHostTests: XCTestCase {
         _ = try await core.start()
         let options = try object(await core.call("projectAreaOptions",
                                                  argumentsJSON: json(["focus-target"])))
-        XCTAssertEqual(Set(options.keys), Set(["revision", "project", "canEdit", "noAreaLabel", "areas"]))
+        XCTAssertEqual(Set(options.keys), Set(["revision", "project", "canEdit", "noAreaLabel", "areas", "colors", "colorOverride"]))
         XCTAssertEqual(options["canEdit"] as? Bool, true)
         XCTAssertEqual(Set(try XCTUnwrap(options["project"] as? [String: Any]).keys),
                        Set(["id", "title", "status", "areaId", "areaTitle", "order", "rev", "revBy", "updatedAt"]))
@@ -21414,8 +21485,9 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(targetAfter["areaId"] as? String, "rename-area")
         XCTAssertEqual(targetAfter["areaTitle"] as? String, "Keep Area")
         XCTAssertEqual(targetAfter["rev"] as? Int, (targetBefore["rev"] as? Int ?? 0) + 1)
-        XCTAssertEqual(try json(targetAfter.filter { !["areaId", "areaTitle", "orderNum", "rev", "revBy", "updatedAt"].contains($0.key) }),
-                       try json(targetBefore.filter { !["areaId", "areaTitle", "orderNum", "rev", "revBy", "updatedAt"].contains($0.key) }))
+        XCTAssertEqual(targetAfter["color"] as? String, try areaRows("rename-area").first?["color"] as? String ?? "#94a3b8")
+        XCTAssertEqual(try json(targetAfter.filter { !["areaId", "areaTitle", "color", "orderNum", "rev", "revBy", "updatedAt"].contains($0.key) }),
+                       try json(targetBefore.filter { !["areaId", "areaTitle", "color", "orderNum", "rev", "revBy", "updatedAt"].contains($0.key) }))
         let afterDB = try SQLiteBridge(url: database)
         let after = try nineTableSnapshot(afterDB)
         afterDB.close()
@@ -21475,6 +21547,89 @@ final class CoreHostTests: XCTestCase {
             _ = try await reopened.call("projectAreaRetryOutcome", argumentsJSON: json([json(request)]))
         }
         XCTAssertEqual(mutations, 0)
+        await reopened.close()
+    }
+
+    func testProjectColorFailedCommitRetryAndResetRetainExplicitSameAreaHue() async throws {
+        try await seedProjectRenameRows()
+        let fixture = try SQLiteBridge(url: database)
+        _ = try fixture.execute("UPDATE areas SET color = '#3b82f6' WHERE id = 'rename-area'")
+        fixture.close()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        var request = try await projectAreaRequest(writer, areaID: "rename-area")
+        request["colorOverride"] = "#3b82f6"
+        let before = try SQLiteBridge(url: database)
+        let savedBefore = try nineTableSnapshot(before)
+        before.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected color COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectAreaWrite", argumentsJSON: json([json(request)]))
+        }
+        let rolledBack = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(rolledBack), savedBefore)
+        rolledBack.close()
+        faults.beforeSQL = nil
+        let retryValue = try await writer.retryPending()
+        let retried = try object(XCTUnwrap(retryValue))
+        XCTAssertEqual(retried["colorOverride"] as? String, "#3b82f6")
+        XCTAssertEqual(try projectRows("focus-target").first?["colorOverride"] as? String, "#3b82f6")
+        await writer.close()
+        let recolor = try SQLiteBridge(url: database)
+        _ = try recolor.execute("UPDATE areas SET color = '#ef4444', rev = rev + 1 WHERE id = 'rename-area'")
+        recolor.close()
+        let reader = host()
+        _ = try await reader.start()
+        XCTAssertEqual(try projectRows("focus-target").first?["colorOverride"] as? String, "#3b82f6")
+        var reset = try await projectAreaRequest(reader, areaID: "rename-area")
+        reset["colorOverride"] = NSNull()
+        let cleared = try object(await reader.call("projectAreaWrite", argumentsJSON: json([json(reset)])))
+        XCTAssertTrue(cleared["colorOverride"] is NSNull)
+        let row = try XCTUnwrap(projectRows("focus-target").first)
+        XCTAssertTrue(row["colorOverride"] is NSNull)
+        XCTAssertEqual(row["color"] as? String, "#ef4444")
+        await reader.close()
+    }
+
+    func testProjectAreaRetainedV1JournalKeepsItsOriginalColorAfterColdStart() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectAreaRequest(writer, areaID: "rename-area")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected v1 migration hold") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectAreaWrite", argumentsJSON: json([json(request)]))
+        }
+        await writer.close()
+        var retained = try object(String(contentsOf: journal))
+        let encodedArguments = try XCTUnwrap(retained["argumentsJSON"] as? String)
+        let arguments = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(encodedArguments.utf8)) as? [String])
+        var envelope = try object(XCTUnwrap(arguments.first))
+        var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        prepared["version"] = 1
+        var scope = try XCTUnwrap(prepared["scope"] as? [String: Any])
+        var selected = try XCTUnwrap(scope["selectedArea"] as? [String: Any])
+        selected.removeValue(forKey: "color")
+        scope["selectedArea"] = selected
+        prepared["scope"] = scope
+        var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        var project = try XCTUnwrap(effect["project"] as? [String: Any])
+        let before = try XCTUnwrap(project["before"] as? [String: Any])
+        var after = try XCTUnwrap(project["after"] as? [String: Any])
+        after["color"] = before["color"]
+        project["after"] = after
+        effect["project"] = project
+        prepared["effect"] = effect
+        envelope["prepared"] = prepared
+        retained["argumentsJSON"] = try json([json(envelope)])
+        try json(retained).write(to: journal, atomically: true, encoding: .utf8)
+        let reopened = host()
+        let window = try object(await reopened.start())
+        XCTAssertEqual((window["recovery"] as? [String: Any])?["method"] as? String, "projectAreaCommit")
+        XCTAssertEqual(try projectRows("focus-target").first?["color"] as? String, before["color"] as? String)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
         await reopened.close()
     }
 

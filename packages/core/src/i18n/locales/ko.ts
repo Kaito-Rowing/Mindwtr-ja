@@ -867,6 +867,8 @@ export const koOverrides: Record<string, string> = {
         'projects.noActiveTasks': '이 프로젝트에는 활성 할 일이 없습니다.',
         'projects.projectName': '프로젝트 이름',
         'projects.color': '색상',
+        'projects.useAreaColor': "영역 색상 사용",
+        'projects.colorSaveFailed': "색상을 저장하지 못했습니다.",
         'projects.colorBlue': '파랑',
         'projects.colorGreen': '초록',
         'projects.colorAmber': '호박색',

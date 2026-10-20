@@ -11,6 +11,7 @@ import {
     buildCaptureTaskProps,
     buildHttpRemoteFileFingerprint,
     buildNewProject,
+    projectAreaSelection,
     canonicalRecurringFollowUp,
     compactPurgedProjectSectionTombstone,
     compactPurgedProjectTombstone,
@@ -959,9 +960,13 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
             );
             data.tasks = lifecycle.tasks;
             data.sections = lifecycle.sections;
+            const areaSelection = projectAreaSelection(existing, {
+                ...updates, ...(areaId !== undefined ? { areaId: areaId ?? undefined } : {}),
+            } as Partial<Project>, data.projects, data.areas);
             const updatedProject = {
                 ...existing,
                 ...lifecycle.projectUpdates,
+                ...areaSelection.fields,
                 title: typeof updates.title === 'string' ? updates.title.trim() : existing.title,
                 areaId: areaId !== undefined ? areaId ?? undefined : existing.areaId,
                 updatedAt: nowIso,

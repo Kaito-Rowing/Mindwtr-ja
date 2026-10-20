@@ -709,6 +709,8 @@ export const frOverrides: Record<string, string> = {
 
         // Projects
         'projects.title': 'Projets',
+        'projects.useAreaColor': "Utiliser la couleur du domaine",
+        'projects.colorSaveFailed': "Impossible d’enregistrer la couleur.",
         'projects.statusLabel': 'Statut',
         'projects.activeSection': 'Projets actifs',
         'projects.noProjects': 'Aucun projet pour l’instant.',

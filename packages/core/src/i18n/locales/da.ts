@@ -831,6 +831,8 @@ export const daOverrides: Record<string, string> = {
     'shortcuts.captureUnavailable': 'Genvej til registrering er ikke tilgængelig',
     'shortcuts.missingTitle': 'Mindwtr kunne ikke læse en opgavetitel fra det genvejslink.',
     'projects.title': 'Projekter',
+    'projects.useAreaColor': "Brug områdets farve",
+    'projects.colorSaveFailed': "Farven kunne ikke gemmes.",
     'projects.statusLabel': 'Status',
     'projects.activeSection': 'Aktive projekter',
     'projects.noProjects': 'Ingen projekter endnu.',

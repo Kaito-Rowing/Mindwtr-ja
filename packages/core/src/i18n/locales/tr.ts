@@ -627,6 +627,8 @@ export const trOverrides: Record<string, string> = {
         'projects.noActiveTasks': 'Bu projede etkin görev yok.',
         'projects.projectName': 'Proje Adı',
         'projects.color': 'Renk',
+        'projects.useAreaColor': "Alan rengini kullan",
+        'projects.colorSaveFailed': "Renk kaydedilemedi.",
         'projects.create': 'Yaratmak',
         'areas.create': 'Yaratmak',
         'areas.deleteConfirm': 'Bu alan silinsin mi? Bu alandaki projeler ve görevler korunur ve atanmamış durumuna taşınır.',

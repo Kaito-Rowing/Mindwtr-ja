@@ -230,6 +230,7 @@ static const MWFieldSpec kProjectFields[] = {
     {"title",        "title",        MWFieldKindString},
     {"status",       "status",       MWFieldKindString},
     {"color",        "color",        MWFieldKindString},
+    {"colorOverride", "colorOverride", MWFieldKindString},
     {"order",        "sortOrder",    MWFieldKindInt},
     {"tagIds",       "tagIds",       MWFieldKindStringArray},
     {"isSequential", "isSequential", MWFieldKindBool},

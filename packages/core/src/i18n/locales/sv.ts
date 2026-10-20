@@ -830,6 +830,8 @@ export const svOverrides: Record<string, string> = {
         'shortcuts.missingTitle': 'Mindwtr kunde inte läsa en uppgiftstitel från den genvägslänken.',
 
         'projects.title': 'Projekt',
+        'projects.useAreaColor': "Använd områdets färg",
+        'projects.colorSaveFailed': "Färgen kunde inte sparas.",
         'projects.statusLabel': 'Status',
         'projects.activeSection': 'Aktiva projekt',
         'projects.noProjects': 'Inga projekt än.',

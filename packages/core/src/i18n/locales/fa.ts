@@ -845,6 +845,8 @@ export const faOverrides: Record<string, string> = {
         'projects.noActiveTasks': 'کار فعالی در این پروژه نیست.',
         'projects.projectName': 'نام پروژه',
         'projects.color': 'رنگ',
+        'projects.useAreaColor': "استفاده از رنگ حوزه",
+        'projects.colorSaveFailed': "رنگ ذخیره نشد.",
         'projects.colorBlue': 'آبی',
         'projects.colorGreen': 'سبز',
         'projects.colorAmber': 'کهربایی',

@@ -836,6 +836,8 @@ export const zhHant: Record<string, string> = {
         'shortcuts.captureUnavailable': '快捷捕獲不可用',
         'shortcuts.missingTitle': 'Mindwtr 無法從該快捷方式連結中讀取任務標題。',
         'projects.title': '專案',
+        'projects.useAreaColor': "使用領域顏色",
+        'projects.colorSaveFailed': "無法儲存顏色。",
         'projects.statusLabel': '狀態',
         'projects.activeSection': '啟用中的專案',
         'projects.noProjects': '暫無專案',

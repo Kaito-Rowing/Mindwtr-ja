@@ -770,6 +770,8 @@ export const csOverrides: Record<string, string> = {
         'projects.noActiveTasks': 'V tomto projektu nejsou žádné aktivní úkoly.',
         'projects.projectName': 'Název projektu',
         'projects.color': 'Barva',
+        'projects.useAreaColor': "Použít barvu oblasti",
+        'projects.colorSaveFailed': "Barvu se nepodařilo uložit.",
         'projects.colorBlue': 'Modrá',
         'projects.colorGreen': 'Zelená',
         'projects.colorAmber': 'Jantarová',

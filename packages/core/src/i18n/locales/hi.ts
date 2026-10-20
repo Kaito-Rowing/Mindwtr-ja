@@ -617,6 +617,8 @@ export const hiOverrides: Record<string, string> = {
         'projects.noActiveTasks': 'इस प्रोजेक्ट में कोई सक्रिय कार्य नहीं.',
         'projects.projectName': 'प्रोजेक्ट का नाम',
         'projects.color': 'रंग',
+        'projects.useAreaColor': "क्षेत्र के रंग का उपयोग करें",
+        'projects.colorSaveFailed': "रंग सहेजा नहीं जा सका।",
         'projects.create': 'बनाएं',
         'areas.create': 'बनाएं',
         'areas.deleteConfirm': 'इस क्षेत्र को हटाएं? इस क्षेत्र के प्रोजेक्ट और कार्य रखे जाएंगे और असाइन नहीं किए गए में ले जाए जाएंगे।',

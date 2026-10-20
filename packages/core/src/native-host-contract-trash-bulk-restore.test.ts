@@ -71,6 +71,32 @@ const prepare = async (host = methods(), input = request()): Promise<NativeTrash
 afterEach(async () => { await flushPendingSave(); resetForTests(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('guarded mixed Trash bulk Restore', () => {
+    it.each([1, 2] as const)('cold-replays the v%s bulk restore color policy after Area deletion', async (version) => {
+        const selected = seed();
+        selected.projects![0].color = '#3b82f6';
+        const sqlite = await openSqliteHost(selected);
+        try {
+            await useTaskStore.getState().deleteArea('area');
+            await flushPendingSave();
+            const frozen = clone(await prepare(methods(), request([], ['p'])));
+            expect(frozen.prepared.version).toBe(2);
+            frozen.prepared.version = version;
+            if (version === 1) {
+                for (const pair of frozen.prepared.effect.projects) pair.after.color = pair.before.color;
+            }
+            expect(value(methods().validatePreparedTrashItemsRestore(frozen))).toEqual({ count: 1 });
+            expect(value(await methods().commitPreparedTrashItemsRestore(frozen))).toEqual({ count: 1 });
+            const restored = useTaskStore.getState()._projectsById.get('p')!;
+            expect(restored.areaId).toBeUndefined();
+            expect(restored.color).toBe(version === 1 ? '#3b82f6' : '#94a3b8');
+            // Restart the same file, including its private durable request receipt.
+            await sqlite.restart(undefined, { recoveryLoad: true });
+            const before = await raw(sqlite);
+            expect(value(await methods().commitPreparedTrashItemsRestore(frozen))).toEqual({ count: 1 });
+            expect(await raw(sqlite)).toEqual(before);
+        } finally { await sqlite.close(); }
+    });
+
     it.each([DELETED, INDEPENDENT])('matches actual RN task-first rows and preserves selected detachment for stamp %s', async (stamp) => {
         vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(NOW));
         const rn = await openSqliteHost(seed(stamp)); let expected: AppData;

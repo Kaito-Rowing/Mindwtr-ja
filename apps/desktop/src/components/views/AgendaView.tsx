@@ -1,3 +1,4 @@
+import { getProjectAccentColor } from '@mindwtr/core';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -488,7 +489,7 @@ export function AgendaView() {
             .map((project) => ({
                 id: project.id,
                 title: project.title,
-                dotColor: (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined,
+                dotColor: getProjectAccentColor(project, areaById),
             }));
     }, [activeTasks, areaById, projects]);
     const showNoProjectOption = activeTasks.some((task) => !task.projectId);
@@ -1362,6 +1363,7 @@ export function AgendaView() {
                 )}
 
                 <AgendaProjectSection
+                        areaById={areaById}
                     title={tFallback(t, 'agenda.reviewDueProjects', 'Projects to review')}
                     icon={Folder}
                     onProjectPress={handleOpenReviewProject}

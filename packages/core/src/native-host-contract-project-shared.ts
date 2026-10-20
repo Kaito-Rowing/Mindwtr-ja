@@ -1,3 +1,4 @@
+import { isValidProjectColorOverride } from './color-constants';
 import { isNativeJsonWithinBytes, record } from './native-json';
 export { exact, record } from './native-json';
 import { PROJECT_SYNC_FIELD_SCHEMA, projectToSqliteRow } from './project-sync-schema';
@@ -28,7 +29,7 @@ export const validProject = (value: unknown, projectId: string): value is Projec
     if (!record(value) || Object.keys(value).some((key) => !projectKeys.has(key as keyof Project))
         || value.id !== projectId || typeof value.title !== 'string'
         || !['active', 'someday', 'waiting', 'archived'].includes(String(value.status))
-        || typeof value.color !== 'string' || typeof value.order !== 'number' || !Number.isFinite(value.order)
+        || !isValidProjectColorOverride(value.colorOverride) || typeof value.color !== 'string' || typeof value.order !== 'number' || !Number.isFinite(value.order)
         || !Array.isArray(value.tagIds) || !value.tagIds.every((tag) => typeof tag === 'string')
         || !iso(value.createdAt) || !iso(value.updatedAt)
         || (value.isFocused !== undefined && typeof value.isFocused !== 'boolean')

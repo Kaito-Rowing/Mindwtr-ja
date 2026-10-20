@@ -814,6 +814,8 @@ export const esOverrides: Record<string, string> = {
 'shortcuts.captureUnavailable': "Atajo de captura no disponible",
 'shortcuts.missingTitle': "Mindwtr no pudo leer un título de tarea desde ese enlace de atajo.",
 'projects.title': "Proyectos",
+'projects.useAreaColor': "Usar el color del área",
+'projects.colorSaveFailed': "No se pudo guardar el color.",
 'projects.statusLabel': "Estado",
 'projects.activeSection': "Proyectos activos",
 'projects.noProjects': "Aún no hay proyectos.",

@@ -191,6 +191,9 @@ function validateTaskPropValues(value: Record<string, unknown>): string | null {
 }
 
 function validateProjectPropValues(value: Record<string, unknown>): string | null {
+    if (value.colorOverride != null && (typeof value.colorOverride !== 'string' || !/^#[0-9a-f]{6}$/i.test(value.colorOverride))) {
+        return 'Invalid project colorOverride';
+    }
     const cancellationError = validateCancellationTimestamp(value, 'project');
     if (cancellationError) return cancellationError;
     const attachmentsError = validateAttachments(value, 'project');

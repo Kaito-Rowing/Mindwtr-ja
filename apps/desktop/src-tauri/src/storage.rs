@@ -41,7 +41,7 @@ const STORAGE_RETRY_BASE_DELAY_MS: u64 = 120;
 // indexes that duplicated camelCase ones. Increment this
 // whenever SQLITE_SCHEMA or an ensure_* migration changes; otherwise the warm schema-state fast
 // path can incorrectly skip the migration on an existing database.
-const STORAGE_SCHEMA_VERSION: i64 = 12;
+const STORAGE_SCHEMA_VERSION: i64 = 13;
 const STORAGE_SCHEMA_STATE_TABLE: &str = "storage_schema_state";
 // Version 4 adds assignedTo to the desktop-native FTS schema and forces one
 // content rebuild after the corrected triggers are installed.
@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS projects (
   title TEXT NOT NULL,
   status TEXT NOT NULL,
   color TEXT NOT NULL,
+  colorOverride TEXT,
   orderNum INTEGER,
   tagIds TEXT,
   isSequential INTEGER,
@@ -553,6 +554,7 @@ fn initialize_sqlite_schema(conn: &mut Connection) -> Result<i64, String> {
         ensure_projects_order_column(&transaction)?;
         ensure_column(&transaction, "projects", "sequentialScope", "TEXT")?;
         ensure_column(&transaction, "projects", "taskSortBy", "TEXT")?;
+        ensure_column(&transaction, "projects", "colorOverride", "TEXT")?;
         ensure_projects_due_date_column(&transaction)?;
         ensure_column(&transaction, "projects", "startDate", "TEXT")?;
         ensure_column(&transaction, "projects", "cancelledAt", "TEXT")?;
@@ -2178,6 +2180,9 @@ fn row_to_project_value(row: &rusqlite::Row<'_>) -> Result<Value, rusqlite::Erro
             map.insert("sequentialScope".to_string(), Value::String(v));
         }
     }
+    if let Some(value) = row.get::<_, Option<String>>("colorOverride")? {
+        map.insert("colorOverride".to_string(), Value::String(value));
+    }
     if let Ok(val) = row.get::<_, Option<String>>("taskSortBy") {
         if let Some(v) = normalize_project_task_sort_by(val.as_deref()) {
             map.insert("taskSortBy".to_string(), Value::String(v.to_string()));
@@ -3436,7 +3441,7 @@ fn replace_prepared_data_in_transaction(
         let attachments_json = json_str(project.get("attachments"));
         let view_section_ids_json = json_str(project.get("viewSectionIds"));
         execute_insert(
-            "INSERT OR REPLACE INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, startDate, cancelledAt, viewSectionIds, archivedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+            "INSERT OR REPLACE INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, startDate, cancelledAt, viewSectionIds, archivedAt, colorOverride) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
             params![
                 project.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
                 project.get("title").and_then(|v| v.as_str()).unwrap_or_default(),
@@ -3464,6 +3469,7 @@ fn replace_prepared_data_in_transaction(
                 project.get("cancelledAt").and_then(|v| v.as_str()),
                 view_section_ids_json,
                 project.get("archivedAt").and_then(|v| v.as_str()),
+                project.get("colorOverride").and_then(|v| v.as_str()),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -4958,8 +4964,8 @@ fn replace_project_row(conn: &Connection, project: &Value) -> Result<(), String>
     let normalized_rev = normalized_revision_for_storage(project.get("rev"));
     let normalized_rev_by = normalized_rev_by(project.get("revBy"));
     conn.execute(
-        "INSERT INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, startDate, cancelledAt, viewSectionIds, archivedAt)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
+        "INSERT INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, startDate, cancelledAt, viewSectionIds, archivedAt, colorOverride)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
          ON CONFLICT(id) DO UPDATE SET
            title=excluded.title, status=excluded.status, color=excluded.color, orderNum=excluded.orderNum,
            tagIds=excluded.tagIds, isSequential=excluded.isSequential, sequentialScope=excluded.sequentialScope,
@@ -4968,7 +4974,7 @@ fn replace_project_row(conn: &Connection, project: &Value) -> Result<(), String>
            areaId=excluded.areaId, areaTitle=excluded.areaTitle, rev=excluded.rev, revBy=excluded.revBy,
            createdAt=excluded.createdAt, updatedAt=excluded.updatedAt, deletedAt=excluded.deletedAt,
            purgedAt=excluded.purgedAt, startDate=excluded.startDate, cancelledAt=excluded.cancelledAt,
-           viewSectionIds=excluded.viewSectionIds, archivedAt=excluded.archivedAt",
+           viewSectionIds=excluded.viewSectionIds, archivedAt=excluded.archivedAt, colorOverride=excluded.colorOverride",
         params![
             project.get("id").and_then(Value::as_str).unwrap_or_default(),
             project.get("title").and_then(Value::as_str).unwrap_or_default(),
@@ -5011,6 +5017,7 @@ fn replace_project_row(conn: &Connection, project: &Value) -> Result<(), String>
             project.get("cancelledAt").and_then(Value::as_str),
             view_section_ids_json,
             project.get("archivedAt").and_then(Value::as_str),
+            project.get("colorOverride").and_then(Value::as_str),
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -8569,6 +8576,34 @@ mod tests {
 
         assert_eq!(project["sequentialScope"], "section");
         assert_eq!(project["taskSortBy"], "created-desc");
+    }
+
+    #[test]
+    fn sqlite_project_color_override_round_trip() {
+        let mut conn = Connection::open_in_memory().expect("open db");
+        conn.execute_batch(SQLITE_SCHEMA).expect("schema");
+        let mut data = serde_json::json!({"tasks": [], "projects": [{
+            "id": "p", "title": "Project", "status": "active", "color": "#94a3b8",
+            "colorOverride": "#94a3b8", "order": 0, "tagIds": [], "rev": 1,
+            "createdAt": "2026-10-20T10:00:00.000Z", "updatedAt": "2026-10-20T10:00:00.000Z"
+        }], "areas": [], "sections": [], "settings": {}});
+        migrate_json_to_sqlite(&mut conn, &data).expect("full save");
+        assert_eq!(
+            read_sqlite_data(&conn).unwrap()["projects"][0]["colorOverride"],
+            "#94a3b8"
+        );
+        data["projects"][0]["colorOverride"] = Value::Null;
+        data["projects"][0]["rev"] = serde_json::json!(2);
+        replace_project_row(&conn, &data["projects"][0]).expect("scoped reset");
+        assert!(read_sqlite_data(&conn).unwrap()["projects"][0]["colorOverride"].is_null());
+        let cell: Option<String> = conn
+            .query_row(
+                "SELECT colorOverride FROM projects WHERE id='p'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cell, None);
     }
 
     #[test]

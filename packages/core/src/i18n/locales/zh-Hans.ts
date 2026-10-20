@@ -846,6 +846,8 @@ export const zhHans: Record<string, string> = {
         'projects.noActiveTasks': '此项目没有活动任务',
         'projects.projectName': '项目名称',
         'projects.color': '颜色',
+        'projects.useAreaColor': "使用领域颜色",
+        'projects.colorSaveFailed': "无法保存颜色。",
         'projects.colorBlue': '蓝色',
         'projects.colorGreen': '绿色',
         'projects.colorAmber': '琥珀色',

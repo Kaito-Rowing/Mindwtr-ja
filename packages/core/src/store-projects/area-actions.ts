@@ -20,13 +20,14 @@ import { actionFail, actionOk, mutateEntities } from './shared';
 export type AreaAdditionRows = { areas: Area[]; projects: Project[]; sections: Section[]; tasks: Task[] };
 
 /** The existing deleteArea detach policy, including trashed directly linked Tasks. */
-export function planAreaDeletion(area: Area, projects: Project[], tasks: Task[], deviceId: string, now: string):
+export function planAreaDeletion(area: Area, projects: Project[], tasks: Task[], deviceId: string, now: string, version: 1 | 2 = 2):
     { area: Area; projects: Project[]; tasks: Task[] } {
     return {
         area: { ...area, deletedAt: now, updatedAt: now,
             rev: nextRevision(area.rev), revBy: deviceId },
         projects: projects.map((project) => project.areaId === area.id && !project.deletedAt
-            ? { ...project, areaId: undefined, areaTitle: undefined, updatedAt: now,
+            ? { ...project, areaId: undefined, areaTitle: undefined,
+                ...(version === 2 ? { color: project.colorOverride ?? DEFAULT_PROJECT_COLOR } : {}), updatedAt: now,
                 rev: nextRevision(project.rev), revBy: deviceId } : project),
         tasks: tasks.map((task) => task.areaId === area.id
             ? { ...task, areaId: undefined, updatedAt: now,
@@ -42,8 +43,8 @@ export function selectAreaDeleteScope(areas: Area[], projects: Project[], tasks:
 }
 
 export function areaDeleteEffect(scope: PreparedAreaDelete['scope'], deviceId: string,
-    now: string, detachProjects = false): PreparedAreaDelete['effect'] {
-    const planned = planAreaDeletion(scope.area, detachProjects ? scope.liveProjects : [], scope.tasks, deviceId, now);
+    now: string, detachProjects = false, version: 1 | 2 = 2): PreparedAreaDelete['effect'] {
+    const planned = planAreaDeletion(scope.area, detachProjects ? scope.liveProjects : [], scope.tasks, deviceId, now, version);
     return { area: { before: scope.area, after: planned.area },
         tasks: scope.tasks.map((before, index) => ({ before, after: planned.tasks[index] })),
         ...(detachProjects ? { projects: scope.liveProjects.map((before, index) =>
@@ -82,8 +83,8 @@ export function selectAreaColorScope(areas: Area[], projects: Project[], areaId:
 }
 
 export function areaColorEffect(scope: PreparedAreaColor['scope'], color: string | undefined,
-    deviceId: string, now: string): PreparedAreaColor['effect'] {
-    const planned = planAreaColorChange(scope.area, scope.projects, color, deviceId, now);
+    deviceId: string, now: string, version: 1 | 2 = 2): PreparedAreaColor['effect'] {
+    const planned = planAreaColorChange(scope.area, scope.projects, color, deviceId, now, version);
     return { area: { before: scope.area, after: planned.area },
         projects: scope.projects.flatMap((before, index) => {
             const after = planned.projects[index];
@@ -93,7 +94,7 @@ export function areaColorEffect(scope: PreparedAreaColor['scope'], color: string
 
 /** The final rows of addArea, including restoreArea followed by updateArea for a tombstone. */
 export function planAreaAddition(rows: AreaAdditionRows, name: string, props: Partial<Area> | undefined,
-    id: string, deviceId: string, restoreAt: string, updateAt: string):
+    id: string, deviceId: string, restoreAt: string, updateAt: string, version: 1 | 2 = 2):
     { kind: 'live' | 'fresh' | 'restored'; area: Area; rows: AreaAdditionRows } | null {
     const trimmed = typeof name === 'string' ? name.trim() : '';
     if (!trimmed) return null;
@@ -151,7 +152,7 @@ export function planAreaAddition(rows: AreaAdditionRows, name: string, props: Pa
         if (repaintColor || title !== restored.name?.trim()) {
             projects = projects.map((project) => {
                 if (project.areaId !== deleted.id) return project;
-                const wantsColor = repaintColor && project.color !== color;
+                const wantsColor = repaintColor && (version === 1 || project.colorOverride == null) && project.color !== color;
                 const wantsTitle = project.areaTitle !== title;
                 return wantsColor || wantsTitle ? { ...project,
                     ...(wantsColor ? { color } : {}), ...(wantsTitle ? { areaTitle: title } : {}),
@@ -355,7 +356,7 @@ export const createAreaActions = ({
             const scope = selectAreaAdditionScope(rows, selected);
             if (!taskEditValuesEqual(scope, input.scope)) return memory;
             const planned = planAreaAddition(rows, request.name, { color: request.color }, request.requestId,
-                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.restoreAt, input.updateAt);
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.restoreAt, input.updateAt, input.version ?? 1);
             if (!planned || planned.kind !== input.kind || planned.area.id !== request.expectedAreaId
                 || !taskEditValuesEqual(areaAdditionEffect(scope, planned.rows, request.expectedAreaId), effect)) return memory;
             const settings = input.deviceIdToInitialize
@@ -391,7 +392,7 @@ export const createAreaActions = ({
             })) return state;
             // SQLite defaults can hide omitted fields; derive the write only from live rows.
             const planned = areaColorEffect({ area: target, projects: linked }, request.color ?? undefined,
-                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt, input.version ?? 1);
             if (!taskEditValuesEqual(planned, effect)) return state;
             const nextAreas = state._allAreas.map((row) => row.id === request.areaId ? planned.area.after : row)
                 .sort((left, right) => left.order - right.order);
@@ -448,7 +449,7 @@ export const createAreaActions = ({
                 !sameAreaAdditionRow.area(row, scope.areas[index]))) return memory;
             const planned = planAreaEditorSave({ areas: state._allAreas, projects: state._allProjects,
                 tasks: state._allTasks }, request.areaId, request.name, request.manageColor,
-                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt, input.version ?? 1);
             if (!planned || !taskEditValuesEqual(planned.result, input.result)) return memory;
             const currentScope = selectAreaRenameScope({ areas: state._allAreas,
                 projects: state._allProjects, tasks: state._allTasks }, request.areaId, planned.result.areaId);
@@ -457,7 +458,7 @@ export const createAreaActions = ({
             if (!sameRows(currentScope.projects, scope.projects, sameAreaAdditionRow.project)
                 || !sameRows(currentScope.tasks, scope.tasks, sameAreaAdditionRow.task)) return memory;
             const replanned = areaRenameEffect(currentScope, request.areaId, request.name,
-                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt, request.manageColor);
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt, request.manageColor, input.version ?? 1);
             if (!replanned || !taskEditValuesEqual(replanned.effect, effect)
                 || !taskEditValuesEqual(replanned.result, input.result)) return memory;
             const settings = input.deviceIdToInitialize
@@ -579,7 +580,7 @@ export const createAreaActions = ({
             } else if (repaintColor || nextAreaTitle !== area.name?.trim()) {
                 newAllProjects = state._allProjects.map((project) => {
                     if (project.areaId !== id) return project;
-                    const wantsColor = repaintColor && project.color !== nextAreaColor;
+                    const wantsColor = repaintColor && project.colorOverride == null && project.color !== nextAreaColor;
                     const wantsTitle = project.areaTitle !== nextAreaTitle;
                     if (!wantsColor && !wantsTitle) return project;
                     projectsChanged = true;
@@ -687,7 +688,7 @@ export const createAreaActions = ({
                 return !before || !sameAreaAdditionRow.task(task, before);
             })) return memory;
             const planned = areaDeleteEffect({ area: target, tasks: linkedTasks, liveProjects: linkedProjects },
-                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt, request.detachProjects);
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt, request.detachProjects, input.version ?? 1);
             if (!taskEditValuesEqual(planned, effect)) return memory;
             const nextAreas = state._allAreas.map((row) => row.id === request.areaId ? planned.area.after : row)
                 .sort((left, right) => left.order - right.order);

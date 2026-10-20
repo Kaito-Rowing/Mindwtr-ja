@@ -21,7 +21,7 @@ export type NativeTrashItemsRestoreRequest = { requestId: string; taskIds: strin
 export type NativeTrashItemsRestoreResult = { count: number };
 export type NativeTrashItemsRestoreScope = { tasks: Task[]; projects: Project[]; sections: Section[]; areas: Area[] };
 export type NativePreparedTrashItemsRestore = {
-    version: 1; request: NativeTrashItemsRestoreRequest; scope: NativeTrashItemsRestoreScope;
+    version: 1 | 2; request: NativeTrashItemsRestoreRequest; scope: NativeTrashItemsRestoreScope;
     effect: { tasks: { before: Task; after: Task }[]; projects: { before: Project; after: Project }[];
         sections: { before: Section; after: Section }[] };
     deviceIdBefore: string | null; deviceIdToInitialize: string | null; updateAt: string; result: NativeTrashItemsRestoreResult;
@@ -114,7 +114,7 @@ const sourcesMatch = (request: NativeTrashItemsRestoreRequest, scope: NativeTras
 
 /** Actual RN task-first policy, collapsed from pure intermediate rows to unique original/final pairs. */
 export const trashItemsRestoreEffect = (prepared: Pick<NativePreparedTrashItemsRestore,
-    'request' | 'scope' | 'deviceIdBefore' | 'deviceIdToInitialize' | 'updateAt'>): NativePreparedTrashItemsRestore['effect'] | null => {
+    'version' | 'request' | 'scope' | 'deviceIdBefore' | 'deviceIdToInitialize' | 'updateAt'>): NativePreparedTrashItemsRestore['effect'] | null => {
     const { request, scope } = prepared;
     if (!sourcesMatch(request, scope)) return null;
     const device = prepared.deviceIdBefore ?? prepared.deviceIdToInitialize!;
@@ -129,7 +129,7 @@ export const trashItemsRestoreEffect = (prepared: Pick<NativePreparedTrashItemsR
         const parent = projects.find((row) => row.id === id)!;
         const effect = projectRestoreEffect({ project: parent, tasks: tasks.filter((row) => row.projectId === id),
             sections: sections.filter((row) => row.projectId === id), area: scope.areas.find((row) => row.id === parent.areaId) ?? null },
-        device, prepared.updateAt);
+        device, prepared.updateAt, prepared.version);
         projectAfter.set(id, effect.project.after);
         for (const pair of effect.tasks) taskAfter.set(pair.before.id, pair.after);
         for (const pair of effect.sections) sectionAfter.set(pair.before.id, pair.after);
@@ -161,7 +161,7 @@ const readEnvelope = (input: unknown): NativeTrashItemsRestoreEnvelope | null =>
     if (!envelope || !exact(envelope, ['request', 'prepared']) || !record(envelope.prepared)) return null;
     const request = readRequest(envelope.request), raw = envelope.prepared;
     if (!request || !exact(raw, ['version', 'request', 'scope', 'effect', 'deviceIdBefore', 'deviceIdToInitialize', 'updateAt', 'result'])
-        || raw.version !== 1 || !same(raw.request, request) || !record(raw.scope) || !exact(raw.scope, ['tasks', 'projects', 'sections', 'areas'])
+        || (raw.version !== 1 && raw.version !== 2) || !same(raw.request, request) || !record(raw.scope) || !exact(raw.scope, ['tasks', 'projects', 'sections', 'areas'])
         || !Array.isArray(raw.scope.tasks) || !raw.scope.tasks.every(validTask) || !unique(raw.scope.tasks)
         || !Array.isArray(raw.scope.projects) || !raw.scope.projects.every(validRawProject) || !unique(raw.scope.projects)
         || !Array.isArray(raw.scope.sections) || !raw.scope.sections.every((row) => record(row) && text(row.id, 500)
@@ -225,7 +225,7 @@ export function createTrashItemsRestoreMethods(deps: { readiness: () => NativeHo
             const scope = trashItemsRestoreScope(request, read.value.authority.snapshot);
             if (!sourcesMatch(request, scope)) return fail('STALE_REVISION', 'Saved Trash selection changed');
             const device = ensureDeviceId(read.value.authority.snapshot.settings);
-            const base = { version: 1 as const, request, scope, deviceIdBefore: read.value.authority.snapshot.settings.deviceId ?? null,
+            const base = { version: 2 as const, request, scope, deviceIdBefore: read.value.authority.snapshot.settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null, updateAt: new Date().toISOString(),
                 result: { count: request.taskIds.length + request.projectIds.length } };
             if (!isNativeJsonWithinBytes({ request, prepared: base })) return fail('INVALID_INPUT', 'Trash Restore journal is too large; select fewer items');

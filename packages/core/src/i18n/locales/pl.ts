@@ -605,6 +605,8 @@ export const plOverrides: Record<string, string> = {
         'shortcuts.captureUnavailable': 'Skrót przechwytywania niedostępny',
         'shortcuts.missingTitle': 'Mindwtr nie mógł odczytać tytułu zadania z tego linku skrótu.',
         'projects.title': 'Projekty',
+        'projects.useAreaColor': "Użyj koloru obszaru",
+        'projects.colorSaveFailed': "Nie udało się zapisać koloru.",
         'projects.activeSection': 'Aktywne projekty',
         'projects.noProjects': 'Nie ma jeszcze żadnych projektów.',
         'projects.noProjectsInArea': 'Brak projektów w tym obszarze.',

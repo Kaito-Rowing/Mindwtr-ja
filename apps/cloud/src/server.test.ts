@@ -4179,6 +4179,30 @@ describe('cloud server api', () => {
         expect((await areasList.json()).total).toBe(1);
     });
 
+    test('persists Project color override intent and null reset while rejecting invalid colors', async () => {
+        const headers = { ...authHeaders, 'content-type': 'application/json' };
+        const create = await fetch(`${baseUrl}/v1/projects`, { method: 'POST', headers,
+            body: JSON.stringify({ title: 'Project color', props: { colorOverride: '#94a3b8' } }) });
+        expect(create.status).toBe(201);
+        const initial = (await create.json()).project;
+        expect(initial.colorOverride).toBe('#94a3b8');
+        const url = `${baseUrl}/v1/projects/${initial.id}`;
+        const unrelated = await fetch(url, { method: 'PATCH', headers, body: JSON.stringify({ title: 'Renamed' }) });
+        expect((await unrelated.json()).project.colorOverride).toBe('#94a3b8');
+        const reset = await fetch(url, { method: 'PATCH', headers, body: JSON.stringify({ colorOverride: null }) });
+        expect(reset.status).toBe(200);
+        const cleared = (await reset.json()).project;
+        expect(cleared.colorOverride ?? null).toBeNull();
+        expect(cleared.color).toBe('#94a3b8');
+        expect(cleared.rev).toBeGreaterThan(initial.rev);
+        for (const colorOverride of [false, '', '#fff', '#abcdef00', 'url(private)']) {
+            const invalid = await fetch(url, { method: 'PATCH', headers, body: JSON.stringify({ colorOverride }) });
+            expect(invalid.status).toBe(400);
+        }
+        const loaded = await fetch(url, { headers: authHeaders });
+        expect((await loaded.json()).project.colorOverride ?? null).toBeNull();
+    });
+
     test('creates REST projects with core defaults while honoring explicit props', async () => {
         const seedResponse = await fetch(`${baseUrl}/v1/data`, {
             method: 'PUT',

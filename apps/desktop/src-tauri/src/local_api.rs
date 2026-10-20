@@ -1592,8 +1592,12 @@ fn patch_area_in_data(
             if project.get("areaId").and_then(Value::as_str) != Some(id) {
                 continue;
             }
-            let wants_color =
-                repaint && project.get("color").and_then(Value::as_str) != Some(color);
+            let wants_color = repaint
+                && project
+                    .get("colorOverride")
+                    .and_then(Value::as_str)
+                    .is_none()
+                && project.get("color").and_then(Value::as_str) != Some(color);
             let wants_title = project.get("areaTitle").and_then(Value::as_str) != target_title;
             if !wants_color && !wants_title {
                 continue;
@@ -1671,6 +1675,18 @@ pub(crate) fn sanitize_project_fields(
                         .ok_or_else(|| "Invalid project field: areaId".to_string())?;
                     Value::String(area_id.to_string())
                 }
+            }
+            "colorOverride" => {
+                if !value.is_null()
+                    && !value.as_str().is_some_and(|color| {
+                        color.len() == 7
+                            && color.starts_with('#')
+                            && color.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
+                    })
+                {
+                    return Err("Invalid project field: colorOverride".to_string());
+                }
+                value.clone()
             }
             "color" => {
                 let color = value
@@ -1767,8 +1783,15 @@ fn create_project_from_body(
     project.insert(
         "color".to_string(),
         props
-            .get("color")
+            .get("colorOverride")
+            .filter(|value| value.is_string())
             .cloned()
+            .or_else(|| {
+                area.and_then(|area| area.get("color"))
+                    .filter(|value| value.is_string())
+                    .cloned()
+            })
+            .or_else(|| props.get("color").cloned())
             .unwrap_or_else(|| Value::String(DEFAULT_PROJECT_COLOR.to_string())),
     );
     project.insert(
@@ -1779,6 +1802,9 @@ fn create_project_from_body(
             .or_else(|| data.get(PROJECT_MUTATION_NEXT_ORDER_KEY).cloned())
             .unwrap_or_else(|| Value::Number(0.into())),
     );
+    if let Some(value) = props.get("colorOverride") {
+        project.insert("colorOverride".to_string(), value.clone());
+    }
     project.insert("tagIds".to_string(), Value::Array(Vec::new()));
     project.insert(
         "isSequential".to_string(),
@@ -2189,6 +2215,21 @@ pub(crate) fn patch_project_in_data(
             project.insert(key, value);
         }
     }
+    if patch.contains_key("areaId") || patch.contains_key("colorOverride") {
+        let color = project
+            .get("colorOverride")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                next_area_id
+                    .as_deref()
+                    .and_then(|id| live_project_area(data, id))
+                    .and_then(|area| area.get("color"))
+                    .and_then(Value::as_str)
+            })
+            .unwrap_or(DEFAULT_PROJECT_COLOR)
+            .to_string();
+        project.insert("color".to_string(), json!(color));
+    }
     if area_changed && !patch.contains_key("order") {
         let order = data
             .get(PROJECT_MUTATION_NEXT_ORDER_KEY)
@@ -2296,6 +2337,14 @@ fn apply_project_delete_or_restore_at(
                 }
             }
         } else {
+            if project.get("areaId").and_then(Value::as_str).is_some() {
+                let color = project
+                    .get("colorOverride")
+                    .and_then(Value::as_str)
+                    .unwrap_or(DEFAULT_PROJECT_COLOR)
+                    .to_string();
+                project.insert("color".to_string(), json!(color));
+            }
             project.remove("areaId");
             project.remove("areaTitle");
         }
@@ -9013,6 +9062,69 @@ mod tests {
         assert!(project["id"].as_str().is_some_and(|id| !id.is_empty()));
         assert!(project["createdAt"].is_string());
         assert_eq!(project["createdAt"], project["updatedAt"]);
+    }
+
+    #[test]
+    fn local_api_project_color_override_uses_explicit_presence() {
+        let mut data = json!({"tasks": [], "projects": [], "sections": [], "people": [],
+            "areas": [{"id": "a", "name": "Area", "color": "#3b82f6"}],
+            "settings": {"deviceId": "writer"}});
+        let created = create_project_from_body(
+            json!({"title": "Project", "props": {
+                "areaId": "a", "colorOverride": "#3b82f6"
+            }})
+            .as_object()
+            .unwrap(),
+            &data,
+        )
+        .unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+        data["projects"] = json!([created]);
+        let (renamed, _, _) = patch_project_in_data(
+            &mut data,
+            &id,
+            json!({"title": "Renamed"}).as_object().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(renamed["colorOverride"], "#3b82f6");
+        let (moved, _, _) =
+            patch_project_in_data(&mut data, &id, json!({"areaId": null}).as_object().unwrap())
+                .unwrap();
+        assert_eq!(moved["colorOverride"], "#3b82f6");
+        assert_eq!(moved["color"], "#3b82f6");
+        let (reset, _, _) = patch_project_in_data(
+            &mut data,
+            &id,
+            json!({"colorOverride": null}).as_object().unwrap(),
+        )
+        .unwrap();
+        assert!(reset["colorOverride"].is_null());
+        assert_eq!(reset["color"], DEFAULT_PROJECT_COLOR);
+        for invalid in [json!(false), json!("#fff"), json!("#12345678"), json!("")] {
+            assert!(sanitize_project_fields(
+                json!({"colorOverride": invalid}).as_object().unwrap(),
+                true
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn local_api_project_color_override_restore_detaches_stale_area() {
+        for color_override in [Value::Null, json!("#123456")] {
+            let mut data = json!({"tasks": [], "sections": [], "areas": [], "settings": {},
+                "projects": [{"id": "p", "title": "Project", "status": "active", "color": "#123456",
+                    "colorOverride": color_override, "areaId": "gone", "areaTitle": "Gone",
+                    "order": 0, "tagIds": [], "rev": 1, "createdAt": "2026-10-01T00:00:00Z",
+                    "updatedAt": "2026-10-02T00:00:00Z", "deletedAt": "2026-10-02T00:00:00Z"}]});
+            apply_project_delete_or_restore(&mut data, "p", true).unwrap();
+            let restored = &data["projects"][0];
+            assert!(restored.get("areaId").is_none());
+            assert_eq!(
+                restored["color"],
+                color_override.as_str().unwrap_or(DEFAULT_PROJECT_COLOR)
+            );
+        }
     }
 
     #[test]

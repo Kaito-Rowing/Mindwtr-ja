@@ -203,10 +203,10 @@ const fileAvailabilityTarget = (attachment: Attachment, directory: string, webda
 // Rebuild only from exact SQL cells. Object-key ordering in a native journal
 // never rewrites the opaque raw attachment string or changes its frozen plan.
 const fileAvailabilityRawBefore = (value: unknown): Project | null => {
-    if (!Array.isArray(value) || value.length !== PROJECT_SQLITE_COLUMNS.length
+    if (!Array.isArray(value) || (value.length !== PROJECT_SQLITE_COLUMNS.length && value.length !== 26)
         || !value.every(cell => cell === null || typeof cell === 'string' || typeof cell === 'number' && Number.isFinite(cell))) return null;
     try {
-        const row = Object.fromEntries(PROJECT_SQLITE_COLUMNS.map((column, index) => [column, value[index]]));
+        const row = Object.fromEntries(PROJECT_SQLITE_COLUMNS.map((column, index) => [column, column === 'colorOverride' && value.length === 26 ? null : value[index]]));
         const project = projectFromSqliteRow(row);
         rememberRawReadRow(project, row, PROJECT_SQLITE_COLUMNS, projectToSqliteRow(project));
         return projectFileAddScalarCellsMatchWriter(project) && iso(project.createdAt) && iso(project.updatedAt)

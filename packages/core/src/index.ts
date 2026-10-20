@@ -70,7 +70,7 @@ export * from './native-host-contract-task-save';
 export * from './task-creation';
 export { taskRevisionOf, NATIVE_UNJOURNALED_COMMANDS, NativeReceiptSqliteAdapter, loadNativeRequestReceipts, pruneNativeRequestReceipts, setNativeReplayTokens, type NativeReplayTokens } from './native-request-receipts';
 export * from './legacy-json-import';
-export { buildNewProject, MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
+export { buildNewProject, projectAreaSelection, MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
 export { nameNotifyListener } from './store-notify-profiler';
 export * from './store-types';
 export * from './project-to-section';

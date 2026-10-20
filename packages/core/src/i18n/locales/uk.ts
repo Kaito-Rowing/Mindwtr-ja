@@ -1,5 +1,7 @@
 // Ukrainian app strings. Keep placeholders and slash-command syntax in sync with en.ts.
 export const ukOverrides: Record<string, string> = {
+    'projects.useAreaColor': "Використовувати колір області",
+    'projects.colorSaveFailed': "Не вдалося зберегти колір.",
     'contexts.new': 'Новий контекст',
     'tags.new': 'Нова мітка',
     'settings.importDiagnostics.unknownColumns': "Пропущено невідомих стовпців: {{count}}.",

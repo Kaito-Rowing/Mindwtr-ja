@@ -79,7 +79,7 @@
     "viewSectionIds",
     "archivedAt"
    ],
-   "pendingProduction": []
+   "pendingProduction": ["colorOverride"]
   },
   "MindwtrSection": {
    "deployed": [

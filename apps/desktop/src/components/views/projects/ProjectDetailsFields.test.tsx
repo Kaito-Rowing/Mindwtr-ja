@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Project } from '@mindwtr/core';
@@ -73,6 +73,26 @@ const defaultProps = {
 };
 
 describe('ProjectDetailsFields', () => {
+    it('saves an explicit swatch and retries a refused durable save without losing its intent', async () => {
+        const onColorChange = vi.fn().mockRejectedValueOnce(new Error('disk unavailable')).mockResolvedValue({ success: true });
+        render(<LanguageProvider><ProjectDetailsFields {...defaultProps} onColorChange={onColorChange} /></LanguageProvider>);
+        fireEvent.click(screen.getByRole('button', { name: 'Project color' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Project color: #3b82f6' }));
+        await screen.findByRole('alert');
+        expect(onColorChange).toHaveBeenLastCalledWith('#3b82f6');
+        fireEvent.click(screen.getByRole('button', { name: 'common.retry' }));
+        await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+        expect(onColorChange).toHaveBeenCalledTimes(2);
+        expect(onColorChange).toHaveBeenLastCalledWith('#3b82f6');
+    });
+
+    it('resets only through the explicit Area color option', async () => {
+        const onColorChange = vi.fn().mockResolvedValue({ success: true });
+        render(<LanguageProvider><ProjectDetailsFields {...defaultProps} project={buildProject({ colorOverride: '#3b82f6' })} onColorChange={onColorChange} /></LanguageProvider>);
+        fireEvent.click(screen.getByRole('button', { name: 'Project color' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Use Area color' }));
+        await waitFor(() => expect(onColorChange).toHaveBeenCalledWith(null));
+    });
     it('uses a compact responsive settings grid', () => {
         const { container } = render(
             <LanguageProvider>

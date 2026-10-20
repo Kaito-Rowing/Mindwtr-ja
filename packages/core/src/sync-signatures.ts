@@ -148,6 +148,7 @@ export const normalizeTaskForContentComparison = (task: Task): Record<string, un
 export const normalizeProjectForContentComparison = (project: Project): Record<string, unknown> => {
     const comparable: Record<string, unknown> = {
         ...project,
+        colorOverride: project.colorOverride ?? undefined,
         tagIds: normalizeOptionalArrayForComparison(project.tagIds),
         attachments: project.deletedAt ? undefined : normalizeAttachmentsForContentComparison(project.attachments),
         isSequential: project.isSequential ? true : undefined,

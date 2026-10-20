@@ -1844,6 +1844,11 @@ export function ProjectWorkspace({
                                         onAreaChange={(value) => {
                                             updateMutableSelectedProject({ areaId: value === noAreaId ? undefined : value });
                                         }}
+                                        onColorChange={async (colorOverride) => {
+                                            const state = useTaskStore.getState();
+                                            if (state.persistenceFailure) await state.retryPersistence();
+                                            return updateMutableSelectedProject({ colorOverride });
+                                        }}
                                         isSequential={selectedProject.isSequential === true}
                                         onToggleSequential={() => updateMutableSelectedProject({ isSequential: !selectedProjectRef.current?.isSequential })}
                                         sequentialScope={selectedProject.sequentialScope ?? 'project'}

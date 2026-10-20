@@ -672,6 +672,8 @@ export const deOverrides: Record<string, string> = {
         'projects.noActiveTasks': 'Keine aktiven Aufgaben in diesem Projekt.',
         'projects.projectName': 'Projektname',
         'projects.color': 'Farbe',
+        'projects.useAreaColor': "Bereichsfarbe verwenden",
+        'projects.colorSaveFailed': "Die Farbe konnte nicht gespeichert werden.",
         'projects.create': 'Erstellen',
         'areas.create': 'Erstellen',
         'areas.deleteConfirm': 'Diesen Bereich löschen? Projekte und Aufgaben in diesem Bereich bleiben erhalten und werden nach Nicht zugewiesen verschoben.',

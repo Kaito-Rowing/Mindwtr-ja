@@ -154,6 +154,29 @@ describeSqlite('SqliteAdapter', () => {
         return connection;
     };
 
+    it('persists a Project color override and a newer reset across SQLite reopen', async () => {
+        const at = '2026-10-20T10:00:00.000Z';
+        const row = { id: 'color', title: 'Color', status: 'active' as const, color: '#3b82f6',
+            colorOverride: '#3b82f6', order: 0, tagIds: [], rev: 1, revBy: 'writer', createdAt: at, updatedAt: at };
+        const source: AppData = { tasks: [], projects: [row], areas: [], sections: [], settings: {} };
+        await adapter.saveData(source);
+        db.close();
+        db = new RuntimeDatabase!(databasePath);
+        adapter = new SqliteAdapter(createClient(db));
+        expect((await adapter.getData()).projects[0].colorOverride).toBe('#3b82f6');
+        await adapter.saveData({ ...source, projects: [{ ...row, colorOverride: null, color: '#94a3b8', rev: 2 }] });
+        db.close();
+        db = new RuntimeDatabase!(databasePath);
+        adapter = new SqliteAdapter(createClient(db));
+        const reset = await adapter.getData();
+        expect(reset.projects[0].colorOverride).toBeUndefined();
+        expect(reset.projects[0].rev).toBe(2);
+        expect(getSql(db, 'SELECT colorOverride FROM projects WHERE id=?', ['color'])).toEqual({ colorOverride: null });
+        await adapter.saveData(source);
+        expect((await adapter.getData()).projects[0].colorOverride).toBeUndefined();
+        expect((await adapter.getData()).projects[0].rev).toBe(2);
+    });
+
     it('persists Someday section moves, clears, and undo across reopen and sync with an older peer', async () => {
         const createdAt = '2026-09-15T10:00:00.000Z';
         const initial: AppData = {

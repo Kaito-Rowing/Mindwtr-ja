@@ -667,6 +667,8 @@ export const itOverrides: Record<string, string> = {
 
         // Projects
         'projects.title': 'Progetti',
+        'projects.useAreaColor': "Usa il colore dell’area",
+        'projects.colorSaveFailed': "Impossibile salvare il colore.",
         'projects.statusLabel': 'Stato',
         'projects.activeSection': 'Progetti attivi',
         'projects.noProjects': 'Ancora nessun progetto.',

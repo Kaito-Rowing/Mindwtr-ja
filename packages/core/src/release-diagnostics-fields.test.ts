@@ -15,6 +15,8 @@ import { sanitizeLogContext } from './log-sanitize';
 const RELEASE_CHECK_FIELD_NAMES = [
     // focus-area-selection: aggregate selected slots only.
     'globalCount', 'hiddenByAreaCount',
+    // project-color reuses releaseCheck and mode; no identity or color values.
+
     // android-widget-capture-status: bounded creation status and picker origin; kind/outcome below.
     'destination', 'selection',
     // quick-capture-description reuses releaseCheck, kind and outcome; no captured text.

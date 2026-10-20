@@ -700,6 +700,7 @@ const toNativeProjectRow = (
     summaries: ReturnType<ReturnType<typeof useTaskStore.getState>['getDerivedState']>['projectTaskSummaryById'],
     focusedProjectCount: number,
     t: (key: string) => string,
+    areaById: Map<string, Area>,
 ): NativeProjectRow => {
     const summary = summaries.get(project.id);
     const nextAction = summary?.nextAction;
@@ -713,7 +714,7 @@ const toNativeProjectRow = (
         ...getProjectRowStatus(project, t),
         isFocused,
         focusDisabled: !isFocused && focusedProjectCount >= MAX_FOCUSED_PROJECTS,
-        color: project.color ?? null,
+        color: getProjectAccentColor(project, areaById) ?? null,
         activeTaskCount,
         nextActionId: nextAction?.id ?? null,
         nextActionTitle: nextAction?.title ?? null,
@@ -1151,7 +1152,7 @@ export function createNativeHostContract(options: {
                 areaName: area?.name ?? null,
                 areaColor: area?.color ?? null,
                 areaIcon: area?.icon ?? null,
-                projects: group.projects.map((project) => toNativeProjectRow(project, summaries, focusedProjectCount, translate)),
+                projects: group.projects.map((project) => toNativeProjectRow(project, summaries, focusedProjectCount, translate, areaById)),
             };
         };
         const view: NativeProjectsView = {
@@ -2349,6 +2350,7 @@ export function createNativeHostContract(options: {
             }));
             const { projectTaskSummaryById: summaries, focusedProjectCount } = useTaskStore.getState().getDerivedState();
             const formatDate = createDateFormatter(dateFormatting());
+            const areaById = new Map(useTaskStore.getState().areas.map((area) => [area.id, area]));
             return {
                 ok: true,
                 value: {
@@ -2357,7 +2359,7 @@ export function createNativeHostContract(options: {
                     dateLabel: formatDate(now, 'PPPP'),
                     sections,
                     reviewProjects: cachedReviewProjects.map((project) => ({
-                        ...toNativeProjectRow(project, summaries, focusedProjectCount, translate),
+                        ...toNativeProjectRow(project, summaries, focusedProjectCount, translate, areaById),
                         reviewDateLabel: project.reviewAt ? formatDate(project.reviewAt, 'P') : null,
                     })),
                     controls: buildNativeFocusControls(model, { t: translate, formatDate }),

@@ -1,7 +1,8 @@
 {
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_MENU_VIEWS=1 MINDWTR_CAPTURE_MENU_VIEWS_COMMIT=$(git rev-parse HEAD) bunx vitest run components/views/menu-views-parity.test.tsx",
-  "capturedAt": "afb2066e92dc83ae900d1f42bf9b2efe699daf1d"
+  "capturedAt": "afb2066e92dc83ae900d1f42bf9b2efe699daf1d",
+  "projectColorPolicy": "#1422 updates only deferred Project identity colors: live Area, then area-less legacy color, then the captured secondaryText fallback. Original capture commit remains above."
  },
  "timeZone": "America/New_York",
  "now": "2026-09-23T14:00:00.000Z",
@@ -1815,13 +1816,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -1872,13 +1873,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -1928,13 +1929,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -1990,13 +1991,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -2046,13 +2047,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -2099,13 +2100,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -2155,13 +2156,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -2206,13 +2207,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -2267,7 +2268,7 @@
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -2332,13 +2333,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -2389,13 +2390,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -2445,13 +2446,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -2504,7 +2505,7 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       }
      ]
     },
@@ -2580,13 +2581,13 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       },
       {
        "action": "Reactivate",
        "title": "Tax paperwork",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -2623,7 +2624,7 @@
        "action": "Reactivate",
        "title": "Vendor contract",
        "area": "Work",
-       "color": "#f59e0b"
+       "color": "#2563eb"
       }
      ]
     },
@@ -8244,13 +8245,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -8511,13 +8512,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -8760,13 +8761,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -9009,13 +9010,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -9258,13 +9259,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -9507,13 +9508,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -9756,13 +9757,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -12106,13 +12107,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -12356,13 +12357,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -12611,13 +12612,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -12871,13 +12872,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -15284,13 +15285,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },
@@ -15533,13 +15534,13 @@
        "action": "Reactivate",
        "title": "Learn Spanish",
        "area": "Home",
-       "color": "#94a3b8"
+       "color": "#16a34a"
       },
       {
        "action": "Reactivate",
        "title": "Build shed",
        "area": null,
-       "color": "#94a3b8"
+       "color": "#64748b"
       }
      ]
     },

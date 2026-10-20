@@ -859,6 +859,8 @@ export const en: Record<string, string> = {
         'projects.noActiveTasks': 'No active tasks in this project.',
         'projects.projectName': 'Project Name',
         'projects.color': 'Color',
+        'projects.useAreaColor': 'Use Area color',
+        'projects.colorSaveFailed': 'Color could not be saved.',
         'projects.colorBlue': 'Blue',
         'projects.colorGreen': 'Green',
         'projects.colorAmber': 'Amber',

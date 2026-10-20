@@ -1,4 +1,5 @@
 import { normalizeTaskReminderPolicy } from './task-reminder-policy';
+import { DEFAULT_PROJECT_COLOR, isValidProjectColorOverride } from './color-constants';
 import { isTaxonomyCatalog } from './taxonomy-catalog';
 import { runToEnd, SLICE_ITEMS, type CooperativePass } from './cooperative';
 import type { AppData, Area, Attachment, Person, Project, Section, Task } from './types';
@@ -305,6 +306,7 @@ export const normalizeProjectForSyncMerge = (
         ...project,
         status: normalizeProjectStatusForMerge(project.status),
         color: normalizeOptionalString(project.color) ?? '#6B7280',
+        colorOverride: isValidProjectColorOverride(project.colorOverride) ? project.colorOverride : undefined,
         tagIds: normalizeStringArray(project.tagIds),
         isSequential: normalizeSyncedBoolean(project.isSequential),
         sequentialScope: normalizeProjectSequentialScope(project.sequentialScope),
@@ -424,6 +426,7 @@ export const repairMergedSyncReferences = (data: AppData, nowIso: string): AppDa
             ...withRepairRevision(project),
             areaId: undefined,
             areaTitle: undefined,
+            color: project.colorOverride ?? DEFAULT_PROJECT_COLOR,
             updatedAt: nowIso,
         };
     });
@@ -784,6 +787,9 @@ export function* validateMergedSyncDataPass(data: AppData): CooperativePass<stri
     if (Array.isArray(data.projects)) {
         data.projects.forEach((project, index) => {
             if (!isObjectRecord(project)) return;
+            if (!isValidProjectColorOverride(project.colorOverride)) {
+                errors.push(`projects[${index}].colorOverride must be a six-digit hex color or null`);
+            }
             if (isNonEmptyString(project.areaId) && !allAreaIds.has(project.areaId)) {
                 errors.push(`projects[${index}].areaId must reference an existing area`);
                 return;

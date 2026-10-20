@@ -605,6 +605,8 @@ export const ruOverrides: Record<string, string> = {
         'shortcuts.captureUnavailable': 'Ярлык захвата недоступен',
         'shortcuts.missingTitle': 'Mindwtr не смог прочитать название задачи из этой ссылки ярлыка.',
         'projects.title': 'Проекты',
+        'projects.useAreaColor': "Использовать цвет области",
+        'projects.colorSaveFailed': "Не удалось сохранить цвет.",
         'projects.statusLabel': 'Статус',
         'projects.activeSection': 'Активные проекты',
         'projects.noProjects': 'Проектов пока нет.',

@@ -656,6 +656,8 @@ export const arOverrides: Record<string, string> = {
         'projects.noActiveTasks': 'لا توجد مهام نشطة في هذا المشروع.',
         'projects.projectName': 'اسم المشروع',
         'projects.color': 'لون',
+        'projects.useAreaColor': "استخدام لون المجال",
+        'projects.colorSaveFailed': "تعذر حفظ اللون.",
         'projects.colorBlue': 'أزرق',
         'projects.colorGreen': 'أخضر',
         'projects.colorAmber': 'كهرماني',

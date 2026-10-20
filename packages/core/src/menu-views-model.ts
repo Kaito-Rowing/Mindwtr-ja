@@ -1,3 +1,4 @@
+import { getProjectAccentColor } from './task-accent-color';
 /**
  * The React Native Inbox, Waiting, Someday, Reference and Done screens as data: which
  * tasks each lists, their order and groups, the counts, the empty states, and
@@ -114,7 +115,7 @@ export function buildDeferredProjectsSection(
             title: project.title,
             areaName: (project.areaId ? areaById.get(project.areaId)?.name : undefined) ?? null,
             // Mobile draws the stored color, else its secondary text color.
-            color: project.color || null,
+            color: getProjectAccentColor(project, areaById) ?? null,
         })),
     };
 }

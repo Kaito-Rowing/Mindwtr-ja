@@ -1,5 +1,7 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const nlOverrides: Record<string, string> = {
+    'projects.useAreaColor': "Kleur van gebied gebruiken",
+    'projects.colorSaveFailed': "De kleur kon niet worden opgeslagen.",
     'contexts.new': 'Nieuwe context',
     'tags.new': 'Nieuwe tag',
     'settings.cleartextSyncDismiss': 'Verbergen voor deze synchronisatiebestemming',

@@ -87,6 +87,7 @@ export interface Project {
     title: string;
     status: 'active' | 'someday' | 'waiting' | 'archived';
     color: string;
+    colorOverride?: string | null; // Explicit project identity color; absent/null follows its Area.
     order: number; // Sort order within an Area
     tagIds: string[]; // Array of Tag IDs
     isSequential?: boolean; // If true, only first incomplete task shows in Next Actions

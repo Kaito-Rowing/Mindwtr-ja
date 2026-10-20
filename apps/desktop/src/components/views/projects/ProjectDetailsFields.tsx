@@ -4,6 +4,8 @@ import { cn } from '../../../lib/utils';
 import { useNativeDateInputLocale } from '../../../hooks/use-native-date-input-locale';
 import { TokenAutocompleteInput } from '../../Task/TokenAutocompleteInput';
 import { DateField } from '../../ui/DateField';
+import { useEffect, useRef, useState } from 'react';
+import { AreaColorPicker } from './AreaColorPicker';
 
 type ProjectDetailsFieldsProps = {
     project: Project;
@@ -18,6 +20,7 @@ type ProjectDetailsFieldsProps = {
     onNewArea: () => void;
     onManageAreas: () => void;
     onAreaChange: (value: string) => void;
+    onColorChange?: (value: string | null) => unknown | Promise<unknown>;
     isSequential: boolean;
     onToggleSequential: () => void;
     sequentialScope: Project['sequentialScope'];
@@ -47,6 +50,7 @@ export function ProjectDetailsFields({
     onNewArea,
     onManageAreas,
     onAreaChange,
+    onColorChange,
     isSequential,
     onToggleSequential,
     sequentialScope,
@@ -62,6 +66,14 @@ export function ProjectDetailsFields({
     readOnly = false,
     readOnlyHint,
 }: ProjectDetailsFieldsProps) {
+    const [colorSaving, setColorSaving] = useState(false);
+    const [colorError, setColorError] = useState(false);
+    const [colorIntent, setColorIntent] = useState<string | null>(null);
+    const colorGeneration = useRef(0);
+    useEffect(() => {
+        colorGeneration.current += 1;
+        setColorSaving(false); setColorError(false); setColorIntent(null);
+    }, [project.id]);
     const resolveText = (key: string, fallback: string) => {
         const value = t(key);
         return value && value !== key ? value : fallback;
@@ -69,6 +81,17 @@ export function ProjectDetailsFields({
     const resolvedSequenceModeLabel = resolveText('projects.sequenceMode', 'Flow Mode');
     const resolvedSequentialScope = sequentialScope === 'section' ? 'section' : 'project';
     const { nativeDateInputLocale, dateFormatSetting } = useNativeDateInputLocale();
+    const saveColor = async (value: string | null) => {
+        const generation = colorGeneration.current;
+        setColorIntent(value);
+        setColorSaving(true);
+        setColorError(false);
+        try {
+            const result = await onColorChange?.(value);
+            if (result && typeof result === 'object' && 'success' in result && result.success === false) throw new Error('Save refused');
+        } catch { if (colorGeneration.current === generation) setColorError(true); }
+        finally { if (colorGeneration.current === generation) setColorSaving(false); }
+    };
 
     return (
         <section id="project-details-fields" className="border-b border-border/50 py-3">
@@ -84,6 +107,21 @@ export function ProjectDetailsFields({
                 title={readOnly ? readOnlyHint : undefined}
             >
             <div data-project-details-grid className="grid grid-cols-1 gap-x-2 gap-y-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-6">
+                {onColorChange && <div className="min-w-0 space-y-1">
+                    <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{resolveText('projects.color', 'Project color')}</div>
+                    <fieldset disabled={colorSaving} className="flex items-center gap-2">
+                        <AreaColorPicker value={project.colorOverride ?? undefined} onChange={(value) => { void saveColor(value ?? null); }}
+                            title={resolveText('projects.color', 'Project color')}
+                            noneLabel={resolveText('projects.useAreaColor', 'Use Area color')}
+                            customLabel={resolveText('projects.colorCustom', 'Custom color')}
+                            applyLabel={t('common.save')} cancelLabel={t('common.cancel')} />
+                        <span className="truncate text-xs text-muted-foreground">{project.colorOverride ?? resolveText('projects.useAreaColor', 'Use Area color')}</span>
+                    </fieldset>
+                    {colorError && <div role="alert" className="text-xs text-destructive">
+                        {resolveText('projects.colorSaveFailed', 'Color could not be saved.')}{' '}
+                        <button type="button" disabled={colorSaving} className="underline" onClick={() => { void saveColor(colorIntent); }}>{t('common.retry')}</button>
+                    </div>}
+                </div>}
                 <div className="min-w-0 space-y-1">
                     <label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider flex items-center gap-1.5 truncate">
                         <Signal className="h-3.5 w-3.5" />

@@ -1,3 +1,4 @@
+import { getProjectAccentColor } from '@mindwtr/core';
 import { useEffect, useMemo, useState } from 'react';
 import type { Project, Section, Task, TaskDraftSetter, Area } from '@mindwtr/core';
 import { getFrequentTaskTokens, getPersonOptionNames, getRetainedTaskContexts, getSavedTaxonomyTokens, getUsedTaskTokens, useTaskStore,
@@ -129,7 +130,7 @@ export function useTaskItemProjectContext({
         sectionsByProject,
         currentProject: project,
         currentTaskArea: project?.areaId ? projectArea : taskArea,
-        currentProjectColor: projectArea?.color,
+        currentProjectColor: project ? getProjectAccentColor(project, new Map(projectArea ? [[projectArea.id, projectArea]] : [])) : undefined,
         projectContext,
         tagOptions,
         popularTagOptions,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { getProjectToSectionEligibility, isGettingStartedProject } from '@mindwtr/core';
+import { AREA_PRESET_COLORS, DEFAULT_PROJECT_COLOR, getProjectToSectionEligibility, isGettingStartedProject } from '@mindwtr/core';
 import { GettingStartedActions, type GettingStartedAction } from '../GettingStartedActions';
 import {
     Alert,
@@ -577,6 +577,14 @@ export function ProjectDetailModal({
     const selectedProjectRef = React.useRef(selectedProject);
     selectedProjectRef.current = selectedProject;
     const liveSelectedProject = allProjects?.find((project) => project.id === selectedProject?.id);
+    const [colorSaving, setColorSaving] = React.useState(false);
+    const [colorError, setColorError] = React.useState(false);
+    const [colorIntent, setColorIntent] = React.useState<string | null>(null);
+    const colorGeneration = React.useRef(0);
+    React.useEffect(() => {
+        colorGeneration.current += 1;
+        setColorSaving(false); setColorError(false); setColorIntent(null);
+    }, [selectedProject?.id]);
     const liveSelectedProjectStatus = liveSelectedProject?.status;
     const isArchivedProject = selectedProject?.status === 'archived' || liveSelectedProjectStatus === 'archived';
     const isArchivedProjectRef = React.useRef(isArchivedProject);
@@ -595,6 +603,23 @@ export function ProjectDetailModal({
         onProjectChange(next);
         return next;
     }, [getMutableSelectedProject, onProjectChange, updateProject]);
+    const saveProjectColor = async (colorOverride: string | null) => {
+        const current = getMutableSelectedProject();
+        if (!current || colorSaving) return;
+        const generation = colorGeneration.current;
+        setColorSaving(true);
+        setColorIntent(colorOverride);
+        setColorError(false);
+        try {
+            const state = useTaskStore.getState();
+            if (state.persistenceFailure) await state.retryPersistence();
+            const result = await updateProject(current.id, { colorOverride });
+            if (!result.success) throw new Error('Save refused');
+            const live = useTaskStore.getState()._projectsById.get(current.id);
+            if (colorGeneration.current === generation && selectedProjectRef.current?.id === current.id) onProjectChange({ ...selectedProjectRef.current, colorOverride, color: live?.color ?? current.color });
+        } catch { if (colorGeneration.current === generation) setColorError(true); }
+        finally { if (colorGeneration.current === generation) setColorSaving(false); }
+    };
     // A stored 'timeEstimate' project sort reverts to default order while the
     // feature is off — list, sort sheet and label all read this one value (#1107).
     const projectTaskSortBy = resolveTaskSortByForFeatures(storedProjectTaskSortBy, settings);
@@ -1310,6 +1335,30 @@ export function ProjectDetailModal({
 
                                         <View style={[styles.reviewContainer, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
                                             <View style={styles.projectMetadataRow}>
+                                                <Text style={[styles.reviewLabel, { color: tc.text }]}>{tFallback(t, 'projects.color', 'Project color')}</Text>
+                                                <View style={{ flex: 1, alignItems: 'flex-end', gap: 8 }}>
+                                                    <TouchableOpacity disabled={isArchivedProject || colorSaving} accessibilityRole="button"
+                                                        accessibilityLabel={tFallback(t, 'projects.useAreaColor', 'Use Area color')}
+                                                        accessibilityState={{ selected: !liveSelectedProject?.colorOverride, disabled: isArchivedProject || colorSaving }}
+                                                        onPress={() => { void saveProjectColor(null); }} style={{ minHeight: 44, justifyContent: 'center' }}>
+                                                        <Text style={{ color: tc.tint }}>{!liveSelectedProject?.colorOverride ? '✓ ' : ''}{tFallback(t, 'projects.useAreaColor', 'Use Area color')}</Text>
+                                                    </TouchableOpacity>
+                                                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 4 }}>
+                                                        {[DEFAULT_PROJECT_COLOR, ...AREA_PRESET_COLORS].map((color) => <TouchableOpacity key={color}
+                                                            disabled={isArchivedProject || colorSaving} accessibilityRole="button"
+                                                            accessibilityLabel={`${tFallback(t, 'projects.color', 'Project color')}: ${color}`}
+                                                            accessibilityState={{ selected: liveSelectedProject?.colorOverride === color, disabled: isArchivedProject || colorSaving }}
+                                                            onPress={() => { void saveProjectColor(color); }} style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
+                                                            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: color, borderWidth: liveSelectedProject?.colorOverride === color ? 3 : 1, borderColor: liveSelectedProject?.colorOverride === color ? tc.text : tc.border }} />
+                                                            {liveSelectedProject?.colorOverride === color && <Text style={{ color: tc.text }}>✓</Text>}
+                                                        </TouchableOpacity>)}
+                                                    </View>
+                                                    {colorError && <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('common.retry')} onPress={() => { void saveProjectColor(colorIntent); }} disabled={colorSaving}>
+                                                        <Text accessibilityRole="alert" style={{ color: tc.danger }}>{tFallback(t, 'projects.colorSaveFailed', 'Color could not be saved.')} {t('common.retry')}</Text>
+                                                    </TouchableOpacity>}
+                                                </View>
+                                            </View>
+                                            <View style={[styles.projectMetadataRow, styles.projectMetadataRowDivider, { borderTopColor: tc.border }]}>
                                                 <Text style={[styles.reviewLabel, { color: tc.text }]}>{t('projects.areaLabel')}</Text>
                                                 <TouchableOpacity
                                                     style={[styles.projectMetadataValueButton, { backgroundColor: tc.inputBg, borderColor: tc.border }]}

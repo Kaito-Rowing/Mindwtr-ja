@@ -814,6 +814,8 @@ export const huOverrides: Record<string, string> = {
     'shortcuts.captureUnavailable': 'A rögzítési gyorsparancs nem érhető el',
     'shortcuts.missingTitle': 'A Mindwtr nem tudott feladatcímet beolvasni abból a gyorsparancs-hivatkozásból.',
     'projects.title': 'Projektek',
+    'projects.useAreaColor': "A terület színének használata",
+    'projects.colorSaveFailed': "Nem sikerült menteni a színt.",
     'projects.statusLabel': 'Állapot',
     'projects.activeSection': 'Aktív projektek',
     'projects.noProjects': 'Még nincsenek projektek.',

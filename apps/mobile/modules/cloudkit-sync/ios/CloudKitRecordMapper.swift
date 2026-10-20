@@ -162,6 +162,7 @@ enum CloudKitRecordMapper {
         FieldSpec(jsKey: "title", ckKey: "title", kind: .string),
         FieldSpec(jsKey: "status", ckKey: "status", kind: .string),
         FieldSpec(jsKey: "color", ckKey: "color", kind: .string),
+        FieldSpec(jsKey: "colorOverride", ckKey: "colorOverride", kind: .string),
         FieldSpec(jsKey: "order", ckKey: "sortOrder", kind: .int),
         FieldSpec(jsKey: "tagIds", ckKey: "tagIds", kind: .stringArray),
         FieldSpec(jsKey: "isSequential", ckKey: "isSequential", kind: .bool),

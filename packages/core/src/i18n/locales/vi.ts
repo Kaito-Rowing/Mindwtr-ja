@@ -796,6 +796,8 @@ export const viOverrides: Record<string, string> = {
         'projects.noActiveTasks': 'Không có nhiệm vụ đang hoạt động trong dự án này.',
         'projects.projectName': 'Tên dự án',
         'projects.color': 'Màu sắc',
+        'projects.useAreaColor': "Dùng màu của lĩnh vực",
+        'projects.colorSaveFailed': "Không thể lưu màu.",
         'projects.colorBlue': 'Xanh dương',
         'projects.colorGreen': 'Xanh lá',
         'projects.colorAmber': 'Hổ phách',

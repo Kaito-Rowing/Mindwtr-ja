@@ -14837,7 +14837,10 @@ final class CoreModel: ObservableObject {
         for attempt in 0..<2 {
             let options = try await query("projectAreaOptions", [id])
             let project = options.object("project")
-            guard options.count == 5, !options.text("revision").isEmpty,
+            guard options.count == 7,
+                  options["colorOverride"] is NSNull || (options["colorOverride"] as? String).map({ $0.range(of: #"^#[0-9a-fA-F]{6}$"#, options: .regularExpression) != nil }) == true,
+                  let colors = options["colors"] as? [String], !colors.isEmpty, colors.count <= 32,
+                  colors.allSatisfy({ $0.range(of: #"^#[0-9a-fA-F]{6}$"#, options: .regularExpression) != nil }), !options.text("revision").isEmpty,
                   let canEdit = options["canEdit"] as? NSNumber,
                   CFGetTypeID(canEdit) == CFBooleanGetTypeID(),
                   let noAreaLabel = options["noAreaLabel"] as? String, !noAreaLabel.isEmpty,
@@ -14906,10 +14909,26 @@ final class CoreModel: ObservableObject {
         await performProjectAreaWrite(selectedID, name: selectedName, projectID: id)
     }
 
+    func chooseProjectColor(_ color: String?) async {
+        let id = projectHeader.text("id")
+        guard projectAreaChoiceEnabled, !id.isEmpty,
+              color == nil || projectAreaOptions["colors"] is [String]
+                && (projectAreaOptions["colors"] as? [String])?.contains(color!) == true else { return }
+        let project = projectAreaOptions.object("project")
+        let areaID = project["areaId"] as? String
+        let name = areaID.flatMap { id in projectAreaOptions.objects("areas").first { $0.text("id") == id }?.text("label") }
+        guard (areaID == nil) == (name == nil), await flushProjectNotesEdit(), projectHeader.text("id") == id,
+              projectAreaPresented, !busy, !retryNeeded, projectAreaRequest == nil else { return }
+        busy = true
+        projectAreaError = nil
+        defer { finishOperation() }
+        await performProjectAreaWrite(areaID, name: name, projectID: id, colorOverride: color as Any? ?? NSNull())
+    }
+
     // The Area-create path calls this only after its own durable acknowledgment.
     // The caller owns busy, so a second command cannot bypass the UI guards.
     private func performProjectAreaWrite(_ selectedID: String?, name selectedName: String?,
-                                         projectID id: String) async {
+                                         projectID id: String, colorOverride: Any? = nil) async {
         do {
             // Notes autosave may change the Project revision. Re-read its token,
             // but never silently switch the association or tapped Area witness.
@@ -14936,9 +14955,11 @@ final class CoreModel: ObservableObject {
             if let selectedID, let selectedName {
                 selectedArea = ["id": selectedID, "name": selectedName]
             } else { selectedArea = NSNull() }
-            projectAreaRequest = try json(["requestId": UUID().uuidString.lowercased(),
-                                           "projectId": id, "areaId": areaValue,
-                                           "expected": expected, "selectedArea": selectedArea])
+            var request: CoreObject = ["requestId": UUID().uuidString.lowercased(),
+                                       "projectId": id, "areaId": areaValue,
+                                       "expected": expected, "selectedArea": selectedArea]
+            if let colorOverride { request["colorOverride"] = colorOverride }
+            projectAreaRequest = try json(request)
             projectAreaHasRequestedChoice = true
             projectAreaRequestedID = selectedID
             projectAreaExpectedID = id
@@ -14966,8 +14987,11 @@ final class CoreModel: ObservableObject {
         }
         let blocked = result.count == 1 && result["blocked"] as? String == ""
         if !blocked {
+            let request = try JSONSerialization.jsonObject(with: Data(projectAreaRequest!.utf8)) as? CoreObject ?? [:]
             let actualAreaID = result["areaId"] as? String
-            guard result.count == 4, result.text("id") == id,
+            guard result.count == (request["colorOverride"] == nil ? 4 : 5), result.text("id") == id,
+                  (request["colorOverride"] == nil || (result["colorOverride"] is NSNull && request["colorOverride"] is NSNull)
+                    || result["colorOverride"] as? String == request["colorOverride"] as? String),
                   (actualAreaID == projectAreaExpectedAreaID &&
                     (actualAreaID != nil || result["areaId"] is NSNull)),
                   result["areaTitle"] is NSNull || (result["areaTitle"] as? String)

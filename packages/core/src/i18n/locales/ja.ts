@@ -872,6 +872,8 @@ export const jaOverrides: Record<string, string> = {
         'projects.noActiveTasks': 'このプロジェクトに進行中のタスクはありません。',
         'projects.projectName': 'プロジェクト名',
         'projects.color': '色',
+        'projects.useAreaColor': "エリアの色を使用",
+        'projects.colorSaveFailed': "色を保存できませんでした。",
         'projects.colorBlue': 'ブルー',
         'projects.colorGreen': 'グリーン',
         'projects.colorAmber': 'アンバー',

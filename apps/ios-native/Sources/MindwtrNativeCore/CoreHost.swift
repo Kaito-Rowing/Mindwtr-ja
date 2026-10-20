@@ -12824,7 +12824,8 @@ private final class Engine: @unchecked Sendable {
                     guard Set(response.keys) == Set(["kind", "result"]),
                           let result = response["result"] as? [String: Any],
                           (kind == "noop"
-                            ? Set(result.keys) == Set(["id", "areaId", "areaTitle", "order"])
+                            ? Set(result.keys) == Set(["id", "areaId", "areaTitle", "order"]).union(submitted["colorOverride"] == nil ? [] : ["colorOverride"])
+                                && (submitted["colorOverride"] == nil || Self.equalJSON(result["colorOverride"], submitted["colorOverride"]))
                                 && result["id"] as? String == projectID
                                 && Self.equalJSON(result["areaId"], submitted["areaId"])
                                 && Self.equalJSON(result["areaId"], expected["areaId"])
@@ -17133,7 +17134,8 @@ private final class Engine: @unchecked Sendable {
               let prepared = envelope["prepared"] as? [String: Any],
               let expected = prepared["result"] as? [String: Any],
               let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
-              Set(result.keys) == Set(["id", "areaId", "areaTitle", "order"]),
+              Set(result.keys) == Set(["id", "areaId", "areaTitle", "order"]).union(request["colorOverride"] == nil ? [] : ["colorOverride"]),
+              (request["colorOverride"] == nil || Self.equalJSON(result["colorOverride"], request["colorOverride"])),
               result["id"] as? String == request["projectId"] as? String,
               Self.equalJSON(result["areaId"], request["areaId"]),
               result["areaTitle"] is NSNull || result["areaTitle"] is String,
@@ -17423,6 +17425,10 @@ private final class Engine: @unchecked Sendable {
         }
     }
 
+    private static func validProjectColor(_ value: Any?) -> Bool {
+        value is NSNull || (value as? String).map { $0.range(of: #"^#[0-9a-fA-F]{6}$"#, options: .regularExpression) != nil } == true
+    }
+
     private static func validProjectAreaToken(_ token: [String: Any], includesID: Bool) -> Bool {
         let fields: Set<String> = ["title", "status", "areaId", "areaTitle", "order", "rev", "revBy", "updatedAt"]
         guard Set(token.keys) == (includesID ? fields.union(["id"]) : fields),
@@ -17441,7 +17447,9 @@ private final class Engine: @unchecked Sendable {
 
     private func validateProjectAreaOptions(_ value: String, projectID: String) throws {
         guard let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
-              Set(options.keys) == Set(["revision", "project", "canEdit", "noAreaLabel", "areas"]),
+              Set(options.keys) == Set(["revision", "project", "canEdit", "noAreaLabel", "areas", "colors", "colorOverride"]),
+              Self.validProjectColor(options["colorOverride"]),
+              let colors = options["colors"] as? [String], !colors.isEmpty, colors.count <= 32, colors.allSatisfy({ Self.validProjectColor($0) }),
               let revision = options["revision"] as? String, !revision.isEmpty,
               Self.isBoolean(options["canEdit"]),
               let label = options["noAreaLabel"] as? String, !label.isEmpty,
@@ -19224,7 +19232,7 @@ private final class Engine: @unchecked Sendable {
               let request = envelope["request"] as? [String: Any], Self.validTrashItemsRestoreRequest(request),
               let prepared = envelope["prepared"] as? [String: Any],
               Set(prepared.keys) == Set(["version", "request", "scope", "effect", "deviceIdBefore", "deviceIdToInitialize", "updateAt", "result"]),
-              Self.isInteger(prepared["version"], equalTo: 1), Self.equalJSON(prepared["request"], request),
+              (Self.isInteger(prepared["version"], equalTo: 1) || Self.isInteger(prepared["version"], equalTo: 2)), Self.equalJSON(prepared["request"], request),
               let scope = prepared["scope"] as? [String: Any], Set(scope.keys) == Set(["tasks", "projects", "sections", "areas"]),
               ["tasks", "projects", "sections", "areas"].allSatisfy({ scope[$0] is [[String: Any]] }),
               let effect = prepared["effect"] as? [String: Any], Set(effect.keys) == Set(["tasks", "projects", "sections"]),
@@ -20961,7 +20969,7 @@ private final class Engine: @unchecked Sendable {
                   Set(input.keys) == Set(["request", "prepared"]),
                   let request = input["request"] as? [String: Any],
                   let prepared = input["prepared"] as? [String: Any],
-                  Self.isInteger(prepared["version"], equalTo: 1),
+                  (Self.isInteger(prepared["version"], equalTo: 1) || Self.isInteger(prepared["version"], equalTo: 2)),
                   let original = prepared["request"] as? [String: Any],
                   try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
                     == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
@@ -21156,7 +21164,7 @@ private final class Engine: @unchecked Sendable {
                   Set(input.keys) == Set(["request", "prepared"]),
                   let request = input["request"] as? [String: Any],
                   let prepared = input["prepared"] as? [String: Any],
-                  Self.isInteger(prepared["version"], equalTo: 1),
+                  (Self.isInteger(prepared["version"], equalTo: 1) || Self.isInteger(prepared["version"], equalTo: 2)),
                   let original = prepared["request"] as? [String: Any],
                   try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
                     == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
@@ -21174,7 +21182,7 @@ private final class Engine: @unchecked Sendable {
                   Set(input.keys) == Set(["request", "prepared"]),
                   let request = input["request"] as? [String: Any],
                   let prepared = input["prepared"] as? [String: Any],
-                  Self.isInteger(prepared["version"], equalTo: 1),
+                  (Self.isInteger(prepared["version"], equalTo: 1) || Self.isInteger(prepared["version"], equalTo: 2)),
                   let original = prepared["request"] as? [String: Any],
                   try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
                     == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
@@ -21214,7 +21222,7 @@ private final class Engine: @unchecked Sendable {
                   Set(input.keys) == Set(["request", "prepared"]),
                   let request = input["request"] as? [String: Any],
                   let prepared = input["prepared"] as? [String: Any],
-                  Self.isInteger(prepared["version"], equalTo: 1),
+                  (Self.isInteger(prepared["version"], equalTo: 1) || Self.isInteger(prepared["version"], equalTo: 2)),
                   let original = prepared["request"] as? [String: Any],
                   try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
                     == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
@@ -21232,7 +21240,7 @@ private final class Engine: @unchecked Sendable {
                   Set(input.keys) == Set(["request", "prepared"]),
                   let request = input["request"] as? [String: Any],
                   let prepared = input["prepared"] as? [String: Any],
-                  Self.isInteger(prepared["version"], equalTo: 1),
+                  (Self.isInteger(prepared["version"], equalTo: 1) || Self.isInteger(prepared["version"], equalTo: 2)),
                   let original = prepared["request"] as? [String: Any],
                   try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
                     == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
@@ -21293,7 +21301,7 @@ private final class Engine: @unchecked Sendable {
                   Set(prepared.keys) == (undo
                     ? Set(["version", "request", "delete", "scope", "effect", "deviceIdBefore", "deviceIdToInitialize", "updateAt", "result"])
                     : Set(["version", "request", "scope", "effect", "deviceIdBefore", "deviceIdToInitialize", "updateAt", "result"])),
-                  Self.isInteger(prepared["version"], equalTo: 1), Self.equalJSON(prepared["request"], request),
+                  (Self.isInteger(prepared["version"], equalTo: 1) || undo && Self.isInteger(prepared["version"], equalTo: 2)), Self.equalJSON(prepared["request"], request),
                   let scope = prepared["scope"] as? [String: Any],
                   Set(scope.keys) == (undo ? Set(["project", "tasks", "sections", "area", "linkedTasks"])
                     : Set(["project", "tasks", "sections"])),
@@ -21360,7 +21368,7 @@ private final class Engine: @unchecked Sendable {
                   let request = envelope["request"] as? [String: Any],
                   let prepared = envelope["prepared"] as? [String: Any],
                   Set(prepared.keys) == Set(["version", "request", "scope", "effect", "deviceIdBefore", "deviceIdToInitialize", "updateAt", "result"]),
-                  Self.isInteger(prepared["version"], equalTo: 1),
+                  (Self.isInteger(prepared["version"], equalTo: 1) || Self.isInteger(prepared["version"], equalTo: 2)),
                   Self.equalJSON(prepared["request"], request),
                   let scope = prepared["scope"] as? [String: Any],
                   Set(scope.keys) == Set(["project", "tasks", "sections", "area"]),
@@ -22796,7 +22804,8 @@ private final class Engine: @unchecked Sendable {
         if ["projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
-                  Set(input.keys) == Set(["requestId", "projectId", "areaId", "expected", "selectedArea"]),
+                  Set(input.keys) == Set(["requestId", "projectId", "areaId", "expected", "selectedArea"]).union(input["colorOverride"] == nil ? [] : ["colorOverride"]),
+                  (input["colorOverride"] == nil || Self.validProjectColor(input["colorOverride"])),
                   let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
                   let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
                   input["areaId"] is NSNull || (input["areaId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true,

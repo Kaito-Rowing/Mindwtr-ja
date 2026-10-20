@@ -644,6 +644,8 @@ export const ptOverrides: Record<string, string> = {
 
         // Projects
         'projects.title': 'Projetos',
+        'projects.useAreaColor': "Usar a cor da área",
+        'projects.colorSaveFailed': "Não foi possível salvar a cor.",
         'projects.activeSection': 'Projetos Ativos',
         'projects.noProjects': 'Nenhum projeto ainda.',
         'projects.noProjectsInArea': 'Não há projetos nesta área.',

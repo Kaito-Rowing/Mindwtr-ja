@@ -142,7 +142,7 @@ describe('project actions', () => {
             .toEqual({ selected: false, metadataChanged: false, fields: {}, order: undefined });
         expect(projectAreaSelection(source, { areaId: 'b' }, [source, target, tombstone], areas))
             .toEqual({ selected: true, metadataChanged: true,
-                fields: { areaId: 'b', areaTitle: 'Area B' }, order: 10 });
+                fields: { areaId: 'b', areaTitle: 'Area B', color: '#94a3b8' }, order: 10 });
         expect(projectAreaSelection(source, { areaId: 'b', order: 3 }, [source, target, tombstone], areas))
             .toMatchObject({ fields: { areaId: 'b', areaTitle: 'Area B' }, order: 3 });
         expect(projectAreaSelection(source, { areaId: undefined }, [source, target, tombstone], areas))

@@ -228,6 +228,7 @@ export type PreparedProjectStatus = {
 
 /** One frozen restore of a deleted Project and only its cascade-stamped children. */
 export type PreparedTrashProjectRestore = {
+    version?: 1 | 2;
     request: { requestId: string; projectId: string; projectRevision: string };
     scope: { project: Project; tasks: Task[]; sections: Section[]; area: Area | null };
     effect: { project: { before: Project; after: Project };
@@ -250,6 +251,7 @@ export type PreparedProjectDelete = {
 
 /** Frozen Undo reads current Task content and the confirmed Delete relationship proof. */
 export type PreparedProjectDeleteUndo = {
+    version?: 1 | 2;
     request: { requestId: string; deleteRequestId: string };
     delete: { request: PreparedProjectDelete['request']; prepared: PreparedProjectDelete & { version: 1 } };
     scope: { project: Project; tasks: Task[]; sections: Section[]; area: Area | null;
@@ -295,7 +297,8 @@ export type PreparedProjectDate = {
 
 /** One frozen Project Area assignment with its selected Area and destination-order witness. */
 export type PreparedProjectArea = {
-    scope: { project: Project; selectedArea: { id: string; name: string } | null; orderMax: number };
+    version?: 1 | 2;
+    scope: { project: Project; selectedArea: { id: string; name: string; color?: string | null } | null; orderMax: number };
     effect: { project: { before: Project; after: Project } };
     deviceIdBefore: string | null;
     deviceIdToInitialize: string | null;
@@ -388,6 +391,7 @@ export type PreparedPersonEdit = {
 
 /** Frozen final rows for a native Area create or legacy tombstone restoration. */
 export type PreparedAreaCreate = {
+    version?: 1 | 2;
     kind: 'fresh' | 'restored';
     scope: { area: Area | null; projects: Project[]; sections: Section[]; tasks: Task[] };
     effect: {
@@ -405,6 +409,7 @@ export type PreparedAreaCreate = {
 
 /** Frozen Area recolor and all linked Project rows the RN writer inspected. */
 export type PreparedAreaColor = {
+    version?: 1 | 2;
     scope: { area: Area; projects: Project[] };
     effect: { area: { before: Area; after: Area }; projects: Array<{ before: Project; after: Project }> };
     deviceIdBefore: string | null;
@@ -414,6 +419,7 @@ export type PreparedAreaColor = {
 
 /** Frozen live Area resolution inventory and complete linked-row witnesses for rename/merge. */
 export type PreparedAreaRename = {
+    version?: 1 | 2;
     scope: { areas: Area[]; projects: Project[]; tasks: Task[] };
     effect: {
         areas: Array<{ before: Area; after: Area }>;
@@ -436,6 +442,7 @@ export type PreparedAreaOrder = {
 
 /** Frozen native Area tombstone and directly linked detach rows. */
 export type PreparedAreaDelete = {
+    version?: 1 | 2;
     scope: { area: Area; tasks: Task[]; liveProjects: Project[] };
     effect: { area: { before: Area; after: Area }; tasks: Array<{ before: Task; after: Task }>;
         projects?: Array<{ before: Project; after: Project }> };
@@ -806,7 +813,7 @@ export interface TaskStore {
     commitPreparedProjectDuplicate: (input: PreparedProjectDuplicate) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectLifecycle: (input: PreparedProjectLifecycle, options?: Extract<PreparedChecklistWriteOptions, { authority: PreparedAreaAuthority }>) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDate: (input: PreparedProjectDate & { request: { projectId: string; field: 'startDate' | 'dueDate' | 'reviewAt'; value: string | null } }) => Promise<PreparedTaskEditResult>;
-    commitPreparedProjectArea: (input: PreparedProjectArea & { request: { projectId: string; areaId: string | null } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectArea: (input: PreparedProjectArea & { request: { projectId: string; areaId: string | null; colorOverride?: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionCreate: (input: PreparedProjectSectionCreate) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionRename: (input: PreparedProjectSectionRename & { request: {
         projectId: string; sectionId: string; title: string } }) => Promise<PreparedTaskEditResult>;

@@ -97,6 +97,7 @@ vi.mock('../../contexts/language-context', () => ({
 // the store is a plain selector over spies.
 const storeActions = vi.hoisted(() => ({
     _allProjects: [] as Project[],
+    _projectsById: new Map<string, Project>(),
     _allSections: [] as Section[],
     _allTasks: [] as Task[],
     addSection: vi.fn(),
@@ -332,6 +333,7 @@ const expandProjectDetails = (tree: ReturnType<typeof create>) => {
 
 beforeEach(() => {
     storeActions._allProjects = [];
+    storeActions._projectsById = new Map();
     storeActions._allSections = [];
     storeActions._allTasks = [];
     for (const action of Object.values(storeActions)) {
@@ -410,6 +412,27 @@ describe('ProjectDetailModal safe area handling', () => {
 });
 
 describe('ProjectDetailModal progressive disclosure', () => {
+    it('retries the exact color intent after save failure and sends an explicit null reset', async () => {
+        const selected = project('active');
+        storeActions._allProjects = [selected];
+        storeActions._projectsById.set(selected.id, selected);
+        storeActions.updateProject.mockResolvedValueOnce({ success: false }).mockResolvedValue({ success: true });
+        const onProjectChange = vi.fn();
+        let tree!: ReturnType<typeof create>;
+        act(() => { tree = create(<ProjectDetailModal {...createProjectDetailModalProps({ project: selected, onProjectChange })} />); });
+        expandProjectDetails(tree);
+        await act(async () => { tree.root.findByProps({ accessibilityLabel: 'Project color: #3b82f6' }).props.onPress(); });
+        expect(onProjectChange).not.toHaveBeenCalled();
+        expect(tree.root.findByProps({ accessibilityRole: 'alert' })).toBeTruthy();
+        await act(async () => { tree.root.findByProps({ accessibilityLabel: 'common.retry' }).props.onPress(); });
+        expect(storeActions.updateProject.mock.calls.slice(0, 2)).toEqual([
+            [selected.id, { colorOverride: '#3b82f6' }], [selected.id, { colorOverride: '#3b82f6' }],
+        ]);
+        expect(onProjectChange).toHaveBeenCalledWith(expect.objectContaining({ colorOverride: '#3b82f6' }));
+        await act(async () => { tree.root.findByProps({ accessibilityLabel: 'Use Area color' }).props.onPress(); });
+        expect(storeActions.updateProject).toHaveBeenLastCalledWith(selected.id, { colorOverride: null });
+    });
+
     it('keeps tasks near the top with a compact collapsed project summary', () => {
         let tree!: ReturnType<typeof create>;
 

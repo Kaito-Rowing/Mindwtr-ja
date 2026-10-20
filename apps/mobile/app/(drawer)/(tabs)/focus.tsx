@@ -1,3 +1,4 @@
+import { getProjectAccentColor } from '@mindwtr/core';
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { useStartupScreenReady } from '@/hooks/use-startup-screen-ready';
 import { workspaceSessionStorage as AsyncStorage } from '@/lib/workspace-session-storage';
@@ -1239,7 +1240,7 @@ export default function FocusScreen() {
             <View
               style={[
                 styles.projectReviewIcon,
-                { backgroundColor: tc.filterBg, borderColor: project.color || tc.border },
+                { backgroundColor: tc.filterBg, borderColor: getProjectAccentColor(project, areaById) || tc.border },
               ]}
             >
               <Folder size={18} color={tc.text} />

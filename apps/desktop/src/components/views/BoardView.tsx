@@ -1,3 +1,4 @@
+import { getProjectAccentColor } from '@mindwtr/core';
 import React from 'react';
 import {
     DndContext,
@@ -637,7 +638,7 @@ export function BoardView() {
                             projectOptions={sortedProjects.map((project) => ({
                                 id: project.id,
                                 title: project.title,
-                                dotColor: (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined,
+                                dotColor: getProjectAccentColor(project, areaById),
                             }))}
                             selectedDuePreset={selectedDuePreset}
                             selectedProjectIds={selectedProjectIds}
