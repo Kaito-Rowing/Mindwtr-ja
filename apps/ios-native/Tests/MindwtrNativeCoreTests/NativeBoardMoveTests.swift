@@ -359,6 +359,57 @@ final class NativeBoardMoveTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 
+    private func boardAllTaskRows() throws -> [[String: Any]] {
+        let sqlite = try SQLiteBridge(url: database); defer { sqlite.close() }
+        return try XCTUnwrap(NativeJSON.jsonObject(with: Data(sqlite.execute("SELECT * FROM tasks ORDER BY id").utf8)) as? [[String: Any]])
+    }
+
+    func testPreparedBoardCompletionRecurringChildExactRetryColdReceiptAndUndo() async throws {
+        let id = try await seedBoardCompletionFixture()
+        let seed = try SQLiteBridge(url: database)
+        _ = try seed.execute("UPDATE tasks SET recurrence = ?, dueDate = ?, startTime = NULL WHERE id = ?",
+            parametersJSON: json([json(["rule": "daily", "strategy": "after-completion", "seriesId": id]), "2026-10-20", id]))
+        seed.close()
+        let faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        let request = try await boardCompletionRequest(core, taskID: id), before = try boardAllTaskRows()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected recurring Board completion COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("taskCompletion", argumentsJSON: json([json(request)])) }
+        let frozen = try completionJournalEnvelope(), prepared = try XCTUnwrap(frozen.envelope["prepared"] as? [String: Any])
+        let checklist = try XCTUnwrap(prepared["checklist"] as? [String: Any])
+        let effect = try XCTUnwrap(checklist["effect"] as? [String: Any])
+        let rows = try XCTUnwrap(effect["tasks"] as? [[String: Any]])
+        let children = rows.filter { $0["before"] is NSNull }
+        XCTAssertEqual(children.count, 1)
+        let child = try XCTUnwrap(children.first?["after"] as? [String: Any]), childID = try XCTUnwrap(child["id"] as? String)
+        XCTAssertNotEqual(childID, id)
+        XCTAssertEqual(try json(boardAllTaskRows()), try json(before))
+        faults.beforeSQL = nil
+        faults.journalRemove = { throw HostFailure("Injected recurring Board completion lost retirement") }
+        await expectFailure("lost retirement") { _ = try await core.retryPending() }
+        let landed = try boardAllTaskRows()
+        XCTAssertEqual(landed.count, before.count + 1)
+        XCTAssertEqual(landed.filter { $0["id"] as? String == childID }.count, 1)
+        XCTAssertEqual(try storedTask(id)["status"] as? String, "done")
+        XCTAssertEqual(try completionJournalEnvelope().encoded, frozen.encoded)
+        await core.close()
+        let replay = host(), startup = try object(await replay.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["requestId"] as? String, request["requestId"] as? String)
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(XCTUnwrap(prepared["result"])))
+        XCTAssertEqual(try json(boardAllTaskRows()), try json(landed))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let undo: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "completionRequestId": try XCTUnwrap(request["requestId"])]
+        _ = try await replay.call("taskCompletionUndo", argumentsJSON: json([json(undo)]))
+        XCTAssertEqual(try storedTask(id)["status"] as? String, "next")
+        XCTAssertNotNil(try storedTask(childID)["deletedAt"] as? String)
+        let undone = try boardAllTaskRows()
+        XCTAssertEqual(undone.map { $0["id"] as? String }, landed.map { $0["id"] as? String })
+        for row in before where row["id"] as? String != id {
+            XCTAssertEqual(try json(storedTask(XCTUnwrap(row["id"] as? String))), try json(row))
+        }
+    }
+
     func testPreparedBoardCompletionColdOriginUUIDRetirementAndUndo() async throws {
         for afterCommit in [false, true] {
             let id = try await seedBoardCompletionFixture(), faults = HostIOFaults(), core = host(faults)
@@ -985,6 +1036,17 @@ final class NativeBoardMoveTests: XCTestCase {
         await expectFailure("INVALID_INPUT") {
             _ = try await core.call("logLine", argumentsJSON: json([moveMessage, json(context)]))
         }
+        let doneMessage = "Native iOS Board Done cross-drop submitted"
+        let doneContext = ["releaseCheck": "v1.3.7/ios-board-done-cross-drop"]
+        let doneResult = try await core.call("logLine", argumentsJSON: json([doneMessage, json(doneContext)]))
+        XCTAssertEqual(doneResult, "{}")
+        for extra in ["nonce", "taskId", "text", "status", "filters", "geometry", "outcome"] {
+            var forged = doneContext; forged[extra] = extra == "outcome" ? "saved" : "private"
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("logLine", argumentsJSON: json([doneMessage, json(forged)])) }
+        }
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("logLine", argumentsJSON: json([doneMessage, json(moveContext)]))
+        }
         let stageMessage = "Native iOS Board drag stage", stageTag = "v1.3.5/ios-board-drag-stage"
         let stageReasons = [
             "begin": ["scene", "admission", "geometry-missing", "geometry-ineligible", "ready"],
@@ -1087,6 +1149,10 @@ final class NativeBoardMoveTests: XCTestCase {
         XCTAssertEqual(crossColumn.count, 1)
         XCTAssertEqual(crossColumn.first?["scope"] as? String, "native-ios")
         XCTAssertEqual(try json(XCTUnwrap(crossColumn.first?["context"])), try json(moveContext))
+        let doneCross = lines.filter { $0["message"] as? String == doneMessage }
+        XCTAssertEqual(doneCross.count, 1)
+        XCTAssertEqual(doneCross.first?["scope"] as? String, "native-ios")
+        XCTAssertEqual(try json(XCTUnwrap(doneCross.first?["context"])), try json(doneContext))
         XCTAssertFalse(lines.contains { $0["message"] as? String == "Native iOS Board move saved" })
         let stages = lines.filter { $0["message"] as? String == stageMessage }
         XCTAssertEqual(stages.count, stageContexts.count)

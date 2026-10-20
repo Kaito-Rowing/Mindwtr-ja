@@ -27,15 +27,16 @@ struct BoardDragMeasurements: Equatable {
     }
 
     func moveTarget(at point: CGPoint, status: String, capture: BoardOrderDragCapture) -> BoardDropTarget? {
-        guard capture.moveAllowed, ["inbox", "next", "waiting", "someday"].contains(capture.status),
-              ["inbox", "next", "waiting", "someday"].contains(status), status != capture.status,
+        guard ["inbox", "next", "waiting", "someday", "done"].contains(capture.status),
+              status != capture.status,
+              (status == "done" ? capture.completionAllowed : capture.moveAllowed && ["inbox", "next", "waiting", "someday"].contains(status)),
               point.x.isFinite, point.y.isFinite, viewports.count == 1,
               geometry(for: capture)?.canBegin(capture) == true else { return nil }
         let areas = columns.filter { $0.status == status }
         guard areas.count == 1, BoardDragGeometry.valid(viewports[0]), BoardDragGeometry.valid(areas[0].frame),
               CGRect(origin: .zero, size: areas[0].frame.size).contains(point),
               viewports[0].contains(CGPoint(x: areas[0].frame.minX + point.x, y: areas[0].frame.minY + point.y)) else { return nil }
-        return .move(status: status)
+        return status == "done" ? .complete : .move(status: status)
     }
 }
 
@@ -47,6 +48,7 @@ struct BoardDropPosition: Equatable {
 enum BoardDropTarget: Equatable {
     case order(BoardDropPosition)
     case move(status: String)
+    case complete
 }
 
 struct BoardDragGeometry: Equatable {
@@ -79,7 +81,7 @@ struct BoardDragGeometry: Equatable {
 
     func canBegin(_ capture: BoardOrderDragCapture) -> Bool {
         guard let visible = visibleRows(capture) else { return false }
-        return visible.count > 1 || capture.moveAllowed
+        return visible.count > 1 || capture.moveAllowed || capture.completionAllowed
     }
 
     func position(at point: CGPoint, capture: BoardOrderDragCapture) -> BoardDropPosition? {
@@ -127,7 +129,8 @@ struct BoardDragState {
 
     func reusableCapture(matching candidate: BoardOrderDragCapture, measurements: BoardDragMeasurements) -> BoardOrderDragCapture? {
         guard claim == nil, let capture, self.measurements == measurements,
-              capture.hostID == candidate.hostID, capture.moveAllowed == candidate.moveAllowed, capture.generation == candidate.generation,
+              capture.hostID == candidate.hostID, capture.moveAllowed == candidate.moveAllowed,
+              capture.completionAllowed == candidate.completionAllowed, capture.generation == candidate.generation,
               capture.taskID.utf8.elementsEqual(candidate.taskID.utf8),
               capture.status.utf8.elementsEqual(candidate.status.utf8),
               capture.displayedJSON.utf8.elementsEqual(candidate.displayedJSON.utf8),
@@ -335,7 +338,8 @@ struct BoardScreen: View {
                 .contentShape(Rectangle())
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("board-drop-" + status)
-                .background(dropIndicator == .move(status: status) ? palette.tint.opacity(0.12) : Color.clear)
+                .background((dropIndicator == .move(status: status) || status == "done" && dropIndicator == .complete)
+                    ? palette.tint.opacity(0.12) : Color.clear)
                 .coordinateSpace(name: "board-drag-" + status)
                 .background {
                     GeometryReader { geometry in
@@ -512,7 +516,9 @@ struct BoardScreen: View {
     }
 
     private func sourceCurrent(_ capture: BoardOrderDragCapture, status: String) -> Bool {
-        capture.status == status ? model.boardOrderDragIsCurrent(capture) : model.boardMoveDragIsCurrent(capture, status: status)
+        if capture.status == status { return model.boardOrderDragIsCurrent(capture) }
+        if status == "done" { return model.boardCompletionDragIsCurrent(capture) }
+        return model.boardMoveDragIsCurrent(capture, status: status)
     }
 
     private func acceptsDrag(status: String) -> Bool {
@@ -524,7 +530,7 @@ struct BoardScreen: View {
     private func dragAdmissionReason(status: String) -> String {
         guard scenePhase == .active else { return "scene" }
         guard let capture = drag.capture else { return "capture" }
-        guard capture.status == status || ["inbox", "next", "waiting", "someday"].contains(status) else { return "column" }
+        guard ["inbox", "next", "waiting", "someday", "done"].contains(status) else { return "column" }
         guard drag.claim == nil else { return "claimed" }
         guard sourceCurrent(capture, status: status) else { return "stale" }
         guard dragMeasurements == drag.measurements else { return "geometry" }
@@ -570,6 +576,8 @@ struct BoardScreen: View {
                     submitted = model.orderBoardCard(capture, afterID: position.afterID) { drag.consume(claim, data: data) }
                 case .move(let destination):
                     submitted = model.moveBoardCard(capture, status: destination) { drag.consume(claim, data: data) }
+                case .complete:
+                    submitted = model.completeBoardCard(capture) { drag.consume(claim, data: data) }
                 }
                 if submitted { endInput() } else { drag.retire(claim) }
                 traceDrag(.load, reason: submitted ? "ready" : "retain-rejected", attempt: diagnosticAttempt)

@@ -12,6 +12,7 @@ struct BoardOrderDragCapture: Equatable {
     let generation: Int
     let hostID: ObjectIdentifier
     let moveAllowed: Bool
+    let completionAllowed: Bool
     let taskID: String
     let status: String
     let displayedJSON: String
@@ -1975,6 +1976,8 @@ final class CoreModel: ObservableObject {
     private var boardFilters: CoreObject = [:]
     private var boardPendingEdit: CoreObject?
     @Published private var boardActionRequest: String?
+    private var boardActionHost: CoreHost?
+    private var boardActionForeground = 0
     #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
     private var boardMoveFixtureConfigured = false
     #endif
@@ -5648,6 +5651,7 @@ final class CoreModel: ObservableObject {
                       !result.text("id").isEmpty, result.text("id").utf16.count <= 500 else { throw CocoaError(.coderReadCorrupt) }
                 selectedSurface = .board
                 taskCompletionRequest = nil; taskActionUndoRequest = nil; retryNeeded = false
+                boardCompletionOwner = nil; boardCompletionUndoOwner = nil; boardCompletionNoticeHost = nil
                 if recovery.text("method") == "taskCompletionCommit" {
                     guard validBoardCompletionResult(result) else { throw CocoaError(.coderReadCorrupt) }
                     taskActionRequestID = requestID
@@ -17426,25 +17430,31 @@ final class CoreModel: ObservableObject {
         await performBoardAction(request)
     }
 
-    func boardMoveDragDestinations(_ displayed: CoreObject, column: CoreObject, filters: CoreObject) -> [CoreObject] {
+    func boardDragSnapshotIsCurrent(_ displayed: CoreObject, column: CoreObject, filters: CoreObject) -> Bool {
         let row = displayed.object("row"), status = column.text("status")
-        guard !appLock.concealed, taskCompletionRequest == nil, taskActionUndoRequest == nil,
-              !referenceProjectNextActionPending, ["inbox", "next", "waiting", "someday"].contains(status),
+        guard !appLock.concealed, !Task.isCancelled, UIApplication.shared.applicationState == .active,
+              taskCompletionRequest == nil, taskActionUndoRequest == nil,
+              !referenceProjectNextActionPending, ["inbox", "next", "waiting", "someday", "done"].contains(status),
               row.text("status").utf8.elementsEqual(status.utf8),
               !row.text("id").isEmpty, row.text("id").utf16.count <= 500,
               !row.text("taskRevision").isEmpty, row.text("taskRevision").utf16.count <= 4096,
               !filters.isEmpty, let frozenFilters = try? json(filters),
               let currentFilters = try? json(boardView.object("filters")),
-              frozenFilters.utf8.elementsEqual(currentFilters.utf8) else { return [] }
+              frozenFilters.utf8.elementsEqual(currentFilters.utf8) else { return false }
         let columns = boardView.objects("columns").filter { $0.text("status").utf8.elementsEqual(status.utf8) }
-        guard columns.count == 1 else { return [] }
+        guard columns.count == 1 else { return false }
         let ids = column.objects("cards").map { $0.object("row").text("id") }
         let currentIDs = columns[0].objects("cards").map { $0.object("row").text("id") }
         let current = columns[0].objects("cards").filter { $0.object("row").text("id").utf8.elementsEqual(row.text("id").utf8) }
         guard !ids.contains(""), Set(ids).count == ids.count, ids.count == currentIDs.count,
               zip(ids, currentIDs).allSatisfy({ $0.0.utf8.elementsEqual($0.1.utf8) }), current.count == 1,
               let frozenCard = try? json(displayed), let currentCard = try? json(current[0]),
-              frozenCard.utf8.elementsEqual(currentCard.utf8) else { return [] }
+              frozenCard.utf8.elementsEqual(currentCard.utf8) else { return false }
+        return true
+    }
+
+    func boardMoveDragDestinations(_ displayed: CoreObject, column: CoreObject, filters: CoreObject) -> [CoreObject] {
+        guard boardDragSnapshotIsCurrent(displayed, column: column, filters: filters) else { return [] }
         return boardMoveDestinations(displayed).filter { destination in
             boardView.objects("columns").filter { $0.text("status") == destination.text("status") }.count == 1
         }
@@ -17453,12 +17463,14 @@ final class CoreModel: ObservableObject {
     func boardDragAvailable(_ displayed: CoreObject, column: CoreObject, filters: CoreObject) -> Bool {
         boardOrderActions(displayed, column: column, filters: filters).count == 2
             || !boardMoveDragDestinations(displayed, column: column, filters: filters).isEmpty
+            || boardDragSnapshotIsCurrent(displayed, column: column, filters: filters) && boardCardCanComplete(displayed)
     }
 
     func captureBoardDrag(_ displayed: CoreObject, column: CoreObject, filters: CoreObject) -> BoardOrderDragCapture? {
         let moveAllowed = !boardMoveDragDestinations(displayed, column: column, filters: filters).isEmpty
+        let completionAllowed = boardDragSnapshotIsCurrent(displayed, column: column, filters: filters) && boardCardCanComplete(displayed)
         guard let host, !appLock.concealed,
-              moveAllowed || boardOrderActions(displayed, column: column, filters: filters).count == 2,
+              moveAllowed || completionAllowed || boardOrderActions(displayed, column: column, filters: filters).count == 2,
               let displayedJSON = try? json(displayed), let columnJSON = try? json(column),
               let filtersJSON = try? json(filters) else { return nil }
         let cards = column.objects("cards"), ids = cards.map { $0.object("row").text("id") }
@@ -17469,7 +17481,8 @@ final class CoreModel: ObservableObject {
                   boardOrderActions(item, column: column, filters: filters).count == 2 else { return nil }
             return item.object("row").text("id")
         }
-        return BoardOrderDragCapture(nonce: UUID().uuidString, generation: boardGeneration, hostID: ObjectIdentifier(host), moveAllowed: moveAllowed,
+        return BoardOrderDragCapture(nonce: UUID().uuidString, generation: boardGeneration, hostID: ObjectIdentifier(host),
+            moveAllowed: moveAllowed, completionAllowed: completionAllowed,
             taskID: displayed.object("row").text("id"), status: column.text("status"),
             displayedJSON: displayedJSON, columnJSON: columnJSON, filtersJSON: filtersJSON, ids: ids, headID: headID)
     }
@@ -17491,6 +17504,34 @@ final class CoreModel: ObservableObject {
         return boardMoveDragDestinations(displayed, column: column, filters: filters).contains { $0.text("status") == status }
     }
 
+    func boardCompletionDragIsCurrent(_ capture: BoardOrderDragCapture) -> Bool {
+        guard let host, capture.hostID == ObjectIdentifier(host), capture.generation == boardGeneration,
+              capture.completionAllowed, let displayed = try? decode(capture.displayedJSON),
+              let column = try? decode(capture.columnJSON), let filters = try? decode(capture.filtersJSON),
+              capture.taskID.utf8.elementsEqual(displayed.object("row").text("id").utf8),
+              capture.status.utf8.elementsEqual(column.text("status").utf8) else { return false }
+        return boardDragSnapshotIsCurrent(displayed, column: column, filters: filters) && boardCardCanComplete(displayed)
+            && boardView.objects("columns").filter { $0.text("status") == "done" }.count == 1
+    }
+
+    @discardableResult
+    func completeBoardCard(_ capture: BoardOrderDragCapture, consume: () -> Bool) -> Bool {
+        let requestID = UUID().uuidString.lowercased()
+        guard boardCompletionDragIsCurrent(capture), let host,
+              let displayed = try? decode(capture.displayedJSON),
+              let request = try? json(["id": capture.taskID, "requestId": requestID,
+                  "taskRevision": displayed.object("row").text("taskRevision"), "source": "board"]),
+              request.utf8.count <= 4096, consume() else { return false }
+        let owner = BoardCompletionOwner(host: host, request: request, requestID: requestID, foreground: foregroundSyncGeneration)
+        retainTaskCompletion(request, requestID: requestID, boardOwner: owner)
+        Task {
+            _ = try? await host.call("logLine", argumentsJSON: json([
+                "Native iOS Board Done cross-drop submitted", #"{"releaseCheck":"v1.3.7/ios-board-done-cross-drop"}"#]))
+            await runTaskCompletion(request, source: "board", boardOwner: owner)
+        }
+        return true
+    }
+
     /// Consume the gesture and retain its exact Move before any asynchronous work.
     @discardableResult
     func moveBoardCard(_ capture: BoardOrderDragCapture, status: String, consume: () -> Bool) -> Bool {
@@ -17501,10 +17542,12 @@ final class CoreModel: ObservableObject {
                 "taskRevision": displayed.object("row").text("taskRevision"), "filters": filters]]), consume() else { return false }
         retainBoardAction(request)
         let submittedHost = host
+        let fromDone = capture.status == "done"
         Task {
             // Submission is separate from the existing durable Move acknowledgement.
             _ = try? await submittedHost?.call("logLine", argumentsJSON: json([
-                "Native iOS Board cross-column drag submitted", #"{"releaseCheck":"v1.3.7/ios-board-cross-column-drag"}"#]))
+                fromDone ? "Native iOS Board Done cross-drop submitted" : "Native iOS Board cross-column drag submitted",
+                fromDone ? #"{"releaseCheck":"v1.3.7/ios-board-done-cross-drop"}"# : #"{"releaseCheck":"v1.3.7/ios-board-cross-column-drag"}"#]))
             await runBoardAction(request)
         }
         return true
@@ -17550,6 +17593,8 @@ final class CoreModel: ObservableObject {
 
     private func retainBoardAction(_ request: String) {
         boardActionRequest = request
+        boardActionHost = host
+        boardActionForeground = foregroundSyncGeneration
         busy = true
         error = nil
     }
@@ -17560,31 +17605,55 @@ final class CoreModel: ObservableObject {
     }
 
     private func runBoardAction(_ request: String) async {
+        guard let actionHost = boardActionHost, boardActionRequest?.utf8.elementsEqual(request.utf8) == true else { return }
+        guard host === actionHost else {
+            boardActionRequest = nil; boardActionHost = nil
+            return
+        }
+        let foreground = boardActionForeground
         var boardTaskOpened = false
+        var dispatched = false
         defer {
-            finishOperation()
-            if boardTaskOpened { Task { await readTaskView() } }
+            if boardActionHost === actionHost,
+               boardActionRequest?.utf8.elementsEqual(request.utf8) == true || boardActionRequest == nil {
+                if host === actionHost { finishOperation() }
+                if boardActionRequest == nil { boardActionHost = nil }
+                if boardTaskOpened, host === actionHost { Task { await readTaskView() } }
+            }
         }
         let result: CoreObject
         do {
-            result = try await query("boardAction", [request])
+            result = try await query("boardAction", [request], beforeDispatch: {
+                guard self.host === actionHost, self.boardActionHost === actionHost, self.boardActionRequest?.utf8.elementsEqual(request.utf8) == true,
+                      self.foregroundSyncGeneration == foreground, !self.appLock.concealed, !Task.isCancelled,
+                      UIApplication.shared.applicationState == .active, self.selectedSurface == .board else { return false }
+                dispatched = true
+                return true
+            })
         } catch {
+            guard boardActionHost === actionHost, boardActionRequest?.utf8.elementsEqual(request.utf8) == true else { return }
             // Only the host's typed, cleaned-up rejection proves no write is owed.
             // Every other failure retains this exact request and its private journal.
-            if isDefiniteRejection(error) { boardActionRequest = nil }
+            if !dispatched || isDefiniteRejection(error) { boardActionRequest = nil }
+            guard host === actionHost else { return }
             retryNeeded = boardActionPending
-            self.error = error.localizedDescription
+            if foregroundSyncGeneration == foreground, !appLock.concealed,
+               UIApplication.shared.applicationState == .active { self.error = error.localizedDescription }
             return
         }
+        guard host === actionHost, boardActionHost === actionHost, boardActionRequest?.utf8.elementsEqual(request.utf8) == true else { return }
         boardTaskOpened = await acknowledgeBoardAction(result)
     }
 
-    private func acknowledgeBoardAction(_ result: CoreObject) async -> Bool {
+    private func acknowledgeBoardAction(_ result: CoreObject, foreground: Int? = nil) async -> Bool {
+        let actionHost = host
+        let presentation = foreground ?? boardActionForeground
         // Only an acknowledged Move from this exact displayed Done row invalidates its completion notice.
         if selectedSurface == .board, result.flag("changed"), taskActionUndoRequest == nil,
            let request = boardActionRequest, let action = try? decode(request).object("action"),
            action.text("type") == "moveCard", !action.text("taskId").isEmpty,
            taskActionNotice.text("operation") == "completion",
+           taskActionNotice.text("source") != "board" || boardCompletionNoticeHost === actionHost,
            taskActionNotice.text("id").utf8.elementsEqual(action.text("taskId").utf8),
            boardView.objects("columns").contains(where: { column in
                column.objects("cards").contains(where: {
@@ -17595,14 +17664,20 @@ final class CoreModel: ObservableObject {
                })
            }) {
             taskActionNotice = [:]
+            boardCompletionNoticeHost = nil
         }
         boardActionRequest = nil
         retryNeeded = false
         error = nil
         // Navigation is blocked while the command is pending. Still never route
         // an acknowledgement onto a different surface if that state has changed.
-        guard selectedSurface == .board else { return false }
-        do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+        func warm() -> Bool {
+            host === actionHost && selectedSurface == .board && foregroundSyncGeneration == presentation
+                && !appLock.concealed && !Task.isCancelled && UIApplication.shared.applicationState == .active
+        }
+        guard warm() else { return false }
+        do { try await readSelectedSurface() } catch { if warm() { self.error = error.localizedDescription } }
+        guard warm() else { return false }
         return presentAcknowledgedBoardTask(result)
     }
 
@@ -29964,6 +30039,20 @@ final class CoreModel: ObservableObject {
     private var taskActionRequestID: String?
     private var taskActionUndoRequest: String?
     private var taskCompletionRequest: String?
+    private struct BoardCompletionOwner {
+        let host: CoreHost
+        let request: String
+        let requestID: String
+        let foreground: Int
+    }
+    private var boardCompletionOwner: BoardCompletionOwner?
+    private var boardCompletionNoticeHost: CoreHost?
+    private struct BoardCompletionUndoOwner {
+        let host: CoreHost
+        let request: String
+        let completionRequestID: String
+    }
+    private var boardCompletionUndoOwner: BoardCompletionUndoOwner?
     private var taskActionNoticeGeneration = 0
     private var taskActionCompleteCancellation = false
 
@@ -29985,6 +30074,7 @@ final class CoreModel: ObservableObject {
         taskActionCompleteCancellation = operation == "cancel" && completeCancellation
         var presentation: CoreObject = ["requestId": requestID, "id": result.text("id"), "operation": operation]
         if let source { presentation["source"] = source }
+        boardCompletionNoticeHost = source == "board" && operation == "completion" ? host : nil
         showTaskActionNotice(notice.merging(presentation) { _, new in new })
     }
 
@@ -29996,14 +30086,38 @@ final class CoreModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 5_200_000_000)
             if taskActionNoticeGeneration == generation && taskActionUndoRequest == nil {
                 taskActionNotice = [:]
+                boardCompletionNoticeHost = nil
             }
         }
+    }
+
+    private func boardCompletionUndoOwned(_ owner: BoardCompletionUndoOwner) -> Bool {
+        boardCompletionUndoOwner?.host === owner.host && boardCompletionUndoOwner?.request.utf8.elementsEqual(owner.request.utf8) == true
+            && boardCompletionUndoOwner?.completionRequestID == owner.completionRequestID
+    }
+
+    private func boardCompletionUndoPending(_ owner: BoardCompletionUndoOwner) -> Bool {
+        boardCompletionUndoOwned(owner) && host === owner.host && taskActionUndoRequest?.utf8.elementsEqual(owner.request.utf8) == true
+            && taskActionNotice.text("source") == "board" && taskActionNotice.text("operation") == "completion"
+            && taskActionNotice.text("requestId") == owner.completionRequestID
+    }
+
+    private func boardCompletionUndoWarm(_ owner: BoardCompletionUndoOwner, foreground: Int) -> Bool {
+        boardCompletionUndoOwned(owner) && host === owner.host && selectedSurface == .board
+            && foregroundSyncGeneration == foreground && !Task.isCancelled && !appLock.concealed
+            && UIApplication.shared.applicationState == .active && !taskPresented && !capturePresented
     }
 
     func undoTaskAction() async {
         guard !busy, !retryNeeded, !taskPresented, !capturePresented,
               archiveBulkDeleteConfirmation.isEmpty,
               !referenceProjectNextActionPending, taskActionNotice.flag("undoEnabled"), taskActionUndoRequest == nil else { return }
+        let boardUndo = taskActionNotice.text("source") == "board" && taskActionNotice.text("operation") == "completion"
+        let boardHost = boardCompletionNoticeHost, boardForeground = foregroundSyncGeneration
+        if boardUndo {
+            guard let boardHost, host === boardHost, selectedSurface == .board, !appLock.concealed,
+                  !Task.isCancelled, UIApplication.shared.applicationState == .active else { return }
+        }
         let inboxUndo = taskActionNotice.text("source") == "inbox"
         let inboxOwner = inboxBulkNoticeHost
         let inboxSelection = inboxSelectionGeneration, inboxForeground = foregroundSyncGeneration, inboxSurface = selectedSurface
@@ -30019,7 +30133,16 @@ final class CoreModel: ObservableObject {
         }
         busy = true
         error = nil
-        defer { if !inboxUndo || host === inboxOwner { finishOperation() } }
+        var boardAttempt: BoardCompletionUndoOwner?
+        defer {
+            if let owner = boardAttempt {
+                if boardCompletionUndoOwned(owner) {
+                    if host === owner.host { finishOperation() }
+                    if taskActionUndoRequest == nil { boardCompletionUndoOwner = nil }
+                }
+            } else if !inboxUndo || host === inboxOwner { finishOperation() }
+        }
+        var boardDispatched = false
         var inboxDispatched = false
         var inboxAttemptRequest: String?
         do {
@@ -30031,8 +30154,19 @@ final class CoreModel: ObservableObject {
             let request = try json(fields)
             if inboxUndo { inboxAttemptRequest = request }
             taskActionUndoRequest = request
+            if boardUndo, let boardHost {
+                let owner = BoardCompletionUndoOwner(host: boardHost, request: request,
+                    completionRequestID: taskActionNotice.text("requestId"))
+                boardAttempt = owner; boardCompletionUndoOwner = owner
+            }
             if let inboxOwner, inboxUndo { inboxBulkUndoOwner = (inboxOwner, request) }
             let result = try await query(taskActionUndoMethod, [request], beforeDispatch: {
+                if let owner = boardAttempt {
+                    guard self.boardCompletionUndoPending(owner),
+                          self.boardCompletionUndoWarm(owner, foreground: boardForeground) else { return false }
+                    boardDispatched = true
+                    return true
+                }
                 guard inboxUndo else { return true }
                 let admitted = self.host === inboxOwner && !self.appLock.concealed
                     && UIApplication.shared.applicationState == .active && !Task.isCancelled
@@ -30048,14 +30182,32 @@ final class CoreModel: ObservableObject {
                 guard inboxBulkUndoOwner?.host === inboxOwner,
                       taskActionUndoRequest?.utf8.elementsEqual(request.utf8) == true else { return }
             }
-            if taskActionNotice.text("source") == "board" { selectedSurface = .board }
-            let warmInbox = !inboxUndo || (host === inboxOwner && selectedSurface == inboxSurface
+            if let owner = boardAttempt { guard boardCompletionUndoPending(owner) else { return } }
+            let warmBoard = boardAttempt.map { boardCompletionUndoWarm($0, foreground: boardForeground) } ?? true
+            let warmInbox = warmBoard && (!inboxUndo || (host === inboxOwner && selectedSurface == inboxSurface
                 && inboxSelectionGeneration == inboxSelection && foregroundSyncGeneration == inboxForeground
-                && !Task.isCancelled && !appLock.concealed && UIApplication.shared.applicationState == .active)
+                && !Task.isCancelled && !appLock.concealed && UIApplication.shared.applicationState == .active))
             try acknowledgeTaskActionUndo(result, inboxWarm: warmInbox)
             guard warmInbox else { return }
-            do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+            do { try await readSelectedSurface() } catch {
+                if boardAttempt.map({ boardCompletionUndoWarm($0, foreground: boardForeground) }) ?? true {
+                    self.error = error.localizedDescription
+                }
+            }
         } catch {
+            if let owner = boardAttempt {
+                guard boardCompletionUndoOwned(owner), taskActionUndoRequest?.utf8.elementsEqual(owner.request.utf8) == true,
+                      taskActionNotice.text("requestId") == owner.completionRequestID else { return }
+                if !boardDispatched || isDefiniteRejection(error) {
+                    taskActionUndoRequest = nil
+                    taskActionNotice = [:]
+                    boardCompletionNoticeHost = nil
+                }
+                guard host === owner.host else { return }
+                retryNeeded = taskActionUndoRequest != nil
+                if boardCompletionUndoWarm(owner, foreground: boardForeground) { self.error = error.localizedDescription }
+                return
+            }
             if inboxUndo, !inboxDispatched, let request = inboxAttemptRequest,
                inboxBulkUndoOwner?.host === inboxOwner,
                inboxBulkUndoOwner?.request.utf8.elementsEqual(request.utf8) == true,
@@ -30107,7 +30259,8 @@ final class CoreModel: ObservableObject {
                 : result.text("id") == taskActionNotice.text("id")
             guard idMatches else { throw CocoaError(.coderReadCorrupt) }
             if taskActionNotice.text("source") == "board" {
-                guard Set(result.keys) == Set(["id"]) else { throw CocoaError(.coderReadCorrupt) }
+                guard let owner = boardCompletionUndoOwner, boardCompletionUndoPending(owner),
+                      Set(result.keys) == Set(["id"]) else { throw CocoaError(.coderReadCorrupt) }
             }
         }
         if ["done", "archive"].contains(taskActionNotice.text("source")) { historyError = nil }
@@ -30118,6 +30271,7 @@ final class CoreModel: ObservableObject {
         }
         taskActionUndoRequest = nil
         taskActionNotice = [:]
+        boardCompletionNoticeHost = nil
         if !inboxUndo || (inboxWarm && host === inboxOwner) { retryNeeded = false; error = nil }
     }
 
@@ -32674,35 +32828,110 @@ final class CoreModel: ObservableObject {
         await saveTaskCompletion(id, taskRevision: taskRevision)
     }
 
+    private func boardCompletionOwned(_ owner: BoardCompletionOwner) -> Bool {
+        boardCompletionOwner?.host === owner.host && boardCompletionOwner?.request.utf8.elementsEqual(owner.request.utf8) == true
+            && boardCompletionOwner?.requestID == owner.requestID
+    }
+
+    private func boardCompletionPending(_ owner: BoardCompletionOwner) -> Bool {
+        boardCompletionOwned(owner) && host === owner.host && taskCompletionRequest?.utf8.elementsEqual(owner.request.utf8) == true
+            && taskActionRequestID == owner.requestID
+    }
+
+    private func boardCompletionWarm(_ owner: BoardCompletionOwner, foreground: Int? = nil) -> Bool {
+        boardCompletionOwned(owner) && host === owner.host && selectedSurface == .board
+            && foregroundSyncGeneration == (foreground ?? owner.foreground)
+            && !Task.isCancelled && !appLock.concealed && UIApplication.shared.applicationState == .active
+            && !taskPresented && !capturePresented && !morePresented && !areaPickerPresented
+    }
+
+    private func retainTaskCompletion(_ request: String, requestID: String, boardOwner: BoardCompletionOwner?) {
+        taskActionRequestID = requestID
+        taskCompletionRequest = request
+        boardCompletionOwner = boardOwner
+        busy = true
+        error = nil
+        invalidatePreview()
+    }
+
     private func saveTaskCompletion(_ id: String, taskRevision: String, reference: Bool = false, source: String? = nil) async {
         guard source == nil || source == "board", !reference || source == nil else { return }
-        busy = true
-        invalidatePreview()
-        defer { finishOperation() }
-        var acknowledgment: CoreObject?
         do {
             let requestID = UUID().uuidString.lowercased()
             var input: CoreObject = ["id": id, "requestId": requestID, "taskRevision": taskRevision]
             if reference { input["source"] = "reference" }
             else if let source { input["source"] = source }
             let request = try json(input)
-            taskActionRequestID = requestID
-            taskCompletionRequest = request
-            let result = try await query("taskCompletion", [request])
-            try acknowledgeTaskCompletion(result)
-            acknowledgment = result
-        } catch {
-            if isDefiniteRejection(error) {
-                taskCompletionRequest = nil
-                taskActionRequestID = nil
+            let owner: BoardCompletionOwner?
+            if source == "board" {
+                guard let host else { return }
+                owner = BoardCompletionOwner(host: host, request: request, requestID: requestID, foreground: foregroundSyncGeneration)
+            } else { owner = nil }
+            retainTaskCompletion(request, requestID: requestID, boardOwner: owner)
+            await runTaskCompletion(request, source: source, boardOwner: owner)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func runTaskCompletion(_ request: String, source: String?, boardOwner: BoardCompletionOwner?) async {
+        defer {
+            if let owner = boardOwner {
+                if boardCompletionOwned(owner) {
+                    if host === owner.host { finishOperation() }
+                    if taskCompletionRequest == nil { boardCompletionOwner = nil }
+                }
+            } else { finishOperation() }
+        }
+        var dispatched = false
+        let acknowledgment: CoreObject
+        do {
+            if let owner = boardOwner {
+                guard boardCompletionOwned(owner), taskCompletionRequest?.utf8.elementsEqual(owner.request.utf8) == true,
+                      taskActionRequestID == owner.requestID else { return }
+                guard host === owner.host else { throw CancellationError() }
             }
-            retryNeeded = taskCompletionRequest != nil
-            self.error = error.localizedDescription
+            acknowledgment = try await query("taskCompletion", [request], beforeDispatch: {
+                if let owner = boardOwner {
+                    guard self.boardCompletionPending(owner), self.boardCompletionWarm(owner) else { return false }
+                }
+                dispatched = true
+                return true
+            })
+            if let owner = boardOwner { guard boardCompletionPending(owner) else { return } }
+            try acknowledgeTaskCompletion(acknowledgment)
+        } catch {
+            if let owner = boardOwner {
+                guard boardCompletionOwned(owner), taskCompletionRequest?.utf8.elementsEqual(owner.request.utf8) == true,
+                      taskActionRequestID == owner.requestID else { return }
+                if !dispatched || isDefiniteRejection(error) {
+                    taskCompletionRequest = nil
+                    taskActionRequestID = nil
+                }
+                guard host === owner.host else { return }
+                retryNeeded = taskCompletionRequest != nil
+                if boardCompletionWarm(owner) { self.error = error.localizedDescription }
+            } else {
+                if isDefiniteRejection(error) { taskCompletionRequest = nil; taskActionRequestID = nil }
+                retryNeeded = taskCompletionRequest != nil
+                self.error = error.localizedDescription
+            }
             return
         }
-        if source == "board" { selectedSurface = .board }
-        do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
-        if let acknowledgment { showTaskAction(acknowledgment, operation: "completion", source: source) }
+        if let owner = boardOwner {
+            await publishBoardCompletion(acknowledgment, owner: owner, foreground: owner.foreground)
+        } else {
+            do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+            showTaskAction(acknowledgment, operation: "completion", source: source)
+        }
+    }
+
+    private func publishBoardCompletion(_ result: CoreObject, owner: BoardCompletionOwner, foreground: Int) async {
+        guard boardCompletionOwned(owner), taskActionRequestID == owner.requestID else { return }
+        defer { if boardCompletionOwned(owner), taskActionRequestID == owner.requestID { taskActionRequestID = nil } }
+        guard boardCompletionWarm(owner, foreground: foreground) else { return }
+        do { try await readSelectedSurface() }
+        catch { if boardCompletionWarm(owner, foreground: foreground) { self.error = error.localizedDescription } }
+        guard boardCompletionWarm(owner, foreground: foreground), taskActionRequestID == owner.requestID else { return }
+        showTaskAction(result, operation: "completion", source: "board")
     }
 
     private func acknowledgeTaskCompletion(_ result: CoreObject) throws {
@@ -32719,7 +32948,8 @@ final class CoreModel: ObservableObject {
             queueReferenceProjectNextAction(kind: "completion", submitted: submitted)
         }
         if submitted.text("source") == "board" {
-            guard validBoardCompletionResult(result) else { throw CocoaError(.coderReadCorrupt) }
+            guard let owner = boardCompletionOwner, boardCompletionPending(owner),
+                  validBoardCompletionResult(result) else { throw CocoaError(.coderReadCorrupt) }
         }
         taskCompletionRequest = nil
         retryNeeded = false
@@ -32776,6 +33006,16 @@ final class CoreModel: ObservableObject {
         guard !busy, !projectRenameEditing || projectRenameRequest != nil else { return }
         guard ready else { await start(); return }
         guard let retryHost = host else { return }
+        let boardActionRetry = boardActionRequest
+        if boardActionRetry != nil { guard boardActionHost === retryHost else { return } }
+        let completionRetry = boardCompletionOwner, boardUndoRetry = boardCompletionUndoOwner
+        let boardRetryForeground = foregroundSyncGeneration
+        if let request = taskCompletionRequest, (try? decode(request).text("source")) == "board" {
+            guard let owner = completionRetry, boardCompletionPending(owner) else { return }
+        }
+        if taskActionUndoRequest != nil, taskActionNotice.text("source") == "board" {
+            guard let owner = boardUndoRetry, boardCompletionUndoPending(owner) else { return }
+        }
         guard processInboxUndoPending == nil || processInboxUndoPending?.host === retryHost else { return }
         let inboxRetryHost = inboxBulkMutationHost
         let inboxRetrySelection = inboxSelectionGeneration, inboxRetryForeground = foregroundSyncGeneration
@@ -32811,14 +33051,26 @@ final class CoreModel: ObservableObject {
         var boardTaskOpened = false
         defer {
             if (inboxRetryHost == nil || host === inboxRetryHost)
-                && (captureRetry == nil || (host === retryHost && captureBusyOwner == captureRetry?.id)) {
+                && (captureRetry == nil || (host === retryHost && captureBusyOwner == captureRetry?.id))
+                && (completionRetry == nil && boardUndoRetry == nil && boardActionRetry == nil || host === retryHost)
+                && (completionRetry.map { boardCompletionOwned($0) } ?? true)
+                && (boardUndoRetry.map { boardCompletionUndoOwned($0) } ?? true)
+                && (boardActionRetry == nil || boardActionHost === retryHost) {
+                if boardActionRetry != nil, boardActionRequest == nil { boardActionHost = nil }
+                if completionRetry != nil, taskCompletionRequest == nil { boardCompletionOwner = nil }
+                if boardUndoRetry != nil, taskActionUndoRequest == nil { boardCompletionUndoOwner = nil }
                 if captureRetry != nil { captureBusyOwner = nil }
                 finishOperation()
                 #if DEBUG && targetEnvironment(simulator)
                 publishCaptureSaveEditFixtureState()
                 #endif
             }
-            if boardTaskOpened { Task { await readTaskView() } }
+            if boardTaskOpened, host === retryHost, foregroundSyncGeneration == boardRetryForeground {
+                Task {
+                    guard self.host === retryHost, self.foregroundSyncGeneration == boardRetryForeground else { return }
+                    await readTaskView()
+                }
+            }
         }
         do {
             let acknowledgment = try await retryHost.retryPending()
@@ -32879,6 +33131,7 @@ final class CoreModel: ObservableObject {
                 return
             }
             if let request = taskActionUndoRequest {
+                if let owner = boardUndoRetry { guard boardCompletionUndoPending(owner) else { return } }
                 let result: CoreObject
                 if ["archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete"].contains(taskActionNotice.text("operation"))
                     || (taskActionNotice.text("operation") == "delete" && ["done", "reference"].contains(taskActionNotice.text("source"))) {
@@ -32905,8 +33158,13 @@ final class CoreModel: ObservableObject {
                     }
                 } else if taskActionUndoMethod == "taskCompletionUndo", acknowledgment == nil || ["reference", "board"].contains(taskActionNotice.text("source")) {
                     let outcome = try await query("taskCompletionUndoRetryOutcome", [request])
+                    if let owner = boardUndoRetry { guard boardCompletionUndoPending(owner) else { return } }
                     guard outcome.text("kind") == "confirmed" else {
                         let unknown = label("task.completionUndoOutcomeUnknown")
+                        if let owner = boardUndoRetry {
+                            if boardCompletionUndoWarm(owner, foreground: boardRetryForeground) { self.error = unknown }
+                            return
+                        }
                         try? await readSelectedSurface()
                         if taskActionNotice.text("source") == "reference" { referenceError = unknown }
                         self.error = unknown
@@ -32921,12 +33179,20 @@ final class CoreModel: ObservableObject {
                     }
                 } else if let acknowledgment { result = try decode(acknowledgment) }
                 else { result = try await query(taskActionUndoMethod, [request]) }
-                if taskActionNotice.text("source") == "board" { selectedSurface = .board }
+                if let owner = boardUndoRetry { guard boardCompletionUndoPending(owner) else { return } }
                 try acknowledgeTaskActionUndo(result)
-                do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+                if let owner = boardUndoRetry {
+                    guard boardCompletionUndoWarm(owner, foreground: boardRetryForeground) else { return }
+                }
+                do { try await readSelectedSurface() } catch {
+                    if boardUndoRetry.map({ boardCompletionUndoWarm($0, foreground: boardRetryForeground) }) ?? true {
+                        self.error = error.localizedDescription
+                    }
+                }
                 return
             }
             if let request = taskCompletionRequest {
+                if let owner = completionRetry { guard boardCompletionPending(owner) else { return } }
                 let result: CoreObject
                 let completionSource = (try decode(request)).text("source")
                 let referenceCompletion = completionSource == "reference"
@@ -32934,7 +33200,12 @@ final class CoreModel: ObservableObject {
                 if let acknowledgment, !scopedCompletion { result = try decode(acknowledgment) }
                 else {
                     let outcome = try await query("taskCompletionRetryOutcome", [request])
+                    if let owner = completionRetry { guard boardCompletionPending(owner) else { return } }
                     guard outcome.text("kind") == "confirmed" else {
+                        if let owner = completionRetry {
+                            if boardCompletionWarm(owner, foreground: boardRetryForeground) { self.error = label("task.completionOutcomeUnknown") }
+                            return
+                        }
                         // No matching durable receipt: preserve the UUID and block a new write.
                         let unknown = label("task.completionOutcomeUnknown")
                         try? await readSelectedSurface()
@@ -32950,10 +33221,14 @@ final class CoreModel: ObservableObject {
                         }
                     }
                 }
+                if let owner = completionRetry { guard boardCompletionPending(owner) else { return } }
                 try acknowledgeTaskCompletion(result)
-                if completionSource == "board" { selectedSurface = .board }
-                do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
-                showTaskAction(result, operation: "completion", source: scopedCompletion ? completionSource : nil)
+                if let owner = completionRetry {
+                    await publishBoardCompletion(result, owner: owner, foreground: boardRetryForeground)
+                } else {
+                    do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+                    showTaskAction(result, operation: "completion", source: scopedCompletion ? completionSource : nil)
+                }
                 return
             }
             if let request = projectDeleteUndoRequest {
@@ -33911,8 +34186,9 @@ final class CoreModel: ObservableObject {
                 return
             }
             if boardActionPending {
+                guard boardActionHost === retryHost, boardActionRetry.map { boardActionRequest?.utf8.elementsEqual($0.utf8) == true } == true else { return }
                 guard let acknowledgment else { throw CocoaError(.coderValueNotFound) }
-                boardTaskOpened = await acknowledgeBoardAction(try decode(acknowledgment))
+                boardTaskOpened = await acknowledgeBoardAction(try decode(acknowledgment), foreground: boardRetryForeground)
                 return
             }
             if mindSweepRequest != nil {
@@ -33954,6 +34230,22 @@ final class CoreModel: ObservableObject {
             }
             if !calendarPreferencePending { calendarComposerNavigation = nil }
         } catch {
+            if let owner = completionRetry {
+                guard boardCompletionPending(owner) else { return }
+                if isDefiniteRejection(error) { taskCompletionRequest = nil; taskActionRequestID = nil }
+                retryNeeded = taskCompletionRequest != nil
+                if boardCompletionWarm(owner, foreground: boardRetryForeground) { self.error = error.localizedDescription }
+                return
+            }
+            if let owner = boardUndoRetry {
+                guard boardCompletionUndoPending(owner) else { return }
+                if isDefiniteRejection(error) {
+                    taskActionUndoRequest = nil; taskActionNotice = [:]; boardCompletionNoticeHost = nil
+                }
+                retryNeeded = taskActionUndoRequest != nil
+                if boardCompletionUndoWarm(owner, foreground: boardRetryForeground) { self.error = error.localizedDescription }
+                return
+            }
             if let inboxRetryHost {
                 if let pending = inboxOrganizeDestinationCreateOwner, pending.host === inboxRetryHost {
                     handleInboxOrganizeError(error, on: pending.host, request: pending.request, creation: true,

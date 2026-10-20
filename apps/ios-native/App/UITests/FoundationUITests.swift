@@ -5923,8 +5923,9 @@ final class FoundationUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: "board-drop-" + status).firstMatch
     }
 
-    private func boardCrossAssert(_ app: XCUIApplication, status: String) {
+    private func boardCrossAssert(_ app: XCUIApplication, status: String, completionOffer: Bool = false) {
         boardEnabled(app.buttons["board-filter-open"])
+        if completionOffer { boardEnabled(app.buttons["task-completion-undo"], timeout: 5) }
         for column in ["inbox", "next", "waiting", "someday", "done"] {
             let expected = (column == status ? 1 : 0) + (column == "waiting" ? 1 : 0)
             XCTAssertEqual(app.staticTexts["board-count-" + column].label, String(expected))
@@ -5932,11 +5933,13 @@ final class FoundationUITests: XCTestCase {
         }
         XCTAssertTrue(boardCrossBody(app, "waiting").buttons["board-task-" + boardCrossPeer].exists)
         XCTAssertFalse(app.buttons["task-view-close"].exists)
-        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        XCTAssertEqual(app.buttons["task-completion-undo"].exists, completionOffer)
         XCTAssertFalse(app.keyboards.firstMatch.exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
     }
 
-    private func boardCrossDrag(_ app: XCUIApplication, from source: String, to destination: String) throws {
+    private func boardCrossDrag(_ app: XCUIApplication, from source: String, to destination: String, completionOffer: Bool = false) throws {
         let handle = app.images["board-drag-" + boardCrossSource]
         let body = boardCrossBody(app, destination)
         let scroll = app.scrollViews["board-scroll"]
@@ -5989,7 +5992,44 @@ final class FoundationUITests: XCTestCase {
                 && app.buttons["board-filter-open"].isEnabled
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 20), .completed)
-        boardCrossAssert(app, status: destination)
+        boardCrossAssert(app, status: destination, completionOffer: completionOffer)
+    }
+
+    func testBoardDoneCrossDropPublicUndoNormalAndColdRead() throws {
+        try boardDoneCrossDropRoundTrip("NORMAL")
+    }
+
+    func testBoardDoneCrossDropPublicUndoLargestTextAndColdRead() throws {
+        try boardDoneCrossDropRoundTrip("LARGEST", largest: true)
+    }
+
+    private func boardDoneCrossDropRoundTrip(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_BOARD_DONE_UI_" + role + "_LIBRARY"] else {
+            throw XCTSkip("An externally staged isolated Board Done drag library is required")
+        }
+        guard UUID(uuidString: library)?.uuidString.lowercased() == library else {
+            XCTFail("The isolated library must be a canonical lowercase UUID")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let app = XCUIApplication(); defer { app.terminate() }
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US",
+            "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardSelectAllAreas(app); boardOpen(app); boardCrossAssert(app, status: "someday")
+        try boardCrossDrag(app, from: "someday", to: "done", completionOffer: true)
+        boardTap(app, "task-completion-undo")
+        boardCrossAssert(app, status: "someday")
+        try boardCrossDrag(app, from: "someday", to: "done", completionOffer: true)
+        let expired = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+            object: app.buttons["task-completion-undo"])
+        XCTAssertEqual(XCTWaiter.wait(for: [expired], timeout: 8), .completed)
+        boardCrossAssert(app, status: "done")
+        try boardCrossDrag(app, from: "done", to: "someday")
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); boardCrossAssert(app, status: "someday")
+        XCTAssertFalse(app.staticTexts["task-completion-notice"].exists)
     }
 
     private func boardCrossColumnRoundTrip(_ role: String, largest: Bool = false) throws {
