@@ -2429,6 +2429,10 @@ export const daOverrides: Record<string, string> = {
     'settings.backupMobile.recoverySnapshotSaved': 'Gendannelsessnapshot gemt som {{snapshotName}}.',
     'settings.backupMobile.restoreBackup': 'Gendan sikkerhedskopien?',
     'settings.backupMobile.restoreComplete': 'Gendannelse fuldført',
+    'settings.backupMobile.undoUnavailableTitle': 'Fortryd vil ikke være tilgængelig',
+    'settings.backupMobile.undoUnavailableConfirm': 'Dette bibliotek er for stort til at fortryde denne ændring. Et gendannelsessnapshot gemmes stadig under Indstillinger › Data. Fortsæt?',
+    'settings.backupMobile.undoUnavailableContinue': 'Fortsæt',
+    'settings.backupMobile.undoUnavailableResult': 'Fortryd er ikke tilgængelig for denne ændring: biblioteket er for stort.',
     'settings.backupMobile.restoreFailed': 'Gendannelse mislykkedes',
     'settings.backupMobile.restoreRecoverySnapshot': 'Vil du gendanne gendannelsesbillede?',
     'settings.backupMobile.restoreSnapshotReplaceLocalData':

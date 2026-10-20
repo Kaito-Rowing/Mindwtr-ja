@@ -299,6 +299,11 @@ export type NativeDocumentReceiptInput = {
      */
     maxLibraryBytes?: number;
     /**
+     * The library's SQLite bytes this write may leave while its Undo still fits (large-library pass b): past them the write still
+     * commits, and its stored reply gains `undo: false`, so a replay answers the same.
+     */
+    undoLibraryBytes?: number;
+    /**
      * The caller hands both documents over (core's native backup commit, which parsed them itself and keeps no reference): no
      * detaching copy is made, and the baseline goes once the stale check has read it.
      */
@@ -497,7 +502,7 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
     private pomodoroUncertainRequest: string | null = null;
     private pomodoroReload: { data: AppData | null; available: boolean; acknowledged: PomodoroProjectionAcknowledgment | null;
         generation: number; fetch: ReturnType<typeof useTaskStore.getState>['fetchData'] } | null = null;
-    private documentReceipt: { requestId: string; payload: string; data: AppData; replyJson: string; savedAt: string; maxLibraryBytes?: number } | null = null;
+    private documentReceipt: { requestId: string; payload: string; data: AppData; replyJson: string; savedAt: string; maxLibraryBytes?: number; undoLibraryBytes?: number } | null = null;
 
     constructor(client: SqliteClient, options?: SqliteAdapterOptions) {
         let isDocumentWrite = () => false;
@@ -824,8 +829,9 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             throw new Error('Invalid document receipt identity');
         }
         const { requestId, payload } = input;
-        const { maxLibraryBytes } = input;
-        if (maxLibraryBytes !== undefined && !(Number.isSafeInteger(maxLibraryBytes) && maxLibraryBytes >= 0)) {
+        const { maxLibraryBytes, undoLibraryBytes } = input;
+        if (maxLibraryBytes !== undefined && !(Number.isSafeInteger(maxLibraryBytes) && maxLibraryBytes >= 0)
+            || undoLibraryBytes !== undefined && !(Number.isSafeInteger(undoLibraryBytes) && undoLibraryBytes >= 0)) {
             throw new Error('Invalid document receipt input');
         }
         const owner = requestPayloads.get(requestId);
@@ -867,7 +873,7 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             current = null; expectedCurrent = null;
             if (input.owned === true) (input as { expectedCurrent: AppData | null }).expectedCurrent = null;
             if (pendingReceipts.size > 0 || receiptedWritesRunning > 0 || hasPendingDocumentStoreWork()) throw new Error('Document receipt write is busy');
-            const context = { requestId, payload, data, replyJson, savedAt: new Date().toISOString(), maxLibraryBytes };
+            const context = { requestId, payload, data, replyJson, savedAt: new Date().toISOString(), maxLibraryBytes, undoLibraryBytes };
             this.documentReceipt = context;
             try { await this.saveDataNow(data); }
             catch (error) {
@@ -876,6 +882,7 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
                 if (error instanceof Error && error.message === UNDO_LIMIT_EXCEEDED) throw error;
                 throw new Error('Document receipt persistence failed');
             }
+            replyJson = context.replyJson;
             durableReceipts!.set(requestId, { fingerprint: payload, reply: JSON.parse(replyJson) as unknown, savedAt: context.savedAt });
             succeeded = true;
             try {
@@ -929,6 +936,15 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             }
             if (context.maxLibraryBytes !== undefined && await this.libraryBytesNow() > context.maxLibraryBytes) {
                 throw new Error(UNDO_LIMIT_EXCEEDED);
+            }
+            if (context.undoLibraryBytes !== undefined && await this.libraryBytesNow() > context.undoLibraryBytes) {
+                const replyJson = JSON.stringify({ ...(JSON.parse(context.replyJson) as object), undo: false });
+                try {
+                    await this.receiptClient.run('UPDATE native_request_receipts SET reply = ? WHERE request_id = ?', [replyJson, context.requestId]);
+                } catch {
+                    throw new Error('Document receipt insert failed');
+                }
+                context.replyJson = replyJson;
             }
             return;
         }

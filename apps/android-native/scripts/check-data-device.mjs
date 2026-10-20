@@ -23,7 +23,8 @@
 //      own import of the fixture over the pulled library, then Undo leaves none;
 //   I2 a TickTick file on the DGT row: core's invalid-file warning, no staged copy; I3 a 16 MiB + 1 byte file: core's limit text;
 //   I4 process death before the journal (no row, no result) and after COMMIT (the rows once, the receipt, one replay line);
-//   I5 the 60 000-row Mindwtr CSV whose Undo could not be admitted: refused, nothing lands;
+//   I5 the 60 000-row Mindwtr CSV whose Undo cannot be admitted (large-library pass b): core's no-Undo question; Cancel lands
+//      nothing, Continue lands it with a toast that says Undo is not available and has no Undo button;
 //   I6 sentinels in a dropped rule, a renamed project and a skipped archive entry reach no result record, journal, receipt
 //      or log;
 //   G3 and G2 (each on a fresh install): a seed stopped before its send replays once; one stopped after its COMMIT is there
@@ -274,7 +275,8 @@ const useTestFolder = async () => {
 
 // ---- Data actions ----
 /** The open question's action button (a dialog window has no test tags): core's Merge, Restore or Import word, its text or TalkBack name. */
-const confirmButton = (nodes) => nodes.find((node) => [en['settings.mergeBackupAction'], en['markdown.referenceRestore'], en['settings.backupMobile.import']]
+const confirmButton = (nodes) => nodes.find((node) => [en['settings.mergeBackupAction'], en['markdown.referenceRestore'], en['settings.backupMobile.import'],
+    en['settings.backupMobile.undoUnavailableContinue']]
     .some((label) => [node.text, node['content-desc']].some((text) => (text ?? '').toUpperCase() === label.toUpperCase())));
 const confirmQuestion = async (title) => {
     const nodes = await waitFor(`the question "${title}"`, (current) => hasText(current, title) && Boolean(confirmButton(current)), 60_000);
@@ -1532,17 +1534,33 @@ try {
         check(again.found === 'none' && !again.toast, `(I4 after-commit) a second start's leftover step found nothing to show: ${JSON.stringify(again)}`);
     }
 
-    // I5: Codex's 60 000-row Mindwtr CSV grows the library past what its Undo could admit: refused before COMMIT, nothing lands.
+    // I5: Codex's 60 000-row Mindwtr CSV grows the library past what its Undo could admit. Large-library pass b: it is never
+    // refused for that; core's question says Undo will not be available, Cancel lands nothing, Continue runs it without Undo.
     const expansion = binary(`d1-expansion-${run}.csv`, strToU8(`Title\n${Array.from({ length: 60_000 }, (_, index) => `d1x${index}x${run}`).join('\n')}\n`));
     push(expansion);
     const csvReceipts = receiptCount('i5-before', 'csv');
-    // The 12 MiB limit this row was built for (pass D1c raises the default; the Undo-size refusal is what it checks).
+    // The 12 MiB limit this row was built for (pass D1c raises the default; the Undo's room is what it checks).
     setProp('transfer_limit_mb', '12');
+    const noUndoQuestion = (current) => hasText(current, en['settings.backupMobile.undoUnavailableTitle'])
+        && hasText(current, en['settings.backupMobile.undoUnavailableConfirm']);
     await importPick('mindwtr-csv', expansion);
     await confirmQuestion(en['settings.backupMobile.importMindwtrCsvData']);
-    await waitFor('the Undo-size refusal', (current) => hasText(current, en['settings.backupMobile.importFailed']) && hasText(current, en['settings.importDiagnostics.limitExceeded']), 600_000);
-    check(!taggedRows(pullDb('i5')).some((row) => row.title.startsWith('d1x')), '(I5) the 60 000-row import landed nothing');
-    check(receiptCount('i5-after', 'csv') === csvReceipts, '(I5) and wrote no receipt');
+    const asked = await waitFor('the no-Undo question', noUndoQuestion, 600_000);
+    await tap(asked.find((node) => [node.text, node['content-desc']].some((text) => (text ?? '').toUpperCase() === en['common.cancel'].toUpperCase()))
+        ?? fail('no Cancel on the no-Undo question'));
+    await waitFor('the question to close', (current) => !noUndoQuestion(current), 30_000);
+    await until('(I5) the journal and the operation folder to empty', () => journal().length === 0 && operations().length === 0, 60_000);
+    check(!taggedRows(pullDb('i5-cancel')).some((row) => row.title.startsWith('d1x')), '(I5) Cancel on the no-Undo question landed nothing');
+    check(receiptCount('i5-cancel', 'csv') === csvReceipts, '(I5) and wrote no receipt');
+    await importPick('mindwtr-csv', expansion);
+    await confirmQuestion(en['settings.backupMobile.importMindwtrCsvData']);
+    await confirmQuestion(en['settings.backupMobile.undoUnavailableTitle']);
+    const done = await waitFor('the import\'s result', (current) => hasText(current, en['settings.backupMobile.importComplete']) && !confirmButton(current), 900_000);
+    check(done.some((node) => (node.text ?? '').includes(en['settings.backupMobile.undoUnavailableResult'])) && !undoButton(done),
+        '(I5) Continue ran it: the toast says Undo is not available and offers no Undo');
+    check(taggedRows(pullDb('i5')).filter((row) => row.title.startsWith('d1x')).length === 60_000, '(I5) all 60 000 rows landed');
+    check(receiptCount('i5-after', 'csv') === csvReceipts + 1, '(I5) with one receipt');
+    check(allLogs().includes('v1.3.7/large-library-no-undo'), '(I5) the log names the no-Undo run (v1.3.7/large-library-no-undo)');
     await until('(I5) the journal and the operation folder to empty', () => journal().length === 0 && operations().length === 0, 60_000);
     setProp('transfer_limit_mb', '');
     sh(`rm -f ${PHONE_DIR}/${expansion.name}`);

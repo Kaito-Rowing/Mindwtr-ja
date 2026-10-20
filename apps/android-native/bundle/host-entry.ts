@@ -37,6 +37,7 @@ import {
     buildNativeBackupDocumentFailure,
     buildNativeBackupDocumentResult,
     buildNativeBackupSnapshotRestoreConfirmation,
+    buildNativeBackupNoUndoConfirmation,
     commitNativeBackupDocument,
     holdNativeBackupUndoAttachments,
     inspectNativeBackupDocument,
@@ -5104,7 +5105,8 @@ globalThis.MindwtrHost = {
                 plan = channelClose(planHandle);
                 if (result.recovery) recovery = channelClose(recoveryHandle);
             });
-            return { plan: plan!, recovery };
+            // Large-library pass b: an operation that will run without Undo is asked about first, in core's words.
+            return { plan: plan!, recovery, ...(result.undo === false ? { noUndo: buildNativeBackupNoUndoConfirmation(backupTranslate) } : {}) };
         });
     },
     backupDocumentPrepare(inputJSON: string): string {

@@ -26,6 +26,8 @@ import java.io.IOException
 import java.io.InputStream
 import java.util.Date
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 
 /*
  * Settings › Data's Backup and Import folds and Sync › Recovery snapshots (RN's use-sync-settings-backup-actions.ts and
@@ -92,7 +94,10 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
      * "snapshot:<name>"), or "gettingStarted" (RN's own busy flag for that row; every Data row is off while it runs).
      */
     var action by mutableStateOf<String?>(null); private set
-    /** The open question (RN's Alert): `{ kind: "confirm", model, mode, stage }` or `{ kind: "snapshot", model, name, undo }`. */
+    /**
+     * The open question (RN's Alert): `{ kind: "confirm", model, mode, stage }`, `{ kind: "snapshot", model, name, undo }`, or
+     * `{ kind: "noUndo", model }` (large-library pass b: a prepared operation that will run without Undo; [noUndoAnswer] waits on it).
+     */
     var question by mutableStateOf<JSONObject?>(null); private set
     /** A system picker the Data screen opens next ("json", "tree"); the screen launches it and clears it. */
     var launch by mutableStateOf<String?>(null); private set
@@ -102,6 +107,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     var share by mutableStateOf<Pair<File, String>?>(null); private set
     /** The export made at press time (RN reads its snapshot before the folder picker), held for the picker's answer. */
     private var exportFile: JSONObject? = null
+    @Volatile private var noUndoAnswer: CompletableFuture<Boolean>? = null
 
     /** Every Data row is off while one runs or a sync runs (RN's `isSyncing || isBackupBusy`); each entry point checks it. */
     val busy get() = dataRowsBusy(action, shell.syncActive)
@@ -283,6 +289,8 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 
     /** The question's Cancel: nothing was written; the staged copy goes. */
     fun cancel() {
+        // The no-Undo question's Cancel: the waiting operation discards its prepared files and ends itself.
+        if (question?.optString("kind") == "noUndo") { question = null; noUndoAnswer?.complete(false); return }
         question?.optString("stage")?.takeIf { it.isNotEmpty() }?.let { StagedCopies.release(File(staging, it)) }
         question = null
         finish()
@@ -293,6 +301,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         val open = question ?: return
         question = null
         when (open.getString("kind")) {
+            "noUndo" -> noUndoAnswer?.complete(true)
             "confirm" -> {
                 val file = File(staging, open.getString("stage"))
                 val importMode = open.optString("importMode").takeIf { it.isNotEmpty() }
@@ -356,6 +365,16 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                         .put("admission", JSONObject().put("sourceBytes", sourceBytes).put("maxTransferBytes", DataTransferLimits.MAX_DATA_TRANSFER_BYTES)).toString(),
                         recoveryFile, ops.pendingPlan(requestId), DataTransferLimits.MAX_PLAN_BYTES)
                 } finally { staged?.let(StagedCopies::release) }
+                // Large-library pass b: core found the library too large to undo this change. dd's warning first; it runs only on
+                // Continue, with its recovery snapshot still written (RN's safety net), and its result says Undo is not available.
+                prepared.optJSONObject("noUndo")?.let { words ->
+                    if (!askNoUndo(words)) {
+                        ops.discard(requestId); ops.pendingSnapshot(requestId).delete()
+                        outcome = "cancelled"
+                        shell.ui { finish() }
+                        return@whenHosted
+                    }
+                }
                 val recovery = prepared.optJSONObject("recovery")?.let(::closed)
                 if (recovery != null) RecoverySnapshots.publish(snapshots, recoveryFile!!, name, recovery.bytes, recovery.sha256)
                 stop("after-snapshot")
@@ -388,6 +407,15 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     }
 
     private fun closed(json: JSONObject) = DataChannel.Closed(json.getLong("bytes"), json.getString("sha256"))
+
+    /** Shows the no-Undo question ([words]: core's model) and waits on this operation's thread; no answer in 15 minutes is Cancel. */
+    private fun askNoUndo(words: JSONObject): Boolean {
+        val answer = CompletableFuture<Boolean>()
+        shell.ui { noUndoAnswer = answer; question = JSONObject().put("kind", "noUndo").put("model", words) }
+        val continued = runCatching { answer.get(15, TimeUnit.MINUTES) }.getOrDefault(false)
+        shell.ui { noUndoAnswer = null; if (question?.optString("kind") == "noUndo") question = null }
+        return continued
+    }
 
     /** RN's result toast (core's words and duration), with Undo; [shown] (the result record goes) runs once it shows (design §4.3). */
     private fun showResult(result: JSONObject, undo: String?, shown: () -> Unit) {
