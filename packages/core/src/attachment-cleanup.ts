@@ -131,18 +131,20 @@ const attachmentHasFreshCleanupWork = (
 
 export function hasFreshAttachmentCleanupWork(appData: AppData): boolean {
     const pendingRemoteDeletes = normalizePendingRemoteDeletes(appData.settings.attachments?.pendingRemoteDeletes);
+    const held = heldRestoreUndoAttachments();
     // Drain an attempt-zero digest-qualified entry left by versions that used
     // pendingRemoteDeletes as a File publication journal. Current File cleanup
-    // retains the shared-folder bytes and clears only local bookkeeping.
+    // retains the shared-folder bytes and clears only local bookkeeping. A held
+    // entry waits (cleanup carries it unchanged), so it is no fresh work.
     if (
         pendingRemoteDeletes.some(
-            (entry) => isFileSyncGenerationCloudKey(entry.cloudKey) && (entry.attempts ?? 0) === 0,
+            (entry) => isFileSyncGenerationCloudKey(entry.cloudKey) && (entry.attempts ?? 0) === 0
+                && !(held && isAttachmentCloudResourceReferenced(entry, held)),
         )
     ) {
         return true;
     }
     const pendingCloudKeys = new Set(pendingRemoteDeletes.map((entry) => entry.cloudKey));
-    const held = heldRestoreUndoAttachments();
     const hasWork = (attachments: readonly Attachment[] | undefined, parentPurged: boolean): boolean => (
         Boolean(attachments?.some((attachment) => attachmentHasFreshCleanupWork(attachment, parentPurged, pendingCloudKeys, held)))
     );

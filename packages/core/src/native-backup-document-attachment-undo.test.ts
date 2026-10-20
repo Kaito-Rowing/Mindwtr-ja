@@ -7,7 +7,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+    findLiveAttachmentResourceReferences,
     hasFreshAttachmentCleanupWork,
+    holdRestoreUndoAttachments,
     resetRestoreUndoAttachmentHold,
     runAttachmentCleanupLifecycle,
 } from './attachment-cleanup';
@@ -128,6 +130,7 @@ describe('a restore, a sync\'s attachment cleanup, then the restore\'s Undo', ()
 
     it.each(cases)('keeps them when the next start offers the leftover result\'s Undo again (Android, %s)', async (_label, item, tasks) => {
         const result = await restoreCleanupUndo(item, tasks, 'leftover');
+        expect(result.freshWork).toBe(false);
         expect(result.deleted).toEqual([]);
         expect(result.remoteDeletes).toEqual([]);
         expect(result.after).toMatchObject({ localStatus: 'available' });
@@ -181,6 +184,26 @@ describe('a restore, a sync\'s attachment cleanup, then the restore\'s Undo', ()
         const deleted: string[] = [];
         await runAttachmentCleanupLifecycle({ appData: libraryWith({ ...attachment, deletedAt: AT }), deleteLocalAttachment: collectDeletes(deleted) });
         expect(deleted).toEqual([]);
+    });
+
+    it('a leftover hold from an unreadable snapshot holds nothing new and keeps the hold it found; a bad name is refused', async () => {
+        const deleted: string[] = [];
+        holdRestoreUndoAttachments(findLiveAttachmentResourceReferences(libraryWith(attachment)));
+        expect(holdNativeBackupUndoAttachments('{not a backup', NAME)).toBe(false);
+        await runAttachmentCleanupLifecycle({ appData: libraryWith({ ...attachment, deletedAt: AT }), deleteLocalAttachment: collectDeletes(deleted) });
+        expect(deleted).toEqual([]);
+        expect(() => holdNativeBackupUndoAttachments(serializeBackupData(libraryWith(attachment)), '../data.json')).toThrow('INVALID_INPUT:');
+    });
+
+    it('a held legacy File Sync drain entry is no reason to run cleanup on every sync', () => {
+        const generation = `attachments/a2doc.${'b'.repeat(64)}.pdf`;
+        const held: Attachment = { ...attachment, cloudKey: generation };
+        holdRestoreUndoAttachments(findLiveAttachmentResourceReferences(libraryWith(held)));
+        const data = libraryWith({ ...held, deletedAt: AT });
+        data.settings = { ...data.settings, attachments: { pendingRemoteDeletes: [{ cloudKey: generation, attempts: 0 }] } };
+        expect(hasFreshAttachmentCleanupWork(data)).toBe(false);
+        resetRestoreUndoAttachmentHold();
+        expect(hasFreshAttachmentCleanupWork(data)).toBe(true);
     });
 
     it('keeps a held remote copy queued for deletion instead of deleting or dropping it', async () => {
