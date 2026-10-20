@@ -30,9 +30,15 @@ export function normalizeWidgetTokenListId(value: string): string | null {
 
 export function buildWidgetTokenOptions(data: AppData, field: BulkTaskTokenField): { id: string; name: string }[] {
     const prefix = field === 'contexts' ? WIDGET_CONTEXT_LIST_PREFIX : WIDGET_TAG_LIST_PREFIX;
-    // Retained records keep unused labels available; deleted records contribute nothing.
-    const tokens = getUsedTaskTokens(data.tasks || [], (task) => (task[field] || [])
-        .map((token) => normalizeBulkTaskTokenInput(token, field)), { includeAncestors: true });
+    // Retained records keep unused labels available; deleted records contribute nothing. Every Android widget refresh runs
+    // this over the whole store, where a few labels repeat thousands of times: each is normalized once.
+    const normalized = new Map<string, string>();
+    const normalize = (token: string): string => {
+        let value = normalized.get(token);
+        if (value === undefined) normalized.set(token, value = normalizeBulkTaskTokenInput(token, field));
+        return value;
+    };
+    const tokens = getUsedTaskTokens(data.tasks || [], (task) => (task[field] || []).map(normalize), { includeAncestors: true });
     return tokens.flatMap((name) => {
         const id = normalizeWidgetTokenListId(`${prefix}${name}`);
         return id ? [{ id, name }] : [];
