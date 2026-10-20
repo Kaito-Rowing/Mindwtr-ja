@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const itOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "I caricamenti dal browser richiedono la sincronizzazione con un cloud autogestito.",
+    "attachments.webUploadEncrypted": "I caricamenti dal browser richiedono la disattivazione della crittografia di sincronizzazione.",
+    "attachments.webUploadOffline": "Non è possibile caricare file offline.",
+    "attachments.webUploadChanged": "La bozza o la configurazione di sincronizzazione è cambiata. Seleziona di nuovo il file.",
+    "attachments.webUploadFailed": "L’allegato non è stato salvato.",
+    "attachments.webUploadRetry": "Riprova a salvare o rimuovi il file per continuare.",
+    "attachments.webProjectUploadUnsupported": "Il caricamento nei progetti non è disponibile nel browser. Aggiungi il file a un’attività.",
     'settings.cleartextSyncDismiss': 'Nascondi per questa destinazione di sincronizzazione',
     "projects.convertBlocked.destination-section-sequence": "Scegli un progetto di destinazione impostato su Sequenziale → Dentro le sezioni. La nuova sezione mantiene la sequenza delle attività; le altre sezioni procedono indipendentemente.",
     'timeline.moveTaskDates': "Sposta le date dell’attività",

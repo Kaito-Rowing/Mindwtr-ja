@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ptOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "Os envios pelo navegador exigem sincronização com uma nuvem auto-hospedada.",
+    "attachments.webUploadEncrypted": "Os envios pelo navegador exigem que a criptografia de sincronização esteja desativada.",
+    "attachments.webUploadOffline": "Não é possível enviar arquivos offline.",
+    "attachments.webUploadChanged": "O rascunho ou a configuração de sincronização mudou. Selecione o arquivo novamente.",
+    "attachments.webUploadFailed": "O anexo não foi salvo.",
+    "attachments.webUploadRetry": "Tente salvar novamente ou remova o arquivo para continuar.",
+    "attachments.webProjectUploadUnsupported": "O envio para projetos não está disponível no navegador. Adicione o arquivo a uma tarefa.",
     'contexts.new': 'Novo contexto',
     'tags.new': 'Nova etiqueta',
     'settings.cleartextSyncDismiss': 'Dispensar para este destino de sincronização',

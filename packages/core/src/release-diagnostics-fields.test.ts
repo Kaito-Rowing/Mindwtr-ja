@@ -17,6 +17,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'globalCount', 'hiddenByAreaCount',
     // project-color reuses releaseCheck and mode; no identity or color values.
 
+    // web-attachment-upload reuses releaseCheck, stage and count; only acknowledged PUTs.
     // android-widget-capture-status: bounded creation status and picker origin; kind/outcome below.
     'destination', 'selection',
     // quick-capture-description reuses releaseCheck, kind and outcome; no captured text.

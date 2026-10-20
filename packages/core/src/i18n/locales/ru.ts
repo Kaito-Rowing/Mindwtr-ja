@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ruOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "Для загрузки из браузера нужна синхронизация с собственным облачным сервером.",
+    "attachments.webUploadEncrypted": "Для загрузки из браузера нужно отключить шифрование синхронизации.",
+    "attachments.webUploadOffline": "В автономном режиме нельзя загружать файлы.",
+    "attachments.webUploadChanged": "Черновик или настройки синхронизации изменились. Выберите файл заново.",
+    "attachments.webUploadFailed": "Вложение не сохранено.",
+    "attachments.webUploadRetry": "Повторите сохранение или удалите файл, чтобы продолжить.",
+    "attachments.webProjectUploadUnsupported": "Загрузка в проекты из браузера недоступна. Добавьте файл к задаче.",
     'contexts.new': 'Новый контекст',
     'tags.new': 'Новая метка',
     'settings.cleartextSyncDismiss': 'Скрыть для этого адреса синхронизации',

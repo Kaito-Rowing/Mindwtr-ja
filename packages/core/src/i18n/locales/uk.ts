@@ -2,6 +2,13 @@
 export const ukOverrides: Record<string, string> = {
     'projects.useAreaColor': "Використовувати колір області",
     'projects.colorSaveFailed': "Не вдалося зберегти колір.",
+    "attachments.webUploadRequiresCloud": "Для завантаження з браузера потрібна синхронізація з власним хмарним сервером.",
+    "attachments.webUploadEncrypted": "Для завантаження з браузера потрібно вимкнути шифрування синхронізації.",
+    "attachments.webUploadOffline": "В автономному режимі неможливо завантажувати файли.",
+    "attachments.webUploadChanged": "Чернетка або налаштування синхронізації змінилися. Виберіть файл знову.",
+    "attachments.webUploadFailed": "Вкладення не збережено.",
+    "attachments.webUploadRetry": "Повторіть збереження або видаліть файл, щоб продовжити.",
+    "attachments.webProjectUploadUnsupported": "Завантаження в проєкти з браузера недоступне. Додайте файл до завдання.",
     'contexts.new': 'Новий контекст',
     'tags.new': 'Нова мітка',
     'settings.importDiagnostics.unknownColumns': "Пропущено невідомих стовпців: {{count}}.",

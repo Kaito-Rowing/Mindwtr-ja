@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const csOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "Nahrávání v prohlížeči vyžaduje synchronizaci s vlastním cloudovým serverem.",
+    "attachments.webUploadEncrypted": "Nahrávání v prohlížeči vyžaduje vypnuté šifrování synchronizace.",
+    "attachments.webUploadOffline": "Bez připojení nelze nahrávat soubory.",
+    "attachments.webUploadChanged": "Koncept nebo nastavení synchronizace se změnilo. Vyberte soubor znovu.",
+    "attachments.webUploadFailed": "Příloha nebyla uložena.",
+    "attachments.webUploadRetry": "Zkuste uložit znovu nebo pokračujte odebráním souboru.",
+    "attachments.webProjectUploadUnsupported": "Nahrávání do projektů není v prohlížeči dostupné. Přidejte soubor k úkolu.",
     "projects.convertBlocked.destination-section-sequence": "Vyberte cílový projekt s nastavením Sekvenční → V rámci sekcí. Nová sekce zachová pořadí úkolů; ostatní sekce mohou pokračovat nezávisle.",
     'timeline.moveTaskDates': "Posunout data úkolu",
     'timeline.moveProjectDates': "Posunout data projektu",

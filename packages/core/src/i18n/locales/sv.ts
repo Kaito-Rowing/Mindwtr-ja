@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const svOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "Uppladdning i webbläsaren kräver synkronisering med ett självhostat moln.",
+    "attachments.webUploadEncrypted": "Uppladdning i webbläsaren kräver att synkroniseringskryptering är avstängd.",
+    "attachments.webUploadOffline": "Filer kan inte laddas upp offline.",
+    "attachments.webUploadChanged": "Utkastet eller synkroniseringsinställningarna har ändrats. Välj filen igen.",
+    "attachments.webUploadFailed": "Bilagan sparades inte.",
+    "attachments.webUploadRetry": "Försök spara igen eller ta bort filen för att fortsätta.",
+    "attachments.webProjectUploadUnsupported": "Uppladdning till projekt är inte tillgänglig i webbläsaren. Lägg till filen i en uppgift.",
     'contexts.new': 'Ny kontext',
     'tags.new': 'Ny tagg',
     "projects.convertBlocked.destination-section-sequence": "Välj ett målprojekt med Sekventiellt → Inom sektioner. Den nya sektionen behåller uppgifternas ordning; övriga sektioner kan fortsätta oberoende.",

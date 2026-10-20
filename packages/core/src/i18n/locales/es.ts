@@ -2,6 +2,13 @@
 // translation contributions easier. Every English key is translated here (mode: overrides,
 // floor: all), so new English UI copy cannot silently fall back in Spanish.
 export const esOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "Las cargas desde el navegador requieren sincronización con una nube autoalojada.",
+    "attachments.webUploadEncrypted": "Las cargas desde el navegador requieren desactivar el cifrado de sincronización.",
+    "attachments.webUploadOffline": "No se pueden subir archivos sin conexión.",
+    "attachments.webUploadChanged": "El borrador o la configuración de sincronización cambió. Vuelve a elegir el archivo.",
+    "attachments.webUploadFailed": "El adjunto no se guardó.",
+    "attachments.webUploadRetry": "Vuelve a guardar o elimina el archivo para continuar.",
+    "attachments.webProjectUploadUnsupported": "No se pueden subir archivos a proyectos desde el navegador. Añade el archivo a una tarea.",
     "projects.convertBlocked.destination-section-sequence": "Elige un proyecto de destino configurado como Secuencial → Dentro de secciones. La nueva sección conserva su secuencia de tareas; las demás siguen avanzando de forma independiente.",
     'timeline.moveTaskDates': "Mover fechas de la tarea",
     'timeline.moveProjectDates': "Mover fechas del proyecto",

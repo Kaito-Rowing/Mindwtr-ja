@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const arOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "يتطلب الرفع من المتصفح مزامنة سحابية على خادم مستضاف ذاتيًا.",
+    "attachments.webUploadEncrypted": "يتطلب الرفع من المتصفح إيقاف تشفير المزامنة.",
+    "attachments.webUploadOffline": "لا يمكن رفع الملفات دون اتصال.",
+    "attachments.webUploadChanged": "تغيرت المسودة أو إعدادات المزامنة. حدد الملف مجددًا.",
+    "attachments.webUploadFailed": "لم يتم حفظ المرفق.",
+    "attachments.webUploadRetry": "أعد محاولة الحفظ أو أزل الملف للمتابعة.",
+    "attachments.webProjectUploadUnsupported": "رفع الملفات إلى المشاريع غير متاح في المتصفح. أضف الملف إلى مهمة.",
     'settings.cleartextSyncDismiss': 'إخفاء لوجهة المزامنة هذه',
     'settings.importDiagnostics.unknownColumns': "تم تجاهل {{count}} من الأعمدة غير المعروفة.",
     'settings.importDiagnostics.csvLocation': "الصف {{row}}، العمود {{column}}",

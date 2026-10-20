@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const faOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "بارگذاری در مرورگر به همگام‌سازی ابری با میزبانی شخصی نیاز دارد.",
+    "attachments.webUploadEncrypted": "برای بارگذاری در مرورگر باید رمزگذاری همگام‌سازی خاموش باشد.",
+    "attachments.webUploadOffline": "در حالت آفلاین نمی‌توان فایل بارگذاری کرد.",
+    "attachments.webUploadChanged": "پیش‌نویس یا تنظیمات همگام‌سازی تغییر کرد. فایل را دوباره انتخاب کنید.",
+    "attachments.webUploadFailed": "پیوست ذخیره نشد.",
+    "attachments.webUploadRetry": "دوباره ذخیره کنید یا برای ادامه فایل را حذف کنید.",
+    "attachments.webProjectUploadUnsupported": "بارگذاری در پروژه‌ها از مرورگر در دسترس نیست. فایل را به یک کار اضافه کنید.",
     'settings.importDiagnostics.unknownColumns': "{{count}} ستون ناشناخته نادیده گرفته شد.",
     'settings.importDiagnostics.csvLocation': "ردیف {{row}}، ستون {{column}}",
     'settings.importDiagnostics.csvArchiveLocation': "ورودی CSV {{entry}}، ردیف {{row}}، ستون {{column}}",

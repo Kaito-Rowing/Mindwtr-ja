@@ -2,6 +2,13 @@
 export const nlOverrides: Record<string, string> = {
     'projects.useAreaColor': "Kleur van gebied gebruiken",
     'projects.colorSaveFailed': "De kleur kon niet worden opgeslagen.",
+    "attachments.webUploadRequiresCloud": "Uploads in de browser vereisen synchronisatie met een zelfgehoste cloud.",
+    "attachments.webUploadEncrypted": "Voor uploads in de browser moet synchronisatieversleuteling uitstaan.",
+    "attachments.webUploadOffline": "Bestanden kunnen niet offline worden geüpload.",
+    "attachments.webUploadChanged": "Het concept of de synchronisatieconfiguratie is gewijzigd. Selecteer het bestand opnieuw.",
+    "attachments.webUploadFailed": "De bijlage is niet opgeslagen.",
+    "attachments.webUploadRetry": "Probeer opnieuw op te slaan of verwijder het bestand om door te gaan.",
+    "attachments.webProjectUploadUnsupported": "Uploaden naar projecten is niet beschikbaar in de browser. Voeg het bestand toe aan een taak.",
     'contexts.new': 'Nieuwe context',
     'tags.new': 'Nieuwe tag',
     'settings.cleartextSyncDismiss': 'Verbergen voor deze synchronisatiebestemming',

@@ -1,5 +1,12 @@
 // Danish translation. Keep at full key parity with en.ts.
 export const daOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "Upload i browseren kræver synkronisering med en selvhostet sky.",
+    "attachments.webUploadEncrypted": "Upload i browseren kræver, at synkroniseringskryptering er slået fra.",
+    "attachments.webUploadOffline": "Filer kan ikke uploades offline.",
+    "attachments.webUploadChanged": "Kladden eller synkroniseringsopsætningen er ændret. Vælg filen igen.",
+    "attachments.webUploadFailed": "Vedhæftningen blev ikke gemt.",
+    "attachments.webUploadRetry": "Prøv at gemme igen, eller fjern filen for at fortsætte.",
+    "attachments.webProjectUploadUnsupported": "Upload til projekter er ikke tilgængelig i browseren. Føj filen til en opgave.",
     "projects.convertBlocked.destination-section-sequence": "Vælg et destinationsprojekt med Sekventiel → Indenfor sektioner. Den nye sektion bevarer opgavernes rækkefølge; andre sektioner kan fortsætte uafhængigt.",
     'timeline.moveTaskDates': "Flyt opgavens datoer",
     'timeline.moveProjectDates': "Flyt projektets datoer",

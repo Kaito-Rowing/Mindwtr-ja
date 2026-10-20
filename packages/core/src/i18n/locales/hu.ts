@@ -2,6 +2,13 @@
 // translation contributions easier. Every English key is translated here (mode: overrides,
 // floor: all), so new English UI copy cannot silently fall back in Hungarian.
 export const huOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "A böngészős feltöltéshez saját üzemeltetésű felhőszinkronizálás szükséges.",
+    "attachments.webUploadEncrypted": "A böngészős feltöltéshez ki kell kapcsolni a szinkronizálás titkosítását.",
+    "attachments.webUploadOffline": "Offline állapotban nem lehet fájlokat feltölteni.",
+    "attachments.webUploadChanged": "A piszkozat vagy a szinkronizálás beállítása megváltozott. Válassza ki újra a fájlt.",
+    "attachments.webUploadFailed": "A melléklet nem lett elmentve.",
+    "attachments.webUploadRetry": "Próbálja újra a mentést, vagy távolítsa el a fájlt a folytatáshoz.",
+    "attachments.webProjectUploadUnsupported": "A projektekbe való feltöltés nem érhető el a böngészőben. Adja a fájlt egy feladathoz.",
     "projects.convertBlocked.destination-section-sequence": "Válassz Szekvenciális → Szakaszokon belül beállítású célprojektet. Az új szakasz megőrzi a feladatok sorrendjét, a többi szakasz egymástól függetlenül haladhat.",
     'timeline.moveTaskDates': "Feladat dátumainak mozgatása",
     'timeline.moveProjectDates': "Projekt dátumainak mozgatása",

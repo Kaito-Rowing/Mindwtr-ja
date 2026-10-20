@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const trOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "Tarayıcıdan yükleme, kendi sunucunuzda bulut eşitlemesi gerektirir.",
+    "attachments.webUploadEncrypted": "Tarayıcıdan yükleme için eşitleme şifrelemesi kapalı olmalıdır.",
+    "attachments.webUploadOffline": "Çevrimdışıyken dosya yüklenemez.",
+    "attachments.webUploadChanged": "Taslak veya eşitleme ayarları değişti. Dosyayı yeniden seçin.",
+    "attachments.webUploadFailed": "Ek kaydedilmedi.",
+    "attachments.webUploadRetry": "Yeniden kaydetmeyi deneyin veya devam etmek için dosyayı kaldırın.",
+    "attachments.webProjectUploadUnsupported": "Tarayıcıda projelere yükleme kullanılamaz. Dosyayı bir göreve ekleyin.",
     'contexts.new': 'Yeni bağlam',
     'tags.new': 'Yeni etiket',
     'settings.cleartextSyncDismiss': 'Bu eşitleme hedefi için gizle',

@@ -1,4 +1,11 @@
 export const viOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "Tải lên từ trình duyệt cần đồng bộ với máy chủ đám mây tự lưu trữ.",
+    "attachments.webUploadEncrypted": "Tải lên từ trình duyệt cần tắt mã hóa đồng bộ.",
+    "attachments.webUploadOffline": "Không thể tải tệp lên khi ngoại tuyến.",
+    "attachments.webUploadChanged": "Bản nháp hoặc cấu hình đồng bộ đã thay đổi. Hãy chọn lại tệp.",
+    "attachments.webUploadFailed": "Tệp đính kèm chưa được lưu.",
+    "attachments.webUploadRetry": "Thử lưu lại hoặc xóa tệp để tiếp tục.",
+    "attachments.webProjectUploadUnsupported": "Trình duyệt chưa hỗ trợ tải lên dự án. Hãy thêm tệp vào một công việc.",
     'contexts.new': 'Ngữ cảnh mới',
     'tags.new': 'Thẻ mới',
     "projects.convertBlocked.destination-section-sequence": "Chọn dự án đích đặt thành Tuần tự → Trong các phần. Phần mới giữ nguyên thứ tự công việc; các phần khác tiếp tục độc lập.",

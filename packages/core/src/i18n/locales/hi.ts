@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const hiOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "ब्राउज़र से अपलोड करने के लिए स्व-होस्टेड क्लाउड सिंक आवश्यक है।",
+    "attachments.webUploadEncrypted": "ब्राउज़र से अपलोड करने के लिए सिंक एन्क्रिप्शन बंद होना चाहिए।",
+    "attachments.webUploadOffline": "ऑफ़लाइन रहते हुए फ़ाइलें अपलोड नहीं की जा सकतीं।",
+    "attachments.webUploadChanged": "ड्राफ़्ट या सिंक सेटिंग बदल गई है। फ़ाइल दोबारा चुनें।",
+    "attachments.webUploadFailed": "अनुलग्नक सहेजा नहीं गया।",
+    "attachments.webUploadRetry": "सहेजने का फिर प्रयास करें या आगे बढ़ने के लिए फ़ाइल हटाएँ।",
+    "attachments.webProjectUploadUnsupported": "ब्राउज़र में परियोजना अपलोड उपलब्ध नहीं है। फ़ाइल किसी कार्य में जोड़ें।",
     'settings.cleartextSyncDismiss': 'इस सिंक गंतव्य के लिए खारिज करें',
     'settings.importDiagnostics.unknownColumns': "{{count}} अज्ञात स्तंभों को अनदेखा किया गया।",
     'settings.importDiagnostics.csvLocation': "पंक्ति {{row}}, स्तंभ {{column}}",

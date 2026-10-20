@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const frOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "Les envois depuis le navigateur nécessitent la synchronisation avec un serveur auto-hébergé.",
+    "attachments.webUploadEncrypted": "Les envois depuis le navigateur nécessitent de désactiver le chiffrement de synchronisation.",
+    "attachments.webUploadOffline": "Impossible de téléverser des fichiers hors ligne.",
+    "attachments.webUploadChanged": "Le brouillon ou la configuration de synchronisation a changé. Sélectionnez à nouveau le fichier.",
+    "attachments.webUploadFailed": "La pièce jointe n’a pas été enregistrée.",
+    "attachments.webUploadRetry": "Réessayez d’enregistrer ou retirez le fichier pour continuer.",
+    "attachments.webProjectUploadUnsupported": "L’envoi vers un projet est indisponible dans le navigateur. Ajoutez le fichier à une tâche.",
     "projects.convertBlocked.destination-section-sequence": "Choisissez un projet de destination réglé sur Séquentiel → Dans les sections. La nouvelle section conserve l’ordre des tâches ; les autres sections continuent indépendamment.",
     'timeline.moveTaskDates': "Déplacer les dates de la tâche",
     'timeline.moveProjectDates': "Déplacer les dates du projet",

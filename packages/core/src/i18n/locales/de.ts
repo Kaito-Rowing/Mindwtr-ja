@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const deOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "Browser-Uploads erfordern die Synchronisierung mit einer selbst gehosteten Cloud.",
+    "attachments.webUploadEncrypted": "Für Browser-Uploads muss die Synchronisierungsverschlüsselung ausgeschaltet sein.",
+    "attachments.webUploadOffline": "Offline können keine Dateien hochgeladen werden.",
+    "attachments.webUploadChanged": "Der Entwurf oder die Synchronisierungskonfiguration wurde geändert. Wähle die Datei erneut aus.",
+    "attachments.webUploadFailed": "Der Anhang wurde nicht gespeichert.",
+    "attachments.webUploadRetry": "Versuche erneut zu speichern oder entferne die Datei, um fortzufahren.",
+    "attachments.webProjectUploadUnsupported": "Projekt-Uploads sind im Browser nicht verfügbar. Füge die Datei einer Aufgabe hinzu.",
     "projects.convertBlocked.destination-section-sequence": "Wähle ein Zielprojekt mit Sequenziell → Innerhalb von Abschnitten. Der neue Abschnitt behält seine Aufgabenreihenfolge; andere Abschnitte können unabhängig fortfahren.",
     'timeline.moveTaskDates': "Aufgabendaten verschieben",
     'timeline.moveProjectDates': "Projektdaten verschieben",

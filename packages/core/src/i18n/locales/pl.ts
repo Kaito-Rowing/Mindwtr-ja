@@ -1,5 +1,12 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const plOverrides: Record<string, string> = {
+    "attachments.webUploadRequiresCloud": "Przesyłanie w przeglądarce wymaga synchronizacji z własnym serwerem w chmurze.",
+    "attachments.webUploadEncrypted": "Przesyłanie w przeglądarce wymaga wyłączenia szyfrowania synchronizacji.",
+    "attachments.webUploadOffline": "Nie można przesyłać plików offline.",
+    "attachments.webUploadChanged": "Szkic lub konfiguracja synchronizacji uległy zmianie. Wybierz plik ponownie.",
+    "attachments.webUploadFailed": "Załącznik nie został zapisany.",
+    "attachments.webUploadRetry": "Ponów zapis lub usuń plik, aby kontynuować.",
+    "attachments.webProjectUploadUnsupported": "Przesyłanie do projektów jest niedostępne w przeglądarce. Dodaj plik do zadania.",
     'contexts.new': 'Nowy kontekst',
     'tags.new': 'Nowy tag',
     'settings.cleartextSyncDismiss': 'Ukryj dla tego miejsca synchronizacji',
