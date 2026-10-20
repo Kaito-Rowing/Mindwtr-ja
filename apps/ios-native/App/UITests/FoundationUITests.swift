@@ -5226,10 +5226,10 @@ final class FoundationUITests: XCTestCase {
         boardEnabled(task)
     }
 
-    func testReferenceChecklistUsesBulletsAndPersists() {
+    func testReferenceChecklistTogglesResetsAndPersists() {
         let app = XCUIApplication()
         let library = UUID().uuidString.lowercased()
-        app.launchArguments = ["--native-ui-test-library", library]
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US"]
         print("Reference checklist isolated library: " + library)
         app.launch()
         boardEnabled(app.buttons["capture-open"], timeout: 30)
@@ -5273,12 +5273,17 @@ final class FoundationUITests: XCTestCase {
         openReference()
         boardTap(app, "task-mode-edit")
         showChecklist()
-        XCTAssertFalse(app.buttons["task-checklist-toggle-0"].exists)
-        XCTAssertFalse(app.buttons["task-checklist-toggle-1"].exists)
-        XCTAssertFalse(app.buttons["task-checklist-reset"].exists)
+        boardEnabled(app.buttons["task-checklist-toggle-0"])
+        boardEnabled(app.buttons["task-checklist-toggle-1"])
+        boardEnabled(app.buttons["task-checklist-reset"])
+        editorTap("task-checklist-toggle-0")
+        boardEnabled(app.buttons["task-editor-save"])
+        XCTAssertEqual(app.buttons["task-checklist-toggle-0"].value as? String, "Done")
         boardTap(app, "task-mode-view")
-        XCTAssertFalse(app.buttons["task-view-checklist-toggle-0"].exists)
-        XCTAssertFalse(app.textFields["task-view-checklist-append"].exists)
+        boardEnabled(app.buttons["task-view-checklist-toggle-0"])
+        XCTAssertEqual(app.buttons["task-view-checklist-toggle-0"].value as? String, "Done")
+        editorTap("task-view-checklist-toggle-1")
+        boardEnabled(app.textFields["task-view-checklist-append"])
         boardTap(app, "task-mode-edit")
         showChecklist()
         editorTap("task-checklist-add")
@@ -5289,16 +5294,33 @@ final class FoundationUITests: XCTestCase {
         app.terminate(); app.launch()
         boardEnabled(app.buttons["tab-menu"], timeout: 30)
         openReference()
-        XCTAssertFalse(app.buttons["task-view-checklist-toggle-0"].exists)
+        boardEnabled(app.buttons["task-view-checklist-toggle-0"])
+        XCTAssertEqual(app.buttons["task-view-checklist-toggle-0"].value as? String, "Done")
+        boardEnabled(app.buttons["task-view-checklist-toggle-1"])
+        XCTAssertEqual(app.buttons["task-view-checklist-toggle-1"].value as? String, "Done")
         boardTap(app, "task-mode-edit")
         showChecklist()
         for (index, expected) in ["Reference first", "Reference second", "Reference third"].enumerated() {
             let field = app.textFields["task-checklist-input-\(index)"]
             revealPagedElement(app, field, in: scroll)
             XCTAssertEqual(field.value as? String, expected)
-            XCTAssertFalse(app.buttons["task-checklist-toggle-\(index)"].exists)
+            boardEnabled(app.buttons["task-checklist-toggle-\(index)"])
+            XCTAssertEqual(app.buttons["task-checklist-toggle-\(index)"].value as? String, index < 2 ? "Done" : "Active")
         }
-        XCTAssertFalse(app.buttons["task-checklist-reset"].exists)
+        editorTap("task-checklist-reset")
+        boardEnabled(app.buttons["task-editor-save"])
+        boardTap(app, "task-view-close")
+        XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+        boardEnabled(app.buttons["Reference checklist"])
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        openReference()
+        boardTap(app, "task-mode-edit")
+        showChecklist()
+        for index in 0..<3 {
+            revealPagedElement(app, app.buttons["task-checklist-toggle-\(index)"], in: scroll)
+            XCTAssertEqual(app.buttons["task-checklist-toggle-\(index)"].value as? String, "Active")
+        }
         boardTap(app, "task-view-close")
         XCTAssertFalse(app.buttons["task-editor-discard"].exists)
         boardEnabled(app.buttons["Reference checklist"])
