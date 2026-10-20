@@ -27,7 +27,6 @@ import java.io.InputStream
 import java.util.Date
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.TimeUnit
 
 /*
  * Settings › Data's Backup and Import folds and Sync › Recovery snapshots (RN's use-sync-settings-backup-actions.ts and
@@ -408,11 +407,11 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 
     private fun closed(json: JSONObject) = DataChannel.Closed(json.getLong("bytes"), json.getString("sha256"))
 
-    /** Shows the no-Undo question ([words]: core's model) and waits on this operation's thread; no answer in 15 minutes is Cancel. */
+    /** Shows the no-Undo question ([words]: core's model) and waits on this operation's thread, as long as the app's other questions wait. */
     private fun askNoUndo(words: JSONObject): Boolean {
         val answer = CompletableFuture<Boolean>()
         shell.ui { noUndoAnswer = answer; question = JSONObject().put("kind", "noUndo").put("model", words) }
-        val continued = runCatching { answer.get(15, TimeUnit.MINUTES) }.getOrDefault(false)
+        val continued = runCatching { answer.get() }.getOrDefault(false)
         shell.ui { noUndoAnswer = null; if (question?.optString("kind") == "noUndo") question = null }
         return continued
     }
