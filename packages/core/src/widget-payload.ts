@@ -801,8 +801,8 @@ export interface WidgetPublicationInput {
  * offers every saved filter, context and tag by name, but their lists (and
  * legacy project lists) are built only for what placed widgets chose
  * (`listSelections`): one list per label made every refresh grow with the
- * labels (#1399; D9b, dd's call 2026-10-20). A newly chosen one shows under
- * its name, empty, until the app's next publication.
+ * labels (#1399). A newly chosen one shows under its name, empty, until the
+ * app's next publication.
  */
 export function androidWidgetProjectionOptions(
     input: WidgetPublicationInput & { listSelections: readonly string[] },
