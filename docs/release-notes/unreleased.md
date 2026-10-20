@@ -2,7 +2,7 @@
 
 Changes collected since the latest stable release.
 
-- Mobile: taking Undo right after a restore, merge or import now brings attachments back with their files. Before, a sync that ran in between could delete the files of attachments the restore had removed, and Undo then showed them as available with nothing on the phone. A restore or snapshot restore also marks any attachment whose file is missing on the phone, so the next sync downloads it again.
+- Mobile: taking Undo after a restore, merge or import now brings attachments back with their files, as long as the app stays open and no newer restore, merge or import came after it. Before, a sync that ran in between could delete the files of attachments the restore had removed, and Undo then showed them as available with nothing on the phone. A restore or snapshot restore also marks any attachment whose file is missing on the phone, so the next sync downloads it again.
 - Linux desktop: **Copy Title**, **Copy task link** and **Copy task ID** in the task menu no longer fail now and then with "Could not copy task". The menu could lose the click before the copy ran, and WebKit then refused the clipboard write (#1327).
 - Mobile: Contexts has a Sort button beside its search, so you can see and change the list sort there, as in Inbox (#1415).
 - Task lists on desktop and mobile can sort by **Priority** (highest first, tasks without a priority last). Priority is offered only while Priorities is on, and not as a project's own sort or in Done and Archive (#1415).

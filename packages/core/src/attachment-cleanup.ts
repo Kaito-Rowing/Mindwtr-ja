@@ -142,7 +142,7 @@ export function hasFreshAttachmentCleanupWork(appData: AppData): boolean {
         return true;
     }
     const pendingCloudKeys = new Set(pendingRemoteDeletes.map((entry) => entry.cloudKey));
-    const held = heldRestoreUndoAttachments(Date.now());
+    const held = heldRestoreUndoAttachments();
     const hasWork = (attachments: readonly Attachment[] | undefined, parentPurged: boolean): boolean => (
         Boolean(attachments?.some((attachment) => attachmentHasFreshCleanupWork(attachment, parentPurged, pendingCloudKeys, held)))
     );
@@ -296,26 +296,25 @@ export function isAttachmentCloudResourceReferenced(
 /**
  * A restore, merge or import offers Undo: a restore of the recovery snapshot taken just before it. While that Undo may still be
  * taken, cleanup leaves alone the local files and remote copies the snapshot's live attachments name, or the Undo would bring
- * them back with no bytes (follow-up restore-undo-attachment-bytes). Core never sees the result toast close, so the hold ends
- * after a fixed time, or when a newer transfer with its own Undo replaces it; cleanup then runs as before.
+ * them back with no bytes (follow-up restore-undo-attachment-bytes). Core never sees an Undo go away (iOS's result panel stays
+ * until Done, and every confirm question waits for a tap), so the hold has no end in time: it lasts until a newer transfer with
+ * its own Undo replaces it, or the process ends. Android's leftover result re-registers it at the next start.
  */
-// ponytail: one in-memory hold with a fixed end; a host signal for the toast's close would end it sooner, and a recovery
-// snapshot restored from Settings later (or after a process death) is covered only by markMissingLocalAttachmentFiles.
-export const RESTORE_UNDO_ATTACHMENT_HOLD_MS = 10 * 60 * 1000;
-let restoreUndoHold: { references: LiveAttachmentResourceReferences; until: number } | null = null;
+// ponytail: one in-memory hold, ended only by replacement or process end, so one transfer's removed files (and remote copies)
+// wait until then; a host signal for the Undo's end would free them sooner. A recovery snapshot restored from Settings later is
+// covered only by markMissingLocalAttachmentFiles.
+let restoreUndoHold: LiveAttachmentResourceReferences | null = null;
 
 /** [references]: findLiveAttachmentResourceReferences of the library the Undo would bring back (its recovery snapshot). */
-export function holdRestoreUndoAttachments(references: LiveAttachmentResourceReferences, nowMs = Date.now()): void {
-    restoreUndoHold = { references, until: nowMs + RESTORE_UNDO_ATTACHMENT_HOLD_MS };
+export function holdRestoreUndoAttachments(references: LiveAttachmentResourceReferences): void {
+    restoreUndoHold = references;
 }
 
 export function resetRestoreUndoAttachmentHold(): void {
     restoreUndoHold = null;
 }
 
-const heldRestoreUndoAttachments = (nowMs: number): LiveAttachmentResourceReferences | null => (
-    restoreUndoHold && nowMs < restoreUndoHold.until ? restoreUndoHold.references : null
-);
+const heldRestoreUndoAttachments = (): LiveAttachmentResourceReferences | null => restoreUndoHold;
 
 const isRestoreUndoAttachmentHeld = (
     attachment: Pick<Attachment, 'uri' | 'cloudKey'>,
@@ -465,7 +464,7 @@ export function applyAttachmentCleanupResult(appData: AppData, result: Attachmen
 export async function runAttachmentCleanupLifecycle(
     options: AttachmentCleanupLifecycleOptions,
 ): Promise<AttachmentCleanupLifecycleResult> {
-    const held = heldRestoreUndoAttachments(Date.now());
+    const held = heldRestoreUndoAttachments();
     const orphanedAttachments = findOrphanedAttachments(options.appData);
     const deletedAttachments = findDeletedAttachmentsForFileCleanup(options.appData);
     const cleanupTargets = new Map<string, Attachment>();

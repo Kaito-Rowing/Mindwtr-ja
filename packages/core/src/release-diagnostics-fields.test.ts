@@ -23,6 +23,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'destination', 'selection',
     // quick-capture-description reuses releaseCheck, kind and outcome; no captured text.
     // restore-attachment-presence reuses releaseCheck and count below; no names or paths.
+    // leftover-undo-hold reuses releaseCheck and outcome below.
     // ios-reminder-actions reuses releaseCheck, stage, action, reason, and appState below.
     // ios-task-badge reuses releaseCheck, count, and enabled below.
     'result',

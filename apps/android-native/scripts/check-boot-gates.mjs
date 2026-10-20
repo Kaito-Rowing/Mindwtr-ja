@@ -3992,6 +3992,10 @@ export function buildNativeBackupDocumentFailure(operation, error, t, limitMb) {
   globalThis.backupInputs.push(JSON.stringify(['failure', operation, error, limitMb]));
   return { title: t('settings.backupMobile.restoreFailed'), message: error };
 }
+export function holdNativeBackupUndoAttachments(snapshotText, snapshotName) {
+  globalThis.backupInputs.push(JSON.stringify(['undoHold', snapshotText.length, snapshotName]));
+  return true;
+}
 export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName, t) {
   globalThis.backupInputs.push(JSON.stringify(['restoreModel', snapshotName]));
   return { title: t('settings.undoImportConfirmTitle'), message: t('settings.undoImportConfirm', { snapshotName }),

@@ -38,6 +38,7 @@ import {
     buildNativeBackupDocumentResult,
     buildNativeBackupSnapshotRestoreConfirmation,
     commitNativeBackupDocument,
+    holdNativeBackupUndoAttachments,
     inspectNativeBackupDocument,
     prepareNativeBackupDocument,
     readNativeBackupDocumentOutcome,
@@ -5147,6 +5148,23 @@ globalThis.MindwtrHost = {
     },
     backupDocumentOutcome(referenceJSON: string, planJSON: string, snapshotName: string): string {
         return submit(async () => readNativeBackupDocumentOutcome(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof readNativeBackupDocumentOutcome>[1], planJSON, snapshotName));
+    },
+    /**
+     * Android: before a leftover result's toast offers Undo at a start, its recovery snapshot (read through [snapshotHandle]) holds
+     * that Undo's attachment files again, as the commit held them (follow-up restore-undo-attachment-bytes). `{ held }`.
+     */
+    backupUndoHold(snapshotHandle: string, snapshotName: string): string {
+        return submit(async () => {
+            let text: string;
+            try {
+                text = channelRead(snapshotHandle);
+                channelClose(snapshotHandle);
+            } catch (error) {
+                if (channelCode(error)) throw new Error('SAVE_FAILED: The recovery snapshot could not be read');
+                throw error;
+            }
+            return { held: holdNativeBackupUndoAttachments(text, snapshotName) };
+        });
     },
     backupDocumentResultModel(replyJSON: string): string {
         return submit(async () => buildNativeBackupDocumentResult(backupJson(replyJSON) as Parameters<typeof buildNativeBackupDocumentResult>[0], backupTranslate));

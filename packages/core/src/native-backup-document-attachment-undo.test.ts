@@ -9,13 +9,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     hasFreshAttachmentCleanupWork,
     resetRestoreUndoAttachmentHold,
-    RESTORE_UNDO_ATTACHMENT_HOLD_MS,
     runAttachmentCleanupLifecycle,
 } from './attachment-cleanup';
 import type { LocalAttachmentPresence } from './attachment-transfer';
 import { serializeBackupData } from './backup-transfer';
 import { runDataTransferTransaction, runDataTransferTransactionWithoutSnapshot } from './data-transfer-transaction';
-import { commitNativeBackupDocument, prepareNativeBackupDocument, type NativeBackupOperationReference } from './native-backup-document';
+import { commitNativeBackupDocument, holdNativeBackupUndoAttachments, prepareNativeBackupDocument, type NativeBackupOperationReference } from './native-backup-document';
 import { loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts } from './native-request-receipts';
 import { openScratchSqlite } from './screen-parity.replay';
 import { SqliteAdapter } from './sqlite-adapter';
@@ -78,8 +77,12 @@ const cases = [
 ];
 const collectDeletes = (deleted: string[]) => async (target: Attachment) => { if (target.uri) deleted.push(target.uri); };
 
-/** Restore [tasks] over a library holding [item], run a sync's cleanup [cleanupAfterMs] later, then take the restore's Undo. */
-async function restoreCleanupUndo(item: Attachment, tasks: readonly Task[], cleanupAfterMs: number) {
+/**
+ * Restore [tasks] over a library holding [item], run a sync's cleanup a day later, then take the restore's Undo. [between]: the
+ * process lives on (`held`), ends (`process-ended`), or ends and the next start shows the leftover result's Undo (`leftover`,
+ * Android), which holds the files again from the recovery snapshot.
+ */
+async function restoreCleanupUndo(item: Attachment, tasks: readonly Task[], between: 'held' | 'process-ended' | 'leftover') {
     vi.useFakeTimers({ toFake: ['Date'], now: NOW });
     const library = libraryWith(item);
     const adapter = await open(library);
@@ -92,7 +95,10 @@ async function restoreCleanupUndo(item: Attachment, tasks: readonly Task[], clea
     await commitNativeBackupDocument(adapter, reference(replaceId, 'a'), replaced.planJSON, NAME, { getLocalAttachmentPresence: presence });
 
     // The next sync's cleanup (mobile-attachment-cleanup.ts wires deleteLocalAttachment to the device's file delete).
-    vi.setSystemTime(NOW + cleanupAfterMs);
+    // The hold has no end in time: an iOS result panel or a confirm question can wait for as long as the app runs.
+    vi.setSystemTime(NOW + 24 * 60 * 60 * 1000);
+    if (between !== 'held') resetRestoreUndoAttachmentHold();
+    if (between === 'leftover') holdNativeBackupUndoAttachments(replaced.recoveryJSON!, NAME);
     const restored = await adapter.getData();
     const freshWork = hasFreshAttachmentCleanupWork(restored);
     const cleaned = await runAttachmentCleanupLifecycle({ appData: restored, deleteLocalAttachment: collectDeletes(deleted),
@@ -110,7 +116,7 @@ async function restoreCleanupUndo(item: Attachment, tasks: readonly Task[], clea
 
 describe('a restore, a sync\'s attachment cleanup, then the restore\'s Undo', () => {
     it.each(cases)('keeps the Undo\'s file and remote copy while the Undo may be taken (%s)', async (_label, item, tasks) => {
-        const result = await restoreCleanupUndo(item, tasks, 60_000);
+        const result = await restoreCleanupUndo(item, tasks, 'held');
         expect(result.deleted).toEqual([]);
         expect(result.remoteDeletes).toEqual([]);
         // A held tombstone is no reason to run cleanup ahead of its daily interval, and cleanup leaves it unprocessed.
@@ -120,8 +126,15 @@ describe('a restore, a sync\'s attachment cleanup, then the restore\'s Undo', ()
         expect(result.after?.deletedAt ?? null).toBeNull();
     });
 
-    it.each(cases)('cleans up once the Undo is gone, and the Undo then marks the attachment missing (%s)', async (label, item, tasks) => {
-        const result = await restoreCleanupUndo(item, tasks, RESTORE_UNDO_ATTACHMENT_HOLD_MS + 1);
+    it.each(cases)('keeps them when the next start offers the leftover result\'s Undo again (Android, %s)', async (_label, item, tasks) => {
+        const result = await restoreCleanupUndo(item, tasks, 'leftover');
+        expect(result.deleted).toEqual([]);
+        expect(result.remoteDeletes).toEqual([]);
+        expect(result.after).toMatchObject({ localStatus: 'available' });
+    });
+
+    it.each(cases)('cleans up once the process ended, and the Undo then marks the attachment missing (%s)', async (label, item, tasks) => {
+        const result = await restoreCleanupUndo(item, tasks, 'process-ended');
         expect(result.after?.deletedAt ?? null).toBeNull();
         if (label.startsWith('the restored backup lacks the task')) {
             // Nothing in the restored library names the attachment, so cleanup has nothing to delete.

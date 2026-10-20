@@ -611,6 +611,19 @@ function importResult(reply: ImportReplyWithDiagnostics, t: ImportDiagnosticTran
     };
 }
 
+/**
+ * Android's leftover result (a death after its commit, before its toast) offers Undo again at the next start: its recovery
+ * snapshot's attachments are held again first, as the commit held them (attachment-cleanup.ts holdRestoreUndoAttachments).
+ * Parsing the snapshot costs what the Undo's own prepare costs, and the transfer limit admitted that. Answers whether it held.
+ */
+export function holdNativeBackupUndoAttachments(snapshotText: string, snapshotName: string): boolean {
+    if (!snapshot(snapshotName)) invalid();
+    const validation = parseSource(snapshotText, { fileName: snapshotName, lastModified: 0, appVersion: '0.0.0' });
+    if (!validation.valid || !validation.data) return false;
+    holdRestoreUndoAttachments(findLiveAttachmentResourceReferences(validation.data));
+    return true;
+}
+
 /** RN's question before a snapshot restore: the Undo words after an import or restore, else the Recovery snapshots row's. */
 export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName: string, t: ImportDiagnosticTranslator, undo = true) {
     if (!snapshot(snapshotName)) invalid();

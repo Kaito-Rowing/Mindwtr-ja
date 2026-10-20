@@ -410,7 +410,19 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         takeLeftover(operations, snapshots, { runtime.backupResultModel(it) }) { leftover, shown ->
             found = if (leftover is Leftover.Result) "result" else "failure"
             when (leftover) {
-                is Leftover.Result -> shell.ui { showResult(leftover.model, leftover.undo, shown) }
+                is Leftover.Result -> {
+                    // Its Undo comes back with this toast: core holds that Undo's attachment files again first, as the commit did
+                    // in the process that died (a sync's cleanup must not delete them before the Undo is taken).
+                    leftover.undo?.let { name ->
+                        val held = runCatching { runtime.backupUndoHold(File(snapshots, name)).optBoolean("held") }
+                            .onFailure { Log.w(CoreHost.TAG, "Leftover Undo hold failed ${failureForLog(it)}") }.getOrDefault(false)
+                        runCatching {
+                            runtime.logLine("Native Android leftover Undo held its attachments releaseCheck=v1.3.7/leftover-undo-hold", JSONObject()
+                                .put("releaseCheck", "v1.3.7/leftover-undo-hold").put("outcome", if (held) "held" else "failed"))
+                        }
+                    }
+                    shell.ui { showResult(leftover.model, leftover.undo, shown) }
+                }
                 is Leftover.Failure -> {
                     val model = failureModel(runtime, leftover.operation, leftover.error)
                     shell.ui {

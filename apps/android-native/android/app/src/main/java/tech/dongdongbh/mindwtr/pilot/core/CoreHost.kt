@@ -846,6 +846,14 @@ class CoreHost(
     /** Core's result toast for a commit's reply. */
     fun backupResultModel(replyJson: String): JSONObject = callAsync("backupDocumentResultModel", replyJson)
 
+    /** Before a leftover result offers Undo: core holds the attachment files of recovery snapshot [snapshot] again (`{ held }`). */
+    fun backupUndoHold(snapshot: File): JSONObject {
+        val handle = data.openRead(snapshot, false)
+        try {
+            return callAsync("backupUndoHold", handle, snapshot.name, deadlineMs = sized(BACKUP_DEADLINE_MS, snapshot.length()))
+        } finally { data.drop(handle) }
+    }
+
     /** Core's question before restoring snapshot [name]: [mode] "undo" (a result's Undo) or "restore" (a Recovery snapshots row). */
     fun backupSnapshotModel(name: String, mode: String): JSONObject = callAsync("backupSnapshotRestoreModel", name, mode)
 

@@ -26,6 +26,7 @@ export const ANDROID_HOST_METHODS = [
     'backupDocumentResultModel',
     'backupLibraryBytes',
     'backupSnapshotRestoreModel',
+    'backupUndoHold',
     'boot',
     'bootRecovery',
     'calendarRequest',
