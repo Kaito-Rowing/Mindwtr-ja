@@ -1736,4 +1736,9 @@ export const arOverrides: Record<string, string> = {
         "settings.taskReminderDefaultDesc": "ينطبق على المهام الجديدة والمهام التي تستخدم الافتراضي. يتطلب الإرسال تفعيل تذكيرات المهام وتحديد وقت البدء أو الاستحقاق.",
         "settings.taskReminderDefaultSend": "إرسال",
         "settings.taskReminderDefaultSkip": "تخطي",
+        "settings.mobile.appLockRelock": "طلب فتح القفل",
+        "settings.mobile.appLockRelockImmediately": "فورًا",
+        "settings.mobile.appLockRelockAfter1": "بعد دقيقة واحدة",
+        "settings.mobile.appLockRelockAfter5": "بعد 5 دقائق",
+        "settings.mobile.appLockRelockAfter15": "بعد 15 دقيقة",
 };

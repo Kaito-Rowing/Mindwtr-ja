@@ -197,6 +197,7 @@ function generalDriver(host: Host, scenario: Scenario) {
         if (control === 'theme') return { title: model.appearance.theme.pickerTitle, groups: model.appearance.theme.groups };
         const controls = {
             quickAccess: model.appearance.quickAccess,
+            appLockRelock: model.privacy.appLockRelockDelay!,
             language: model.language,
             weekStart: model.regional.weekStart,
             dateFormat: model.regional.dateFormat,
@@ -242,6 +243,7 @@ function generalDriver(host: Host, scenario: Scenario) {
                     ...rows(appearance.quickAccess),
                     privacy.title, privacy.appLock.label, privacy.appLock.description,
                     ...(appLockError ? [privacy.appLock.errors[appLockError]] : []),
+                    ...rows(privacy.appLockRelockDelay),
                     ...(privacy.appSearch ? [privacy.appSearch.label, privacy.appSearch.description] : []),
                     language.title, language.description, ...rows(language),
                     regional.label, regional.summary,

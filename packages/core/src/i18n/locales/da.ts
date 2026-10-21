@@ -1343,6 +1343,11 @@ export const daOverrides: Record<string, string> = {
     'settings.mobile.appLock': 'App lås',
     'settings.mobile.appLockDesc':
         'Kræv din enhedslås, når du åbner Mindwtr eller vender tilbage til appen. Dette beskytter appvisningen, ikke databasen på enheden.',
+    'settings.mobile.appLockRelock': 'Kræv oplåsning',
+    'settings.mobile.appLockRelockImmediately': 'Med det samme',
+    'settings.mobile.appLockRelockAfter1': 'Efter 1 minut',
+    'settings.mobile.appLockRelockAfter5': 'Efter 5 minutter',
+    'settings.mobile.appLockRelockAfter15': 'Efter 15 minutter',
     'appLock.title': 'Mindwtr er låst',
     'appLock.description':
         'Brug din enhedslås til at åbne Mindwtr. Dette beskytter appvisningen, ikke databasen på enheden.',

@@ -532,8 +532,13 @@ export interface SupportPromptSettings {
     lastShownAt?: string;
 }
 
+/** Minutes away from the app before App Lock asks again; 0 asks every time. */
+export type MobileAppLockRelockDelayMinutes = 0 | 1 | 5 | 15;
+
 export interface SecuritySettings {
     mobileAppLockEnabled?: boolean;
+    /** Device-local like the whole group. A missing or unknown value reads as 0. */
+    mobileAppLockRelockDelayMinutes?: MobileAppLockRelockDelayMinutes;
 }
 
 export interface NetworkSettings {

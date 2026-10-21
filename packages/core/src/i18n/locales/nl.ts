@@ -850,4 +850,9 @@ export const nlOverrides: Record<string, string> = {
         "settings.taskReminderDefaultDesc": "Geldt voor nieuwe taken en taken die de standaard gebruiken. Versturen vereist ingeschakelde taakherinneringen en een start- of eindtijd.",
         "settings.taskReminderDefaultSend": "Versturen",
         "settings.taskReminderDefaultSkip": "Overslaan",
+        "settings.mobile.appLockRelock": "Ontgrendelen vereisen",
+        "settings.mobile.appLockRelockImmediately": "Direct",
+        "settings.mobile.appLockRelockAfter1": "Na 1 minuut",
+        "settings.mobile.appLockRelockAfter5": "Na 5 minuten",
+        "settings.mobile.appLockRelockAfter15": "Na 15 minuten",
 };

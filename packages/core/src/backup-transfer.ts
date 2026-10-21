@@ -287,27 +287,22 @@ const carryForwardEntitiesMissingFromBackup = <T extends RestorableEntity>(
     return carried.length > 0 ? [...restored, ...carried] : restored;
 };
 
+// The whole security group (App Lock and its relock delay) belongs to this device, as in sync.
 const stripDeviceLocalRestoreSettings = (settings: AppData['settings']): AppData['settings'] => {
-    if (settings.security?.mobileAppLockEnabled === undefined) return settings;
-    const nextSettings: AppData['settings'] = {
-        ...settings,
-        security: { ...settings.security },
-    };
-    delete nextSettings.security?.mobileAppLockEnabled;
-    if (nextSettings.security && Object.keys(nextSettings.security).length === 0) {
-        delete nextSettings.security;
-    }
+    if (settings.security === undefined) return settings;
+    const nextSettings: AppData['settings'] = { ...settings };
+    delete nextSettings.security;
     return nextSettings;
 };
 
-// App Lock is this device's own: a restore never takes it from the file (above) and never turns this device's lock off.
+// A restore never takes App Lock from the file (above) and never changes this device's App Lock.
 const keepDeviceLocalRestoreSettings = (
     restored: AppData['settings'],
     previous: AppData['settings'] | undefined,
 ): AppData['settings'] => {
-    const lock = previous?.security?.mobileAppLockEnabled;
-    if (lock === undefined) return restored;
-    return { ...restored, security: { ...restored.security, mobileAppLockEnabled: lock } };
+    const security = previous?.security;
+    if (security === undefined) return restored;
+    return { ...restored, security: { ...security } };
 };
 
 const RESTORED_SETTINGS_SYNC_GROUPS: SettingsSyncGroup[] = [

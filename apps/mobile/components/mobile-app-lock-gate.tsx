@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LockKeyhole } from 'lucide-react-native';
-import { translateWithFallback } from '@mindwtr/core';
+import { resolveMobileAppLockRelockDelayMinutes, translateWithFallback, useTaskStore } from '@mindwtr/core';
 
 import { useLanguage } from '@/contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -10,6 +10,7 @@ import { useFilledButtonColors } from '@/hooks/use-filled-button-colors';
 import {
   authenticateWithDeviceLock,
   getMobileAppLockErrorKey,
+  isWithinMobileAppLockRelockDelay,
   shouldAttemptMobileAppLockAuthentication,
 } from '@/lib/mobile-app-lock';
 
@@ -21,6 +22,10 @@ type MobileAppLockGateProps = {
 const AUTHENTICATE_AFTER_ACTIVE_DELAY_MS = 250;
 
 export function MobileAppLockGate({ enabled, children }: MobileAppLockGateProps) {
+  // Minutes away before a return asks again; 0 asks every time. A cold start always asks.
+  const relockDelayMinutes = useTaskStore((state) => (
+    resolveMobileAppLockRelockDelayMinutes(state.settings?.security?.mobileAppLockRelockDelayMinutes)
+  ));
   const tc = useThemeColors();
   const filledButton = useFilledButtonColors();
   const { t } = useLanguage();
@@ -33,6 +38,10 @@ export function MobileAppLockGate({ enabled, children }: MobileAppLockGateProps)
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const authInFlightRef = useRef(false);
   const wasEnabledRef = useRef(enabled);
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
+  // When the app last left 'active' while unlocked; null while locked or after a cold start.
+  const leftUnlockedAtRef = useRef<number | null>(null);
 
   const resolveText = useCallback((key: string, fallback: string) => (
     translateWithFallback(t, key, fallback)
@@ -97,11 +106,19 @@ export function MobileAppLockGate({ enabled, children }: MobileAppLockGateProps)
       const previous = appStateRef.current;
       appStateRef.current = nextAppState;
       if (previous === 'active' && (nextAppState === 'inactive' || nextAppState === 'background')) {
+        // The lock screen still covers the app while it is away; the delay only skips the prompt on return.
+        leftUnlockedAtRef.current = lockedRef.current ? null : Date.now();
         lockApp();
+      } else if (nextAppState === 'active') {
+        const leftUnlockedAt = leftUnlockedAtRef.current;
+        leftUnlockedAtRef.current = null;
+        if (isWithinMobileAppLockRelockDelay({ delayMinutes: relockDelayMinutes, leftUnlockedAt, now: Date.now() })) {
+          setLocked(false);
+        }
       }
     });
     return () => subscription.remove();
-  }, [enabled]);
+  }, [enabled, relockDelayMinutes]);
 
   useEffect(() => {
     if (!shouldAttemptMobileAppLockAuthentication({

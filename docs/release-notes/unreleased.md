@@ -2,6 +2,7 @@
 
 Changes collected since the latest stable release.
 
+- Mobile App Lock: a new **Require unlock** choice (Immediately, After 1 minute, After 5 minutes, After 15 minutes) lets you switch to another app briefly without unlocking again. Immediately stays the default, and opening the app after it was closed always asks. The choice stays on this phone and is kept when you restore a backup (#1423).
 - Quick add reads `@person/todd` and `@"Two words"` as one context or tag, even when no task uses it yet. Before, `@person/todd` became `@person` with "/todd" left in the title, and a quoted context swallowed the rest of the line. Android task widgets now pre-fill these names too (#1428).
 - Contexts view: tapping a context or tag now switches to it instead of adding it to the selection. To combine several, long-press a chip on mobile, or Ctrl-click (Cmd-click on macOS) on desktop (#1427).
 - Android: a task widget that shows one context or tag now opens quick capture with that context or tag already typed in, so the new task gets it. You can edit or delete it before saving (#1418).

@@ -28,6 +28,14 @@
     "observations": [
      "Manage sections for Contexts and Tags append a New context/New tag label and Add button when open (localized in German). Frozen inputs, actions, writes, alerts, device writes and editor fields are unchanged."
     ]
+   },
+   {
+    "base": "4f5ac3c79",
+    "command": "cd apps/mobile && MINDWTR_DUMP_SETTINGS_SCREENS=<file> TZ=UTC bunx vitest run components/settings/settings.parity.test.tsx, with the App Lock relock delay row in place (#1423); only the observations below were replaced, and every other observation matched the frozen one",
+    "observations": [
+     "general: stored values, task age and quick access, in German, and app lock after the successful enable: while App Lock is on, a 'Require unlock' row ('Entsperren verlangen' in German) showing 'Immediately' ('Sofort') follows the App lock row. Only texts changed.",
+     "general: app lock relock delay is a new scenario: the picker offers Immediately, After 1 minute, After 5 minutes and After 15 minutes; picking 5 minutes writes security.mobileAppLockRelockDelayMinutes 5 with App Lock kept on, and picking it again writes nothing."
+    ]
    }
   ]
  },
@@ -591,6 +599,39 @@
     [
      "toggle",
      "appLock"
+    ]
+   ]
+  },
+  {
+   "name": "general: app lock relock delay",
+   "data": "none",
+   "settings": "stored",
+   "device": {
+    "themeMode": "nord"
+   },
+   "actions": [
+    [
+     "open",
+     "appLockRelock"
+    ],
+    [
+     "pick",
+     2
+    ],
+    [
+     "open",
+     "appLockRelock"
+    ],
+    [
+     "pick",
+     2
+    ],
+    [
+     "open",
+     "appLockRelock"
+    ],
+    [
+     "dismiss"
     ]
    ]
   },
@@ -3357,6 +3398,8 @@
      "Privacy",
      "App lock",
      "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
      "Language",
      "Select your preferred language",
      "Language",
@@ -3395,6 +3438,8 @@
      "Privacy",
      "App lock",
      "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
      "Language",
      "Select your preferred language",
      "Language",
@@ -3439,6 +3484,8 @@
      "Privacy",
      "App lock",
      "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
      "Language",
      "Select your preferred language",
      "Language",
@@ -3803,6 +3850,8 @@
      "Privacy",
      "App lock",
      "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
      "Language",
      "Select your preferred language",
      "Language",
@@ -3841,6 +3890,8 @@
      "Privacy",
      "App lock",
      "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
      "Language",
      "Select your preferred language",
      "Language",
@@ -3890,6 +3941,8 @@
      "Privacy",
      "App lock",
      "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
      "Language",
      "Select your preferred language",
      "Language",
@@ -3939,6 +3992,8 @@
      "Privacy",
      "App lock",
      "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
      "Language",
      "Select your preferred language",
      "Language",
@@ -4003,6 +4058,8 @@
      "Privacy",
      "App lock",
      "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
      "Language",
      "Select your preferred language",
      "Language",
@@ -4052,6 +4109,8 @@
      "Privacy",
      "App lock",
      "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
      "Language",
      "Select your preferred language",
      "Language",
@@ -4116,6 +4175,8 @@
      "Privacy",
      "App lock",
      "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
      "Language",
      "Select your preferred language",
      "Language",
@@ -4205,6 +4266,8 @@
      "Privacy",
      "App lock",
      "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
      "Language",
      "Select your preferred language",
      "Language",
@@ -4435,6 +4498,376 @@
       }
      ]
     ],
+    "alerts": [],
+    "navigations": [],
+    "links": []
+   }
+  ],
+  "general: app lock relock delay": [
+   {
+    "texts": [
+     "General",
+     "Appearance",
+     "Theme",
+     "Nord",
+     "Show task age",
+     "Display how long ago a task was created in task metadata.",
+     "Quick access view",
+     "Calendar",
+     "Privacy",
+     "App lock",
+     "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
+     "Language",
+     "Select your preferred language",
+     "Language",
+     "English",
+     "Regional formats",
+     "Monday · Year / Month / Day · 24-hour"
+    ],
+    "switches": [
+     [
+      true,
+      false
+     ],
+     [
+      true,
+      false
+     ]
+    ],
+    "expanded": false,
+    "picker": null,
+    "writes": [],
+    "device": [],
+    "alerts": [],
+    "navigations": [],
+    "links": []
+   },
+   {
+    "texts": [
+     "General",
+     "Appearance",
+     "Theme",
+     "Nord",
+     "Show task age",
+     "Display how long ago a task was created in task metadata.",
+     "Quick access view",
+     "Calendar",
+     "Privacy",
+     "App lock",
+     "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "Immediately",
+     "Language",
+     "Select your preferred language",
+     "Language",
+     "English",
+     "Regional formats",
+     "Monday · Year / Month / Day · 24-hour"
+    ],
+    "switches": [
+     [
+      true,
+      false
+     ],
+     [
+      true,
+      false
+     ]
+    ],
+    "expanded": false,
+    "picker": {
+     "title": "Require unlock",
+     "groups": [
+      [
+       [
+        "Immediately",
+        true,
+        null
+       ],
+       [
+        "After 1 minute",
+        false,
+        null
+       ],
+       [
+        "After 5 minutes",
+        false,
+        null
+       ],
+       [
+        "After 15 minutes",
+        false,
+        null
+       ]
+      ]
+     ]
+    },
+    "writes": [],
+    "device": [],
+    "alerts": [],
+    "navigations": [],
+    "links": []
+   },
+   {
+    "texts": [
+     "General",
+     "Appearance",
+     "Theme",
+     "Nord",
+     "Show task age",
+     "Display how long ago a task was created in task metadata.",
+     "Quick access view",
+     "Calendar",
+     "Privacy",
+     "App lock",
+     "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "After 5 minutes",
+     "Language",
+     "Select your preferred language",
+     "Language",
+     "English",
+     "Regional formats",
+     "Monday · Year / Month / Day · 24-hour"
+    ],
+    "switches": [
+     [
+      true,
+      false
+     ],
+     [
+      true,
+      false
+     ]
+    ],
+    "expanded": false,
+    "picker": null,
+    "writes": [
+     [
+      "updateSettings",
+      {
+       "security": {
+        "mobileAppLockEnabled": true,
+        "mobileAppLockRelockDelayMinutes": 5
+       }
+      }
+     ]
+    ],
+    "device": [],
+    "alerts": [],
+    "navigations": [],
+    "links": []
+   },
+   {
+    "texts": [
+     "General",
+     "Appearance",
+     "Theme",
+     "Nord",
+     "Show task age",
+     "Display how long ago a task was created in task metadata.",
+     "Quick access view",
+     "Calendar",
+     "Privacy",
+     "App lock",
+     "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "After 5 minutes",
+     "Language",
+     "Select your preferred language",
+     "Language",
+     "English",
+     "Regional formats",
+     "Monday · Year / Month / Day · 24-hour"
+    ],
+    "switches": [
+     [
+      true,
+      false
+     ],
+     [
+      true,
+      false
+     ]
+    ],
+    "expanded": false,
+    "picker": {
+     "title": "Require unlock",
+     "groups": [
+      [
+       [
+        "Immediately",
+        false,
+        null
+       ],
+       [
+        "After 1 minute",
+        false,
+        null
+       ],
+       [
+        "After 5 minutes",
+        true,
+        null
+       ],
+       [
+        "After 15 minutes",
+        false,
+        null
+       ]
+      ]
+     ]
+    },
+    "writes": [],
+    "device": [],
+    "alerts": [],
+    "navigations": [],
+    "links": []
+   },
+   {
+    "texts": [
+     "General",
+     "Appearance",
+     "Theme",
+     "Nord",
+     "Show task age",
+     "Display how long ago a task was created in task metadata.",
+     "Quick access view",
+     "Calendar",
+     "Privacy",
+     "App lock",
+     "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "After 5 minutes",
+     "Language",
+     "Select your preferred language",
+     "Language",
+     "English",
+     "Regional formats",
+     "Monday · Year / Month / Day · 24-hour"
+    ],
+    "switches": [
+     [
+      true,
+      false
+     ],
+     [
+      true,
+      false
+     ]
+    ],
+    "expanded": false,
+    "picker": null,
+    "writes": [],
+    "device": [],
+    "alerts": [],
+    "navigations": [],
+    "links": []
+   },
+   {
+    "texts": [
+     "General",
+     "Appearance",
+     "Theme",
+     "Nord",
+     "Show task age",
+     "Display how long ago a task was created in task metadata.",
+     "Quick access view",
+     "Calendar",
+     "Privacy",
+     "App lock",
+     "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "After 5 minutes",
+     "Language",
+     "Select your preferred language",
+     "Language",
+     "English",
+     "Regional formats",
+     "Monday · Year / Month / Day · 24-hour"
+    ],
+    "switches": [
+     [
+      true,
+      false
+     ],
+     [
+      true,
+      false
+     ]
+    ],
+    "expanded": false,
+    "picker": {
+     "title": "Require unlock",
+     "groups": [
+      [
+       [
+        "Immediately",
+        false,
+        null
+       ],
+       [
+        "After 1 minute",
+        false,
+        null
+       ],
+       [
+        "After 5 minutes",
+        true,
+        null
+       ],
+       [
+        "After 15 minutes",
+        false,
+        null
+       ]
+      ]
+     ]
+    },
+    "writes": [],
+    "device": [],
+    "alerts": [],
+    "navigations": [],
+    "links": []
+   },
+   {
+    "texts": [
+     "General",
+     "Appearance",
+     "Theme",
+     "Nord",
+     "Show task age",
+     "Display how long ago a task was created in task metadata.",
+     "Quick access view",
+     "Calendar",
+     "Privacy",
+     "App lock",
+     "Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.",
+     "Require unlock",
+     "After 5 minutes",
+     "Language",
+     "Select your preferred language",
+     "Language",
+     "English",
+     "Regional formats",
+     "Monday · Year / Month / Day · 24-hour"
+    ],
+    "switches": [
+     [
+      true,
+      false
+     ],
+     [
+      true,
+      false
+     ]
+    ],
+    "expanded": false,
+    "picker": null,
+    "writes": [],
+    "device": [],
     "alerts": [],
     "navigations": [],
     "links": []
@@ -6284,6 +6717,8 @@
      "Datenschutz",
      "App-Sperre",
      "Gerätesperre beim Öffnen von Mindwtr oder beim Zurückkehren zur App verlangen. Das schützt die App-Ansicht, nicht die Datenbank auf dem Gerät.",
+     "Entsperren verlangen",
+     "Sofort",
      "Sprache",
      "Bevorzugte Sprache auswählen",
      "Sprache",
@@ -6322,6 +6757,8 @@
      "Datenschutz",
      "App-Sperre",
      "Gerätesperre beim Öffnen von Mindwtr oder beim Zurückkehren zur App verlangen. Das schützt die App-Ansicht, nicht die Datenbank auf dem Gerät.",
+     "Entsperren verlangen",
+     "Sofort",
      "Sprache",
      "Bevorzugte Sprache auswählen",
      "Sprache",
@@ -6366,6 +6803,8 @@
      "Datenschutz",
      "App-Sperre",
      "Gerätesperre beim Öffnen von Mindwtr oder beim Zurückkehren zur App verlangen. Das schützt die App-Ansicht, nicht die Datenbank auf dem Gerät.",
+     "Entsperren verlangen",
+     "Sofort",
      "Sprache",
      "Bevorzugte Sprache auswählen",
      "Sprache",

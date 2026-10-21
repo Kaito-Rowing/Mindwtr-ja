@@ -93,6 +93,7 @@ import {
     buildGeneralSettingsUpdate,
     getGeneralSettingsDeviceWrites,
     isGeneralSettingStored,
+    MOBILE_APP_LOCK_RELOCK_DELAY_OPTIONS,
     MOBILE_QUICK_ACCESS_VIEW_OPTIONS,
     resolveGeneralThemeMode,
     SETTINGS_LANGUAGE_OPTIONS,
@@ -316,6 +317,7 @@ function readGeneralEdit(value: unknown, calendarSystemShown: boolean): GeneralS
         switch (value.type) {
             case 'theme': return SETTINGS_THEME_VALUE_SET.has(v as never);
             case 'quickAccessView': return MOBILE_QUICK_ACCESS_VIEW_OPTIONS.includes(v as never);
+            case 'appLockRelockDelay': return MOBILE_APP_LOCK_RELOCK_DELAY_OPTIONS.includes(v as never);
             case 'language': return LANGUAGES.has(v as string);
             case 'weekStart': return WEEK_STARTS.has(v as string);
             case 'dateFormat': return DATE_FORMATS.has(v as string);
