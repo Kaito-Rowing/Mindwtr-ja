@@ -18,6 +18,7 @@ import {
   CONTEXTS_BULK_STATUSES,
   editContextsTaskTokens,
   formatListItemCount,
+  getContextsChipLabels,
   getContextsEmptyState,
   getContextsMatchModeLabels,
   getContextsRouteTokens,
@@ -113,6 +114,8 @@ export function ContextsView() {
     matchMode,
     searchQuery,
   });
+  // Aligned with model.tokenChips: a child chip after its parent shows "/leaf" (#1428).
+  const chipLabels = model.filterSections.flatMap((section) => getContextsChipLabels(section.tokens));
   const tasksById = useMemo(
     () => tasks.reduce((acc, task) => {
       acc[task.id] = task;
@@ -357,7 +360,7 @@ export function ContextsView() {
                 </Text>
               </View>
             </Pressable>
-            {model.tokenChips.map(({ token: context, count, selected: isActive }) => {
+            {model.tokenChips.map(({ token: context, count, selected: isActive }, chipIndex) => {
               return (
                 <Pressable
                   key={context}
@@ -381,7 +384,7 @@ export function ContextsView() {
                       { color: isActive ? tc.onTint : tc.text },
                     ]}
                   >
-                    {context}
+                    {chipLabels[chipIndex]?.label ?? context}
                   </Text>
                   <View
                     style={[

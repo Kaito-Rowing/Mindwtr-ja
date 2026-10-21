@@ -296,6 +296,32 @@ describe('ContextsView', () => {
         expect(getByText('Plan launch')).toBeInTheDocument();
     });
 
+    // #1428: a nested row after its parent row shows only "/leaf", indented; its name stays the full token.
+    it('shows nested contexts and tags under their parent with a short label', () => {
+        const tasks = [
+            makeTask('emma', { title: 'Emma', contexts: ['@person/emma'] }),
+            makeTask('todd', { title: 'Todd', contexts: ['@person/todd'] }),
+            makeTask('bank', { title: 'Bank', contexts: ['@place/bank'], tags: ['#errand/post'] }),
+        ];
+        useTaskStore.setState({ tasks, _allTasks: tasks });
+        const view = renderContextsView();
+        const row = (name: string) => {
+            const button = view.getByRole('button', { name });
+            const label = button.querySelectorAll('span')[1] as HTMLElement;
+            return [label.textContent, label.style.paddingLeft, button.getAttribute('title')];
+        };
+        expect(row('@person (2)')).toEqual(['person', '', null]);
+        expect(row('@person/emma (1)')).toEqual(['/emma', '0.75rem', '@person/emma']);
+        expect(row('@person/todd (1)')).toEqual(['/todd', '0.75rem', '@person/todd']);
+        expect(row('@place/bank (1)')).toEqual(['/bank', '0.75rem', '@place/bank']);
+        expect(row('#errand (1)')).toEqual(['errand', '', null]);
+        expect(row('#errand/post (1)')).toEqual(['/post', '0.75rem', '#errand/post']);
+        fireEvent.click(view.getByRole('button', { name: '@person/todd (1)' }));
+        expect(view.getByRole('heading', { name: '@person/todd' })).toBeInTheDocument();
+        expect(view.getByText('Todd')).toBeInTheDocument();
+        expect(view.queryByText('Emma')).not.toBeInTheDocument();
+    });
+
     it('offers parent filters and keeps a selected parent with zero matches', () => {
         const tasks = [
             makeTask('excavator', { title: 'Excavator', contexts: ['@tools/excavator'] }),

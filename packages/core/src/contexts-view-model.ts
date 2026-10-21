@@ -58,6 +58,37 @@ export const buildContextsViewFilterSections = ({
     ];
 };
 
+export type ContextsChipLabel = {
+    /** The text the chip shows: the full token, or "/" and its last part. */
+    label: string;
+    /** How many shown ancestors sit above the chip; 0 for a full token. */
+    depth: number;
+};
+
+/**
+ * What each chip of one section shows, in order (#1428). A chip whose parent
+ * token is the chip before it, or an earlier chip of the same family run,
+ * shows only "/" and its last part: `@person`, `/emma`, `/todd`. Any other
+ * chip, including one whose parent the search hid, shows its full token.
+ * Display only: selection, counts and accessibility labels keep the full token.
+ */
+export function getContextsChipLabels(tokens: readonly string[]): ContextsChipLabel[] {
+    // The chips from the family root down to the previous chip.
+    const path: string[] = [];
+    return tokens.map((token) => {
+        while (path.length > 0 && !token.startsWith(`${path[path.length - 1]}/`)) path.pop();
+        const slash = token.lastIndexOf('/');
+        const leaf = token.slice(slash + 1);
+        if (path.length === 0 || slash !== path[path.length - 1].length || !leaf) {
+            path.length = 0;
+            path.push(token);
+            return { label: token, depth: 0 };
+        }
+        path.push(token);
+        return { label: `/${leaf}`, depth: path.length - 1 };
+    });
+}
+
 export const taskHasContextOrTag = (task: Task): boolean => (
     (task.contexts?.length ?? 0) > 0 || (task.tags?.length ?? 0) > 0
 );

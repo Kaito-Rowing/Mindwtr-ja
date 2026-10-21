@@ -45,6 +45,7 @@ import {
     buildContextsViewModel,
     CONTEXTS_BULK_STATUSES,
     editContextsTaskTokens,
+    getContextsChipLabels,
     getContextsEmptyState,
     getContextsMatchModeLabels,
     getContextsTokenPicker,
@@ -279,11 +280,13 @@ export function createContextsCoreBackend(t: Translate): ContextsBackend {
             const labels = getContextsMatchModeLabels(t);
             const tasksById = Object.fromEntries(store.tasks.map((task) => [task.id, task]));
             const empty = getContextsEmptyState({ hasTokens: model.hasTokens, selectedTokens: state.tokens }, t);
+            const chipLabels = model.filterSections.flatMap((section) => getContextsChipLabels(section.tokens));
             return {
                 chips: [
                     [t('contexts.all'), state.tokens.length === 0, [t('common.all'), String(model.allCount)]],
                     [t('contexts.none'), model.noContextSelected, [t('contexts.none'), String(model.noContextCount)]],
-                    ...model.tokenChips.map((chip): [string, boolean, string[]] => [`${chip.token} (${chip.count})`, chip.selected, [chip.token, String(chip.count)]]),
+                    // A child chip after its parent shows "/leaf"; the accessibility label keeps the full token (#1428).
+                    ...model.tokenChips.map((chip, index): [string, boolean, string[]] => [`${chip.token} (${chip.count})`, chip.selected, [chipLabels[index].label, String(chip.count)]]),
                 ],
                 matchMode: model.showMatchMode
                     ? [labels.label, [[labels.all, state.matchMode === 'all'], [labels.any, state.matchMode === 'any']]]

@@ -209,6 +209,7 @@ import {
     buildContextsViewModel,
     CONTEXTS_BULK_STATUSES,
     editContextsTaskTokens,
+    getContextsChipLabels,
     getContextsEmptyState,
     getContextsMatchModeLabels,
     getContextsTokenPicker,
@@ -4596,6 +4597,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 const onScreen = new Set(model.tasks.map((task) => task.id));
                 const selected = selectedIds.filter((id) => onScreen.has(id));
                 const tasksById = Object.fromEntries(state.tasks.map((task) => [task.id, task]));
+                const chipLabels = model.filterSections.flatMap((section) => getContextsChipLabels(section.tokens));
                 return {
                     model,
                     selected,
@@ -4603,8 +4605,9 @@ function createListViewMethods(deps: ListViewDeps) {
                     chips: [
                         { id: 'all', kind: 'all' as const, label: t('common.all'), accessibilityLabel: t('contexts.all'), count: model.allCount, selected: tokens.length === 0, next: next([], 'all') },
                         { id: 'none', kind: 'none' as const, label: t('contexts.none'), accessibilityLabel: t('contexts.none'), count: model.noContextCount, selected: model.noContextSelected, next: next(toggleContextsNoContext(tokens), 'all') },
-                        ...model.tokenChips.map((chip) => ({
-                            id: chip.token, kind: chip.kind, label: chip.token, accessibilityLabel: `${chip.token} (${chip.count})`,
+                        // A child chip after its parent shows "/leaf"; id and accessibility label keep the full token (#1428).
+                        ...model.tokenChips.map((chip, index) => ({
+                            id: chip.token, kind: chip.kind, label: chipLabels[index].label, accessibilityLabel: `${chip.token} (${chip.count})`,
                             count: chip.count, selected: chip.selected, next: next(toggleContextsToken(tokens, chip.token), matchMode),
                         })),
                     ],

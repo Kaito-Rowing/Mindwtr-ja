@@ -724,7 +724,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -807,7 +807,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -860,7 +860,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ]
@@ -911,7 +911,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "Sort",
       "Default",
@@ -1118,7 +1118,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -1201,7 +1201,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -1256,7 +1256,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -1339,7 +1339,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -1392,7 +1392,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -1455,7 +1455,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -1508,7 +1508,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -1578,7 +1578,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -1636,7 +1636,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -1719,7 +1719,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -1775,7 +1775,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -1845,7 +1845,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -1903,7 +1903,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -1986,7 +1986,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -2042,7 +2042,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -2105,7 +2105,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -2158,7 +2158,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -2241,7 +2241,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -2294,7 +2294,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -2357,7 +2357,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -2410,7 +2410,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -2480,7 +2480,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -2538,7 +2538,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -2597,7 +2597,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -2650,7 +2650,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -2713,7 +2713,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -2766,7 +2766,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -2825,7 +2825,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -2878,255 +2878,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
-        "1"
-       ]
-      ],
-      [
-       "@phone (2)",
-       false,
-       [
-        "@phone",
-        "2"
-       ]
-      ],
-      [
-       "#focus (1)",
-       false,
-       [
-        "#focus",
-        "1"
-       ]
-      ],
-      [
-       "#home (2)",
-       false,
-       [
-        "#home",
-        "2"
-       ]
-      ],
-      [
-       "#work (2)",
-       false,
-       [
-        "#work",
-        "2"
-       ]
-      ]
-     ],
-     "matchMode": null,
-     "rows": [
-      [
-       "c-plan",
-       false
-      ],
-      [
-       "c-call",
-       false
-      ],
-      [
-       "c-email",
-       false
-      ],
-      [
-       "c-deep",
-       false
-      ],
-      [
-       "c-sink",
-       false
-      ],
-      [
-       "c-idea",
-       false
-      ],
-      [
-       "c-ref",
-       false
-      ]
-     ],
-     "selectionMode": false,
-     "empty": null,
-     "bulk": null,
-     "picker": null,
-     "editor": null,
-     "alerts": [],
-     "toasts": [],
-     "writes": [],
-     "text": [
-      "All",
-      "7",
-      "No context",
-      "1",
-      "@computer",
-      "2",
-      "@computer/deep",
-      "1",
-      "@phone",
-      "2",
-      "#focus",
-      "1",
-      "#home",
-      "2",
-      "#work",
-      "2",
-      "Sort",
-      "Default",
-      "Due date",
-      "Start date",
-      "Review date",
-      "Priority",
-      "Time estimate",
-      "Title",
-      "Oldest",
-      "Newest"
-     ]
-    },
-    {
-     "search": "",
-     "chips": [
-      [
-       "All Contexts",
-       false,
-       [
-        "All",
-        "7"
-       ]
-      ],
-      [
-       "No context",
-       false,
-       [
-        "No context",
-        "1"
-       ]
-      ],
-      [
-       "@computer (2)",
-       false,
-       [
-        "@computer",
-        "2"
-       ]
-      ],
-      [
-       "@computer/deep (1)",
-       false,
-       [
-        "@computer/deep",
-        "1"
-       ]
-      ],
-      [
-       "@phone (2)",
-       false,
-       [
-        "@phone",
-        "2"
-       ]
-      ],
-      [
-       "#focus (1)",
-       true,
-       [
-        "#focus",
-        "1"
-       ]
-      ],
-      [
-       "#home (2)",
-       false,
-       [
-        "#home",
-        "2"
-       ]
-      ],
-      [
-       "#work (2)",
-       false,
-       [
-        "#work",
-        "2"
-       ]
-      ]
-     ],
-     "matchMode": null,
-     "rows": [
-      [
-       "c-deep",
-       false
-      ]
-     ],
-     "selectionMode": false,
-     "empty": null,
-     "bulk": null,
-     "picker": null,
-     "editor": null,
-     "alerts": [],
-     "toasts": [],
-     "writes": [],
-     "text": [
-      "All",
-      "7",
-      "No context",
-      "1",
-      "@computer",
-      "2",
-      "@computer/deep",
-      "1",
-      "@phone",
-      "2",
-      "#focus",
-      "1",
-      "#home",
-      "2",
-      "#work",
-      "2",
-      "Sort",
-      "Default",
-      "Due date",
-      "Start date",
-      "Review date",
-      "Priority",
-      "Time estimate",
-      "Title",
-      "Oldest",
-      "Newest"
-     ]
-    },
-    {
-     "search": "",
-     "chips": [
-      [
-       "All Contexts",
-       true,
-       [
-        "All",
-        "7"
-       ]
-      ],
-      [
-       "No context",
-       false,
-       [
-        "No context",
-        "1"
-       ]
-      ],
-      [
-       "@computer (2)",
-       false,
-       [
-        "@computer",
-        "2"
-       ]
-      ],
-      [
-       "@computer/deep (1)",
-       false,
-       [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -3209,7 +2961,255 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
+      "1",
+      "@phone",
+      "2",
+      "#focus",
+      "1",
+      "#home",
+      "2",
+      "#work",
+      "2",
+      "Sort",
+      "Default",
+      "Due date",
+      "Start date",
+      "Review date",
+      "Priority",
+      "Time estimate",
+      "Title",
+      "Oldest",
+      "Newest"
+     ]
+    },
+    {
+     "search": "",
+     "chips": [
+      [
+       "All Contexts",
+       false,
+       [
+        "All",
+        "7"
+       ]
+      ],
+      [
+       "No context",
+       false,
+       [
+        "No context",
+        "1"
+       ]
+      ],
+      [
+       "@computer (2)",
+       false,
+       [
+        "@computer",
+        "2"
+       ]
+      ],
+      [
+       "@computer/deep (1)",
+       false,
+       [
+        "/deep",
+        "1"
+       ]
+      ],
+      [
+       "@phone (2)",
+       false,
+       [
+        "@phone",
+        "2"
+       ]
+      ],
+      [
+       "#focus (1)",
+       true,
+       [
+        "#focus",
+        "1"
+       ]
+      ],
+      [
+       "#home (2)",
+       false,
+       [
+        "#home",
+        "2"
+       ]
+      ],
+      [
+       "#work (2)",
+       false,
+       [
+        "#work",
+        "2"
+       ]
+      ]
+     ],
+     "matchMode": null,
+     "rows": [
+      [
+       "c-deep",
+       false
+      ]
+     ],
+     "selectionMode": false,
+     "empty": null,
+     "bulk": null,
+     "picker": null,
+     "editor": null,
+     "alerts": [],
+     "toasts": [],
+     "writes": [],
+     "text": [
+      "All",
+      "7",
+      "No context",
+      "1",
+      "@computer",
+      "2",
+      "/deep",
+      "1",
+      "@phone",
+      "2",
+      "#focus",
+      "1",
+      "#home",
+      "2",
+      "#work",
+      "2",
+      "Sort",
+      "Default",
+      "Due date",
+      "Start date",
+      "Review date",
+      "Priority",
+      "Time estimate",
+      "Title",
+      "Oldest",
+      "Newest"
+     ]
+    },
+    {
+     "search": "",
+     "chips": [
+      [
+       "All Contexts",
+       true,
+       [
+        "All",
+        "7"
+       ]
+      ],
+      [
+       "No context",
+       false,
+       [
+        "No context",
+        "1"
+       ]
+      ],
+      [
+       "@computer (2)",
+       false,
+       [
+        "@computer",
+        "2"
+       ]
+      ],
+      [
+       "@computer/deep (1)",
+       false,
+       [
+        "/deep",
+        "1"
+       ]
+      ],
+      [
+       "@phone (2)",
+       false,
+       [
+        "@phone",
+        "2"
+       ]
+      ],
+      [
+       "#focus (1)",
+       false,
+       [
+        "#focus",
+        "1"
+       ]
+      ],
+      [
+       "#home (2)",
+       false,
+       [
+        "#home",
+        "2"
+       ]
+      ],
+      [
+       "#work (2)",
+       false,
+       [
+        "#work",
+        "2"
+       ]
+      ]
+     ],
+     "matchMode": null,
+     "rows": [
+      [
+       "c-plan",
+       false
+      ],
+      [
+       "c-call",
+       false
+      ],
+      [
+       "c-email",
+       false
+      ],
+      [
+       "c-deep",
+       false
+      ],
+      [
+       "c-sink",
+       false
+      ],
+      [
+       "c-idea",
+       false
+      ],
+      [
+       "c-ref",
+       false
+      ]
+     ],
+     "selectionMode": false,
+     "empty": null,
+     "bulk": null,
+     "picker": null,
+     "editor": null,
+     "alerts": [],
+     "toasts": [],
+     "writes": [],
+     "text": [
+      "All",
+      "7",
+      "No context",
+      "1",
+      "@computer",
+      "2",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -3264,7 +3264,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -3334,7 +3334,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -3392,7 +3392,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -3475,7 +3475,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -3533,7 +3533,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -3592,7 +3592,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -3647,7 +3647,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -3730,7 +3730,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -3785,7 +3785,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -3868,7 +3868,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -3921,7 +3921,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -3984,7 +3984,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -4037,7 +4037,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -4107,7 +4107,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -4165,7 +4165,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -4248,7 +4248,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -4304,7 +4304,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -4367,7 +4367,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -4420,7 +4420,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -4483,7 +4483,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -4536,7 +4536,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -4599,7 +4599,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -4652,7 +4652,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -4715,7 +4715,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -4768,7 +4768,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -4835,7 +4835,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "1",
@@ -4888,7 +4888,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -4967,7 +4967,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "1",
@@ -5020,7 +5020,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -5100,7 +5100,7 @@
       "0",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "1",
@@ -5155,7 +5155,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -5238,7 +5238,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -5291,7 +5291,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -5423,7 +5423,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -5488,7 +5488,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -5620,7 +5620,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -5685,7 +5685,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -5828,7 +5828,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -5893,7 +5893,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -6025,7 +6025,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -6090,7 +6090,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -6233,7 +6233,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -6298,7 +6298,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -6419,7 +6419,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -6474,7 +6474,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -6614,7 +6614,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -6681,7 +6681,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -6821,7 +6821,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -6888,7 +6888,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -7038,7 +7038,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -7105,7 +7105,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -7215,7 +7215,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -7270,7 +7270,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -7410,7 +7410,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -7477,7 +7477,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -7617,7 +7617,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -7684,7 +7684,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -7835,7 +7835,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -7902,7 +7902,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -8031,7 +8031,7 @@
       "0",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@desk",
       "2",
@@ -8088,7 +8088,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -8236,7 +8236,7 @@
       "0",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@desk",
       "2",
@@ -8305,7 +8305,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -8463,7 +8463,7 @@
       "0",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@desk",
       "2",
@@ -10973,7 +10973,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -11056,7 +11056,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -11109,7 +11109,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -11241,7 +11241,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -11306,7 +11306,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -11438,7 +11438,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -11503,7 +11503,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -11615,7 +11615,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -11680,7 +11680,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -11812,7 +11812,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",
@@ -11877,7 +11877,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -11971,7 +11971,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "1",
@@ -12496,7 +12496,7 @@
        "@computer/deep (1)",
        false,
        [
-        "@computer/deep",
+        "/deep",
         "1"
        ]
       ],
@@ -12579,7 +12579,7 @@
       "1",
       "@computer",
       "2",
-      "@computer/deep",
+      "/deep",
       "1",
       "@phone",
       "2",

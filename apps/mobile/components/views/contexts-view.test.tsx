@@ -2,7 +2,7 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { runStoreCommand, runSyncStoreSave, type Task } from '@mindwtr/core';
-import { Pressable, ScrollView, TouchableOpacity } from 'react-native';
+import { Pressable, ScrollView, Text, TextInput, TouchableOpacity } from 'react-native';
 import { ContextsView } from './contexts-view';
 import { TaskListSortModal } from '../task-list/TaskListSortModal';
 
@@ -222,6 +222,34 @@ describe('ContextsView', () => {
     await act(async () => { chips[0].props.onPress(); });
     expect(chips[0].props.accessibilityState.selected).toBe(true);
     expect(tree.root.findAll((node) => (node.type as unknown) === 'SwipeableTaskItem')).toHaveLength(2);
+  });
+
+  // #1428: a nested chip after its parent chip shows only "/leaf"; its accessibility label stays full.
+  it('shows nested chips after their parent with a short label', async () => {
+    storeState.tasks = [
+      { ...makeTask('emma', 'Emma'), contexts: ['@person/emma'], tags: [] },
+      { ...makeTask('todd', 'Todd'), contexts: ['@person/todd'], tags: [] },
+      { ...makeTask('bank', 'Bank'), contexts: ['@place/bank'], tags: ['#errand/post'] },
+    ];
+    let tree!: ReactTestRenderer;
+    await act(async () => { tree = create(<ContextsView />); });
+    const chips = () => tree.root.findAllByType(ScrollView).find((node) => node.props.horizontal)!.findAllByType(Pressable).slice(2);
+    const shown = () => chips().map((node) => [node.props.accessibilityLabel, node.findAllByType(Text)[0].props.children]);
+    expect(shown()).toEqual([
+      ['@person (2)', '@person'],
+      ['@person/emma (1)', '/emma'],
+      ['@person/todd (1)', '/todd'],
+      ['@place (1)', '@place'],
+      ['@place/bank (1)', '/bank'],
+      ['#errand (1)', '#errand'],
+      ['#errand/post (1)', '/post'],
+    ]);
+    await act(async () => { chips()[2].props.onPress(); });
+    expect(tree.root.findAll((node) => (node.type as unknown) === 'SwipeableTaskItem').map((node) => node.props.task.title)).toEqual(['Todd']);
+    // The search hides the parent: the child shows its full token.
+    const search = tree.root.findAllByType(TextInput).find((node) => node.props.placeholder === 'contexts.search')!;
+    await act(async () => { search.props.onChangeText('todd'); });
+    expect(shown()).toEqual([['@person/todd (1)', '@person/todd']]);
   });
 
   // #1427: a tap switches to the chip; a long-press (or the screen reader's long-press action) adds it.

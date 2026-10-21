@@ -9,6 +9,7 @@ import {
     getContextsAddTokenOptions,
     buildContextsTokenIndex,
     buildContextsViewFilterSections,
+    getContextsChipLabels,
     getContextsTokenCount,
     collectBulkTaskTokens,
     normalizeBulkTaskTokenInput,
@@ -20,6 +21,7 @@ import {
     toggleContextsToken,
     type Task,
     type ContextOrTagMatchMode,
+    type ContextsChipLabel,
 } from '@mindwtr/core';
 import { AtSign, CheckSquare, ChevronDown, ChevronRight, Filter, Hash, List, Tag, type LucideIcon } from 'lucide-react';
 import { TokenPickerModal } from '../TokenPickerModal';
@@ -488,7 +490,7 @@ export function ContextsView() {
         }
     };
 
-    const renderTokenRow = (token: string, marker: '@' | '#') => {
+    const renderTokenRow = (token: string, marker: '@' | '#', { label, depth }: ContextsChipLabel) => {
         const taskCount = getContextsTokenCount(tokenIndex, token);
         const context = normalizeBulkTaskTokenInput(token, 'contexts');
         const isHovered = marker === '@' && hoveredContext === token;
@@ -513,6 +515,7 @@ export function ContextsView() {
                 onDrop={marker === '@' ? (event) => { void handleContextDrop(event, context); } : undefined}
                 aria-label={`${token} (${taskCount})`}
                 aria-pressed={selectedContexts.includes(token)}
+                title={depth > 0 ? token : undefined}
                 className={cn(
                     "flex w-full items-center gap-2 rounded-lg p-2 text-left text-sm transition-colors",
                     selectedContexts.includes(token) || isHovered ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground",
@@ -520,7 +523,7 @@ export function ContextsView() {
                 )}
             >
                 <span className="w-4 text-center text-muted-foreground">{marker}</span>
-                <span className="flex-1 truncate">{isHovered ? contextDropLabel('contexts.dropAdd', context) : token.replace(marker === '@' ? /^@/ : /^#/, '')}</span>
+                <span className="flex-1 truncate" style={depth > 0 ? { paddingLeft: `${depth * 0.75}rem` } : undefined}>{isHovered ? contextDropLabel('contexts.dropAdd', context) : label.replace(marker === '@' ? /^@/ : /^#/, '')}</span>
                 <span className="text-xs text-muted-foreground">
                     {taskCount}
                 </span>
@@ -560,7 +563,7 @@ export function ContextsView() {
                 </button>
                 {!collapsed && (
                     <div className="mt-1 space-y-1">
-                        {tokens.map((token) => renderTokenRow(token, marker))}
+                        {getContextsChipLabels(tokens).map((chipLabel, index) => renderTokenRow(tokens[index], marker, chipLabel))}
                     </div>
                 )}
             </div>
