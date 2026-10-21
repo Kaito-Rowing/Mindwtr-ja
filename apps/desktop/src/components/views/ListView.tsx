@@ -18,6 +18,7 @@ import { buildProjectOrderMap,
     groupProjectsByViewSection,
     hasActiveFilterCriteria,
     isTaskInActiveProject,
+    isTaskSequenceBlocked,
     isReferenceInVisibleProject,
     parseQuickAdd,
     getDefaultTaskAreaMode,
@@ -276,6 +277,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         allContexts,
         allTags,
         projectMap,
+        sequencing,
         sequentialProjectFirstTasks,
         tasksById,
         tokenCounts,
@@ -532,6 +534,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         baseTasks,
         statusFilter,
         filterCriteria: activeListFilterCriteria,
+        sequencing,
         sequentialProjectFirstTasks,
         projectMap,
         projects,
@@ -545,6 +548,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         baseTasks,
         statusFilter,
         activeListFilterCriteria,
+        sequencing,
         sequentialProjectFirstTasks,
         projectMap,
         projects,
@@ -595,13 +599,10 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                     deferredFilterInputs.areaById
                 )) return false;
 
-                // Sequential project filter: for 'next' status, only show first task from sequential projects
-                if (deferredFilterInputs.statusFilter === 'next' && t.projectId) {
-                    const project = deferredFilterInputs.projectMap.get(t.projectId);
-                    if (project?.isSequential) {
-                        // Only include if this is the first task
-                        if (!deferredFilterInputs.sequentialProjectFirstTasks.has(t.id)) return false;
-                    }
+                // Sequences (project-wide, or a Sequential section, #1429): Next shows only each sequence's current step.
+                if (deferredFilterInputs.statusFilter === 'next'
+                    && isTaskSequenceBlocked(t, deferredFilterInputs.sequencing, deferredFilterInputs.sequentialProjectFirstTasks)) {
+                    return false;
                 }
 
 

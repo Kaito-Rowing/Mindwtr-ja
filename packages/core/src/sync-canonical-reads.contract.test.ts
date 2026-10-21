@@ -2817,6 +2817,7 @@ describe('canonical local reads contract', () => {
                     expect(written.settings.gtd?.archiveRetentionDays).toBe(30);
                 });
             },
+            setProjectFlowMode: () => call('setProjectFlowMode', projectId, 'perSection'),
             skipRecurringTaskOccurrence: async () => {
                 await call('updateTask', taskId, { recurrence: { rule: 'daily', strategy: 'strict', rrule: 'FREQ=DAILY' }, dueDate: '2026-09-01' });
                 expect(await call('skipRecurringTaskOccurrence', taskId)).toMatchObject({ success: true });

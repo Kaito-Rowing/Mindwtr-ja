@@ -128,6 +128,7 @@ export function useDesktopCalendarController() {
         projectMap,
         sequentialProjectIds = new Set<string>(),
         sequentialWithinSectionProjectIds = new Set<string>(),
+        sequentialSectionKeys = new Set<string>(),
     } = getDerivedState();
     const { t, language } = useLanguage();
     const resolveText = useCallback(
@@ -341,6 +342,7 @@ export function useDesktopCalendarController() {
             sections,
             sectionScopedProjectIds: sequentialWithinSectionProjectIds,
             sequentialProjectIds,
+            sequentialSectionKeys,
         },
     ), [
         isSchedulableTask,
@@ -349,6 +351,7 @@ export function useDesktopCalendarController() {
         sections,
         localDayKey,
         sequentialProjectIds,
+        sequentialSectionKeys,
         sequentialWithinSectionProjectIds,
         tasks,
     ]);

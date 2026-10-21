@@ -1600,6 +1600,7 @@ export function createNativeHostContract(options: {
             focusTaskLimit,
             sequentialProjectIds: derived.sequentialProjectIds,
             sectionScopedProjectIds: derived.sequentialWithinSectionProjectIds,
+            sequentialSectionKeys: derived.sequentialSectionKeys,
             now,
         });
         return {

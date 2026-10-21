@@ -182,6 +182,7 @@ export const TaskItem = memo(function TaskItem({
         activeTasksByStatus,
         sequentialProjectIds,
         sequentialWithinSectionProjectIds,
+        sequentialSectionKeys,
     } = useTaskItemStoreState({
         task,
         propProject,
@@ -392,8 +393,9 @@ export const TaskItem = memo(function TaskItem({
         focusTaskLimit,
         sequentialProjectIds,
         sectionScopedProjectIds: sequentialWithinSectionProjectIds,
+        sequentialSectionKeys,
         allowUnclarified: options?.allowUnclarified,
-    }), [activeTasksByStatus, focusTaskLimit, focusedCount, projectMap, sections, sequentialProjectIds, sequentialWithinSectionProjectIds, task]);
+    }), [activeTasksByStatus, focusTaskLimit, focusedCount, projectMap, sections, sequentialProjectIds, sequentialSectionKeys, sequentialWithinSectionProjectIds, task]);
     const toggleTaskFocus = useCallback(() => {
         if (effectiveReadOnly) return;
         const action = resolveFocusStar();
@@ -973,6 +975,7 @@ export const TaskItem = memo(function TaskItem({
             completedTask,
             storeState._allTasks,
             storeState._allProjects,
+            storeState._allSections,
         );
         if (!promptData) return;
         setProjectNextActionTitle('');

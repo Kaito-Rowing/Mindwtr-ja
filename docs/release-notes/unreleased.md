@@ -2,6 +2,7 @@
 
 Changes collected since the latest stable release.
 
+- Projects have a third Flow mode, **Per section**: each section is Parallel or Sequential, so one section moves step by step while another offers all its tasks at once. Sections never wait for each other, and tasks with no section are Parallel. Set it in a section's menu on desktop or in **Sections** on mobile. Older app versions show such a project as Parallel (#1429).
 - Android and iPhone native apps: in Contexts, tapping a context or tag switches to it and a long-press adds it to the selection, as in the main mobile app (#1427).
 - Two new themes on desktop and mobile: **Gruvbox Light** (the soft variant) and **Gruvbox Dark**. Status and context colors use the Gruvbox palette, darkened where needed so text stays readable (#1426).
 - Contexts view: a nested context or tag such as `@person/todd` that follows its parent `@person` now shows as `/todd`, so a family of contexts reads as one group. The full name stays in tooltips and for screen readers. This applies on desktop, mobile and the native apps (#1428).

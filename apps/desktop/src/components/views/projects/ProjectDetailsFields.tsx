@@ -1,6 +1,5 @@
-import { safeParseDate, type Project } from '@mindwtr/core';
+import { safeParseDate, type Project, type ProjectFlowMode } from '@mindwtr/core';
 import { Calendar, CalendarClock, CalendarRange, FolderOpenDot, ListOrdered, Plus, Settings2, Signal, Tags } from 'lucide-react';
-import { cn } from '../../../lib/utils';
 import { useNativeDateInputLocale } from '../../../hooks/use-native-date-input-locale';
 import { TokenAutocompleteInput } from '../../Task/TokenAutocompleteInput';
 import { DateField } from '../../ui/DateField';
@@ -21,8 +20,8 @@ type ProjectDetailsFieldsProps = {
     onManageAreas: () => void;
     onAreaChange: (value: string) => void;
     onColorChange?: (value: string | null) => unknown | Promise<unknown>;
-    isSequential: boolean;
-    onToggleSequential: () => void;
+    flowMode: ProjectFlowMode;
+    onFlowModeChange: (mode: ProjectFlowMode) => void;
     sequentialScope: Project['sequentialScope'];
     onSequentialScopeChange: (value: Project['sequentialScope']) => void;
     status: Project['status'];
@@ -51,8 +50,8 @@ export function ProjectDetailsFields({
     onManageAreas,
     onAreaChange,
     onColorChange,
-    isSequential,
-    onToggleSequential,
+    flowMode,
+    onFlowModeChange,
     sequentialScope,
     onSequentialScopeChange,
     status,
@@ -144,24 +143,24 @@ export function ProjectDetailsFields({
                         <ListOrdered className="h-3.5 w-3.5" />
                         {resolvedSequenceModeLabel}
                     </label>
-                    <button
-                        type="button"
-                        onClick={onToggleSequential}
-                        className={cn(
-                            'flex h-8 w-full items-center justify-center gap-2 rounded-md border px-2 text-sm transition-colors',
-                            isSequential
-                                ? 'bg-primary text-primary-foreground border-primary/50'
-                                : 'bg-background text-muted-foreground border-border hover:bg-muted/40 hover:text-foreground'
-                        )}
-                        title={isSequential ? t('projects.sequentialTooltip') : t('projects.parallelTooltip')}
-                        aria-label={isSequential ? t('projects.sequential') : t('projects.parallel')}
+                    <select
+                        value={flowMode}
+                        onChange={(e) => onFlowModeChange(e.target.value as ProjectFlowMode)}
+                        aria-label={resolvedSequenceModeLabel}
+                        title={flowMode === 'sequential'
+                            ? t('projects.sequentialTooltip')
+                            : flowMode === 'perSection'
+                                ? resolveText('projects.perSectionTooltip', 'Per section: each section is Parallel or Sequential, chosen from its menu.')
+                                : t('projects.parallelTooltip')}
+                        className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
                     >
-                        <ListOrdered className="h-4 w-4" />
-                        <span>{isSequential ? t('projects.sequential') : t('projects.parallel')}</span>
-                    </button>
+                        <option value="parallel">{t('projects.parallel')}</option>
+                        <option value="sequential">{t('projects.sequential')}</option>
+                        <option value="perSection">{resolveText('projects.perSection', 'Per section')}</option>
+                    </select>
                 </div>
 
-                {isSequential && (
+                {flowMode === 'sequential' && (
                     <div className="min-w-0 space-y-1">
                         <label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider flex items-center gap-1.5 truncate">
                             <ListOrdered className="h-3.5 w-3.5" />

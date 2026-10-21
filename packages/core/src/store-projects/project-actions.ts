@@ -24,11 +24,11 @@ import { logInfo, logWarn } from '../logger';
 import { clearDerivedCache } from '../store-settings';
 import { generateUUID as uuidv4 } from '../uuid';
 import { DEFAULT_PROJECT_COLOR, isValidProjectColorOverride } from '../color-constants';
-import { findSelectableProjectByTitleAndArea, normalizeProjectTaskSortBy } from '../project-utils';
-import { PROJECT_SQLITE_COLUMNS, projectFromSqliteRow, projectToSqliteRow } from '../project-sync-schema';
+import { findSelectableProjectByTitleAndArea, normalizeProjectTaskSortBy, planProjectFlowModeChange } from '../project-utils';
+import { PROJECT_SQLITE_COLUMNS, padProjectSqliteCells, projectFromSqliteRow, projectSqliteCellsFit, projectToSqliteRow } from '../project-sync-schema';
 import { taskEditValuesEqual } from '../json-value-equality';
 import { planAttachmentLinkBatch, softDeleteAttachment } from '../attachment-editor-model';
-import type { Area, Attachment, TaskSortBy } from '../types';
+import type { Area, Attachment, ProjectFlowMode, TaskSortBy } from '../types';
 import type { Project, ProjectCoreActions, ProjectActionContext, Section, Task, TaskStatus } from './shared';
 import type { PreparedProjectArea, PreparedProjectAttachmentWrite, PreparedProjectFileAddWrite, PreparedProjectFileRemoveWrite, PreparedProjectCreate, PreparedProjectDate, PreparedProjectDelete, PreparedProjectDeleteUndo, PreparedProjectDuplicate, PreparedProjectLifecycle, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, PreparedTrashProjectRestore, ProjectAttachmentIntent, ProjectFileRemoveIntent, ProjectFlowAction, TaskStore } from '../store-types';
 import { projectTagsForIntent, type ProjectTagsIntent } from '../project-tags';
@@ -196,7 +196,7 @@ export const projectFileAddLiveRowMatches = (live: Project, saved: Project): boo
 const selectedProjectAvailabilityPlan = (before: Project, rawBefore: unknown[], attachmentId: string,
     targetURI: string, deviceIdBefore: string | null, deviceIdToInitialize: string | null,
     updateAt: string, ordinary: boolean): SelectedProjectAvailabilityWrite | null => {
-    if (before.deletedAt || before.purgedAt || (rawBefore.length !== PROJECT_SQLITE_COLUMNS.length && !(rawBefore.length === 26 && before.colorOverride == null))
+    if (before.deletedAt || before.purgedAt || !projectSqliteCellsFit(rawBefore, before)
         || !Number.isFinite(Date.parse(updateAt)) || new Date(updateAt).toISOString() !== updateAt
         || (deviceIdBefore === null ? !deviceIdToInitialize : deviceIdToInitialize !== null)) return null;
     const matches = before.attachments?.filter((item) => item.id === attachmentId) ?? [];
@@ -235,7 +235,7 @@ export const projectWebDavAvailabilityWritePlan = (before: Project, rawBefore: u
     const matches = before.attachments?.filter(item => item.id === attachmentId) ?? [];
     const selected = matches.length === 1 ? matches[0] : undefined;
     if (!selected || selected.kind !== 'file' || selected.deletedAt || before.deletedAt || before.purgedAt
-        || (rawBefore.length !== PROJECT_SQLITE_COLUMNS.length && !(rawBefore.length === 26 && before.colorOverride == null)) || !targetURI) return null;
+        || !projectSqliteCellsFit(rawBefore, before) || !targetURI) return null;
     if (outcome === 'available') {
         if (selected.uri !== targetURI || selected.localStatus !== 'available') return projectFileAvailabilityWritePlan(
             before, rawBefore, attachmentId, targetURI, deviceIdBefore, deviceIdToInitialize, updateAt);
@@ -266,7 +266,7 @@ export const projectWebDavAvailabilityWritePlan = (before: Project, rawBefore: u
 export const sameProjectAvailabilityRawRow = (project: Project, cells: unknown[]): boolean =>
     projectFileAddScalarCellsMatchWriter(project)
     && taskEditValuesEqual(rawReadRow(project, projectToSqliteRow(project)).row,
-        cells.length === 26 ? [...cells, null] : cells);
+        padProjectSqliteCells(cells) ?? cells);
 
 /** The existing RN Restore policy, also used to derive native prepared effects. */
 export const projectRestoreEffect = (scope: PreparedTrashProjectRestore['scope'], deviceId: string,
@@ -402,8 +402,11 @@ export const projectRenameEffect = (project: Project, title: string, deviceId: s
 export const projectFlowEffect = (project: Project, action: ProjectFlowAction, deviceId: string,
     now: string): PreparedProjectFlow['effect'] | null => {
     if (action.kind === 'setScope' && (!project.isSequential || project.sequentialScope === action.scope)) return null;
+    // A native toggle leaves Per section (#1429) the way the desktop/RN picker does:
+    // perSectionFlow is written false, so turning Sequential off later lands on Parallel.
     const patch: Partial<Project> = action.kind === 'toggleType'
-        ? { isSequential: !project.isSequential } : { sequentialScope: action.scope };
+        ? { isSequential: !project.isSequential, ...(project.perSectionFlow === true ? { perSectionFlow: false } : {}) }
+        : { sequentialScope: action.scope };
     const transition = applyProjectLifecycleTransition(project, patch, [], [], now, deviceId);
     return { project: { before: project, after: normalizeProjectLifecycleFields({
         ...project, ...transition.projectUpdates,
@@ -692,7 +695,7 @@ const commitProjectAvailabilityWrite = async (input: SelectedProjectAvailability
             || (state.settings.deviceId ?? null) !== input.deviceIdBefore) return state;
         const after = { ...planned.after };
         rememberRawReadRow(after, Object.fromEntries(PROJECT_SQLITE_COLUMNS.map((column, index) =>
-            [column, column === 'colorOverride' && planned.rawAfter.length === 26 ? null : planned.rawAfter[index]])), PROJECT_SQLITE_COLUMNS, projectToSqliteRow(after));
+            [column, index < planned.rawAfter.length ? planned.rawAfter[index] : null])), PROJECT_SQLITE_COLUMNS, projectToSqliteRow(after));
         const projects = replaceEntitiesInArray(durable.projects, [after]);
         const settings = input.deviceIdToInitialize
             ? { ...durable.settings, deviceId: input.deviceIdToInitialize } : durable.settings;
@@ -726,6 +729,15 @@ export const projectPurgeEffect = (project: Project, tasks: readonly Task[], sec
             after: { ...before, projectId: undefined, sectionId: undefined, updatedAt: now,
                 rev: nextRevision(before.rev), revBy: deviceId } })),
     };
+};
+
+/**
+ * Release check for #1429: proves a Flow mode write (project mode, or one
+ * section's choice) reached durable storage. No titles or identifiers.
+ */
+export const logProjectFlowModeSaved = (mode: string, sectionDefaults: number): void => {
+    logInfo('Project flow mode saved', { scope: 'store', category: 'storage',
+        context: { releaseCheck: 'v1.3.7/section-flow-mode', mode, sectionDefaults } });
 };
 
 export const createProjectCoreActions = ({
@@ -1229,6 +1241,61 @@ export const createProjectCoreActions = ({
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
         });
         return result;
+    },
+
+    setProjectFlowMode: async (id: string, mode: ProjectFlowMode) => {
+        const changeAt = Date.now();
+        const now = new Date().toISOString();
+        let outcome: 'missing' | 'unchanged' | 'saved' = 'missing';
+        let sectionDefaults = 0;
+        set((state) => {
+            const project = state._projectsById.get(id);
+            if (!project || project.deletedAt) return state;
+            const plan = planProjectFlowModeChange(project, state._allSections, mode);
+            if (!plan) {
+                outcome = 'unchanged';
+                return state;
+            }
+            const deviceState = ensureDeviceId(state.settings);
+            const deviceId = deviceState.deviceId;
+            const transition = applyProjectLifecycleTransition(project, plan.project, [], [], now, deviceId);
+            const nextProject = normalizeProjectLifecycleFields({
+                ...project, ...transition.projectUpdates,
+                updatedAt: now, rev: nextRevision(project.rev), revBy: deviceId,
+            });
+            const choiceById = new Map(plan.sections.map((entry) => [entry.id, entry.isSequential]));
+            const changedSections = state._allSections
+                .filter((section) => choiceById.has(section.id))
+                .map((section) => ({ ...section, isSequential: choiceById.get(section.id),
+                    updatedAt: now, rev: nextRevision(section.rev), revBy: deviceId }));
+            sectionDefaults = changedSections.length;
+            const newAllProjects = replaceEntitiesInArray(state._allProjects, [nextProject]);
+            const newAllSections = changedSections.length > 0
+                ? replaceEntitiesInArray(state._allSections, changedSections)
+                : state._allSections;
+            persist(set, debouncedSave, state, {
+                projects: newAllProjects,
+                sections: newAllSections,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            outcome = 'saved';
+            return {
+                _allProjects: newAllProjects,
+                _allSections: newAllSections,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
+        });
+        if (outcome === 'missing') {
+            const message = 'Project not found';
+            set({ error: message });
+            return actionFail(message);
+        }
+        if (outcome === 'saved') {
+            await flushPendingSave();
+            logProjectFlowModeSaved(mode, sectionDefaults);
+        }
+        return actionOk();
     },
 
     cancelProject: async (id: string) => {

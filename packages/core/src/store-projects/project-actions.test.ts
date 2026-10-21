@@ -4,6 +4,8 @@ import type { StorageAdapter } from '../storage';
 import type { AppData } from '../types';
 import { buildNewProject, projectAreaSelection } from './project-actions';
 import { buildProjectViewSectionUpdate } from '../view-sections';
+import * as logger from '../logger';
+import type { Project, Section } from '../types';
 
 const BASE_NOW = '2026-06-14T12:00:00.000Z';
 
@@ -433,6 +435,48 @@ describe('project actions', () => {
 
         expect(await updateProject(project.id, buildProjectViewSectionUpdate(reparked, 'someday')!)).toEqual({ success: true });
         expect(useTaskStore.getState()._allProjects.find((row) => row.id === project.id)?.viewSectionIds).toEqual({});
+    });
+
+    it('switches Flow mode in one write, stamps section defaults, and keeps stored choices (#1429)', async () => {
+        const at = '2026-06-01T00:00:00.000Z';
+        const project: Project = { id: 'trip', title: 'Camping Trip', status: 'active', color: '#6B7280', order: 0,
+            tagIds: [], isSequential: true, sequentialScope: 'section', rev: 3, revBy: 'peer', createdAt: at, updatedAt: at };
+        const sections: Section[] = [
+            { id: 'book', projectId: 'trip', title: 'Book campsite', order: 0, rev: 1, createdAt: at, updatedAt: at },
+            { id: 'prep', projectId: 'trip', title: 'Prep', order: 1, isSequential: false, rev: 1, createdAt: at, updatedAt: at },
+        ];
+        useTaskStore.setState({ _allProjects: [project], _projectsById: new Map([[project.id, project]]),
+            _allSections: sections, _sectionsById: new Map(sections.map((row) => [row.id, row])) });
+        const info = vi.spyOn(logger, 'logInfo');
+        const { setProjectFlowMode, updateSection } = useTaskStore.getState();
+
+        expect(await setProjectFlowMode('trip', 'perSection')).toEqual({ success: true });
+        let saved = latestSavedData();
+        expect(saved.projects[0]).toMatchObject({ isSequential: false, perSectionFlow: true, sequentialScope: 'section', rev: 4 });
+        // The unset section keeps the within-sections behavior; the stored Parallel choice stays.
+        expect(saved.sections.map((row) => [row.id, row.isSequential, row.rev])).toEqual([['book', true, 2], ['prep', false, 1]]);
+        expect(info).toHaveBeenCalledWith('Project flow mode saved', expect.objectContaining({
+            context: { releaseCheck: 'v1.3.7/section-flow-mode', mode: 'perSection', sectionDefaults: 1 },
+        }));
+
+        expect(await updateSection('prep', { isSequential: true })).toEqual({ success: true });
+        expect(info).toHaveBeenCalledWith('Project flow mode saved', expect.objectContaining({
+            context: { releaseCheck: 'v1.3.7/section-flow-mode', mode: 'sectionSequential', sectionDefaults: 0 },
+        }));
+
+        expect(await setProjectFlowMode('trip', 'sequential')).toEqual({ success: true });
+        saved = latestSavedData();
+        expect(saved.projects[0]).toMatchObject({ isSequential: true, perSectionFlow: false });
+        expect(saved.sections.map((row) => row.isSequential)).toEqual([true, true]);
+
+        expect(await setProjectFlowMode('trip', 'perSection')).toEqual({ success: true });
+        saved = latestSavedData();
+        expect(saved.projects[0]).toMatchObject({ isSequential: false, perSectionFlow: true });
+        expect(saved.sections.map((row) => [row.isSequential, row.rev])).toEqual([[true, 2], [true, 2]]);
+        const writes = saveData.mock.calls.length;
+        expect(await setProjectFlowMode('trip', 'perSection')).toEqual({ success: true });
+        expect(saveData.mock.calls.length).toBe(writes);
+        expect(await setProjectFlowMode('missing', 'parallel')).toEqual({ success: false, error: 'Project not found' });
     });
 
     it('does not treat an omitted Area patch or a same-Area selection as a move', async () => {

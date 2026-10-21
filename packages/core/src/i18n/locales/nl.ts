@@ -2,6 +2,9 @@
 export const nlOverrides: Record<string, string> = {
     'projects.useAreaColor': "Kleur van gebied gebruiken",
     'projects.colorSaveFailed': "De kleur kon niet worden opgeslagen.",
+    'projects.sequenceMode': "Stroommodus",
+    'projects.perSection': "Per sectie",
+    'projects.perSectionTooltip': "Per sectie: elke sectie is parallel of sequentieel, te kiezen in het menu van de sectie.",
     "attachments.webUploadRequiresCloud": "Uploads in de browser vereisen synchronisatie met een zelfgehoste cloud.",
     "attachments.webUploadEncrypted": "Voor uploads in de browser moet synchronisatieversleuteling uitstaan.",
     "attachments.webUploadOffline": "Bestanden kunnen niet offline worden geüpload.",

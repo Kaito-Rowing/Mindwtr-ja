@@ -215,6 +215,7 @@ function TaskEditModalInner({
         focusedCount,
         sequentialProjectIds,
         sequentialWithinSectionProjectIds,
+        sequentialSectionKeys,
     } = useTaskStore((state) => {
         const derived = state.getDerivedState();
         return {
@@ -247,6 +248,7 @@ function TaskEditModalInner({
             focusedCount: derived.focusedCount,
             sequentialProjectIds: derived.sequentialProjectIds,
             sequentialWithinSectionProjectIds: derived.sequentialWithinSectionProjectIds,
+            sequentialSectionKeys: derived.sequentialSectionKeys,
         };
     }, shallow);
     const referenceTaskId = useMemo(
@@ -655,6 +657,7 @@ function TaskEditModalInner({
             focusTaskLimit: limit,
             sequentialProjectIds,
             sectionScopedProjectIds: sequentialWithinSectionProjectIds,
+            sequentialSectionKeys,
         });
         const blocked = getFocusStarBlockedText(t, action, limit);
         const label = tFallback(t, action.labelKey, action.isFocused ? 'Remove from focus' : "Add to today's focus");
@@ -666,7 +669,7 @@ function TaskEditModalInner({
             onToggle: () => setDraftField('focusedToday', !action.isFocused),
         };
     }, [activeTasksByStatus, focusedCount, projectMap, readOnly, sections, sequentialProjectIds,
-        sequentialWithinSectionProjectIds, settings, setDraftField, t, task, taskEditDraft]);
+        sequentialSectionKeys, sequentialWithinSectionProjectIds, settings, setDraftField, t, task, taskEditDraft]);
 
     const [customRecurrenceVisible, setCustomRecurrenceVisible] = useState(false);
     const [customInterval, setCustomInterval] = useState(1);

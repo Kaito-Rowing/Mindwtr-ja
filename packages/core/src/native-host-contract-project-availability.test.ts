@@ -273,8 +273,9 @@ describe('private prepared ordinary Project availability', () => {
         try {
             const api = privateMethods(env);
             const envelope = JSON.parse(JSON.stringify(value(await api.prepareProjectFileAvailability(downloadRequest(env)))));
-            expect(envelope.prepared.effect.rawBefore.pop()).toBeNull();
-            expect(envelope.prepared.effect.rawAfter.pop()).toBeNull();
+            // v1.3.6 froze 26 cells: neither colorOverride nor perSectionFlow (#1429) existed yet.
+            expect(envelope.prepared.effect.rawBefore.splice(26)).toEqual([null, null]);
+            expect(envelope.prepared.effect.rawAfter.splice(26)).toEqual([null, null]);
             expect(api.validatePreparedProjectFileAvailability(envelope)).toMatchObject({ ok: true });
             await env.restart();
             expect(await privateMethods(env).commitPreparedProjectFileAvailability(envelope)).toMatchObject({ ok: true });

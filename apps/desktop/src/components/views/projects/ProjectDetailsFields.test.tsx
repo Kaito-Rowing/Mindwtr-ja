@@ -13,6 +13,7 @@ const translations: Record<string, string> = {
     'projects.noArea': 'No area',
     'projects.parallel': 'Parallel',
     'projects.parallelTooltip': 'Parallel project',
+    'projects.perSection': 'Per section',
     'projects.reviewAt': 'Review Date',
     'projects.reviewAtHint': 'Review reminders keep projects visible in Review.',
     'projects.sequenceMode': 'Flow Mode',
@@ -58,8 +59,8 @@ const defaultProps = {
     onNewArea: vi.fn(),
     onManageAreas: vi.fn(),
     onAreaChange: vi.fn(),
-    isSequential: false,
-    onToggleSequential: vi.fn(),
+    flowMode: 'parallel' as const,
+    onFlowModeChange: vi.fn(),
     sequentialScope: 'project' as Project['sequentialScope'],
     onSequentialScopeChange: vi.fn(),
     status: 'active' as Project['status'],
@@ -73,6 +74,23 @@ const defaultProps = {
 };
 
 describe('ProjectDetailsFields', () => {
+    it('picks Parallel, Sequential or Per section, and shows the scope only for Sequential (#1429)', () => {
+        const onFlowModeChange = vi.fn();
+        const { rerender } = render(<LanguageProvider><ProjectDetailsFields {...defaultProps} onFlowModeChange={onFlowModeChange} /></LanguageProvider>);
+        const select = screen.getByRole('combobox', { name: 'Flow Mode' });
+        expect(Array.from((select as HTMLSelectElement).options).map((option) => option.textContent))
+            .toEqual(['Parallel', 'Sequential', 'Per section']);
+        fireEvent.change(select, { target: { value: 'perSection' } });
+        expect(onFlowModeChange).toHaveBeenCalledWith('perSection');
+        expect(screen.queryByText('Sequential Scope')).toBeNull();
+
+        rerender(<LanguageProvider><ProjectDetailsFields {...defaultProps} flowMode="sequential" /></LanguageProvider>);
+        expect(screen.getByText('Sequential Scope')).toBeInTheDocument();
+        rerender(<LanguageProvider><ProjectDetailsFields {...defaultProps} flowMode="perSection" /></LanguageProvider>);
+        expect((screen.getByRole('combobox', { name: 'Flow Mode' }) as HTMLSelectElement).value).toBe('perSection');
+        expect(screen.queryByText('Sequential Scope')).toBeNull();
+    });
+
     it('saves an explicit swatch and retries a refused durable save without losing its intent', async () => {
         const onColorChange = vi.fn().mockRejectedValueOnce(new Error('disk unavailable')).mockResolvedValue({ success: true });
         render(<LanguageProvider><ProjectDetailsFields {...defaultProps} onColorChange={onColorChange} /></LanguageProvider>);

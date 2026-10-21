@@ -497,6 +497,7 @@ export function useTaskEditState({
                 focusTaskLimit: limit,
                 sequentialProjectIds: derived.sequentialProjectIds,
                 sectionScopedProjectIds: derived.sequentialWithinSectionProjectIds,
+                sequentialSectionKeys: derived.sequentialSectionKeys,
             });
             if (!action.canToggle) {
                 onSaveError(getFocusStarBlockedText(translate, action, limit) ?? 'Focus unavailable');

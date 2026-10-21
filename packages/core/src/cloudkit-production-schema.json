@@ -81,7 +81,7 @@
     "archivedAt",
     "colorOverride"
    ],
-   "pendingProduction": []
+   "pendingProduction": ["perSectionFlow"]
   },
   "MindwtrSection": {
    "deployed": [
@@ -98,7 +98,7 @@
     "deletedAtBeforeProjectArchive",
     "projectArchivedAt"
    ],
-   "pendingProduction": []
+   "pendingProduction": ["isSequential"]
   },
   "MindwtrArea": {
    "deployed": [

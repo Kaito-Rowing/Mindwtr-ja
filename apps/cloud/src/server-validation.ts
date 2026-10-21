@@ -191,6 +191,9 @@ function validateTaskPropValues(value: Record<string, unknown>): string | null {
 }
 
 function validateProjectPropValues(value: Record<string, unknown>): string | null {
+    if (value.perSectionFlow != null && typeof value.perSectionFlow !== 'boolean') {
+        return 'Invalid project perSectionFlow';
+    }
     if (value.colorOverride != null && (typeof value.colorOverride !== 'string' || !/^#[0-9a-f]{6}$/i.test(value.colorOverride))) {
         return 'Invalid project colorOverride';
     }
@@ -323,6 +326,9 @@ export function validateAppData(
             }
             if (section.deletedAt != null && !isValidIsoTimestamp(section.deletedAt)) {
                 return { ok: false, error: 'Invalid data: section deletedAt must be a valid ISO timestamp when present' };
+            }
+            if (section.isSequential != null && typeof section.isSequential !== 'boolean') {
+                return { ok: false, error: 'Invalid data: section isSequential must be a boolean when present' };
             }
             sectionsById.set(section.id, section);
             if (section.deletedAt == null) {

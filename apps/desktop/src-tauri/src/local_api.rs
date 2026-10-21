@@ -4117,11 +4117,25 @@ fn local_api_focus_candidate_is_sequential_first(
     else {
         return true;
     };
-    if project.get("isSequential").and_then(Value::as_bool) != Some(true) {
+    let candidate_section = candidate.get("sectionId").and_then(Value::as_str);
+    let project_sequential = project.get("isSequential").and_then(Value::as_bool) == Some(true);
+    // Per section Flow mode (#1429), same rule as core getTaskSequenceKey: only a live
+    // Sequential section of this project is a sequence; everything else is parallel.
+    let in_sequential_section = !project_sequential
+        && project.get("perSectionFlow").and_then(Value::as_bool) == Some(true)
+        && candidate_section.is_some_and(|section_id| {
+            array_items(data, "sections").into_iter().any(|section| {
+                section.get("id").and_then(Value::as_str) == Some(section_id)
+                    && section.get("projectId").and_then(Value::as_str) == Some(project_id)
+                    && !has_string_field(&section, "deletedAt")
+                    && section.get("isSequential").and_then(Value::as_bool) == Some(true)
+            })
+        });
+    if !project_sequential && !in_sequential_section {
         return true;
     }
-    let section_scoped = project.get("sequentialScope").and_then(Value::as_str) == Some("section");
-    let candidate_section = candidate.get("sectionId").and_then(Value::as_str);
+    let section_scoped = in_sequential_section
+        || project.get("sequentialScope").and_then(Value::as_str) == Some("section");
     let mut candidates = array_items(data, "tasks")
         .into_iter()
         .filter_map(|task| {
@@ -5556,6 +5570,46 @@ mod tests {
         assert_eq!(task["status"], "next");
         assert_eq!(task["startTime"], "2026-10-12T07:00");
         assert!(!task.contains_key("focusOrder"));
+    }
+
+    #[test]
+    fn local_api_per_section_flow_holds_only_sequential_sections() {
+        let now = "2026-10-21T10:00:00Z";
+        let local_wall =
+            |instant: OffsetDateTime| Some(PrimitiveDateTime::new(instant.date(), instant.time()));
+        let data = json!({
+            "tasks": [
+                {"id": "find-site", "status": "next", "projectId": "trip", "sectionId": "book", "orderNum": 1},
+                {"id": "find-tent", "status": "next", "projectId": "trip", "sectionId": "prep", "orderNum": 1}
+            ],
+            "projects": [{"id": "trip", "status": "active", "isSequential": false, "perSectionFlow": true}],
+            "sections": [
+                {"id": "book", "projectId": "trip", "title": "Book campsite", "isSequential": true},
+                {"id": "prep", "projectId": "trip", "title": "Prep", "isSequential": false}
+            ]
+        });
+        let created = |section: &str| {
+            let mut task = json!({
+                "id": "new", "status": "next", "projectId": "trip", "sectionId": section,
+                "orderNum": 2, "isFocusedToday": true, "focusOrder": 1
+            })
+            .as_object()
+            .unwrap()
+            .clone();
+            normalize_created_task_focus(&mut task, &data, now, &local_wall);
+            task["isFocusedToday"].clone()
+        };
+
+        assert_eq!(
+            created("book"),
+            false,
+            "a later step of a Sequential section waits its turn"
+        );
+        assert_eq!(
+            created("prep"),
+            true,
+            "a Parallel section never holds a task back"
+        );
     }
 
     #[test]

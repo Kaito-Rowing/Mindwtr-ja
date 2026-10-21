@@ -1,7 +1,7 @@
-import type { Project, Section, Task, TaskSortBy } from './types';
+import type { Project, ProjectFlowMode, Section, Task, TaskSortBy } from './types';
 import { isTaskActionable } from './task-status';
 // task-utils imports this file too; both only call across at run time, so the cycle is safe.
-import { getSequentialFirstTaskIds, isSequentialChainStatus } from './task-utils';
+import { getProjectFlowMode, getSequentialFirstTaskIds, getTaskSequencing, getTaskSequenceKey, isSequentialChainStatus } from './task-utils';
 
 export function normalizeProjectSequentialScope(value: unknown): Project['sequentialScope'] {
     if (value === 'section' || value === 'project') return value;
@@ -80,6 +80,48 @@ export function getProjectSectionsForView(
         .sort(compareProjectSections);
 }
 
+export type ProjectFlowModeChange = {
+    project: Pick<Project, 'isSequential'> & Partial<Pick<Project, 'perSectionFlow'>>;
+    /** Sections that get a stored choice now; every other section is left as it is. */
+    sections: Array<{ id: string; isSequential: boolean }>;
+};
+
+/**
+ * The writes that switch a project's Flow mode (#1429), or null when it is
+ * already in that mode.
+ * - Sequential keeps the stored within/across sections choice.
+ * - Leaving Per section writes perSectionFlow false (never absent), so the
+ *   old-client keep rule in sync cannot bring it back.
+ * - Entering Per section from "Sequential, within sections" gives every live
+ *   section without a stored choice Sequential, so nothing changes for the user.
+ *   From any other mode those sections stay unset, which reads as Parallel.
+ * - Stored section choices are never touched; they come back on return.
+ */
+export function planProjectFlowModeChange(
+    project: Pick<Project, 'id' | 'isSequential' | 'perSectionFlow' | 'sequentialScope'>,
+    sections: readonly Section[],
+    mode: ProjectFlowMode,
+): ProjectFlowModeChange | null {
+    const current = getProjectFlowMode(project);
+    if (current === mode) return null;
+    if (mode !== 'perSection') {
+        return {
+            project: { isSequential: mode === 'sequential', ...(project.perSectionFlow === true ? { perSectionFlow: false } : {}) },
+            sections: [],
+        };
+    }
+    const fromWithinSections = current === 'sequential'
+        && normalizeProjectSequentialScope(project.sequentialScope) === 'section';
+    return {
+        project: { isSequential: false, perSectionFlow: true },
+        sections: fromWithinSections
+            ? sections
+                .filter((section) => section.projectId === project.id && !section.deletedAt && section.isSequential === undefined)
+                .map((section) => ({ id: section.id, isSequential: true }))
+            : [],
+    };
+}
+
 export type ProjectSequenceTaskCue = 'available' | 'later';
 
 /**
@@ -95,24 +137,28 @@ export type ProjectSequenceTaskCue = 'available' | 'later';
  * may show a task this cue marks "later".
  */
 export function getSequentialProjectTaskCues(
-    project: Pick<Project, 'id' | 'isSequential' | 'sequentialScope'> | null | undefined,
+    project: Pick<Project, 'id' | 'isSequential' | 'sequentialScope' | 'perSectionFlow'> | null | undefined,
     tasks: readonly Task[],
     sections: readonly Section[],
 ): Map<string, ProjectSequenceTaskCue> {
     const cues = new Map<string, ProjectSequenceTaskCue>();
-    if (!project?.isSequential) return cues;
+    if (!project || getProjectFlowMode(project) === 'parallel') return cues;
 
-    const projectIds = new Set([project.id]);
+    // Per section (#1429): only tasks in a Sequential section get a cue.
+    const sequencing = getTaskSequencing([{ ...project, deletedAt: undefined,
+        sequentialScope: normalizeProjectSequentialScope(project.sequentialScope) }], sections);
     const firstTaskIds = getSequentialFirstTaskIds(
         tasks.filter((task) => !task.deletedAt && isSequentialChainStatus(task.status)),
-        projectIds,
+        sequencing.sequentialProjectIds,
         {
-            sectionScopedProjectIds: normalizeProjectSequentialScope(project.sequentialScope) === 'section' ? projectIds : undefined,
+            sectionScopedProjectIds: sequencing.sectionScopedProjectIds,
+            sequentialSectionKeys: sequencing.sequentialSectionKeys,
             sections,
         },
     );
     tasks.forEach((task) => {
         if (task.deletedAt || task.status !== 'next' || task.projectId !== project.id) return;
+        if (getTaskSequenceKey(task, sequencing) === null) return;
         cues.set(task.id, firstTaskIds.has(task.id) ? 'available' : 'later');
     });
 
@@ -223,7 +269,9 @@ export function getProjectNextActionCandidates(
 export function getProjectNextActionPromptData(
     completedTask: Task,
     tasks: Task[],
-    projects: Project[]
+    projects: Project[],
+    /** Needed only for Per section projects; without it they prompt per project. */
+    sections?: readonly Section[],
 ): { project: Project; candidates: Task[]; scope: 'project' | 'section' } | null {
     if (!completedTask.projectId || completedTask.deletedAt || completedTask.status !== 'done') {
         return null;
@@ -245,7 +293,13 @@ export function getProjectNextActionPromptData(
     // Section-scoped sequential projects run one sequence per section, so a
     // section left without a next action is stalled even while other sections
     // still have live next actions (#911).
-    if (project.isSequential && normalizeProjectSequentialScope(project.sequentialScope) === 'section') {
+    // A Sequential section of a Per section project is its own sequence too (#1429).
+    const completedSection = completedTask.sectionId
+        ? sections?.find((section) => section.id === completedTask.sectionId && section.projectId === project.id)
+        : undefined;
+    if ((project.isSequential && normalizeProjectSequentialScope(project.sequentialScope) === 'section')
+        || (getProjectFlowMode(project) === 'perSection' && completedSection?.isSequential === true
+            && !completedSection.deletedAt)) {
         const sectionKey = completedTask.sectionId ?? undefined;
         const inSameSection = (task: Task) => (task.sectionId ?? undefined) === sectionKey;
         const sectionHasNext = tasks.some((task) =>
@@ -270,9 +324,10 @@ export function getProjectNextActionPromptData(
 export function shouldPromptForProjectNextAction(
     completedTask: Task,
     tasks: Task[],
-    projects: Project[]
+    projects: Project[],
+    sections?: readonly Section[],
 ): boolean {
-    return getProjectNextActionPromptData(completedTask, tasks, projects) !== null;
+    return getProjectNextActionPromptData(completedTask, tasks, projects, sections) !== null;
 }
 
 export function getProjectsByArea(projects: Project[], areaId: string): Project[] {

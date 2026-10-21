@@ -154,6 +154,38 @@ describeSqlite('SqliteAdapter', () => {
         return connection;
     };
 
+    it('migrates storage without the Flow mode columns and keeps never-set apart from false (#1429)', async () => {
+        const legacy = SQLITE_BASE_SCHEMA
+            .replace('  viewSectionIds TEXT,\n  perSectionFlow INTEGER\n);', '  viewSectionIds TEXT\n);')
+            .replace('  projectArchivedAt TEXT,\n  isSequential INTEGER\n);', '  projectArchivedAt TEXT\n);');
+        expect(legacy).not.toContain('perSectionFlow');
+        expect(legacy).not.toMatch(/projectArchivedAt TEXT,\n  isSequential/);
+        db.exec(legacy);
+        runSql(db, "INSERT INTO projects (id,title,status,color,createdAt,updatedAt) VALUES ('trip','Camping Trip','active','#6B7280','2026-10-01','2026-10-01')");
+        runSql(db, "INSERT INTO sections (id,projectId,title,createdAt,updatedAt) VALUES ('book','trip','Book campsite','2026-10-01','2026-10-01')");
+        const loaded = await adapter.getData();
+        expect(loaded.projects[0].perSectionFlow).toBeUndefined();
+        expect(loaded.sections[0].isSequential).toBeUndefined();
+        expect(allSql(db, 'SELECT perSectionFlow FROM projects')).toEqual([{ perSectionFlow: null }]);
+
+        const at = '2026-10-21T10:00:00.000Z';
+        await adapter.saveData({ ...loaded, projects: [{ ...loaded.projects[0], perSectionFlow: true, rev: 2, updatedAt: at }],
+            sections: [
+                { ...loaded.sections[0], isSequential: true, rev: 2, updatedAt: at },
+                { id: 'prep', projectId: 'trip', title: 'Prep', order: 1, isSequential: false, rev: 1, createdAt: at, updatedAt: at },
+                { id: 'later', projectId: 'trip', title: 'Later', order: 2, rev: 1, createdAt: at, updatedAt: at },
+            ] });
+        db.close();
+        db = new RuntimeDatabase!(databasePath);
+        adapter = new SqliteAdapter(createClient(db));
+        const reopened = await adapter.getData();
+        expect(reopened.projects[0].perSectionFlow).toBe(true);
+        expect(reopened.sections.map((row) => [row.id, row.isSequential])).toEqual([['book', true], ['prep', false], ['later', undefined]]);
+        expect(allSql(db, 'SELECT id, isSequential FROM sections ORDER BY orderNum')).toEqual([
+            { id: 'book', isSequential: 1 }, { id: 'prep', isSequential: 0 }, { id: 'later', isSequential: null },
+        ]);
+    });
+
     it('persists a Project color override and a newer reset across SQLite reopen', async () => {
         const at = '2026-10-20T10:00:00.000Z';
         const row = { id: 'color', title: 'Color', status: 'active' as const, color: '#3b82f6',

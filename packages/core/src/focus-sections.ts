@@ -18,6 +18,8 @@ import { applyFilter } from './saved-filters';
 import { isTaskCountedAsFocused } from './store-helpers';
 import {
     getFocusSequentialFirstTaskIds,
+    getTaskSequencing,
+    isTaskSequenceBlocked,
     getProjectDeadlineBoosts,
     getUpcomingDeferredTasks,
     isTaskFocusedNow,
@@ -214,23 +216,16 @@ export function deriveFocusTaskLists(pools: FocusPools, ctx: FocusListContext): 
         },
     );
 
-    const sequentialProjectIds = new Set<string>();
-    const sequentialWithinSectionProjectIds = new Set<string>();
-    for (const project of projects) {
-        if (project.deletedAt || !project.isSequential) continue;
-        sequentialProjectIds.add(project.id);
-        if (project.sequentialScope === 'section') sequentialWithinSectionProjectIds.add(project.id);
-    }
-    const sequentialFirstTaskIds = getFocusSequentialFirstTaskIds(pools.base, sequentialProjectIds, {
+    // Per section projects (#1429) add one sequence per Sequential section; their
+    // Parallel sections and section-less tasks are never held back.
+    const sequencing = getTaskSequencing(projects, sections);
+    const sequentialFirstTaskIds = getFocusSequentialFirstTaskIds(pools.base, sequencing.sequentialProjectIds, {
         now,
-        sectionScopedProjectIds: sequentialWithinSectionProjectIds,
+        sectionScopedProjectIds: sequencing.sectionScopedProjectIds,
+        sequentialSectionKeys: sequencing.sequentialSectionKeys,
         sections,
     });
-    const isSequentialBlocked = (task: Task) => {
-        if (!task.projectId) return false;
-        if (!sequentialProjectIds.has(task.projectId)) return false;
-        return !sequentialFirstTaskIds.has(task.id);
-    };
+    const isSequentialBlocked = (task: Task) => isTaskSequenceBlocked(task, sequencing, sequentialFirstTaskIds);
 
     // One pair of Date objects for the whole loop, not one pair per task.
     const todayBounds = getTodayBounds(now);

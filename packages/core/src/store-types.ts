@@ -3,7 +3,7 @@ import type { NativePreparedTrashItemsRestore } from './native-host-contract-tra
 import type { ChecklistProjectConversion } from './checklist-project-conversion';
 import type { ProjectTaskSummary } from './project-row-meta';
 import type { FocusStarAction } from './focus-star';
-import type { AppData, Area, Attachment, FilterCriteria, FocusGroupBy, Person, Project, SavedFilter, SavedSearch, Section, SortField, Task, TaskStatus } from './types';
+import type { AppData, Area, Attachment, FilterCriteria, FocusGroupBy, Person, Project, ProjectFlowMode, SavedFilter, SavedSearch, Section, SortField, Task, TaskStatus } from './types';
 import type { TaskQueryOptions } from './storage';
 import type { TaskDateCoherenceIssue } from './task-date-coherence';
 import type { TaskTokenUsage } from './task-token-usage';
@@ -865,6 +865,8 @@ export interface TaskStore {
     retryPreparedCalendarSubscriptionSettingSnapshot: (authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Update a project */
     updateProject: (id: string, updates: Partial<Project>) => Promise<StoreActionResult>;
+    /** Switch a project's Flow mode and stamp section defaults in one write (#1429). */
+    setProjectFlowMode: (id: string, mode: ProjectFlowMode) => Promise<StoreActionResult>;
     /** Archive a project as cancelled and cancel its unfinished child tasks */
     cancelProject: (id: string) => Promise<StoreActionResult>;
     /** Delete a project */
@@ -977,6 +979,8 @@ export type DerivedState = {
     tagTokenUsage: TaskTokenUsage[];
     sequentialProjectIds: Set<string>;
     sequentialWithinSectionProjectIds: Set<string>;
+    /** Sequential sections of Per section projects, as `${projectId}:${sectionId}` (#1429). */
+    sequentialSectionKeys: Set<string>;
     dateCoherenceIssuesByTaskId: Map<string, TaskDateCoherenceIssue[]>;
     focusedCount: number;
     focusedProjectCount: number;
@@ -987,6 +991,7 @@ export type DerivedCache = {
     visibleTasksRef: Task[];
     taskLookupRef: Map<string, Task>;
     projectLookupRef: Map<string, Project>;
+    sectionsRef?: Section[];
     day: string;
     value: DerivedState;
 };

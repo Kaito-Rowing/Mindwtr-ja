@@ -188,6 +188,19 @@ export const normalizeRevisionMetadata = <T extends RevisionMetadata>(item: T): 
 // tolerate that shape so a numeric `true` never gets coerced to `false` (#902).
 const normalizeSyncedBoolean = (value: unknown): boolean => value === true || value === 1;
 
+/**
+ * Flow mode booleans (#1429) keep three states: true, false, and absent (never set).
+ * The old-client keep rule in sync.ts reads absent as "this writer never carried
+ * the field", so false must stay false. Only a present key is touched, which keeps
+ * the record identical when the field is absent.
+ */
+const normalizeFlowBoolean = <T extends object>(item: T, key: keyof T & string): T => {
+    if (!hasOwnKey(item, key)) return item;
+    const value = (item as Record<string, unknown>)[key];
+    const normalized = value === true || value === 1 ? true : value === false || value === 0 ? false : undefined;
+    return normalized === value ? item : { ...item, [key]: normalized };
+};
+
 const normalizeProjectStatusForMerge = (value: unknown): Project['status'] => {
     if (value === 'active' || value === 'someday' || value === 'waiting' || value === 'archived') {
         return value;
@@ -202,10 +215,11 @@ const normalizeProjectStatusForMerge = (value: unknown): Project['status'] => {
 };
 
 /** Older clients uploaded `deletedAtBeforeProjectArchive: null`; absent is canonical (#1156). */
-export const normalizeSectionForSyncMerge = (section: Section): Section => (
+export const normalizeSectionForSyncMerge = (section: Section): Section => normalizeFlowBoolean(
     section.deletedAtBeforeProjectArchive === null
         ? { ...section, deletedAtBeforeProjectArchive: undefined }
-        : section
+        : section,
+    'isSequential',
 );
 
 export const normalizeTaskForSyncMerge = (
@@ -321,8 +335,9 @@ export const normalizeProjectForSyncMerge = (
         areaId: normalizeOptionalString(project.areaId),
         areaTitle: normalizeOptionalString(project.areaTitle),
     };
-    const normalized = normalizeProjectLifecycleFields(candidate);
-    if (normalized !== candidate) {
+    const flowNormalized = normalizeFlowBoolean(candidate, 'perSectionFlow');
+    const normalized = normalizeProjectLifecycleFields(flowNormalized);
+    if (normalized !== flowNormalized) {
         logInfo('Project lifecycle normalized for sync', {
             scope: 'sync',
             context: { releaseCheck: 'v1.3.0/project-lifecycle-sync', count: 1 },

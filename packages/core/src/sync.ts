@@ -1,4 +1,4 @@
-import type { AppData, Attachment, Area, Person, Project, Task } from './types';
+import type { AppData, Attachment, Area, Person, Project, Section, Task } from './types';
 import { logInfo, logWarn } from './logger';
 import {
     PREPARED_UNCHANGED,
@@ -1151,6 +1151,15 @@ export function* mergeAppDataWithStatsPass(local: AppData, incoming: AppData, op
             ? winner
             : { ...winner, viewSectionIds: other.viewSectionIds }
     );
+    // Flow mode fields (#1429): no client ever clears them back to absent, so an
+    // absent value on the winner means it came from a client that never carried
+    // them (v1.3.6 and earlier). Keep the peer's value. Tombstones are skipped so
+    // compaction never sees the field come back.
+    const keepProjectFlowFromPeer = (winner: Project, other: Project): Project => (
+        winner.perSectionFlow !== undefined || other.perSectionFlow === undefined || winner.purgedAt
+            ? winner
+            : { ...winner, perSectionFlow: other.perSectionFlow }
+    );
     const withMergedAttachments = <T extends Task | Project>(winner: T, attachments: Attachment[] | undefined): T => {
         // In the common no-attachment case there is no patch to apply. Keep
         // the normalized winner instead of copying its full optional schema.
@@ -1204,7 +1213,10 @@ export function* mergeAppDataWithStatsPass(local: AppData, incoming: AppData, op
                 localProject,
                 incomingProject,
                 withMergedAttachments(
-                    keepViewSectionIdsFromPeer(winner, winner === localProject ? incomingProject : localProject),
+                    keepProjectFlowFromPeer(
+                        keepViewSectionIdsFromPeer(winner, winner === localProject ? incomingProject : localProject),
+                        winner === localProject ? incomingProject : localProject,
+                    ),
                     attachments,
                 ),
             );
@@ -1217,7 +1229,15 @@ export function* mergeAppDataWithStatsPass(local: AppData, incoming: AppData, op
     const sectionsResult = mergeEntitiesWithStats(
         localNormalized.sections,
         incomingNormalized.sections,
-        undefined,
+        // Same old-client keep rule as keepProjectFlowFromPeer. A section hidden by a
+        // project archive keeps it too, so unarchiving brings the choice back.
+        (localSection: Section, incomingSection: Section, winner: Section) => {
+            const other = winner === localSection ? incomingSection : localSection;
+            return winner.isSequential !== undefined || other.isSequential === undefined
+                || (winner.deletedAt && !winner.projectArchivedAt)
+                ? winner
+                : { ...winner, isSequential: other.isSequential };
+        },
         normalizeSectionForContentComparison,
         'section',
         nowIso

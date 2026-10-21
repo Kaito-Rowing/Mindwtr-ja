@@ -34,6 +34,7 @@ export const validProject = (value: unknown, projectId: string): value is Projec
         || !iso(value.createdAt) || !iso(value.updatedAt)
         || (value.isFocused !== undefined && typeof value.isFocused !== 'boolean')
         || (value.isSequential !== undefined && typeof value.isSequential !== 'boolean')
+        || (value.perSectionFlow !== undefined && typeof value.perSectionFlow !== 'boolean')
         || (value.sequentialScope !== undefined && !['project', 'section'].includes(String(value.sequentialScope)))
         || (value.taskSortBy !== undefined && typeof value.taskSortBy !== 'string')
         || (value.viewSectionIds !== undefined && !(record(value.viewSectionIds)

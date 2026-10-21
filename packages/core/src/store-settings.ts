@@ -1642,6 +1642,7 @@ export const createSettingsActions = ({
             && derivedCache.visibleTasksRef === state.tasks
             && derivedCache.taskLookupRef === state._tasksById
             && derivedCache.projectLookupRef === state._projectsById
+            && derivedCache.sectionsRef === state._allSections
             && derivedCache.taxonomyRef === state.settings.taxonomy
             && derivedCache.day === day
         ) {
@@ -1673,14 +1674,16 @@ export const createSettingsActions = ({
                 }
                 : computeTaskDerivedState(state.tasks, state._tasksById, now);
         const projectDerived =
-            derivedCache && derivedCache.projectLookupRef === state._projectsById && previous
+            derivedCache && derivedCache.projectLookupRef === state._projectsById
+                && derivedCache.sectionsRef === state._allSections && previous
                 ? {
                     projectMap: previous.projectMap,
                     sequentialProjectIds: previous.sequentialProjectIds,
                     sequentialWithinSectionProjectIds: previous.sequentialWithinSectionProjectIds,
+                    sequentialSectionKeys: previous.sequentialSectionKeys,
                     focusedProjectCount: previous.focusedProjectCount,
                 }
-                : computeProjectDerivedState(state._allProjects, state._projectsById);
+                : computeProjectDerivedState(state._allProjects, state._projectsById, state._allSections);
         const derived = {
             ...projectDerived,
             ...taskDerived,
@@ -1694,6 +1697,7 @@ export const createSettingsActions = ({
             visibleTasksRef: state.tasks,
             taskLookupRef: state._tasksById,
             projectLookupRef: state._projectsById,
+            sectionsRef: state._allSections,
             day,
             value: derived,
         };

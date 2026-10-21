@@ -106,6 +106,7 @@ const storeActions = vi.hoisted(() => ({
     reorderSections: vi.fn(),
     updateProject: vi.fn(),
     updateSection: vi.fn(),
+    setProjectFlowMode: vi.fn(),
     lockEditing: vi.fn(),
     unlockEditing: vi.fn(),
 }));
@@ -515,6 +516,42 @@ describe('ProjectDetailModal notes editing', () => {
 });
 
 describe('ProjectDetailModal section management', () => {
+    it('picks Parallel, Sequential or Per section, and offers section flow only in Per section mode (#1429)', async () => {
+        const onProjectChange = vi.fn();
+        const book = { ...section('book', 'Book campsite'), isSequential: true };
+        const prep = section('prep', 'Prep');
+        storeActions._allSections = [book, prep];
+        let tree!: ReturnType<typeof create>;
+        await act(async () => {
+            tree = create(<ProjectDetailModal {...createProjectDetailModalProps({ onProjectChange, sections: [book, prep] })} />);
+        });
+        expandProjectDetails(tree);
+        const option = (mode: string) => tree.root.findByProps({ testID: `project-flow-mode-${mode}` });
+        expect(option('parallel').props.accessibilityState).toMatchObject({ selected: true });
+        expect(option('perSection').findByType(Text).props.children).toBe('Per section');
+        await act(async () => {
+            tree.root.findByProps({ testID: 'project-sections-button' }).props.onPress();
+        });
+        expect(tree.root.findAllByProps({ testID: 'project-section-flow-prep' })).toHaveLength(0);
+
+        await act(async () => { option('perSection').props.onPress(); });
+        expect(storeActions.setProjectFlowMode).toHaveBeenCalledWith('project-1', 'perSection');
+        expect(onProjectChange).toHaveBeenCalledWith(expect.objectContaining({ isSequential: false, perSectionFlow: true }));
+        expect(storeActions.updateProject).not.toHaveBeenCalled();
+
+        await act(async () => {
+            tree.update(<ProjectDetailModal {...createProjectDetailModalProps({
+                onProjectChange, sections: [book, prep], project: { ...project('active'), perSectionFlow: true },
+            })} />);
+        });
+        expect(option('perSection').props.accessibilityState).toMatchObject({ selected: true });
+        const prepFlow = tree.root.findByProps({ testID: 'project-section-flow-prep' });
+        expect(prepFlow.findByType(Text).props.children).toBe('Parallel');
+        expect(tree.root.findByProps({ testID: 'project-section-flow-book' }).findByType(Text).props.children).toBe('Sequential');
+        await act(async () => { prepFlow.props.onPress(); });
+        expect(storeActions.updateSection).toHaveBeenCalledWith('prep', { isSequential: true });
+    });
+
     it('creates a section from project details', async () => {
         storeActions.addSection.mockResolvedValue(section('section-created', 'Grammar'));
         let tree!: ReturnType<typeof create>;
@@ -1285,7 +1322,7 @@ describe('ProjectDetailModal lifecycle actions', () => {
         const duplicate = tree.root.findByProps({ testID: 'project-duplicate-button' });
         expect(duplicate).toBeTruthy();
         expect(tree.root.findByProps({ testID: 'project-archive-button' })).toBeTruthy();
-        expect(duplicate.findAllByProps({ testID: 'project-type-toggle' })).toHaveLength(0);
+        expect(duplicate.findAllByProps({ testID: 'project-flow-mode-options' })).toHaveLength(0);
     });
 
     it('deletes the project from the actions menu after a confirm', () => {
@@ -1510,7 +1547,7 @@ describe('ProjectDetailModal archived projects', () => {
         expandProjectDetails(tree);
 
         expect(tree.root.findByProps({ testID: 'project-status-picker' }).props.disabled).toBe(true);
-        expect(tree.root.findByProps({ testID: 'project-type-toggle' }).props.disabled).toBe(true);
+        expect(tree.root.findByProps({ testID: 'project-flow-mode-sequential' }).props.disabled).toBe(true);
         expect(tree.root.findByProps({ testID: 'project-area-picker' }).props.disabled).toBe(true);
         expect(tree.root.findByProps({ testID: 'project-due-date-picker' }).props.disabled).toBe(true);
         expect(tree.root.findByProps({ testID: 'project-review-date-picker' }).props.disabled).toBe(true);
@@ -1525,11 +1562,12 @@ describe('ProjectDetailModal archived projects', () => {
 
         act(() => {
             titleInput?.props.onEndEditing();
-            tree.root.findByProps({ testID: 'project-type-toggle' }).props.onPress();
+            tree.root.findByProps({ testID: 'project-flow-mode-sequential' }).props.onPress();
             sortOption.props.onPress();
         });
 
         expect(storeActions.updateProject).not.toHaveBeenCalled();
+        expect(storeActions.setProjectFlowMode).not.toHaveBeenCalled();
         expect(onProjectChange).not.toHaveBeenCalled();
         expect(onTaskSortByChange).not.toHaveBeenCalled();
         expect(notes.commitSelectedProjectNotes).not.toHaveBeenCalled();

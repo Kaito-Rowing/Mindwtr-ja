@@ -3284,6 +3284,7 @@ export function createTaskActions({ set, get, getStorage, debouncedSave, flushPe
             focusTaskLimit: normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit),
             sequentialProjectIds: derived.sequentialProjectIds,
             sectionScopedProjectIds: derived.sequentialWithinSectionProjectIds,
+            sequentialSectionKeys: derived.sequentialSectionKeys,
             allowUnclarified: options?.allowUnclarified,
         });
     },

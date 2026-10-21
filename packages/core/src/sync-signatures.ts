@@ -155,6 +155,8 @@ export const normalizeProjectForContentComparison = (project: Project): Record<s
         sequentialScope: project.isSequential && normalizeProjectSequentialScope(project.sequentialScope) === 'section'
             ? 'section'
             : undefined,
+        // Off and never-set both mean "not Per section"; only true is a distinct value.
+        perSectionFlow: project.perSectionFlow === true ? true : undefined,
         taskSortBy: normalizeProjectTaskSortBy(project.taskSortBy),
         isFocused: project.isFocused ? true : undefined,
         viewSectionIds: canonicalizeStringMapForComparison(project.viewSectionIds),

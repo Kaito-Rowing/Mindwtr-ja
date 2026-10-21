@@ -5,6 +5,7 @@ import {
     deriveSqliteColumnEntries,
     fromBool,
     fromJson,
+    fromNullableBool,
     fromOptional,
     sqliteColumnsFromEntries,
     sqliteMigrationColumnsFromEntries,
@@ -12,6 +13,7 @@ import {
     toAttachments,
     toBool,
     toJson,
+    toNullableBool,
     toStringArray,
     type EntityCloudWriteSemantics,
     type EntityFieldNullability,
@@ -82,6 +84,8 @@ const projectColumnValues = (project: Project): Record<string, unknown> => ({
     tagIds: toJson(project.tagIds ?? []),
     isSequential: toBool(project.isSequential),
     sequentialScope: normalizeProjectSequentialScope(project.sequentialScope) ?? null,
+    // NULL keeps "never set" apart from an explicit false (#1429 old-client keep rule).
+    perSectionFlow: toNullableBool(project.perSectionFlow),
     taskSortBy: normalizeProjectTaskSortBy(project.taskSortBy) ?? null,
     isFocused: toBool(project.isFocused),
     supportNotes: project.supportNotes ?? null,
@@ -105,6 +109,22 @@ const projectColumnValues = (project: Project): Record<string, unknown> => ({
 export const projectToSqliteRow = (project: Project): unknown[] =>
     sqliteRowFromColumnValues(PROJECT_SQLITE_COLUMNS, projectColumnValues(project));
 
+/** Native journals frozen by v1.3.6 hold 26 project cells; colorOverride and perSectionFlow came later. */
+export const PROJECT_SQLITE_LEGACY_ROW_LENGTH = 26;
+
+/** A frozen raw project row padded to today's columns (later columns read as NULL), or null when no build wrote that length. */
+export const padProjectSqliteCells = (cells: readonly unknown[]): unknown[] | null => (
+    cells.length >= PROJECT_SQLITE_LEGACY_ROW_LENGTH && cells.length <= PROJECT_SQLITE_COLUMNS.length
+        ? [...cells, ...new Array<null>(PROJECT_SQLITE_COLUMNS.length - cells.length).fill(null)]
+        : null
+);
+
+/** A short frozen row fits a project only when every column it lacks is NULL for that project. */
+export const projectSqliteCellsFit = (cells: readonly unknown[], project: Project): boolean => (
+    padProjectSqliteCells(cells) !== null
+    && projectToSqliteRow(project).slice(cells.length).every((cell) => cell === null)
+);
+
 // `_rowid` is the SQLite rowid the read query aliases in (sqlite-adapter.ts's loadAllRows);
 // absent (e.g. MCP's own SELECTs, which don't alias it), the fallback below matches MCP's
 // pre-existing `row.orderNum ?? 0` exactly.
@@ -121,6 +141,7 @@ export const projectFromSqliteRow = (row: Record<string, unknown>): Project => {
         tagIds: toStringArray(fromJson<unknown>(row.tagIds, [])),
         isSequential: fromBool(row.isSequential),
         sequentialScope: normalizeProjectSequentialScope(row.sequentialScope),
+        perSectionFlow: fromOptional(fromNullableBool(row.perSectionFlow) ?? null),
         taskSortBy: normalizeProjectTaskSortBy(row.taskSortBy),
         isFocused: fromBool(row.isFocused),
         supportNotes: fromOptional(row.supportNotes as string | null),

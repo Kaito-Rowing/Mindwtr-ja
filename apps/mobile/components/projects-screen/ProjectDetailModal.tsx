@@ -23,7 +23,10 @@ import {
     type Attachment,
     getAttachmentDisplayTitle,
     getProjectDetailsPresentation,
+    getProjectFlowMode,
+    planProjectFlowModeChange,
     type Project,
+    type ProjectFlowMode,
     type ProjectSequenceTaskCue,
     type Section,
     type Task,
@@ -94,6 +97,7 @@ function ProjectSectionManagerModal({
     canManage,
     deleteSection,
     onClose,
+    perSectionFlow,
     projectId,
     reorderSections,
     sections,
@@ -106,6 +110,8 @@ function ProjectSectionManagerModal({
     canManage: boolean;
     deleteSection: (id: string) => Promise<unknown> | unknown;
     onClose: () => void;
+    /** The project's Flow mode is Per section: each row offers its section's flow (#1429). */
+    perSectionFlow: boolean;
     projectId: string;
     reorderSections: (projectId: string, orderedIds: string[]) => Promise<unknown> | unknown;
     sections: Section[];
@@ -140,6 +146,9 @@ function ProjectSectionManagerModal({
         'Are you sure you want to delete this section?'
     );
     const sectionReorderFailed = tFallback(t, 'projects.sectionReorderFailed', 'Failed to reorder sections.');
+    const flowModeLabel = tFallback(t, 'projects.sequenceMode', 'Flow Mode');
+    const parallelLabel = tFallback(t, 'projects.parallel', 'Parallel');
+    const sequentialLabel = tFallback(t, 'projects.sequential', 'Sequential');
     const editing = sections.find((section) => section.id === editingSectionId);
     const showEditor = canManage && editingSectionId !== null;
 
@@ -359,6 +368,23 @@ function ProjectSectionManagerModal({
                                                         <Ionicons name="chevron-down" size={16} color={tc.secondaryText} />
                                                     </TouchableOpacity>
                                                 </View>
+                                                {perSectionFlow ? (
+                                                    <TouchableOpacity
+                                                        accessibilityRole="button"
+                                                        accessibilityLabel={`${flowModeLabel}: ${section.title}`}
+                                                        accessibilityValue={{ text: section.isSequential === true ? sequentialLabel : parallelLabel }}
+                                                        onPress={() => {
+                                                            if (!canMutateProject()) return;
+                                                            void Promise.resolve(updateSection(section.id, { isSequential: section.isSequential !== true }));
+                                                        }}
+                                                        style={[styles.smallButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
+                                                        testID={`project-section-flow-${section.id}`}
+                                                    >
+                                                        <Text style={[styles.smallButtonText, { color: tc.secondaryText }]}>
+                                                            {section.isSequential === true ? sequentialLabel : parallelLabel}
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                ) : null}
                                                 <TouchableOpacity
                                                     accessibilityRole="button"
                                                     accessibilityLabel={`${editLabel}: ${section.title}`}
@@ -562,6 +588,7 @@ export function ProjectDetailModal({
         updateProject,
         cancelProject,
         updateSection,
+        setProjectFlowMode,
         settings,
         allProjects,
     } = useTaskStore((state) => ({
@@ -571,6 +598,7 @@ export function ProjectDetailModal({
         updateProject: state.updateProject,
         cancelProject: state.cancelProject,
         updateSection: state.updateSection,
+        setProjectFlowMode: state.setProjectFlowMode,
         settings: state.settings,
         allProjects: state._allProjects,
     }), shallow);
@@ -736,7 +764,7 @@ export function ProjectDetailModal({
         t,
         'projects.projectTypeHelpText',
         'Sequential projects surface one available action at a time. Parallel projects can surface multiple independent Next tasks.'
-    );
+    ) + `\n\n${tFallback(t, 'projects.perSectionTooltip', 'Per section: each section is Parallel or Sequential, chosen from its menu.')}`;
     const sequenceCueLabels = React.useMemo<Record<ProjectSequenceTaskCue, string>>(
         () => ({
             available: tFallback(t, 'projects.availableNextAction', 'Available next action'),
@@ -930,6 +958,15 @@ export function ProjectDetailModal({
     const setSelectedProjectSequentialScope = (sequentialScope: Project['sequentialScope']) => {
         updateMutableSelectedProject({ sequentialScope });
     };
+    const setSelectedProjectFlowMode = (mode: ProjectFlowMode) => {
+        const current = getMutableSelectedProject();
+        if (!current) return;
+        const plan = planProjectFlowModeChange(current, useTaskStore.getState()._allSections ?? [], mode);
+        if (!plan) return;
+        void setProjectFlowMode(current.id, mode);
+        onProjectChange({ ...current, ...plan.project });
+    };
+    const selectedProjectFlowMode = selectedProject ? getProjectFlowMode(selectedProject) : 'parallel';
     const handleSetProjectStatus = (status: Project['status']) => {
         const current = liveSelectedProjectStatus === 'archived'
             ? liveSelectedProject
@@ -1198,48 +1235,49 @@ export function ProjectDetailModal({
 
                                             <View style={[styles.reviewLabelRow, styles.projectSettingsRowSpacing]}>
                                                 <Text style={[styles.reviewLabel, { color: tc.text }]}>{projectTypeLabel}</Text>
-                                                <View style={styles.projectTypeControls}>
-                                                    <TouchableOpacity
-                                                        accessibilityRole="button"
-                                                        onPress={() => {
-                                                            updateMutableSelectedProject({ isSequential: !selectedProjectRef.current?.isSequential });
-                                                        }}
-                                                        disabled={isArchivedProject}
-                                                        accessibilityHint={isArchivedProject ? t('projects.reactivate') : undefined}
-                                                        accessibilityState={{ disabled: isArchivedProject }}
-                                                        style={[
-                                                            styles.sequentialToggle,
-                                                            {
-                                                                backgroundColor: selectedProject.isSequential ? tc.tint : tc.filterBg,
-                                                                borderColor: selectedProject.isSequential ? tc.tint : tc.border,
-                                                            },
-                                                        ]}
-                                                        testID="project-type-toggle"
-                                                    >
-                                                        <Text
+                                                <TouchableOpacity
+                                                    accessibilityLabel={projectTypeHelpLabel}
+                                                    accessibilityRole="button"
+                                                    onPress={showProjectTypeHelp}
+                                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                                    style={[
+                                                        styles.projectTypeHelpButton,
+                                                        { backgroundColor: tc.filterBg, borderColor: tc.border },
+                                                    ]}
+                                                >
+                                                    <Ionicons name="help-circle-outline" size={17} color={tc.secondaryText} />
+                                                </TouchableOpacity>
+                                            </View>
+                                            <View style={styles.sequentialScopeOptions} testID="project-flow-mode-options">
+                                                {(['parallel', 'sequential', 'perSection'] as const).map((mode) => {
+                                                    const selected = selectedProjectFlowMode === mode;
+                                                    return (
+                                                        <TouchableOpacity
+                                                            key={mode}
+                                                            accessibilityRole="button"
+                                                            onPress={() => setSelectedProjectFlowMode(mode)}
+                                                            disabled={isArchivedProject}
+                                                            accessibilityHint={isArchivedProject ? t('projects.reactivate') : undefined}
+                                                            accessibilityState={{ selected, disabled: isArchivedProject }}
                                                             style={[
-                                                                styles.sequentialToggleText,
-                                                                { color: selectedProject.isSequential ? tc.onTint : tc.secondaryText },
+                                                                styles.sequentialScopeButton,
+                                                                {
+                                                                    backgroundColor: selected ? tc.tint : tc.inputBg,
+                                                                    borderColor: selected ? tc.tint : tc.border,
+                                                                },
                                                             ]}
+                                                            testID={`project-flow-mode-${mode}`}
                                                         >
-                                                            {selectedProject.isSequential
-                                                                ? tFallback(t, 'projects.sequential', 'Sequential')
-                                                                : tFallback(t, 'projects.parallel', 'Parallel')}
-                                                        </Text>
-                                                    </TouchableOpacity>
-                                                    <TouchableOpacity
-                                                        accessibilityLabel={projectTypeHelpLabel}
-                                                        accessibilityRole="button"
-                                                        onPress={showProjectTypeHelp}
-                                                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                                                        style={[
-                                                            styles.projectTypeHelpButton,
-                                                            { backgroundColor: tc.filterBg, borderColor: tc.border },
-                                                        ]}
-                                                    >
-                                                        <Ionicons name="help-circle-outline" size={17} color={tc.secondaryText} />
-                                                    </TouchableOpacity>
-                                                </View>
+                                                            <Text style={[styles.sequentialScopeText, { color: selected ? tc.onTint : tc.text }]}>
+                                                                {mode === 'sequential'
+                                                                    ? tFallback(t, 'projects.sequential', 'Sequential')
+                                                                    : mode === 'perSection'
+                                                                        ? tFallback(t, 'projects.perSection', 'Per section')
+                                                                        : tFallback(t, 'projects.parallel', 'Parallel')}
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                    );
+                                                })}
                                             </View>
                                         </View>
 
@@ -2001,6 +2039,7 @@ export function ProjectDetailModal({
                                     canManage={canManageProjectSections}
                                     deleteSection={deleteSection}
                                     onClose={() => setSectionManagerVisible(false)}
+                                    perSectionFlow={getProjectFlowMode(selectedProject) === 'perSection'}
                                     projectId={selectedProject.id}
                                     reorderSections={reorderSections}
                                     sections={selectedProjectSections}

@@ -65,6 +65,7 @@ export const selectTaskItemStoreState = ({ task, propProject, isEditing, hasQuic
             activeTasksByStatus: derived?.activeTasksByStatus ?? EMPTY_TASKS_BY_STATUS,
             sequentialProjectIds: derived?.sequentialProjectIds ?? EMPTY_ID_SET,
             sequentialWithinSectionProjectIds: derived?.sequentialWithinSectionProjectIds ?? EMPTY_ID_SET,
+            sequentialSectionKeys: derived?.sequentialSectionKeys ?? EMPTY_ID_SET,
         };
     };
 

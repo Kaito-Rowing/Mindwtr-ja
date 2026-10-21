@@ -941,6 +941,33 @@ describe('cloud server utils', () => {
         expect(invalid.error).toContain('viewSectionIds');
     });
 
+    test('validates the Per section flow fields and keeps them off REST writes (#1429)', () => {
+        const iso = '2024-01-01T00:00:00.000Z';
+        const project = {
+            id: 'trip', title: 'Camping Trip', status: 'active' as const, color: '#6B7280',
+            order: 0, tagIds: [], createdAt: iso, updatedAt: iso,
+        };
+        const section = { id: 'book', projectId: 'trip', title: 'Book campsite', order: 0, createdAt: iso, updatedAt: iso };
+        expect(validateAppData({ tasks: [], projects: [{ ...project, perSectionFlow: true }],
+            sections: [{ ...section, isSequential: true }, { ...section, id: 'prep', isSequential: false }, { ...section, id: 'later' }] }).ok).toBe(true);
+        expect(validateAppData({ tasks: [], projects: [{ ...project, perSectionFlow: null }], sections: [{ ...section, isSequential: null }] }).ok).toBe(true);
+        const badProject = validateAppData({ tasks: [], projects: [{ ...project, perSectionFlow: 'yes' }] });
+        expect(badProject.ok).toBe(false);
+        if (badProject.ok) throw new Error('Expected invalid project perSectionFlow');
+        expect(badProject.error).toContain('perSectionFlow');
+        const badSection = validateAppData({ tasks: [], projects: [project], sections: [{ ...section, isSequential: 1 }] });
+        expect(badSection.ok).toBe(false);
+        if (badSection.ok) throw new Error('Expected invalid section isSequential');
+        expect(badSection.error).toContain('isSequential');
+        // Managed like sequentialScope: REST create/patch cannot write them.
+        for (const keys of [CLOUD_PROJECT_CREATION_ALLOWED_PROP_KEYS, CLOUD_PROJECT_PATCH_ALLOWED_PROP_KEYS]) {
+            expect((keys as ReadonlySet<string>).has('perSectionFlow')).toBe(false);
+        }
+        for (const keys of [CLOUD_SECTION_CREATION_ALLOWED_PROP_KEYS, CLOUD_SECTION_PATCH_ALLOWED_PROP_KEYS]) {
+            expect((keys as ReadonlySet<string>).has('isSequential')).toBe(false);
+        }
+    });
+
     test('validates Project.viewSectionIds like the task field (#1319)', () => {
         const iso = '2024-01-01T00:00:00.000Z';
         const project = {

@@ -17,6 +17,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // focus-area-selection: aggregate selected slots only.
     'globalCount', 'hiddenByAreaCount',
     // project-color reuses releaseCheck and mode; no identity or color values.
+    // section-flow-mode reuses releaseCheck and mode; sectionDefaults is a count. No titles or identifiers.
+    'sectionDefaults',
 
     // web-attachment-upload reuses releaseCheck, stage and count; only acknowledged PUTs.
     // android-widget-capture-status: bounded creation status and picker origin; kind/outcome below.

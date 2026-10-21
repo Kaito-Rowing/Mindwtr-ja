@@ -82,6 +82,9 @@ export type DefaultProjectFlowMode = 'parallel' | 'sequential';
 
 export type ProjectSequentialScope = 'project' | 'section';
 
+/** A project's Flow mode as the user picks it; see getProjectFlowMode (#1429). */
+export type ProjectFlowMode = 'parallel' | 'sequential' | 'perSection';
+
 export interface Project {
     id: string;
     title: string;
@@ -92,6 +95,7 @@ export interface Project {
     tagIds: string[]; // Array of Tag IDs
     isSequential?: boolean; // If true, only first incomplete task shows in Next Actions
     sequentialScope?: ProjectSequentialScope; // 'project' = one stream, 'section' = first incomplete task per section
+    perSectionFlow?: boolean; // Flow mode "Per section" (#1429): each Section's isSequential decides; ignored while isSequential is true. Absent = never set.
     taskSortBy?: TaskSortBy; // Optional synced task-list sort; absent means manual project order
     isFocused?: boolean; // If true, this project is a priority focus (max 5 allowed)
     supportNotes?: string;
@@ -119,6 +123,7 @@ export interface Section {
     description?: string;
     order: number; // Sort order within a Project
     isCollapsed?: boolean;
+    isSequential?: boolean; // Section flow in a Per section project (#1429): true = Sequential, false = Parallel, absent = no stored choice (Parallel).
     rev?: number; // Monotonic revision counter for sync conflict resolution
     revBy?: string; // Device identifier that issued the revision
     createdAt: string;
