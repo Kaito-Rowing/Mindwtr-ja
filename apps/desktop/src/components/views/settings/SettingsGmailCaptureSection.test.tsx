@@ -33,7 +33,7 @@ const deferred = <T,>() => {
 const mount = () => {
     const showSaved = vi.fn();
     const view = render(<LanguageProvider><SettingsGmailCaptureSection isTauri showSaved={showSaved} /></LanguageProvider>);
-    fireEvent.click(view.getByRole('button', { name: /Gmail \(prototype\)/ }));
+    fireEvent.click(view.getByRole('button', { name: /^Gmail Connect Google/ }));
     return { ...view, showSaved };
 };
 

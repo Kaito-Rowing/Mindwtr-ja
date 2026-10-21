@@ -10,9 +10,9 @@
 //   パーサのコマンドトークン (/due:, @context, #tag, +Project…) は英語のまま。
 // - 数値プレースホルダは詰める ({{count}}件)、英単語は前後に半角スペースを入れる (Dropbox に接続)。
 export const jaOverrides: Record<string, string> = {
-    "settings.gmailCapture": "Gmail（プロトタイプ）",
+    "settings.gmailCapture": "Gmail",
     "settings.gmailCaptureDesc": "Google に接続して、選択したラベルのメールを取り込みます。",
-    "settings.gmailCaptureDisclosure": "Google はメールボックス全体への読み取り専用アクセスを許可しますが、Mindwtr が取り込むのは選択したラベルのメールだけです。Mindwtr はメールやラベルを変更しません。取り込んだ送信者情報とメール本文は通常のタスクデータとなり、設定済みの同期、バックアップ、エクスポート、または任意の AI 機能の対象になる場合があります。このプロトタイプには、専用のテストアカウントのみを使用してください。",
+    "settings.gmailCaptureDisclosure": "Google はメールボックス全体への読み取り専用アクセスを許可しますが、Mindwtr が取り込むのは選択したラベルのメールだけです。Mindwtr はメールやラベルを変更しません。取り込んだ送信者情報とメール本文は通常のタスクデータとなり、設定済みの同期、バックアップ、エクスポート、または任意の AI 機能の対象になる場合があります。専用のテストアカウントのみを使用してください。",
     "settings.gmailCaptureUnavailable": "このビルドでは Gmail の取り込みを利用できません。",
     "settings.gmailCaptureConnect": "Gmail に接続",
     "settings.gmailCaptureConnecting": "Google を待機中…",

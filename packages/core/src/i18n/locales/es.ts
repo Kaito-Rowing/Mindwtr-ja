@@ -2,9 +2,9 @@
 // translation contributions easier. Every English key is translated here (mode: overrides,
 // floor: all), so new English UI copy cannot silently fall back in Spanish.
 export const esOverrides: Record<string, string> = {
-    "settings.gmailCapture": "Gmail (prototipo)",
+    "settings.gmailCapture": "Gmail",
     "settings.gmailCaptureDesc": "Conecta Google y captura correos de una etiqueta que elijas.",
-    "settings.gmailCaptureDisclosure": "Google concede acceso de solo lectura a todo tu buzón, aunque Mindwtr solo importa los correos con la etiqueta seleccionada. Mindwtr nunca modifica correos ni etiquetas. El remitente y el texto importados pasan a ser datos de tareas normales y pueden incluirse en la sincronización, las copias de seguridad, las exportaciones o las funciones opcionales de IA que hayas configurado. Usa este prototipo únicamente con una cuenta de prueba designada para ello.",
+    "settings.gmailCaptureDisclosure": "Google concede acceso de solo lectura a todo tu buzón, aunque Mindwtr solo importa los correos con la etiqueta seleccionada. Mindwtr nunca modifica correos ni etiquetas. El remitente y el texto importados pasan a ser datos de tareas normales y pueden incluirse en la sincronización, las copias de seguridad, las exportaciones o las funciones opcionales de IA que hayas configurado. Usa únicamente una cuenta de prueba designada para ello.",
     "settings.gmailCaptureUnavailable": "La captura de Gmail no está disponible en esta versión.",
     "settings.gmailCaptureConnect": "Conectar Gmail",
     "settings.gmailCaptureConnecting": "Esperando a Google…",

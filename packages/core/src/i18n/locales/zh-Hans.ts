@@ -1,8 +1,8 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const zhHans: Record<string, string> = {
-    "settings.gmailCapture": "Gmail（原型）",
+    "settings.gmailCapture": "Gmail",
     "settings.gmailCaptureDesc": "连接 Google，采集所选标签下的邮件。",
-    "settings.gmailCaptureDisclosure": "Google 会授予整个邮箱的只读访问权限，即使 Mindwtr 只导入带有所选标签的邮件。Mindwtr 不会更改邮件或标签。导入的发件人和邮件正文会成为普通任务数据，可能进入你配置的同步、备份、导出或可选 AI 功能。此原型仅限使用专门指定的测试账号。",
+    "settings.gmailCaptureDisclosure": "Google 会授予整个邮箱的只读访问权限，即使 Mindwtr 只导入带有所选标签的邮件。Mindwtr 不会更改邮件或标签。导入的发件人和邮件正文会成为普通任务数据，可能进入你配置的同步、备份、导出或可选 AI 功能。仅限使用专门指定的测试账号。",
     "settings.gmailCaptureUnavailable": "此版本不支持 Gmail 采集。",
     "settings.gmailCaptureConnect": "连接 Gmail",
     "settings.gmailCaptureConnecting": "正在等待 Google…",

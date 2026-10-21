@@ -1,8 +1,8 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const en: Record<string, string> = {
-    "settings.gmailCapture": "Gmail (prototype)",
+    "settings.gmailCapture": "Gmail",
     "settings.gmailCaptureDesc": "Connect Google and capture emails from a label you choose.",
-    "settings.gmailCaptureDisclosure": "Google grants read-only access to your whole mailbox, even though Mindwtr imports only emails with your selected label. Mindwtr never changes email or labels. Imported sender and email text become ordinary task data and may enter your configured sync, backups, exports, or optional AI features. Only use a designated test account with this prototype.",
+    "settings.gmailCaptureDisclosure": "Google grants read-only access to your whole mailbox, even though Mindwtr imports only emails with your selected label. Mindwtr never changes email or labels. Imported sender and email text become ordinary task data and may enter your configured sync, backups, exports, or optional AI features. Only use a designated test account.",
     "settings.gmailCaptureUnavailable": "Gmail capture is unavailable in this build.",
     "settings.gmailCaptureConnect": "Connect Gmail",
     "settings.gmailCaptureConnecting": "Waiting for Google…",

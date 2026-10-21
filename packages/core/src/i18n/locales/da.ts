@@ -1,8 +1,8 @@
 // Danish translation. Keep at full key parity with en.ts.
 export const daOverrides: Record<string, string> = {
-    "settings.gmailCapture": "Gmail (prototypeversion)",
+    "settings.gmailCapture": "Gmail",
     "settings.gmailCaptureDesc": "Tilslut Google, og indsaml e-mails fra en etiket, du vælger.",
-    "settings.gmailCaptureDisclosure": "Google giver skrivebeskyttet adgang til hele din postkasse, selvom Mindwtr kun importerer e-mails med den valgte etiket. Mindwtr ændrer aldrig e-mails eller etiketter. Importerede afsenderoplysninger og e-mailtekst bliver almindelige opgavedata og kan indgå i din konfigurerede synkronisering, sikkerhedskopiering, eksport eller valgfrie AI-funktioner. Brug kun en særligt udpeget testkonto med denne prototype.",
+    "settings.gmailCaptureDisclosure": "Google giver skrivebeskyttet adgang til hele din postkasse, selvom Mindwtr kun importerer e-mails med den valgte etiket. Mindwtr ændrer aldrig e-mails eller etiketter. Importerede afsenderoplysninger og e-mailtekst bliver almindelige opgavedata og kan indgå i din konfigurerede synkronisering, sikkerhedskopiering, eksport eller valgfrie AI-funktioner. Brug kun en særligt udpeget testkonto.",
     "settings.gmailCaptureUnavailable": "Gmail-indsamling er ikke tilgængelig i denne version.",
     "settings.gmailCaptureConnect": "Tilslut Gmail",
     "settings.gmailCaptureConnecting": "Venter på Google…",

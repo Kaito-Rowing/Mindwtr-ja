@@ -1,8 +1,8 @@
 // Ukrainian app strings. Keep placeholders and slash-command syntax in sync with en.ts.
 export const ukOverrides: Record<string, string> = {
-    "settings.gmailCapture": "Gmail (прототип)",
+    "settings.gmailCapture": "Gmail",
     "settings.gmailCaptureDesc": "Підключіть Google та збирайте листи з вибраною міткою.",
-    "settings.gmailCaptureDisclosure": "Google надає доступ лише для читання до всієї вашої поштової скриньки, хоча Mindwtr імпортує тільки листи з вибраною міткою. Mindwtr ніколи не змінює листи чи мітки. Імпортовані дані відправника й текст листа стають звичайними даними завдань і можуть потрапляти до налаштованої синхронізації, резервних копій, експорту або необов’язкових функцій ШІ. Використовуйте цей прототип лише зі спеціально призначеним тестовим обліковим записом.",
+    "settings.gmailCaptureDisclosure": "Google надає доступ лише для читання до всієї вашої поштової скриньки, хоча Mindwtr імпортує тільки листи з вибраною міткою. Mindwtr ніколи не змінює листи чи мітки. Імпортовані дані відправника й текст листа стають звичайними даними завдань і можуть потрапляти до налаштованої синхронізації, резервних копій, експорту або необов’язкових функцій ШІ. Використовуйте лише спеціально призначений тестовий обліковий запис.",
     "settings.gmailCaptureUnavailable": "Збирання з Gmail недоступне в цій збірці.",
     "settings.gmailCaptureConnect": "Підключити Gmail",
     "settings.gmailCaptureConnecting": "Очікування Google…",
