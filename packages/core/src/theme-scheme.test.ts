@@ -103,10 +103,10 @@ describe('STATUS_COLORS_BY_THEME', () => {
     });
 
     it('gives the gruvbox themes their own palette hues, with reference darkened only in light', () => {
-        expect(STATUS_COLORS_BY_THEME['gruvbox-light'].next.text).toBe('#076678');
+        expect(STATUS_COLORS_BY_THEME['gruvbox-light'].next.text).toBe('#075f70');
         expect(STATUS_COLORS_BY_THEME['gruvbox-light'].reference.text).toBe('#3d7151');
         expect(STATUS_COLORS_BY_THEME['gruvbox-light'].done.text).toBe('#665c54');
-        expect(STATUS_COLORS_BY_THEME['gruvbox-dark'].next.text).toBe('#83a598');
+        expect(STATUS_COLORS_BY_THEME['gruvbox-dark'].next.text).toBe('#9eb9ae');
         expect(STATUS_COLORS_BY_THEME['gruvbox-dark'].reference.text).toBe('#8ec07c');
         expect(STATUS_COLORS_BY_THEME['gruvbox-dark'].done.text).toBe('#b8bb26');
     });

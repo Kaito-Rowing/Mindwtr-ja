@@ -171,10 +171,11 @@ const DRACULA_STATUS_COLORS = buildPalette({
 // (#79740e) stop near 3.9:1, so `done` takes the fg3 gray (the desktop default
 // and sepia themes already show done as a muted neutral), inbox/archived take
 // fg2, and `reference` keeps aqua's hue and saturation with the lightness
-// lowered only to 4.5:1.
+// lowered only to 4.5:1. `next` is the faded blue darkened the same way so it
+// clears 4.5:1 on its own chip tint.
 const GRUVBOX_LIGHT_STATUS_COLORS = buildPalette({
     inbox: '#504945',
-    next: '#076678',
+    next: '#075f70',
     waiting: '#af3a03',
     someday: '#8f3f71',
     reference: '#3d7151',
@@ -183,10 +184,11 @@ const GRUVBOX_LIGHT_STATUS_COLORS = buildPalette({
 });
 
 // Gruvbox dark (medium, on bg0 #282828). The bright accents and fg4 clear
-// 4.5:1 on the background and on the bg0_s cards.
+// 4.5:1 on the background and on the bg0_s cards; `next` is the bright blue
+// lightened so it also clears 4.5:1 on its own chip tint.
 const GRUVBOX_DARK_STATUS_COLORS = buildPalette({
     inbox: '#a89984',
-    next: '#83a598',
+    next: '#9eb9ae',
     waiting: '#fabd2f',
     someday: '#d3869b',
     reference: '#8ec07c',

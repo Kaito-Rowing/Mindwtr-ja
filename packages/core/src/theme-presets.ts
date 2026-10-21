@@ -105,7 +105,8 @@ export const THEME_PRESETS: Record<ThemeStatusPreset, ThemePresetColors> = {
     },
     // Gruvbox light, soft contrast: bg0_s ground, bg0 cards, bg1 inputs, bg2
     // borders; the faded blue is the accent. Warning takes the faded orange
-    // because the faded yellow is 3.0:1 on bg0_s.
+    // because the faded yellow is 3.0:1 on bg0_s, with its lightness lowered
+    // a little so it clears 4.5:1 on bg1 (the desktop info badge).
     'gruvbox-light': {
         bg: '#F2E5BC',
         cardBg: '#FBF1C7',
@@ -118,15 +119,16 @@ export const THEME_PRESETS: Record<ThemeStatusPreset, ThemePresetColors> = {
         inputBg: '#EBDBB2',
         danger: '#9D0006',
         success: '#79740E',
-        warning: '#AF3A03',
+        warning: '#AD3903',
         filterBg: '#EBDBB2',
         icon: '#7C6F64',
         tabIconDefault: '#7C6F64',
         tabIconSelected: '#076678',
     },
     // Gruvbox dark, medium contrast: bg0 ground, bg0_s cards, bg1 inputs, bg2
-    // borders; the bright blue is the accent. secondaryText is fg3 because fg4
-    // drops to 4.2:1 on bg1.
+    // borders; the accent is the bright blue with its lightness raised so it
+    // clears 4.5:1 on its own tint (status chips, the active sidebar row).
+    // secondaryText is fg3 because fg4 drops to 4.2:1 on bg1.
     'gruvbox-dark': {
         bg: '#282828',
         cardBg: '#32302F',
@@ -134,7 +136,7 @@ export const THEME_PRESETS: Record<ThemeStatusPreset, ThemePresetColors> = {
         text: '#EBDBB2',
         secondaryText: '#BDAE93',
         border: '#504945',
-        tint: '#83A598',
+        tint: '#9EB9AE',
         onTint: '#282828',
         inputBg: '#3C3836',
         danger: '#FB4934',
@@ -143,7 +145,7 @@ export const THEME_PRESETS: Record<ThemeStatusPreset, ThemePresetColors> = {
         filterBg: '#3C3836',
         icon: '#A89984',
         tabIconDefault: '#A89984',
-        tabIconSelected: '#83A598',
+        tabIconSelected: '#9EB9AE',
     },
     sepia: {
         bg: '#F4ECD8',
