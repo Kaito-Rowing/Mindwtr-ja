@@ -2,6 +2,7 @@
 
 Changes collected since the latest stable release.
 
+- Mobile sync: a task you save right after a sync now uploads a couple of seconds later instead of up to about 20 seconds later, and the sync dot stays amber until the upload finishes instead of showing green while it waits. This includes the native Android app (#1431).
 - Android widget: the quick capture window has a **Contexts** button. Pick one of your contexts from a short searchable list and Mindwtr types it in at the cursor (#1418).
 - Sync no longer reports a conflict when two devices auto-archive the same task before syncing; both keep the later archive time (#1430).
 - Projects have a third Flow mode, **Per section**: each section is Parallel or Sequential, so one section moves step by step while another offers all its tasks at once. Sections never wait for each other, and tasks with no section are Parallel. Set it in a section's menu on desktop or in **Sections** on mobile. Older app versions show such a project as Parallel (#1429).

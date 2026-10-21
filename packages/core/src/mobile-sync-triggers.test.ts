@@ -392,3 +392,157 @@ describe('mobile sync triggers', () => {
     expect(ports.abortSync).not.toHaveBeenCalled();
   });
 });
+
+// #1431: the issue's harness on the real triggers, controller and orchestrator. The opening
+// sync takes 1,919 ms and finds no changes; a save changes the fingerprint and lastDataChangeAt.
+describe('mobile sync triggers: a local change after a sync (#1431)', () => {
+  const OPENING_MS = 1_919;
+
+  const replay = async ({ openingMs = OPENING_MS, cycleMs = 0, results }: {
+    openingMs?: number;
+    cycleMs?: number;
+    results?: Array<{ success: boolean; error?: string }>;
+  } = {}) => {
+    const base = Date.now();
+    const runs: number[] = [];
+    const pendingChanges: boolean[] = [];
+    let lastDataChangeAt = 0;
+    const fake = createPorts({
+      initialAppState: 'background',
+      readStoredBackend: vi.fn(async () => 'cloud'),
+      performSync: vi.fn(async () => {
+        runs.push(Date.now() - base);
+        const duration = runs.length === 1 ? openingMs : cycleMs;
+        if (duration > 0) await new Promise((resolve) => setTimeout(resolve, duration));
+        return results?.shift() ?? { success: true };
+      }),
+      logInfo: vi.fn(),
+      onLocalChangePendingChange: (pending) => { pendingChanges.push(pending); },
+    });
+    const triggers = createMobileSyncTriggers(fake.ports);
+    triggers.start();
+    await flush();
+    triggers.handleAppStateChange('active');
+    await flush();
+    expect(runs).toEqual([0]);
+    await vi.advanceTimersByTimeAsync(openingMs);
+    let saves = 0;
+    const advanceTo = (offsetMs: number) => vi.advanceTimersByTimeAsync(Math.max(0, base + offsetMs - Date.now()));
+    const save = async (offsetMs: number) => {
+      await advanceTo(offsetMs);
+      saves += 1;
+      fake.setFingerprint(`tasks:${3416 + saves}`);
+      const previous = lastDataChangeAt;
+      lastDataChangeAt = Date.now();
+      triggers.handleStoreChange({ lastDataChangeAt }, { lastDataChangeAt: previous });
+    };
+    return { triggers, fake, runs, pendingChanges, save, advanceTo };
+  };
+
+  it.each([3_000, 6_000, 9_000, 12_000])('uploads a save at %i ms after the debounce, not after nine opening-sync durations', async (saveMs) => {
+    const { triggers, runs, save, advanceTo } = await replay();
+    await save(saveMs);
+    await advanceTo(20_000);
+    // The 2 s debounce, never closer than the 5 s minimum gap after the opening sync ended.
+    // Before the fix every save waited until 9 x 1,919 ms after the opening sync: 19,190 ms.
+    expect(runs).toEqual([0, Math.max(saveMs + 2_000, OPENING_MS + 5_000)]);
+    triggers.dispose();
+  });
+
+  it('still uploads at once when the app goes inactive before the debounce', async () => {
+    const { triggers, runs, save, advanceTo } = await replay();
+    await save(9_000);
+    await advanceTo(10_000);
+    triggers.handleAppStateChange('inactive');
+    await flush();
+    expect(runs).toEqual([0, 10_000]);
+    await advanceTo(30_000);
+    expect(runs).toEqual([0, 10_000]);
+    triggers.dispose();
+  });
+
+  it('keeps the control case: an instant opening sync uploads a save after the debounce', async () => {
+    const { triggers, fake, runs, save, advanceTo } = await replay({ openingMs: 0 });
+    await save(9_000);
+    await advanceTo(20_000);
+    expect(runs).toEqual([0, 11_000]);
+    // Nothing was stretched, so nothing is logged as skipped.
+    expect(fake.ports.logInfo).not.toHaveBeenCalled();
+    triggers.dispose();
+  });
+
+  it('logs one bounded release-check line when a save skips the adaptive wait', async () => {
+    const { triggers, fake, save, advanceTo } = await replay();
+    await save(9_000);
+    await advanceTo(20_000);
+    expect(fake.ports.logInfo).toHaveBeenCalledTimes(1);
+    expect(fake.ports.logInfo).toHaveBeenCalledWith('Auto sync local change skipped adaptive pacing', {
+      scope: 'sync',
+      extra: {
+        releaseCheck: 'v1.3.7/local-change-upload',
+        source: 'data-change',
+        delayMs: '0',
+        adaptiveWaitMs: String(9 * OPENING_MS - (11_000 - OPENING_MS)),
+      },
+    });
+    triggers.dispose();
+  });
+
+  it('keeps the adaptive wait for back-to-back local uploads (#766)', async () => {
+    const { triggers, runs, save, advanceTo } = await replay({ cycleMs: 2_000 });
+    await save(9_000);
+    await advanceTo(14_000);
+    expect(runs).toEqual([0, 11_000]);
+    // The upload ended at 13,000 and carried a local change, so the next one waits 9 x 2,000 ms.
+    await save(14_000);
+    await advanceTo(30_999);
+    expect(runs).toEqual([0, 11_000]);
+    await advanceTo(31_000);
+    expect(runs).toEqual([0, 11_000, 31_000]);
+    triggers.dispose();
+  });
+
+  it('shows pending from the save until the cycle that started after it succeeds', async () => {
+    const { triggers, runs, pendingChanges, save, advanceTo } = await replay({ cycleMs: 1_000 });
+    expect(triggers.hasPendingLocalChange()).toBe(false);
+    await save(9_000);
+    expect(triggers.hasPendingLocalChange()).toBe(true);
+    expect(pendingChanges).toEqual([true]);
+    // An edit during the upload is not covered by it.
+    await save(11_500);
+    await advanceTo(12_000);
+    expect(runs).toEqual([0, 11_000]);
+    expect(triggers.hasPendingLocalChange()).toBe(true);
+    expect(pendingChanges).toEqual([true]);
+    await advanceTo(60_000);
+    expect(runs.length).toBe(3);
+    expect(triggers.hasPendingLocalChange()).toBe(false);
+    expect(pendingChanges).toEqual([true, false]);
+    triggers.dispose();
+  });
+
+  it('keeps pending after a failed upload', async () => {
+    const { triggers, runs, save, advanceTo } = await replay({
+      results: [{ success: true }, { success: false, error: 'Network offline' }],
+    });
+    await save(9_000);
+    await advanceTo(12_000);
+    expect(runs).toEqual([0, 11_000]);
+    expect(triggers.hasPendingLocalChange()).toBe(true);
+    triggers.dispose();
+  });
+
+  it('clears pending without a cycle when a write leaves the payload as uploaded', async () => {
+    const { triggers, fake, runs, pendingChanges, advanceTo } = await replay();
+    // The opening sync uploaded 'sync-change:1'; this write changes lastDataChangeAt only.
+    await advanceTo(9_000);
+    triggers.handleStoreChange({ lastDataChangeAt: 2 }, { lastDataChangeAt: 1 });
+    expect(triggers.hasPendingLocalChange()).toBe(true);
+    await advanceTo(20_000);
+    expect(runs).toEqual([0]);
+    expect(triggers.hasPendingLocalChange()).toBe(false);
+    expect(pendingChanges).toEqual([true, false]);
+    expect(fake.ports.logInfo).not.toHaveBeenCalled();
+    triggers.dispose();
+  });
+});

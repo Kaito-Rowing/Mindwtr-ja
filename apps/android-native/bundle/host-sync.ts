@@ -367,6 +367,8 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
     let cycles = 0;
     let lastEvent = '';
     let fatalCleanupError: NativeAttachmentCleanupUnconfirmedError | null = null;
+    // A saved change still waiting for its upload keeps the badge off green (#1431).
+    let localChangePending = false;
     const badge = (): SyncBadgeState => {
         const settings = useTaskStore.getState().settings;
         return resolveSyncBadgeState({
@@ -375,6 +377,7 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
             pendingRemoteWriteAt: settings.pendingRemoteWriteAt,
             lastSyncStatus: settings.lastSyncStatus,
             lastSyncAt: settings.lastSyncAt,
+            localChangePending,
         });
     };
     const state = () => {
@@ -713,6 +716,11 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
                 classifySyncFailure: (error) => classifySyncFailure(error),
                 reportError: (error) => { void logError(error, { scope: 'app' }); },
                 logWarn: (message, context) => logLine('warn', message, context),
+                logInfo: (message, context) => logLine('info', message, context),
+                onLocalChangePendingChange: (pending) => {
+                    localChangePending = pending;
+                    emitState();
+                },
                 showSyncIssue,
             });
             const active = triggers;

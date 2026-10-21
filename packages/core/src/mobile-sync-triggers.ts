@@ -72,6 +72,10 @@ export type MobileSyncTriggerPorts = {
   classifySyncFailure(error: string): string;
   reportError(error: unknown): void;
   logWarn(message: string, context: { scope: string; extra: Record<string, string> }): unknown;
+  /** Receives only the pacing lines tagged for release diagnostics; absent means none are logged. */
+  logInfo?(message: string, context: { scope: string; extra: Record<string, string> }): unknown;
+  /** A local change is waiting to upload (true) or a successful cycle covered it (false); the badge shows pending. */
+  onLocalChangePendingChange?(pending: boolean): void;
   /** Show the user one warning for an automatic sync failure, by its classification. */
   showSyncIssue(classification: string): void;
 };
@@ -90,6 +94,20 @@ export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
   let lastAppStateSyncTriggerAt = -APP_STATE_TRIGGER_DEDUPE_MS;
   let controller: AutoSyncController | null = null;
   let cleanupFailure: NativeAttachmentCleanupUnconfirmedError | null = null;
+  // A local change is pending while a data change is newer than the start of the last
+  // successful cycle (#1431). The sequence numbers store changes; the fingerprint a
+  // successful cycle started from lets a write that left the payload as uploaded clear it.
+  let localChangeSeq = 0;
+  let coveredLocalChangeSeq = 0;
+  let uploadedFingerprint: string | null = null;
+  let publishedLocalChangePending = false;
+  const hasPendingLocalChange = () => localChangeSeq > coveredLocalChangeSeq;
+  const publishLocalChangePending = () => {
+    const pending = hasPendingLocalChange();
+    if (pending === publishedLocalChangePending) return;
+    publishedLocalChangePending = pending;
+    ports.onLocalChangePendingChange?.(pending);
+  };
 
   const stopRuntime = () => {
     isActive = false;
@@ -185,9 +203,16 @@ export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
       // must escape unchanged, after all timers and queued follow-ups are stopped.
       performSync: async () => {
         requireActiveRuntime();
+        const startSeq = localChangeSeq;
+        const startFingerprint = readCurrentSyncChangeFingerprint();
         try {
           const result = await ports.performSync();
           requireActiveRuntime();
+          if (result.success) {
+            coveredLocalChangeSeq = Math.max(coveredLocalChangeSeq, startSeq);
+            uploadedFingerprint = startFingerprint;
+            publishLocalChangePending();
+          }
           return result;
         } catch (error) {
           if (retainCleanupFailure(error) || cleanupFailure) throw cleanupFailure;
@@ -206,6 +231,11 @@ export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
         }
       },
       reportError: (_label, error) => reportError(error),
+      // The controller's step-by-step traces stay off on mobile; only release-check lines reach the log.
+      logInfo: (message, extra) => {
+        if (isActive && extra?.releaseCheck) void ports.logInfo?.(message, { scope: 'sync', extra });
+      },
+      hasPendingLocalChanges: hasPendingLocalChange,
       isRuntimeActive: () => isActive,
       onSyncFailure: reportAutoSyncFailure,
       // Being offline is not a backend refusing us: no cooldown, no toast.
@@ -221,6 +251,11 @@ export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
         const previousFingerprint = lastAutoSyncPayloadFingerprint;
         if (currentFingerprint) {
           lastAutoSyncPayloadFingerprint = currentFingerprint;
+          // A write that left the payload exactly as last uploaded has nothing to upload.
+          if (currentFingerprint === uploadedFingerprint) {
+            coveredLocalChangeSeq = localChangeSeq;
+            publishLocalChangePending();
+          }
         }
         return !(currentFingerprint && previousFingerprint && currentFingerprint === previousFingerprint);
       },
@@ -298,6 +333,8 @@ export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
       // Data writes always bump lastDataChangeAt, so skipping the fingerprint
       // here is safe.
       if (state.lastDataChangeAt === prevState.lastDataChangeAt) return;
+      localChangeSeq += 1;
+      publishLocalChangePending();
       activeController.handleDataChange();
     },
 
@@ -351,6 +388,9 @@ export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
       if (!isActive) return;
       void getController().requestAutoSync(0, 'cloudkit').catch(reportError);
     },
+
+    /** True while a local change waits for a successful cycle to upload it (#1431). */
+    hasPendingLocalChange,
 
     /** False once disposed or quarantined: the host's foreground work checks it too. */
     isRuntimeActive: (): boolean => isActive,

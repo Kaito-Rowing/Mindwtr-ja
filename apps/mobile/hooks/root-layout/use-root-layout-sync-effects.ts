@@ -14,7 +14,8 @@ import { classifySyncFailure, coerceSupportedBackend, isLikelyOfflineSyncError, 
 import { SYNC_BACKEND_KEY } from '@/lib/sync-constants';
 import { isCloudKitAvailable, subscribeToCloudKitChanges } from '@/lib/cloudkit-sync';
 import { updateMobileWidgetFromStore } from '@/lib/widget-service';
-import { logError, logWarn } from '@/lib/app-log';
+import { logError, logInfo, logWarn } from '@/lib/app-log';
+import { setMobileLocalChangePending } from '@/lib/sync-badge';
 
 type ResolveText = (key: string, fallback: string) => string;
 
@@ -154,6 +155,8 @@ export function useRootLayoutSyncEffects({
             classifySyncFailure: (error) => classifySyncFailure(error),
             reportError: logAppError,
             logWarn: (message, context) => logWarn(message, context),
+            logInfo: (message, context) => logInfo(message, context),
+            onLocalChangePendingChange: setMobileLocalChangePending,
             showSyncIssue,
         });
         return triggersRef.current;
