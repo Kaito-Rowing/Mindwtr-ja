@@ -3,7 +3,7 @@ export const svOverrides: Record<string, string> = {
     "settings.gmailCapture": "Gmail (prototyp)",
     "settings.gmailCaptureDesc": "Anslut Google och fånga e-post från en etikett du väljer.",
     "settings.gmailCaptureDisclosure": "Google ger skrivskyddad åtkomst till hela din brevlåda, även om Mindwtr bara importerar e-post med den valda etiketten. Mindwtr ändrar aldrig e-post eller etiketter. Importerad avsändarinformation och e-posttext blir vanliga uppgiftsdata och kan ingå i din konfigurerade synkronisering, säkerhetskopiering, export eller valfria AI-funktioner. Använd endast ett särskilt avsett testkonto med den här prototypen.",
-    "settings.gmailCaptureUnavailable": "Gmail-insamling är inte tillgänglig i den här versionen. Använd IMAP-inställningarna nedan.",
+    "settings.gmailCaptureUnavailable": "Gmail-insamling är inte tillgänglig i den här versionen.",
     "settings.gmailCaptureConnect": "Anslut Gmail",
     "settings.gmailCaptureConnecting": "Väntar på Google…",
     "settings.gmailCaptureCancel": "Avbryt anslutning",

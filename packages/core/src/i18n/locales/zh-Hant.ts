@@ -3,7 +3,7 @@ export const zhHant: Record<string, string> = {
     "settings.gmailCapture": "Gmail（原型）",
     "settings.gmailCaptureDesc": "連接 Google，擷取所選標籤下的郵件。",
     "settings.gmailCaptureDisclosure": "Google 會授予整個信箱的唯讀存取權限，即使 Mindwtr 只匯入帶有所選標籤的郵件。Mindwtr 不會變更郵件或標籤。匯入的寄件者和郵件內文會成為一般任務資料，可能進入你設定的同步、備份、匯出或選用 AI 功能。此原型僅限使用專門指定的測試帳號。",
-    "settings.gmailCaptureUnavailable": "此版本不支援 Gmail 擷取。請使用下方的 IMAP 設定。",
+    "settings.gmailCaptureUnavailable": "此版本不支援 Gmail 擷取。",
     "settings.gmailCaptureConnect": "連接 Gmail",
     "settings.gmailCaptureConnecting": "正在等待 Google…",
     "settings.gmailCaptureCancel": "取消連接",

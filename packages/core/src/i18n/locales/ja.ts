@@ -13,7 +13,7 @@ export const jaOverrides: Record<string, string> = {
     "settings.gmailCapture": "Gmail（プロトタイプ）",
     "settings.gmailCaptureDesc": "Google に接続して、選択したラベルのメールを取り込みます。",
     "settings.gmailCaptureDisclosure": "Google はメールボックス全体への読み取り専用アクセスを許可しますが、Mindwtr が取り込むのは選択したラベルのメールだけです。Mindwtr はメールやラベルを変更しません。取り込んだ送信者情報とメール本文は通常のタスクデータとなり、設定済みの同期、バックアップ、エクスポート、または任意の AI 機能の対象になる場合があります。このプロトタイプには、専用のテストアカウントのみを使用してください。",
-    "settings.gmailCaptureUnavailable": "このビルドでは Gmail の取り込みを利用できません。下の IMAP 設定を使用してください。",
+    "settings.gmailCaptureUnavailable": "このビルドでは Gmail の取り込みを利用できません。",
     "settings.gmailCaptureConnect": "Gmail に接続",
     "settings.gmailCaptureConnecting": "Google を待機中…",
     "settings.gmailCaptureCancel": "接続をキャンセル",

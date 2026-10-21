@@ -321,8 +321,6 @@ export const SETTINGS_SEARCH_MOBILE_EXCLUSIONS: Record<string, string> = {
     obsidianTaskNotesIncludeArchived: 'Part of the desktop-only Obsidian integration above.',
     obsidianNewTaskFormat: 'Part of the desktop-only Obsidian integration above.',
     calendarChooseLocalFile: 'No local .ics file picker on mobile (same Integrations page as obsidianVault above).',
-    gmailCapture: 'Gmail OAuth is a desktop-only prototype.',
-    gmailCaptureLabel: 'Part of the desktop-only Gmail prototype above.',
     emailCapture: 'No IMAP email capture on mobile (desktop-only background poller).',
     emailCaptureHost: 'Part of the desktop-only email capture above.',
     emailCapturePort: 'Part of the desktop-only email capture above.',

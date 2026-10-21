@@ -5,7 +5,7 @@ export const huOverrides: Record<string, string> = {
     "settings.gmailCapture": "Gmail (prototípus)",
     "settings.gmailCaptureDesc": "Csatlakoztasd a Google-fiókodat, és gyűjts be e-maileket egy választott címkéről.",
     "settings.gmailCaptureDisclosure": "A Google csak olvasási hozzáférést ad a teljes postaládádhoz, bár a Mindwtr csak a kiválasztott címkével ellátott e-maileket importálja. A Mindwtr soha nem módosít e-maileket vagy címkéket. Az importált feladó és levélszöveg szokásos feladatadattá válik, és bekerülhet a beállított szinkronizálásba, biztonsági mentésekbe, exportokba vagy az opcionális MI-funkciókba. Ehhez a prototípushoz kizárólag erre kijelölt tesztfiókot használj.",
-    "settings.gmailCaptureUnavailable": "A Gmail-begyűjtés ebben a verzióban nem érhető el. Használd az alábbi IMAP-beállításokat.",
+    "settings.gmailCaptureUnavailable": "A Gmail-begyűjtés ebben a verzióban nem érhető el.",
     "settings.gmailCaptureConnect": "Gmail csatlakoztatása",
     "settings.gmailCaptureConnecting": "Várakozás a Google-re…",
     "settings.gmailCaptureCancel": "Csatlakozás megszakítása",

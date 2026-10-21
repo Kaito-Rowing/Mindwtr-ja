@@ -3,7 +3,7 @@ export const frOverrides: Record<string, string> = {
     "settings.gmailCapture": "Gmail (version prototype)",
     "settings.gmailCaptureDesc": "Connectez Google et capturez les e-mails portant le libellé de votre choix.",
     "settings.gmailCaptureDisclosure": "Google accorde un accès en lecture seule à toute votre boîte mail, même si Mindwtr importe uniquement les e-mails portant le libellé sélectionné. Mindwtr ne modifie jamais les e-mails ni les libellés. Les informations de l’expéditeur et le texte importés deviennent des données de tâches ordinaires et peuvent être inclus dans la synchronisation, les sauvegardes, les exports ou les fonctions d’IA facultatives que vous avez configurés. Utilisez ce prototype uniquement avec un compte de test prévu à cet effet.",
-    "settings.gmailCaptureUnavailable": "La capture Gmail n’est pas disponible dans cette version. Utilisez les paramètres IMAP ci-dessous.",
+    "settings.gmailCaptureUnavailable": "La capture Gmail n’est pas disponible dans cette version.",
     "settings.gmailCaptureConnect": "Connecter Gmail",
     "settings.gmailCaptureConnecting": "En attente de Google…",
     "settings.gmailCaptureCancel": "Annuler la connexion",

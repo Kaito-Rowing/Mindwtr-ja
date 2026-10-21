@@ -201,6 +201,8 @@ export * from './undo-task-cancellation';
 export * from './undo-project-delete';
 export * from './uuid';
 export * from './date';
+export * from './email-capture';
+export * from './gmail-capture';
 export * from './quick-add';
 export * from './area-filter';
 export * from './area-utils';

@@ -3,7 +3,7 @@ export const faOverrides: Record<string, string> = {
     "settings.gmailCapture": "Gmail (نمونهٔ اولیه)",
     "settings.gmailCaptureDesc": "به Google وصل شوید و ایمیل‌ها را از برچسبی که انتخاب می‌کنید دریافت کنید.",
     "settings.gmailCaptureDisclosure": "Google دسترسی فقط‌خواندنی به کل صندوق پستی شما می‌دهد، هرچند Mindwtr فقط ایمیل‌های دارای برچسب انتخاب‌شده را وارد می‌کند. Mindwtr هرگز ایمیل‌ها یا برچسب‌ها را تغییر نمی‌دهد. اطلاعات فرستنده و متن ایمیلِ واردشده به داده‌های معمولی وظایف تبدیل می‌شوند و ممکن است وارد همگام‌سازی، پشتیبان‌گیری، خروجی‌ها یا قابلیت‌های اختیاری هوش مصنوعیِ پیکربندی‌شدهٔ شما شوند. این نمونهٔ اولیه را فقط با یک حساب آزمایشیِ اختصاص‌یافته به این منظور استفاده کنید.",
-    "settings.gmailCaptureUnavailable": "دریافت از Gmail در این نسخه در دسترس نیست. از تنظیمات IMAP در زیر استفاده کنید.",
+    "settings.gmailCaptureUnavailable": "دریافت از Gmail در این نسخه در دسترس نیست.",
     "settings.gmailCaptureConnect": "اتصال به Gmail",
     "settings.gmailCaptureConnecting": "در انتظار Google…",
     "settings.gmailCaptureCancel": "لغو اتصال",

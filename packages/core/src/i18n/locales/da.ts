@@ -3,7 +3,7 @@ export const daOverrides: Record<string, string> = {
     "settings.gmailCapture": "Gmail (prototypeversion)",
     "settings.gmailCaptureDesc": "Tilslut Google, og indsaml e-mails fra en etiket, du vælger.",
     "settings.gmailCaptureDisclosure": "Google giver skrivebeskyttet adgang til hele din postkasse, selvom Mindwtr kun importerer e-mails med den valgte etiket. Mindwtr ændrer aldrig e-mails eller etiketter. Importerede afsenderoplysninger og e-mailtekst bliver almindelige opgavedata og kan indgå i din konfigurerede synkronisering, sikkerhedskopiering, eksport eller valgfrie AI-funktioner. Brug kun en særligt udpeget testkonto med denne prototype.",
-    "settings.gmailCaptureUnavailable": "Gmail-indsamling er ikke tilgængelig i denne version. Brug IMAP-indstillingerne nedenfor.",
+    "settings.gmailCaptureUnavailable": "Gmail-indsamling er ikke tilgængelig i denne version.",
     "settings.gmailCaptureConnect": "Tilslut Gmail",
     "settings.gmailCaptureConnecting": "Venter på Google…",
     "settings.gmailCaptureCancel": "Annuller tilslutning",
