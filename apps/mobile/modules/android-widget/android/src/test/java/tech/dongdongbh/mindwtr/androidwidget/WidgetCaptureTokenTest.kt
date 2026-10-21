@@ -38,18 +38,27 @@ class WidgetCaptureTokenTest {
   private fun widgetIntent(id: Int, kind: WidgetKind = WidgetKind.TASKS): Intent =
     shadowOf(WidgetRenderer.capturePendingIntent(context, id, kind)).savedIntent
 
+  // Each emitted form is pinned to round-trip through core parseQuickAdd in widget-capture-token.test.ts.
   @Test fun captureTextKeepsOnlyTokensQuickAddParsesUnaided() {
-    assertEquals("@Todd ", WidgetListStore.captureText("context:@Todd"))
-    assertEquals("#errand-1 ", WidgetListStore.captureText("tag:#errand-1"))
-    assertEquals("@Büro ", WidgetListStore.captureText("context:@Büro"))
+    for ((listId, expected) in listOf(
+      "context:@Todd" to "@Todd ", "tag:#errand-1" to "#errand-1 ", "context:@Büro" to "@Büro ",
+      "context:@person/todd" to "@person/todd ", "tag:#area/sub-1" to "#area/sub-1 ",
+      "context:@Two words" to "@\"Two words\" ", "tag:#a.b" to "#\"a.b\" ",
+      "context:@person/Todd Smith" to "@\"person/Todd Smith\" ", "tag:#Tom's & co." to "#\"Tom's & co.\" ",
+      "context:@a/" to "@\"a/\" ",
+    )) {
+      assertEquals(listId, expected, WidgetListStore.captureText(listId))
+    }
     for (none in listOf("focus", "inbox", "next", "upcoming", "filter:f1", "project:p1", "context:@", "tag:#",
-      "context:#wrong", "tag:@wrong", "context:@work/office", "context:@Two words", "tag:#a.b", "tag:#\"q\"")) {
+      "context:#wrong", "tag:@wrong", "tag:#\"q\"", "context:@a\\b", "context:@\u201Cq\u201D", "context:@ x", "context:@x ",
+      "context:@a  b", "context:@a\tb", "tag:#x @y", "context:@see /link:x", "tag:#a +b")) {
       assertEquals(none, "", WidgetListStore.captureText(none))
     }
   }
 
   @Test fun singleTokenWidgetOpensWithEditableTokenAndKeepsInbox() {
-    for ((listId, expected) in listOf("context:@Todd" to "@Todd ", "tag:#errand" to "#errand ")) {
+    for ((listId, expected) in listOf("context:@Todd" to "@Todd ", "tag:#errand" to "#errand ",
+      "context:@person/todd" to "@person/todd ", "context:@Two words" to "@\"Two words\" ")) {
       QuickCaptureAudioSessionStore.clearForTests()
       WidgetListStore.write(context, 41, listId)
       val activity = open(widgetIntent(41)).get()
@@ -66,7 +75,7 @@ class WidgetCaptureTokenTest {
   }
 
   @Test fun otherListsAndEntrypointsOpenEmpty() {
-    for (listId in listOf("focus", "next", "filter:f1", "context:@work/office")) {
+    for (listId in listOf("focus", "next", "filter:f1", "tag:#x @y")) {
       QuickCaptureAudioSessionStore.clearForTests()
       WidgetListStore.write(context, 41, listId)
       assertEquals(listId, "", open(widgetIntent(41)).get().findViewById<EditText>(R.id.mindwtr_quick_capture_input).text.toString())

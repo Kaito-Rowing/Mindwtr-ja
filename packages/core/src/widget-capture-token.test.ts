@@ -5,8 +5,10 @@ import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from
 import type { AppData } from './types';
 
 // The Android Tasks widget pre-fills `@context ` / `#tag ` for a single-token list
-// (WidgetListStore.captureText, #1418). It emits only `[@#][\p{L}\p{N}_-]+`, the form
-// quick-add parses with no known-token list. These pin that contract on the core side.
+// (WidgetListStore.captureText, #1418). It emits a simple token (`@Todd`), a hierarchical
+// one as typed (`@person/todd`), or anything else in quoted form (`@"Two words"`), and
+// skips names containing a quote or backslash, or whitespace before a marker or slash.
+// These pin that each emitted form round-trips through quick-add with no known-token list.
 
 const ID = '33333333-3333-4abc-8def-333333333333';
 
@@ -21,9 +23,27 @@ describe('Android widget capture token pre-fill', () => {
         expect([...(parsed.props.contexts ?? []), ...(parsed.props.tags ?? [])]).toEqual([token]);
     });
 
-    it.each(['@work/office', '@a.b'])('does not parse %s unaided, so the widget skips it', (token) => {
+    it.each(['@person/todd', '#area/sub-1', '@Büro/Raum_2'])('parses the hierarchical pre-fill %s unaided (#1428)', (token) => {
         const parsed = parseQuickAdd(`${token} Call back`, [], new Date('2026-10-21T12:00:00Z'));
-        expect(parsed.props.contexts).not.toEqual([token]);
+        expect([...(parsed.props.contexts ?? []), ...(parsed.props.tags ?? [])]).toEqual([token]);
+        expect(parsed.title).toBe('Call back');
+    });
+
+    it.each([
+        ['@"Two words"', '@Two words'],
+        ['#"a.b"', '#a.b'],
+        ['@"person/Todd Smith"', '@person/Todd Smith'],
+        ['#"Tom\'s & co."', "#Tom's & co."],
+        ['@"a/"', '@a/'],
+    ])('parses the quoted pre-fill %s unaided', (prefill, token) => {
+        const parsed = parseQuickAdd(`${prefill} Call back`, [], new Date('2026-10-21T12:00:00Z'));
+        expect([...(parsed.props.contexts ?? []), ...(parsed.props.tags ?? [])]).toEqual([token]);
+        expect(parsed.title).toBe('Call back');
+    });
+
+    it.each([['#"x @y"', '#x @y'], ['@"x /link:https://a.b"', '@x /link:https://a.b']])('does not round-trip %s, so the widget skips a space before a marker or slash', (prefill, token) => {
+        const parsed = parseQuickAdd(`${prefill} Call back`, [], new Date('2026-10-21T12:00:00Z'));
+        expect([...(parsed.props.contexts ?? []), ...(parsed.props.tags ?? [])]).not.toEqual([token]);
     });
 
     it.each([['@Todd', 'contexts'], ['#errand', 'tags']] as const)('drains widget text %s into an Inbox task carrying it', async (token, field) => {

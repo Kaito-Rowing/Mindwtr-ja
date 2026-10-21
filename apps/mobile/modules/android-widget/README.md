@@ -139,9 +139,10 @@ capture notification and all three widgets launch it by explicit class name.
 
 A Tasks widget showing one context or tag opens the dialog with that token typed
 in (`@Todd `), editable like any text; the drain's quick-add parse applies it
-(#1418). `WidgetListStore.captureText` pre-fills only tokens of the form
-`[@#][\p{L}\p{N}_-]+`, which quick-add parses without a known-token list;
-hierarchical, spaced or punctuated tokens open empty.
+(#1418). `WidgetListStore.captureText` writes simple and hierarchical tokens
+as typed (`@person/todd `) and other names in quoted form (`@"Two words" `), the
+forms quick-add parses without a known-token list (#1428). A name with a quote,
+a backslash, or a space before `@ # + ! % /` opens empty.
 
 After a text **Save** it starts `CaptureSyncHeadlessService` (not exported), which
 wakes the JS task `MindwtrCaptureSync` in `apps/mobile/lib/background-sync-task.ts`:

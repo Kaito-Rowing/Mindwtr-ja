@@ -259,6 +259,10 @@ const QUICK_ADD_COMMAND_START = String.raw`(?:^|\s)`;
 const QUICK_ADD_COMMAND_BOUNDARY = String.raw`(?=\s\/(?:${QUICK_ADD_FOCUS_COMMAND_PATTERN}|link:|note:|start:|due:|review:|project:|area:|energy:|priority:|estimate:|duration:|inbox\b|next\b|in-progress\b|waiting\b|someday\b|reference\b|done\b|archived\b)|$)`;
 const QUICK_ADD_INLINE_CONTROL_BOUNDARY = String.raw`(?=\s(?:[@#+!%]|\/(?:${QUICK_ADD_FOCUS_COMMAND_PATTERN}|link:|note:|start:|due:|review:|project:|area:|energy:|priority:|estimate:|duration:|inbox\b|next\b|in-progress\b|waiting\b|someday\b|reference\b|done\b|archived\b))|$)`;
 const SIMPLE_TASK_TOKEN_RE = /[@#][\p{L}\p{N}_-]+/gu;
+// `@person/todd`: simple segments joined by single slashes, read as one token
+// even when no task uses it yet (#1428). A malformed path (`@a/`, `@a//b`)
+// does not match, so it keeps its old reading (`@a` plus title text).
+const HIERARCHICAL_TASK_TOKEN_RE = /[@#][\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)+(?![\p{L}\p{N}_/-])/gu;
 const RICH_TASK_TOKEN_RE = new RegExp(
     String.raw`(?:^|\s)([@#](?![\s\p{L}\p{N}_-])[^@#+/!%]+?)${QUICK_ADD_INLINE_CONTROL_BOUNDARY}`,
     'gu',
@@ -665,9 +669,12 @@ function getQuickAddTokenMatches(
     const matches: QuickAddTokenMatch[] = [];
 
     pushQuickAddQuotedTokenMatches(working, prefix, matches);
+    // The rich matcher also starts at `@"`, runs past the closing quote and,
+    // being longer, would win; an explicit quote ends the token.
+    const quotedStarts = new Set(matches.map((match) => match.index));
     pushQuickAddKnownTokenMatches(working, prefix, knownTokens, matches);
 
-    for (const match of working.matchAll(SIMPLE_TASK_TOKEN_RE)) {
+    for (const match of [...working.matchAll(SIMPLE_TASK_TOKEN_RE), ...working.matchAll(HIERARCHICAL_TASK_TOKEN_RE)]) {
         const token = match[0];
         if (token.startsWith(prefix)) {
             const index = match.index ?? 0;
@@ -691,6 +698,7 @@ function getQuickAddTokenMatches(
         if (token?.startsWith(prefix)) {
             const rawIndex = match.index ?? 0;
             const index = rawIndex + match[0].indexOf(match[1]);
+            if (quotedStarts.has(index)) continue;
             matches.push({
                 token: restoreEscapes(token),
                 raw: match[1] ?? token,
