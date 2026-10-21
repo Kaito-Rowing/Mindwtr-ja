@@ -46,6 +46,7 @@ mod attachment_installer;
 mod autostart;
 mod config;
 mod email_capture;
+mod gmail_capture;
 mod file_sync_attachment_publication;
 mod install;
 mod system_fonts;
@@ -89,6 +90,11 @@ use config::{
 };
 use email_capture::{
     email_capture_commit, email_capture_poll, get_email_capture_config, set_email_capture_config,
+};
+use gmail_capture::{
+    gmail_capture_cancel, gmail_capture_commit, gmail_capture_configure, gmail_capture_connect,
+    gmail_capture_disconnect, gmail_capture_labels, gmail_capture_poll, gmail_capture_status,
+    gmail_capture_validate,
 };
 use install::{
     check_microsoft_store_update, diagnostics_enabled, get_install_source, get_linux_distro,
@@ -2273,6 +2279,15 @@ pub fn run() {
             set_email_capture_config,
             email_capture_poll,
             email_capture_commit,
+            gmail_capture_status,
+            gmail_capture_connect,
+            gmail_capture_cancel,
+            gmail_capture_labels,
+            gmail_capture_configure,
+            gmail_capture_disconnect,
+            gmail_capture_poll,
+            gmail_capture_validate,
+            gmail_capture_commit,
             get_desktop_rendering_config,
             set_desktop_rendering_config,
             write_macos_widget_payload,
