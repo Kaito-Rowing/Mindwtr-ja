@@ -6,6 +6,7 @@ import { readAreaDurableData } from './native-host-contract-area-durable';
 import { buildSaveSnapshot } from './store-helpers';
 import { buildBulkTaskTokenUpdates } from './bulk-task-tokens';
 import type { AppData, Task } from './types';
+import { retainTaxonomyEffects } from './taxonomy-catalog';
 import type { NativeReferenceTasksRemoveTagEnvelope } from './native-host-contract-reference-bulk-remove-tag';
 import { deterministicHash128 } from './uuid';
 import * as uuid from './uuid';
@@ -248,7 +249,11 @@ describe('Reference Remove tag exact authority and durable replay', () => {
             await sqlite.restart(undefined, { recoveryLoad: true });
             if (label === 'settings' || label === 'unrelated row') {
                 value(await host(sqlite).commitPreparedReferenceTasksRemoveTag(command)); const final = await raw(sqlite);
-                expect(final.settings).toEqual(after.settings);
+                // The successful RN-equivalent write also retains this exact prepared token effect.
+                const expectedSettings = clone(after.settings);
+                expectedSettings.rows[0].data = JSON.stringify(retainTaxonomyEffects(JSON.parse(expectedSettings.rows[0].data),
+                    command.prepared.effect.tasks, command.prepared.effect.projects));
+                expect(final.settings).toEqual(expectedSettings);
                 expect(final.tasks.rows.find((r: { id: string }) => r.id === 'unrelated')).toEqual(after.tasks.rows.find((r: { id: string }) => r.id === 'unrelated'));
             } else { expect(await host(sqlite).commitPreparedReferenceTasksRemoveTag(command)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } }); expect(await raw(sqlite)).toEqual(after); }
         } finally { other.close(); await sqlite.close(); }

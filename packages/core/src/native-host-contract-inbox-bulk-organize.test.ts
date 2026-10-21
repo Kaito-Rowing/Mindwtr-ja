@@ -8,6 +8,7 @@ import { buildSaveSnapshot } from './store-helpers';
 import { EMPTY_BULK_ORGANIZE_DRAFT, BULK_ORGANIZE_NONE, buildBulkOrganizeInput,
     planBulkOrganize, type BulkOrganizeDraft } from './task-list-bulk-actions';
 import type { AppData, Task } from './types';
+import { retainTaxonomyEffects } from './taxonomy-catalog';
 import type { NativeInboxTasksOrganizeEnvelope } from './native-host-contract-inbox-bulk-organize';
 import { inboxTasksOrganizeEffect, inboxTasksOrganizeScope } from './native-host-contract-inbox-bulk-organize';
 import { rawReferenceBatchScope } from './native-host-contract-reference-bulk-status';
@@ -149,7 +150,8 @@ describe('Inbox Organize RN/store parity', () => {
             const overlay = <T extends { id: string }>(raw: T[], changes: { before: T; after: T }[]) =>
                 raw.map(row => changes.find(pair => pair.before.id === row.id)?.after ?? row);
             expect(rows()).toEqual(clone({ ...before, tasks: [...overlay(before.tasks, effect.tasks), ...effect.createdTasks],
-                projects: overlay(before.projects, effect.projects), sections: overlay(before.sections, effect.sections) }));
+                projects: overlay(before.projects, effect.projects), sections: overlay(before.sections, effect.sections),
+                settings: retainTaxonomyEffects(before.settings, effect.tasks, effect.projects) }));
         } finally { await sqlite.close(); }
     });
 });

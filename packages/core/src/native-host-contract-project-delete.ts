@@ -255,6 +255,11 @@ export function createProjectDeleteMethods(deps: {
                     return applied.success ? { ok: true, value: envelope.prepared.result }
                         : fail('STALE_REVISION', applied.error ?? 'Prepared Project Delete conflicts with saved data');
                 });
+            if (confirmed.ok && !alreadySaved?.ok) {
+                try { logInfo('Native Project delete taxonomy retained', { scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: 'v1.3.7/native-project-delete-taxonomy', operation: 'delete', outcome: 'confirmed' } }); }
+                catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            }
             if (confirmed.ok && envelope.request.source === 'archive' && !alreadySaved?.ok) {
                 try { logInfo('Native archived Project delete confirmed', { scope: 'native-host', category: 'storage',
                     context: { releaseCheck: 'v1.3.4/ios-archive-project-trash', outcome: 'confirmed' } }); }
@@ -311,12 +316,19 @@ export function createProjectDeleteMethods(deps: {
             if (!envelope) return fail('INVALID_INPUT', 'Prepared Project Delete Undo is malformed');
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            return receipts.run(envelope.request.requestId,
-                canonicalPayload(['preparedProjectDeleteUndo', envelope]), async () => {
+            const payload = canonicalPayload(['preparedProjectDeleteUndo', envelope]);
+            const alreadySaved = receipts.saved<{ id: string }>(envelope.request.requestId, payload);
+            const confirmed = await receipts.run(envelope.request.requestId, payload, async () => {
                     const applied = await useTaskStore.getState().commitPreparedProjectDeleteUndo(envelope.prepared);
                     return applied.success ? { ok: true, value: envelope.prepared.result }
                         : fail('STALE_REVISION', applied.error ?? 'Prepared Project Delete Undo conflicts with saved data');
                 });
+            if (confirmed.ok && !alreadySaved?.ok) {
+                try { logInfo('Native Project delete taxonomy retained', { scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: 'v1.3.7/native-project-delete-taxonomy', operation: 'undo', outcome: 'confirmed' } }); }
+                catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            }
+            return confirmed;
         },
     };
 }

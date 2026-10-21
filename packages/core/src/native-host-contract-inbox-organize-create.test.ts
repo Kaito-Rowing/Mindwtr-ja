@@ -81,7 +81,10 @@ describe('Inbox Organize destination creation parity', () => {
             expect(result).toEqual({ id: restore ? 'old-area' : ID, changed: true });
             expect(rows()).toEqual(expected); expect(await raw(db)).toEqual(sql); expect(await db.receiptIds()).toEqual([ID]);
             if (!restore) expect(useTaskStore.getState()._allTasks).toEqual(beforeTasks); // Create then Cancel does not apply tasks.
-            if (kind === 'project') expect(useTaskStore.getState()._projectsById.get(ID)).toMatchObject({ color: DEFAULT_PROJECT_COLOR, isSequential: true, rev: 1 });
+            if (kind === 'project') expect(useTaskStore.getState()._projectsById.get(ID)).toMatchObject({
+                color: initial.areas?.find((area) => area.id === draft.areaChoice)?.color ?? DEFAULT_PROJECT_COLOR,
+                isSequential: true, rev: 1,
+            });
             else expect(useTaskStore.getState()._areasById.get(result.id)).toMatchObject({ color: DEFAULT_AREA_COLOR });
             expect(logs).toHaveBeenCalledWith('Native Inbox Organize destination confirmed', expect.objectContaining({ context: {
                 releaseCheck: 'v1.3.5/ios-inbox-organize-stable-offer', kind, outcome: 'saved' } }));

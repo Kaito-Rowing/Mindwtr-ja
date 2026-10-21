@@ -1547,8 +1547,9 @@ export const createProjectCoreActions = ({
             const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
             const nextTasks = replaceEntitiesInArray(state._allTasks, planned.tasks.map((row) => row.after));
             const nextSections = replaceEntitiesInArray(state._allSections, planned.sections.map((row) => row.after));
-            const settings = input.deviceIdToInitialize
-                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            const settings = retainTaxonomyEffects(input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings,
+                planned.tasks, [planned.project]);
             clearDerivedCache();
             persist(set, debouncedSave, state, { projects, tasks: nextTasks, sections: nextSections,
                 ...(settings !== state.settings ? { settings } : {}) });
@@ -1602,8 +1603,9 @@ export const createProjectCoreActions = ({
             const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
             const nextTasks = replaceEntitiesInArray(state._allTasks, planned.tasks.map((row) => row.after));
             const nextSections = replaceEntitiesInArray(state._allSections, planned.sections.map((row) => row.after));
-            const settings = input.deviceIdToInitialize
-                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            const settings = retainTaxonomyEffects(input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings,
+                planned.tasks, [planned.project]);
             clearDerivedCache();
             persist(set, debouncedSave, state, { projects, tasks: nextTasks, sections: nextSections,
                 ...(settings !== state.settings ? { settings } : {}) });

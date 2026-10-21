@@ -1281,6 +1281,8 @@ describe('native OmniFocus CSV/JSON/ZIP prepared import', () => {
  * Pass D1c: prepare's plan and recovery snapshot, frozen from HEAD (f5d7d792a) before the plan is written in parts and the
  * copies are cut. A host that passes no writer (iOS) must keep getting these exact bytes. `MINDWTR_WRITE_PLAN_FIXTURE=1`
  * rewrites the fixture; only a deliberate format change may do that.
+ * The 2026-10-20 recapture on 3d10ce615 updates only four importer plan digests for shared taxonomy retention:
+ * deleting only data.settings.taxonomy reproduces each old plan's exact bytes/hash. All recovery and other mode bytes stay fixed.
  */
 describe('native backup prepare output stays byte-identical (D1c parity fixture)', () => {
     const FIXTURE = new URL('./native-backup-plan-parity.fixtures.json', import.meta.url);
