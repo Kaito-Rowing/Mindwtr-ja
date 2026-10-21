@@ -304,6 +304,8 @@ export * from './entry-points';
 export * from './capture-modal-model';
 export * from './share-capture-files';
 export * from './session-restore';
+export * from './app-search-projection';
+export * from './app-search-service';
 export * from './whisper-models';
 export * from './import-apply';
 export * from './import-diagnostics';
