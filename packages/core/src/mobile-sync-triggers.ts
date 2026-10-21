@@ -24,6 +24,7 @@ const AUTO_SYNC_FAILURE_COOLDOWN_MS = 60_000;
 const MAX_AUTO_SYNC_FAILURE_COOLDOWN_MS = 10 * 60_000;
 /** The same failure is logged and shown again only after this long. */
 const AUTO_SYNC_FAILURE_REPORT_REPEAT_MS = 10 * 60 * 1000;
+const BACKGROUND_HOLD_RELEASE_CHECK = 'v1.3.7/ios-background-sync-hold';
 export const MOBILE_AUTO_SYNC_CADENCE_FILE: MobileAutoSyncCadence = {
   minIntervalMs: 30_000,
   debounceFirstChangeMs: 8_000,
@@ -78,6 +79,12 @@ export type MobileSyncTriggerPorts = {
   onLocalChangePendingChange?(pending: boolean): void;
   /** Show the user one warning for an automatic sync failure, by its classification. */
   showSyncIssue(classification: string): void;
+  /** iOS: asks the OS to keep the app running in the background (#1432). Returns the release, or null
+   *  when the platform has none. `onExpire` runs once if the OS ends the time first; the platform has
+   *  already let go by then. */
+  holdBackgroundExecution?(onExpire: () => void): (() => void) | null;
+  /** Resolves once no sync cycle is running or queued, follow-ups included. */
+  waitForSyncIdle?(): Promise<void>;
 };
 
 export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
@@ -101,6 +108,9 @@ export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
   let coveredLocalChangeSeq = 0;
   let uploadedFingerprint: string | null = null;
   let publishedLocalChangePending = false;
+  // A cycle that spans an abort request was cut short and uploaded nothing for sure, even
+  // though the lifecycle abort reports success.
+  let abortRequests = 0;
   const hasPendingLocalChange = () => localChangeSeq > coveredLocalChangeSeq;
   const publishLocalChangePending = () => {
     const pending = hasPendingLocalChange();
@@ -109,10 +119,74 @@ export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
     ports.onLocalChangePendingChange?.(pending);
   };
 
+  // #1432: iOS suspends the app seconds after it leaves the foreground, mid-request. One OS
+  // background hold keeps sync running while work started at (or running after) that moment is
+  // unfinished; it ends once that work and every follow-up the sync service queued settle.
+  type BackgroundHold = { release: () => void; startedAt: number; work: number; failed: boolean };
+  let backgroundHold: BackgroundHold | null = null;
+  // Set when iOS ended a hold early: no new hold until the next foreground, which then syncs.
+  let backgroundHoldExpired = false;
+  const endBackgroundHold = (hold: BackgroundHold, outcome: 'completed' | 'failed' | 'expired' | 'aborted') => {
+    if (backgroundHold !== hold) return;
+    backgroundHold = null;
+    try {
+      hold.release();
+    } catch (error) {
+      ports.reportError(error);
+    }
+    void ports.logInfo?.('Background sync hold ended', {
+      scope: 'sync',
+      extra: { releaseCheck: BACKGROUND_HOLD_RELEASE_CHECK, outcome, heldMs: String(Date.now() - hold.startedAt) },
+    });
+  };
+  const runHoldingBackground = <T>(source: 'app-left' | 'background-cycle', work: () => Promise<T>): Promise<T> => {
+    // With sync off a cycle returns at once; no hold, no log lines on every app switch.
+    const syncOff = syncBackendCache.readAt > 0 && syncBackendCache.backend === 'off';
+    if (!backgroundHold && !backgroundHoldExpired && !syncOff && ports.holdBackgroundExecution) {
+      let taken: BackgroundHold | null = null;
+      const release = ports.holdBackgroundExecution(() => {
+        if (!taken || backgroundHold !== taken) return;
+        // The foreground already came back: the cycle may finish there.
+        if (appState !== 'active') {
+          backgroundHoldExpired = true;
+          abortRequests += 1;
+          // The existing lifecycle abort: the service queues a follow-up, nothing counts as uploaded.
+          ports.abortSync();
+        }
+        endBackgroundHold(taken, 'expired');
+      });
+      if (release) {
+        taken = { release, startedAt: Date.now(), work: 0, failed: false };
+        backgroundHold = taken;
+        void ports.logInfo?.('Background sync hold started', {
+          scope: 'sync',
+          extra: { releaseCheck: BACKGROUND_HOLD_RELEASE_CHECK, source },
+        });
+      }
+    }
+    const hold = backgroundHold;
+    const promise = (async () => work())();
+    if (!hold) return promise;
+    hold.work += 1;
+    const settle = (rejected: boolean) => {
+      if (backgroundHold !== hold) return;
+      if (rejected) hold.failed = true;
+      hold.work -= 1;
+      if (hold.work > 0) return;
+      void (async () => ports.waitForSyncIdle?.())().then(
+        () => { if (hold.work === 0) endBackgroundHold(hold, hold.failed ? 'failed' : 'completed'); },
+        () => { if (hold.work === 0) endBackgroundHold(hold, 'failed'); },
+      );
+    };
+    promise.then(() => settle(false), () => settle(true));
+    return promise;
+  };
+
   const stopRuntime = () => {
     isActive = false;
     controller?.dispose();
     controller = null;
+    if (backgroundHold) endBackgroundHold(backgroundHold, 'aborted');
   };
   const retainCleanupFailure = (error: unknown): boolean => {
     if (!(error instanceof NativeAttachmentCleanupUnconfirmedError)) return false;
@@ -205,10 +279,17 @@ export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
         requireActiveRuntime();
         const startSeq = localChangeSeq;
         const startFingerprint = readCurrentSyncChangeFingerprint();
+        const startAbortRequests = abortRequests;
         try {
-          const result = await ports.performSync();
+          const result = appState === 'active'
+            ? await ports.performSync()
+            : await runHoldingBackground('background-cycle', async () => {
+              const cycleResult = await ports.performSync();
+              if (!cycleResult.success && backgroundHold) backgroundHold.failed = true;
+              return cycleResult;
+            });
           requireActiveRuntime();
-          if (result.success) {
+          if (result.success && abortRequests === startAbortRequests) {
             coveredLocalChangeSeq = Math.max(coveredLocalChangeSeq, startSeq);
             uploadedFingerprint = startFingerprint;
             publishLocalChangePending();
@@ -351,7 +432,9 @@ export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
         transition = 'resumed';
         ports.reconcileBackgroundSync();
         if (!isActive) return null;
-        if (activeController.takePendingSuspendedRequest()) {
+        const holdExpired = backgroundHoldExpired;
+        backgroundHoldExpired = false;
+        if (activeController.takePendingSuspendedRequest() || holdExpired) {
           void activeController.requestAutoSync(0, 'app-state-resume').catch(reportError);
         } else {
           void refreshSyncCadence()
@@ -372,13 +455,16 @@ export const createMobileSyncTriggers = (ports: MobileSyncTriggerPorts) => {
         ports.reconcileBackgroundSync();
         if (!isActive) return null;
         activeController.handleSuspend();
+        abortRequests += 1;
         ports.abortSync();
         if (!isActive) return null;
         const now = Date.now();
-        if (!shouldDedupeAppStateSyncTrigger(now) && isActive) {
-          markAppStateSyncTrigger(now);
-          void activeController.requestAutoSync(0, 'app-state-background').catch(reportError);
-        }
+        const syncRequested = !shouldDedupeAppStateSyncTrigger(now) && isActive;
+        if (syncRequested) markAppStateSyncTrigger(now);
+        // Held even without a new request: the aborted cycle's follow-up still has to run.
+        void runHoldingBackground('app-left', () => (syncRequested
+          ? activeController.requestAutoSync(0, 'app-state-background')
+          : Promise.resolve())).catch(reportError);
       }
       appState = nextAppState;
       return transition;

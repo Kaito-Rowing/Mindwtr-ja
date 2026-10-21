@@ -546,3 +546,214 @@ describe('mobile sync triggers: a local change after a sync (#1431)', () => {
     triggers.dispose();
   });
 });
+
+// #1432: iOS suspends the app seconds after it leaves the foreground. A sync running or starting
+// then holds one OS background hold until it and every queued follow-up settle.
+describe('mobile sync triggers background hold', () => {
+  type SyncResult = { success: boolean; error?: string };
+  const deferred = <T>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+  };
+
+  const setup = (overrides: Partial<MobileSyncTriggerPorts> = {}) => {
+    const holds: Array<{ onExpire: () => void; release: ReturnType<typeof vi.fn> }> = [];
+    const cycles: Array<ReturnType<typeof deferred<SyncResult>>> = [];
+    const fake = createPorts({
+      performSync: vi.fn(() => {
+        const cycle = deferred<SyncResult>();
+        cycles.push(cycle);
+        return cycle.promise;
+      }),
+      holdBackgroundExecution: vi.fn((onExpire: () => void) => {
+        const release = vi.fn();
+        holds.push({ onExpire, release });
+        return release;
+      }),
+      logInfo: vi.fn(),
+      ...overrides,
+    });
+    const triggers = createMobileSyncTriggers(fake.ports);
+    triggers.start();
+    const holdLines = () => vi.mocked(fake.ports.logInfo!).mock.calls
+      .filter(([, context]) => context.extra.releaseCheck === 'v1.3.7/ios-background-sync-hold')
+      .map(([message, context]) => [message, context.extra.outcome ?? context.extra.source]);
+    return { ...fake, triggers, holds, cycles, holdLines };
+  };
+
+  it('holds while the leave sync runs and releases once when it completes', async () => {
+    const { ports, triggers, holds, cycles, holdLines } = setup();
+    await flush();
+
+    triggers.handleAppStateChange('inactive');
+    await flush();
+    expect(ports.holdBackgroundExecution).toHaveBeenCalledTimes(1);
+    expect(cycles).toHaveLength(1);
+    expect(holds[0].release).not.toHaveBeenCalled();
+
+    cycles[0].resolve({ success: true });
+    await flush();
+    expect(holds[0].release).toHaveBeenCalledTimes(1);
+    expect(holdLines()).toEqual([
+      ['Background sync hold started', 'app-left'],
+      ['Background sync hold ended', 'completed'],
+    ]);
+    const ended = vi.mocked(ports.logInfo!).mock.calls.at(-1)![1].extra;
+    expect(ended.heldMs).toMatch(/^\d+$/);
+    triggers.dispose();
+    expect(holds[0].release).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the hold until queued follow-ups drain', async () => {
+    const idle = deferred<void>();
+    const { triggers, holds, cycles } = setup({ waitForSyncIdle: vi.fn(() => idle.promise) });
+    await flush();
+
+    triggers.handleAppStateChange('inactive');
+    await flush();
+    cycles[0].resolve({ success: true });
+    await flush();
+    expect(holds[0].release).not.toHaveBeenCalled();
+
+    idle.resolve();
+    await flush();
+    expect(holds[0].release).toHaveBeenCalledTimes(1);
+    triggers.dispose();
+  });
+
+  it.each([
+    ['a failed result', (cycle: ReturnType<typeof deferred<SyncResult>>) => cycle.resolve({ success: false, error: 'HTTP 500' })],
+    ['a thrown error', (cycle: ReturnType<typeof deferred<SyncResult>>) => cycle.reject(new Error('boom'))],
+  ])('releases once as failed after %s', async (_label, settle) => {
+    const { triggers, holds, cycles, holdLines } = setup();
+    await flush();
+
+    triggers.handleAppStateChange('background');
+    await flush();
+    settle(cycles[0]);
+    await flush();
+    expect(holds[0].release).toHaveBeenCalledTimes(1);
+    expect(holdLines().at(-1)).toEqual(['Background sync hold ended', 'failed']);
+    triggers.dispose();
+  });
+
+  it('on expiry aborts the cycle, keeps the change pending and syncs on the next foreground', async () => {
+    const { ports, triggers, holds, cycles, holdLines, setFingerprint } = setup();
+    await flush();
+    setFingerprint('sync-change:2');
+    triggers.handleStoreChange({ lastDataChangeAt: 2 }, { lastDataChangeAt: 1 });
+
+    triggers.handleAppStateChange('inactive');
+    triggers.handleAppStateChange('background');
+    await flush();
+    expect(ports.abortSync).toHaveBeenCalledTimes(1);
+
+    holds[0].onExpire();
+    expect(ports.abortSync).toHaveBeenCalledTimes(2);
+    expect(holds[0].release).toHaveBeenCalledTimes(1);
+    expect(holdLines().at(-1)).toEqual(['Background sync hold ended', 'expired']);
+
+    // The lifecycle abort settles as success, but nothing was uploaded.
+    cycles[0].resolve({ success: true });
+    await flush();
+    expect(holds[0].release).toHaveBeenCalledTimes(1);
+    expect(triggers.hasPendingLocalChange()).toBe(true);
+
+    // No second hold in the same background episode.
+    triggers.handleCloudKitChange();
+    await flush();
+    expect(ports.holdBackgroundExecution).toHaveBeenCalledTimes(1);
+
+    // That cycle runs unheld and is cut off too.
+    cycles[1].resolve({ success: false, error: 'Network offline' });
+    await flush();
+    expect(triggers.hasPendingLocalChange()).toBe(true);
+
+    // The foreground syncs at once, inside the 30 s foreground interval.
+    const before = cycles.length;
+    triggers.handleAppStateChange('active');
+    await flush();
+    expect(cycles.length).toBe(before + 1);
+    cycles.at(-1)!.resolve({ success: true });
+    await flush();
+    expect(triggers.hasPendingLocalChange()).toBe(false);
+    triggers.dispose();
+  });
+
+  it('holds a cycle already running when the app leaves until its follow-up drains', async () => {
+    const idle = deferred<void>();
+    const { triggers, holds, cycles, setFingerprint } = setup({ waitForSyncIdle: vi.fn(() => idle.promise) });
+    await flush();
+    setFingerprint('sync-change:2');
+    triggers.handleStoreChange({ lastDataChangeAt: 2 }, { lastDataChangeAt: 1 });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(cycles).toHaveLength(1);
+
+    triggers.handleAppStateChange('background');
+    await flush();
+    expect(holds).toHaveLength(1);
+    // The lifecycle abort reports success; it does not cover the change.
+    cycles[0].resolve({ success: true });
+    await flush();
+    expect(triggers.hasPendingLocalChange()).toBe(true);
+    expect(holds[0].release).not.toHaveBeenCalled();
+
+    idle.resolve();
+    await flush();
+    expect(holds[0].release).toHaveBeenCalledTimes(1);
+    triggers.dispose();
+  });
+
+  it('takes no hold for a foreground-only cycle', async () => {
+    const { ports, triggers, cycles, setFingerprint } = setup();
+    await flush();
+    setFingerprint('sync-change:2');
+    triggers.handleStoreChange({ lastDataChangeAt: 2 }, { lastDataChangeAt: 1 });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(cycles).toHaveLength(1);
+    cycles[0].resolve({ success: true });
+    await flush();
+    expect(ports.holdBackgroundExecution).not.toHaveBeenCalled();
+    triggers.dispose();
+  });
+
+  it('takes one hold across rapid inactive and background events', async () => {
+    const { ports, triggers, holds, cycles } = setup();
+    await flush();
+
+    triggers.handleAppStateChange('inactive');
+    triggers.handleAppStateChange('active');
+    triggers.handleAppStateChange('inactive');
+    triggers.handleAppStateChange('background');
+    await flush();
+    expect(ports.holdBackgroundExecution).toHaveBeenCalledTimes(1);
+
+    for (const cycle of cycles) cycle.resolve({ success: true });
+    await flush();
+    for (const cycle of cycles) cycle.resolve({ success: true });
+    await flush();
+    expect(holds[0].release).toHaveBeenCalledTimes(1);
+    triggers.dispose();
+  });
+
+  it('releases as aborted when the runtime is disposed mid-hold', async () => {
+    const { triggers, holds, holdLines } = setup();
+    await flush();
+    triggers.handleAppStateChange('background');
+    await flush();
+    triggers.dispose();
+    expect(holds[0].release).toHaveBeenCalledTimes(1);
+    expect(holdLines().at(-1)).toEqual(['Background sync hold ended', 'aborted']);
+  });
+
+  it('takes no hold when sync is off', async () => {
+    const { ports, triggers } = setup({ readStoredBackend: vi.fn(async () => 'off') });
+    await flush();
+    triggers.handleAppStateChange('background');
+    await flush();
+    expect(ports.holdBackgroundExecution).not.toHaveBeenCalled();
+    triggers.dispose();
+  });
+});

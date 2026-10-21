@@ -2,6 +2,7 @@
 
 Changes collected since the latest stable release.
 
+- iOS: a sync that is running when you switch to another app now finishes in the background instead of pausing until you reopen Mindwtr. If iOS ends the background time first, the change stays marked as waiting and uploads when you open the app (#1432).
 - Mobile sync: a task you save right after a sync now uploads a couple of seconds later instead of up to about 20 seconds later, and the sync dot stays amber until the upload finishes instead of showing green while it waits. This includes the native Android app (#1431).
 - Android widget: the quick capture window has a **Contexts** button. Pick one of your contexts from a short searchable list and Mindwtr types it in at the cursor (#1418).
 - Sync no longer reports a conflict when two devices auto-archive the same task before syncing; both keep the later archive time (#1430).

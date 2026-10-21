@@ -272,12 +272,20 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'attachmentId',
     // Saved contexts and tags: catalogue kind only, never names.
     'taxonomyKind',
+    // ios-background-sync-hold reuses releaseCheck, source and outcome; heldMs is how long iOS kept the app running.
+    'heldMs',
 ];
 
 describe('release diagnostics field names', () => {
     it('preserves the saved taxonomy persistence proof without token content', () => {
         const receipt = { releaseCheck: 'v1.3.7/saved-taxonomy', taxonomyKind: 'context', operation: 'create', outcome: 'persisted' };
         expect(sanitizeLogContext(receipt)).toEqual(receipt);
+    });
+    it('preserves the content-free iOS background sync hold receipt', () => {
+        const started = { releaseCheck: 'v1.3.7/ios-background-sync-hold', source: 'app-left' };
+        const ended = { releaseCheck: 'v1.3.7/ios-background-sync-hold', outcome: 'expired', heldMs: '29000' };
+        expect(sanitizeLogContext(started)).toEqual(started);
+        expect(sanitizeLogContext(ended)).toEqual(ended);
     });
     it('preserves the content-free windowless sync timer receipt', () => {
         const receipt = {
