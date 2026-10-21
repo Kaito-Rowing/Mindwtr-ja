@@ -13,7 +13,7 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
-    // gmail-capture reuses releaseCheck and count only; never account or mail content.
+    // gmail-capture reuses releaseCheck/count; gmail-capture-storage reuses stage/errorKind. Never account or mail content.
     // focus-area-selection: aggregate selected slots only.
     'globalCount', 'hiddenByAreaCount',
     // project-color reuses releaseCheck and mode; no identity or color values.

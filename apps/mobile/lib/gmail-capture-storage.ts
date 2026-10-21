@@ -62,23 +62,33 @@ export function getGmailReceiptStore(): GmailReceiptStore {
     if (store) return store;
     if (initializationFailed) throw storageFailure();
     let database: ReturnType<typeof import('@op-engineering/op-sqlite').open> | undefined;
+    let stage = 'module';
     try {
         // Load only when native Gmail is available, including outside Expo Go/FOSS.
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { Directory, File, Paths } = require('expo-file-system') as typeof import('expo-file-system');
-        const directory = new Directory(Paths.document, 'GmailCapture');
+        stage = 'directory';
+        // RN URL pathname mutation does not update href; avoid Expo multipart path joining.
+        const directory = new Directory(`${Paths.document.uri.replace(/\/$/, '')}/GmailCapture`);
         if (!directory.exists) directory.create({ intermediates: true });
-        const file = new File(directory, 'receipts.sqlite');
+        stage = 'file';
+        const file = new File(`${directory.uri.replace(/\/$/, '')}/receipts.sqlite`);
         const newlyCreated = !file.exists;
         if (newlyCreated) file.create({ overwrite: false });
         else if (file.size < 100) throw storageFailure();
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { open } = require('@op-engineering/op-sqlite') as typeof import('@op-engineering/op-sqlite');
+        stage = 'open';
         database = open({ name: 'receipts.sqlite', location: directory.uri.replace(/^file:\/\//, '') });
+        stage = 'schema';
         store = createGmailReceiptStore(database, newlyCreated);
         return store;
-    } catch {
+    } catch (error) {
         initializationFailed = true;
+        const errorKind = error instanceof TypeError ? 'type' : error instanceof Error ? 'native' : 'storage';
+        void import('./app-log').then(({ logWarn }) => logWarn('Gmail receipt storage unavailable', {
+            force: true, scope: 'gmail-capture', extra: { releaseCheck: 'v1.3.7/gmail-capture-storage', stage, errorKind },
+        })).catch(() => {});
         try { database?.close(); } catch { /* Keep the database intact for diagnosis. */ }
         throw storageFailure();
     }
