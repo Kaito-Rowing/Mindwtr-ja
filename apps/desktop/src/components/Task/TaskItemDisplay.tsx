@@ -876,7 +876,10 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                             )}
                             dir={resolvedDirection}
                         >
-                            <InlineMarkdown markdown={descriptionPreview} interactiveLinks={false} />
+                            {/* A sibling of the toggle button, so its links can be real
+                              * controls: they stop propagation and open like the opened
+                              * description's links instead of toggling the row (#1425). */}
+                            <InlineMarkdown markdown={descriptionPreview} />
                         </div>
                     )}
                     {(showCompactMeta || isReference) && !isViewOpen && hasCollapsedMetadata && renderMetadataRow(cn(

@@ -735,6 +735,50 @@ describe('TaskItemDisplay', () => {
         expect(queryByText('Second line')).toBeNull();
     });
 
+    it('opens a URL in the collapsed description preview without toggling the row (#1425)', () => {
+        const onToggleView = vi.fn();
+        const openSpy = vi.spyOn(window, 'open').mockReturnValue({} as Window);
+        const { getByRole, getByText, container } = render(
+            <LanguageProvider>
+                <TaskItemDisplay
+                    task={{ ...baseTask, description: 'See https://example.com/spec before the call' }}
+                    language="en"
+                    selectionMode={false}
+                    isViewOpen={false}
+                    actions={{
+                        onToggleView,
+                        onEdit: vi.fn(),
+                        onDelete: vi.fn(),
+                        onDuplicate: vi.fn(),
+                        onStatusChange: vi.fn(),
+                        openAttachment: vi.fn(),
+                    }}
+                    visibleAttachments={[]}
+                    recurrenceRule=""
+                    recurrenceStrategy="strict"
+                    prioritiesEnabled={false}
+                    timeEstimatesEnabled={false}
+                    isStagnant={false}
+                    showQuickDone={false}
+                    readOnly={false}
+                    t={(key: string) => key}
+                />
+            </LanguageProvider>
+        );
+
+        fireEvent.click(getByRole('link', { name: 'https://example.com/spec' }));
+        expect(openSpy).toHaveBeenCalledWith('https://example.com/spec', '_blank', 'noopener,noreferrer');
+        expect(onToggleView).not.toHaveBeenCalled();
+
+        // Plain preview text stays inert, as before; the title still toggles.
+        fireEvent.click(getByText(/before the call/));
+        expect(onToggleView).not.toHaveBeenCalled();
+        fireEvent.click(container.querySelector('[data-task-view-toggle]')!);
+        expect(onToggleView).toHaveBeenCalledTimes(1);
+
+        openSpy.mockRestore();
+    });
+
     it('shows the completion date and time for completed tasks when compact details are off', () => {
         const completedTask: Task = {
             ...baseTask,
