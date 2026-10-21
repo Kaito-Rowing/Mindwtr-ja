@@ -47,9 +47,10 @@
     "sortOrder",
     "orderNum",
     "focusOrder",
-    "archivedAt"
+    "archivedAt",
+    "reminderPolicy"
    ],
-   "pendingProduction": ["reminderPolicy"]
+   "pendingProduction": []
   },
   "MindwtrProject": {
    "deployed": [
@@ -77,9 +78,10 @@
     "startDateText",
     "cancelledAt",
     "viewSectionIds",
-    "archivedAt"
+    "archivedAt",
+    "colorOverride"
    ],
-   "pendingProduction": ["colorOverride"]
+   "pendingProduction": []
   },
   "MindwtrSection": {
    "deployed": [
