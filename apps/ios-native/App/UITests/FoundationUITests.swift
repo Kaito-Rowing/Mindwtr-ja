@@ -5485,7 +5485,7 @@ final class FoundationUITests: XCTestCase {
         }
         boardTap(app, "inbox-process-primary")
         boardTap(app, "process-inbox-mode")
-        let title = app.textFields["process-inbox-title"]
+        let title = app.textViews["process-inbox-title"]
         let scroll = app.scrollViews["process-inbox-scroll"]
         for (index, choice) in ["reference", "done", "trash"].enumerated() {
             boardEnabled(title)
@@ -5546,13 +5546,13 @@ final class FoundationUITests: XCTestCase {
         }
         boardTap(app, "inbox-process-primary")
         let scroll = app.scrollViews["process-inbox-scroll"]
-        let title = app.textFields["process-inbox-title"]
+        let title = app.textViews["process-inbox-title"]
         func processTap(_ id: String) {
             revealPagedElement(app, app.buttons[id], in: scroll)
             boardTap(app, id)
         }
         func processText(_ id: String, _ value: String) {
-            let field = app.textFields[id]
+            let field = ["process-inbox-title", "process-inbox-notes"].contains(id) ? app.textViews[id] : app.textFields[id]
             revealPagedElement(app, field, in: scroll)
             replaceTextView(field, with: value)
         }
@@ -5592,7 +5592,7 @@ final class FoundationUITests: XCTestCase {
         XCTAssertEqual(title.value as? String, "Process edited final")
         XCTAssertEqual(app.staticTexts["process-inbox-progress"].label, "0/4 tasks")
         processTap("process-inbox-notes-toggle")
-        XCTAssertEqual(app.textFields["process-inbox-notes"].value as? String, "Saved notes final")
+        XCTAssertEqual(app.textViews["process-inbox-notes"].value as? String, "Saved notes final")
         processText("process-inbox-title", "Unsaved close draft")
         boardTap(app, "process-inbox-close")
         boardEnabled(app.buttons["inbox-process-primary"])
@@ -30367,13 +30367,33 @@ extension FoundationUITests {
                     boardEnabled(search); search.tap()
                     let previous = search.value as? String ?? ""
                     search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previous.count) + parent + "\n")
-                    let token = app.buttons[prefix + "-filter-token-" + parent]
-                    if !token.isHittable { revealPagedElement(app, token, in: app.scrollViews[prefix + "-filter-picker-scroll"]) }
+                    let identifier = prefix + "-filter-token-" + parent
+                    let token = app.buttons[identifier]
+                    if state == 2 {
+                        task739FilterModalAXState(app, role: role, phase: prefix + "-reopened-selected",
+                            tokenIdentifier: identifier, prefix: prefix)
+                        let hitPointDeadline = ProcessInfo.processInfo.systemUptime + 10
+                        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                            let matches = app.buttons.matching(identifier: identifier), selected = matches.firstMatch
+                            return matches.count == 1 && selected.exists && selected.isEnabled && selected.isSelected
+                                && (selected.value as? String ?? "").isEmpty && selected.isHittable
+                        }, object: nil)
+                        guard XCTWaiter.wait(for: [ready], timeout: max(0, hitPointDeadline - ProcessInfo.processInfo.systemUptime)) == .completed else {
+                            task739FilterModalAXState(app, role: role, phase: prefix + "-reopened-selected-timeout",
+                                tokenIdentifier: identifier, prefix: prefix)
+                            XCTFail("The reopened selected token must have a native accessibility hit point before its second tap")
+                            return
+                        }
+                    } else if !token.isHittable {
+                        revealPagedElement(app, token, in: app.scrollViews[prefix + "-filter-picker-scroll"])
+                    }
                     boardEnabled(token)
                     XCTAssertEqual(app.buttons.matching(identifier: token.identifier).count, 1)
                     XCTAssertEqual(app.buttons.matching(identifier: prefix + "-filter-token-" + child).count, 1)
                     XCTAssertFalse(app.buttons[prefix + "-filter-token-" + bare].exists)
                     task738TokenState(token, selected: state == 2, value: state == 3 ? "Excluded" : "")
+                    XCTAssertTrue(token.isHittable)
+                    XCTAssertGreaterThanOrEqual(token.frame.height, 44 - 1e-6)
                     token.tap()
                     task738TokenState(token, selected: state == 1, value: state == 2 ? "Excluded" : "")
                     boardTap(app, prefix + "-filters-close")
@@ -30459,21 +30479,22 @@ extension FoundationUITests {
         XCTAssertTrue(app.descendants(matching: .any)["inbox-scroll"].firstMatch.exists)
     }
 
-    private func task739FilterModalAXState(_ app: XCUIApplication, role: String, phase: String) {
+    private func task739FilterModalAXState(_ app: XCUIApplication, role: String, phase: String,
+        tokenIdentifier: String = "inbox-filter-token-@alpha", prefix: String = "inbox") {
         // Start from an unfiltered native AX query. Export only fixed-category counts,
         // state booleans and geometry; never labels, identifiers, values or hierarchy.
         let sampleStarted = ProcessInfo.processInfo.systemUptime
         let all = app.descendants(matching: .any).allElementsBoundByIndex
         let identifiers = all.map { $0.identifier }
         func count(_ predicate: (String) -> Bool) -> Int { identifiers.filter(predicate).count }
-        let matches = app.buttons.matching(identifier: "inbox-filter-token-@alpha"), token = matches.firstMatch
-        let exists = token.exists, picker = app.scrollViews["inbox-filter-picker-scroll"]
-        let keyboard = app.keyboards.firstMatch, primary = app.buttons["inbox-process-primary"]
+        let matches = app.buttons.matching(identifier: tokenIdentifier), token = matches.firstMatch
+        let exists = token.exists, picker = app.scrollViews[prefix + "-filter-picker-scroll"]
+        let keyboard = app.keyboards.firstMatch, primary = app.buttons[prefix + "-process-primary"]
         let state = "role=\(role), phase=\(phase), axElements=\(all.count), "
             + "taskTitles=\(count { $0.hasPrefix("task-title-") }), taskStatuses=\(count { $0.hasPrefix("task-status-") }), "
-            + "header=\(count { ["inbox-title", "area-open", "search-open"].contains($0) }), "
-            + "toolbar=\(count { ["inbox-sort-open", "inbox-group-open", "inbox-filters-open"].contains($0) }), "
-            + "primary=\(count { $0 == "inbox-process-primary" }), tabs=\(count { $0.hasPrefix("tab-") || $0 == "capture-open" }), "
+            + "header=\(count { [prefix + "-title", "area-open", "search-open"].contains($0) }), "
+            + "toolbar=\(count { [prefix + "-sort-open", prefix + "-group-open", prefix + "-filters-open"].contains($0) }), "
+            + "primary=\(count { $0 == prefix + "-process-primary" }), tabs=\(count { $0.hasPrefix("tab-") || $0 == "capture-open" }), "
             + "matches=\(matches.count), exists=\(exists), enabled=\(exists && token.isEnabled), selected=\(exists && token.isSelected), "
             + "hittable=\(exists && token.isHittable), valueEmpty=\(exists && (token.value as? String ?? "").isEmpty), "
             + "valueExcluded=\(exists && (token.value as? String) == "Excluded"), "
