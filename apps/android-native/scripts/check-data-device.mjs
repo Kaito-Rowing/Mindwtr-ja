@@ -23,8 +23,8 @@
 //      own import of the fixture over the pulled library, then Undo leaves none;
 //   I2 a TickTick file on the DGT row: core's invalid-file warning, no staged copy; I3 a 16 MiB + 1 byte file: core's limit text;
 //   I4 process death before the journal (no row, no result) and after COMMIT (the rows once, the receipt, one replay line);
-//   I5 the 60 000-row Mindwtr CSV whose Undo cannot be admitted (large-library pass b): core's no-Undo question; Cancel lands
-//      nothing, Continue lands it with a toast that says Undo is not available and has no Undo button;
+//   I5 the 60 000-row Mindwtr CSV whose Undo cannot be admitted (large-library pass b): core's "Undo may not be available"
+//      question; Cancel lands nothing, Continue lands it and the commit's real bytes leave no Undo: the toast says so, no button;
 //   I6 sentinels in a dropped rule, a renamed project and a skipped archive entry reach no result record, journal, receipt
 //      or log;
 //   G3 and G2 (each on a fresh install): a seed stopped before its send replays once; one stopped after its COMMIT is there
@@ -605,7 +605,7 @@ const sampledRun = async (act, done) => {
             if (!pid()) { outcome = 'died'; break; }
             const nodes = await screen().catch(() => []);
             if (done(nodes)) { outcome = 'done'; toast = nodes; break; }
-            // Large-library pass b: an operation whose Undo will not fit asks first; a measured row runs it (Continue).
+            // Large-library pass b: an operation whose Undo may not fit asks first; a measured row runs it (Continue).
             if (hasText(nodes, en['settings.backupMobile.undoUnavailableTitle']) && confirmButton(nodes)) { await tap(confirmButton(nodes)); continue; }
             const failed = nodes.find((node) => /failed|too large|too long/i.test(node.text ?? ''));
             if (failed) { outcome = `failed: ${failed.text}`; toast = nodes; break; }
@@ -1576,7 +1576,8 @@ try {
     }
 
     // I5: Codex's 60 000-row Mindwtr CSV grows the library past what its Undo could admit. Large-library pass b: it is never
-    // refused for that; core's question says Undo will not be available, Cancel lands nothing, Continue runs it without Undo.
+    // refused for that; core's question says Undo may not be available, Cancel lands nothing, Continue runs it, and the commit's
+    // real bytes leave it without Undo.
     const expansion = binary(`d1-expansion-${run}.csv`, strToU8(`Title\n${Array.from({ length: 60_000 }, (_, index) => `d1x${index}x${run}`).join('\n')}\n`));
     push(expansion);
     const csvReceipts = receiptCount('i5-before', 'csv');
@@ -1604,7 +1605,7 @@ try {
         '(I5) Continue ran it: the toast says Undo is not available and offers no Undo');
     check(taggedRows(pullDb('i5')).filter((row) => row.title.startsWith('d1x')).length === 60_000, '(I5) all 60 000 rows landed');
     check(receiptCount('i5-after', 'csv') === csvReceipts + 1, '(I5) with one receipt');
-    check(allLogs().includes('v1.3.7/large-library-no-undo'), '(I5) the log names the no-Undo run (v1.3.7/large-library-no-undo)');
+    check(/large-library-no-undo.*"outcome":"after-save"/.test(allLogs()), '(I5) the log names the commit\'s no-Undo decision (v1.3.7/large-library-no-undo, after-save)');
     await until('(I5) the journal and the operation folder to empty', () => journal().length === 0 && operations().length === 0, 60_000);
     // The 60 000 rows stay; I6 and on need a small library again (its recovery snapshot alone passes the limit).
     setProp('transfer_limit_mb', '');
@@ -1698,7 +1699,11 @@ try {
     await restore(l1a);
     await toastWith(en['settings.backupMobile.restoreComplete'], 600_000);
     await restore(l1b);
-    await toastWith(en['settings.backupMobile.restoreComplete'], 600_000);
+    // Large-library pass b: the admission before it kept this restore's Undo, so it keeps it now, with no question first.
+    const l1toast = await waitFor('the second restore\'s toast or the no-Undo question', (current) => (hasText(current, en['settings.backupMobile.restoreComplete'])
+        && !confirmButton(current)) || hasText(current, en['settings.backupMobile.undoUnavailableTitle']), 600_000);
+    check(!hasText(l1toast, en['settings.backupMobile.undoUnavailableTitle']), '(L1) the restore asked no no-Undo question');
+    check(Boolean(undoButton(l1toast)), '(L1) the restore keeps its Undo (large-library pass b)');
     const l1db = pullDb('l1');
     const l1rows = sqlite(l1db, "SELECT title, description FROM tasks WHERE deletedAt IS NULL AND title LIKE 'd1lb%' ORDER BY title");
     const l1expected = [...l1b.tasks].map((item) => ({ title: item.title, description: item.description })).sort((left, right) => (left.title < right.title ? -1 : left.title > right.title ? 1 : 0));

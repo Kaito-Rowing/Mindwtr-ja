@@ -442,6 +442,35 @@ describe('an import whose Undo could not be admitted is refused before COMMIT (D
         expect(strToU8(prepared.recoveryJSON!).length + await env.adapter.libraryBytes()).toBeLessThanOrEqual(15 * MIB);
     }, 120_000);
 
+    it('a question asked on the estimate still keeps Undo when the real bytes fit, and a recovery snapshot past the limit alone never has Undo (large-library pass b)', async () => {
+        const text = serializeBackupData(incoming);
+        const sourceBytes = strToU8(text).length;
+        const probe = await prepareNativeBackupDocument((await open()).adapter, { ...input(text, 'merge'), admission: { sourceBytes, maxTransferBytes: 512 * MIB } });
+        const recoveryBytes = strToU8(probe.recoveryJSON!).length;
+        // The library's pages are not what this checks: the room is set by the recovery snapshot alone.
+        const tight = async (maxTransferBytes: number) => {
+            const env = await open();
+            const pages = vi.spyOn(env.adapter, 'libraryBytes').mockResolvedValue(0);
+            const prepared = await prepareNativeBackupDocument(env.adapter, { ...input(text, 'merge'), admission: { sourceBytes, maxTransferBytes } });
+            pages.mockRestore();
+            return { env, prepared, plan: JSON.parse(prepared.planJSON) };
+        };
+        // Room of one byte: the estimate asks first; the real bytes (here a roomy bound) keep Undo.
+        const asked = await tight(recoveryBytes + 1);
+        expect(asked.prepared).toMatchObject({ undo: false });
+        expect(asked.plan.undoLibraryBytes).toBe(1);
+        expect(asked.plan.reply).not.toHaveProperty('undo');
+        const kept = await commitNativeBackupDocument(asked.env.adapter, reference, JSON.stringify({ ...asked.plan, undoLibraryBytes: 512 * MIB }), NAME);
+        expect(kept).not.toHaveProperty('undo');
+        expect(buildNativeBackupDocumentResult(kept, t).undoLabel).toBe(t('settings.undoImport'));
+        // The recovery snapshot alone passes the limit: no Undo, decided at prepare, and the commit lands with no bound.
+        const over = await tight(recoveryBytes - 1);
+        expect(over.prepared).toMatchObject({ undo: false });
+        expect(over.plan).not.toHaveProperty('undoLibraryBytes');
+        expect(over.plan.reply.undo).toBe(false);
+        await expect(commitNativeBackupDocument(over.env.adapter, reference, over.prepared.planJSON, NAME)).resolves.toMatchObject({ undo: false });
+    });
+
     it('a library that ends larger than the estimate still lands, and its result says Undo is not available (large-library pass b)', async () => {
         const env = await open();
         const text = serializeBackupData(incoming);

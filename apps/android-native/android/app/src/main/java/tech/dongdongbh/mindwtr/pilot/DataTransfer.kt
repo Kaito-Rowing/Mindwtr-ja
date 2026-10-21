@@ -95,7 +95,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     var action by mutableStateOf<String?>(null); private set
     /**
      * The open question (RN's Alert): `{ kind: "confirm", model, mode, stage }`, `{ kind: "snapshot", model, name, undo }`, or
-     * `{ kind: "noUndo", model }` (large-library pass b: a prepared operation that will run without Undo; [noUndoAnswer] waits on it).
+     * `{ kind: "noUndo", model }` (large-library pass b: a prepared operation that may run without Undo; [noUndoAnswer] waits on it).
      */
     var question by mutableStateOf<JSONObject?>(null); private set
     /** A system picker the Data screen opens next ("json", "tree"); the screen launches it and clears it. */

@@ -319,7 +319,10 @@ function* planParts(plan: Plan): Generator<string> {
 }
 
 /** Freeze shared RN policy against a fresh durable base; this performs no document write (a [sink] only receives its texts). */
-/** [undo] (only with an admission and a recovery snapshot): whether the operation keeps its Undo (large-library pass b). */
+/**
+ * [undo] (only with an admission and a recovery snapshot): whether prepare's estimate says Undo fits (large-library pass b). It
+ * only decides whether to ask first; the commit decides Undo from the real bytes (its reply's `undo: false`).
+ */
 type PreparedUndo = { undo?: boolean };
 export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, input: NativeBackupDocumentPrepareInput): Promise<{ planJSON: string; recoveryJSON: string | null } & PreparedUndo>;
 export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAdapter, input: NativeBackupDocumentPrepareInput, sink: NativeBackupPrepareSink): Promise<{ written: true; recovery: boolean } & PreparedUndo>;
@@ -677,7 +680,7 @@ export function holdNativeBackupUndoAttachments(snapshotText: string, snapshotNa
     return true;
 }
 
-/** The question before an operation that will run without Undo (large-library pass b; RN has no such limit, so no such question). */
+/** The question before an operation that may run without Undo (large-library pass b; RN has no such limit, so no such question). */
 export function buildNativeBackupNoUndoConfirmation(t: ImportDiagnosticTranslator) {
     return { title: t('settings.backupMobile.undoUnavailableTitle'), message: t('settings.backupMobile.undoUnavailableConfirm'),
         confirmLabel: t('settings.backupMobile.undoUnavailableContinue'), cancelLabel: t('common.cancel') };

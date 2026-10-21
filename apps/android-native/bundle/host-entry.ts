@@ -5105,7 +5105,7 @@ globalThis.MindwtrHost = {
                 plan = channelClose(planHandle);
                 if (result.recovery) recovery = channelClose(recoveryHandle);
             });
-            // Large-library pass b: an operation that will run without Undo is asked about first, in core's words.
+            // Large-library pass b: an operation that may run without Undo (prepare's estimate) is asked about first, in core's words.
             return { plan: plan!, recovery, ...(result.undo === false ? { noUndo: buildNativeBackupNoUndoConfirmation(backupTranslate) } : {}) };
         });
     },
