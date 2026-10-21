@@ -397,13 +397,13 @@ describe('an import whose Undo could not be admitted is refused before COMMIT (D
         expect(text.length).toBeLessThan(MIB);
         const source = { ...csvInput(text), admission: { sourceBytes: text.length, maxTransferBytes: 12 * MIB } };
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, source);
-        // Prepare's estimate already sees the library outgrow the limit: no Undo, and no undo bound for the commit to refuse on.
+        // Prepare's estimate sees the library outgrow the limit: the app asks first. The commit decides from the real bytes.
         expect(prepared).toMatchObject({ undo: false });
         expect(prepared.recoveryJSON).toEqual(expect.any(String));
         const plan = JSON.parse(prepared.planJSON);
-        expect(plan.reply.undo).toBe(false);
+        expect(plan.reply).not.toHaveProperty('undo');
         expect(plan).not.toHaveProperty('maxLibraryBytes');
-        expect(plan).not.toHaveProperty('undoLibraryBytes');
+        expect(plan.undoLibraryBytes).toBe(12 * MIB - strToU8(prepared.recoveryJSON!).length);
         const reply = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
         expect(reply).toMatchObject({ operation: 'csv', undo: false });
         expect((await env.state()).tasks).toHaveLength(original.tasks.length + 60_000);
@@ -420,6 +420,26 @@ describe('an import whose Undo could not be admitted is refused before COMMIT (D
         const kept = await commitNativeBackupDocument(roomy.adapter, reference, fits.planJSON, NAME);
         expect(kept).not.toHaveProperty('undo');
         expect(buildNativeBackupDocumentResult(kept, t).undoLabel).toBe(t('settings.undoImport'));
+    }, 120_000);
+
+    it('keeps Undo for L1\'s restore, which the admission before pass b kept: 3 MiB of emoji rows over 3 MiB at 15 MiB (large-library pass b)', async () => {
+        const emoji = (prefix: string): AppData => {
+            const row = (index: number) => task(`${prefix}${index} 🦉`, { description: 'aé🦉日本語 '.repeat(40) });
+            const per = strToU8(JSON.stringify(row(0), null, 2)).length + 8;
+            return { ...clone(original), tasks: Array.from({ length: Math.round(3 * MIB / per) }, (_, index) => row(index)) };
+        };
+        const env = await open();
+        const first = await prepareNativeBackupDocument(env.adapter, input(serializeBackupData(emoji('a')), 'replace'));
+        await commitNativeBackupDocument(env.adapter, reference, first.planJSON, NAME);
+        const text = serializeBackupData(emoji('b'));
+        const second = { id: '22222222-2222-4222-8222-222222222222', sha256: 'b'.repeat(64), byteCount: 420 };
+        const prepared = await prepareNativeBackupDocument(env.adapter, { ...input(text, 'replace'), requestId: second.id,
+            admission: { sourceBytes: strToU8(text).length, maxTransferBytes: 15 * MIB } });
+        expect(prepared).toMatchObject({ undo: true });
+        const reply = await commitNativeBackupDocument(env.adapter, second, prepared.planJSON, NAME);
+        expect(reply).not.toHaveProperty('undo');
+        // The line before pass b: the recovery snapshot and the library left after fit the limit together.
+        expect(strToU8(prepared.recoveryJSON!).length + await env.adapter.libraryBytes()).toBeLessThanOrEqual(15 * MIB);
     }, 120_000);
 
     it('a library that ends larger than the estimate still lands, and its result says Undo is not available (large-library pass b)', async () => {

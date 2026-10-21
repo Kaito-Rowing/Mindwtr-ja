@@ -364,8 +364,8 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                         .put("admission", JSONObject().put("sourceBytes", sourceBytes).put("maxTransferBytes", DataTransferLimits.MAX_DATA_TRANSFER_BYTES)).toString(),
                         recoveryFile, ops.pendingPlan(requestId), DataTransferLimits.MAX_PLAN_BYTES)
                 } finally { staged?.let(StagedCopies::release) }
-                // Large-library pass b: core found the library too large to undo this change. dd's warning first; it runs only on
-                // Continue, with its recovery snapshot still written (RN's safety net), and its result says Undo is not available.
+                // Large-library pass b: core estimates the library may be too large to undo this change. dd's warning first; it runs only on
+                // Continue, with its recovery snapshot still written (RN's safety net); the commit then decides Undo from the real bytes.
                 prepared.optJSONObject("noUndo")?.let { words ->
                     if (!askNoUndo(words)) {
                         ops.discard(requestId); ops.pendingSnapshot(requestId).delete()

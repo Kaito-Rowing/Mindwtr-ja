@@ -77,15 +77,16 @@ class BackupInputError extends Error {}
 function invalid(message = 'Invalid backup document input'): never { throw new BackupInputError(`INVALID_INPUT: ${message}`); }
 function tooLarge(message: string): never { throw new BackupInputError(`TOO_LARGE: ${message}`); }
 const UNDO_TOO_LARGE = 'TOO_LARGE: The imported library would be too large to undo';
-// ponytail: Undo's room is judged before the save: today's SQLite bytes (SQLite keeps its pages when rows go) plus the planned
-// compact JSON's growth at 1.8 SQLite bytes per compact JSON byte (step 0 run 6: a 10.7 MiB pretty rows backup left a 13.9 MiB
-// library, 1.3 per pretty byte; compact JSON is 0.74 of pretty, so about 1.76), times 1.25 so it rarely says Undo fits when it
-// does not. A save that still ends larger lands without Undo and says so (it is never rolled back).
+// The commit decides Undo from the real bytes, on the line the admission before pass b used: the recovery snapshot and the
+// saved library fit the limit together. Prepare only estimates it, to ask "Undo may not be available" first.
+// ponytail: the estimate is today's SQLite bytes (SQLite keeps its pages when rows go) plus the planned compact JSON's growth at
+// 1.8 SQLite bytes per compact JSON byte (step 0 run 6: 1.3 per pretty byte; compact JSON is 0.74 of pretty). Measured against
+// the real library after: 0.92x to 1.35x, so a question can come and Undo still stay, or none come and Undo go (its toast says so).
 const SQLITE_BYTES_PER_JSON_BYTE = 1.8;
-const UNDO_ESTIMATE_MARGIN = 1.25;
 const logUndoUnavailable = (operation: string, outcome: 'estimate' | 'after-save'): void => {
     try {
-        logInfo('Native data transfer runs without Undo: the library is too large to undo', { scope: 'transfer', category: 'storage',
+        logInfo(outcome === 'estimate' ? 'Native data transfer may run without Undo: the library may be too large to undo'
+            : 'Native data transfer ran without Undo: the library is too large to undo', { scope: 'transfer', category: 'storage',
             context: { releaseCheck: 'v1.3.7/large-library-no-undo', operation, outcome } });
     } catch { /* Logging must not change the transfer. */ }
 };
@@ -451,13 +452,12 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
                 if (sink) sinkCall(() => sink.plan(part)); else planJSON += part;
                 // The documents' parts are out (expectedCurrent, then data): decide the Undo before the last part writes the reply.
                 if (undoRoom !== null && partBytes.length === 4) {
-                    const estimate = Math.ceil((libraryBytes + Math.max(0, partBytes[3] - partBytes[1]) * SQLITE_BYTES_PER_JSON_BYTE) * UNDO_ESTIMATE_MARGIN);
+                    const estimate = Math.ceil(libraryBytes + Math.max(0, partBytes[3] - partBytes[1]) * SQLITE_BYTES_PER_JSON_BYTE);
                     undo = undoRoom >= 0 && estimate <= undoRoom;
-                    if (undo) plan.undoLibraryBytes = undoRoom;
-                    else {
-                        plan.reply = { ...plan.reply, undo: false };
-                        logUndoUnavailable(operation, 'estimate');
-                    }
+                    // A recovery snapshot past the limit alone can never be undone; otherwise the commit measures.
+                    if (undoRoom >= 0) plan.undoLibraryBytes = undoRoom;
+                    else plan.reply = { ...plan.reply, undo: false };
+                    if (!undo) logUndoUnavailable(operation, 'estimate');
                 }
             }
             const diagnostics = createImportDiagnostics(rawWarnings, 'warning');

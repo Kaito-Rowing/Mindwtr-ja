@@ -289,15 +289,7 @@ const merge = async (file) => {
     await until('the app back in front', () => !otherAppFront(), 15_000, 500);
 };
 // The question closed first: a question can carry the same title as its result (Merge Backup).
-// Large-library pass b: a restore or merge whose Undo would not fit asks first (I5 checks that question itself); elsewhere the
-// row only needs the operation, so its Continue is tapped here (L1: a restore over a library a fifth of the limit, step 0's).
-const toastWith = async (title, timeoutMs = 120_000) => {
-    const noUndo = (nodes) => hasText(nodes, en['settings.backupMobile.undoUnavailableTitle']) && Boolean(confirmButton(nodes));
-    const nodes = await waitFor(`the toast "${title}"`, (current) => (hasText(current, title) && !confirmButton(current)) || noUndo(current), timeoutMs);
-    if (!noUndo(nodes)) return nodes;
-    await tap(confirmButton(nodes));
-    return waitFor(`the toast "${title}"`, (current) => hasText(current, title) && !confirmButton(current), timeoutMs);
-};
+const toastWith = (title, timeoutMs = 120_000) => waitFor(`the toast "${title}"`, (nodes) => hasText(nodes, title) && !confirmButton(nodes), timeoutMs);
 const undoButton = (nodes) => nodes.find((node) => node.text === en['settings.undoImport']);
 const push = (file) => adbRaw('push', resolve(work, file.name), `${PHONE_DIR}/${file.name}`);
 const exportFile = async (tag, suffix) => {
