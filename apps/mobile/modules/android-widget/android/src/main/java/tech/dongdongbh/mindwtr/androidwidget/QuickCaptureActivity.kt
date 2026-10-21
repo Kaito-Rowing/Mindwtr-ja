@@ -16,6 +16,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -42,6 +43,12 @@ class QuickCaptureActivity : AppCompatActivity() {
   private lateinit var audio: ImageButton
   private lateinit var audioStatus: TextView
   private lateinit var statusButton: Button
+  private lateinit var contextsButton: Button
+  private lateinit var contextPanel: View
+  private lateinit var contextFilter: EditText
+  private lateinit var contextMatches: LinearLayout
+  private var contextOptions: List<WidgetPayload.SavedFilterOption> = emptyList()
+  private var palette: WidgetPayload.Palette? = null
   private lateinit var labels: WidgetPayload.QuickCaptureLabels
   private lateinit var audioSession: QuickCaptureAudioSession
   private var observerToken: Any? = null
@@ -114,6 +121,25 @@ class QuickCaptureActivity : AppCompatActivity() {
           .show()
       }
     }
+    contextOptions = payload.contexts
+    contextPanel = findViewById(R.id.mindwtr_quick_capture_context_panel)
+    contextMatches = findViewById(R.id.mindwtr_quick_capture_context_matches)
+    contextFilter = findViewById<EditText>(R.id.mindwtr_quick_capture_context_filter).apply {
+      hint = payload.listTitles["search"] ?: "Search"
+      doAfterTextChanged { showContextMatches() }
+      // Done picks the top match, so a keyboard user never has to leave the keys.
+      setOnEditorActionListener { _, actionId, event ->
+        val enterPressed = event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN
+        if (actionId != EditorInfo.IME_ACTION_DONE && !enterPressed) return@setOnEditorActionListener false
+        currentContextChoices().firstOrNull()?.let(::insertContext) ?: closeContextPanel()
+        true
+      }
+    }
+    contextsButton = findViewById<Button>(R.id.mindwtr_quick_capture_contexts).apply {
+      text = payload.listTitles["contexts"] ?: "Contexts"
+      visibility = if (contextChoices(contextOptions, "", "").isEmpty()) View.GONE else View.VISIBLE
+      setOnClickListener { if (contextPanel.visibility == View.VISIBLE) closeContextPanel() else openContextPanel() }
+    }
     findViewById<View>(R.id.mindwtr_quick_capture_audio_row).visibility =
       if (labels.audioEnabled) View.VISIBLE else View.GONE
     audio.setOnClickListener {
@@ -135,10 +161,12 @@ class QuickCaptureActivity : AppCompatActivity() {
         false
       }
     }
-    payload.resolvedPalette(this)?.let { applyPalette(it, title, cancel) }
+    palette = payload.resolvedPalette(this)
+    palette?.let { applyPalette(it, title, cancel) }
     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
-        audioSession.cancelAudioOrClose()
+        // Back closes the context list first, so the draft is never lost to it.
+        if (contextPanel.visibility == View.VISIBLE) closeContextPanel() else audioSession.cancelAudioOrClose()
       }
     })
     observerToken = audioSession.attach(::render)
@@ -327,6 +355,8 @@ class QuickCaptureActivity : AppCompatActivity() {
     input.isEnabled = editable || recording || snapshot.state == QuickCaptureAudioSession.State.STOPPING
     description.isEnabled = input.isEnabled
     statusButton.isEnabled = input.isEnabled
+    contextsButton.isEnabled = input.isEnabled
+    if (!input.isEnabled && contextPanel.visibility == View.VISIBLE) contextPanel.visibility = View.GONE
     val captureStatus = audioSession.captureStatus ?: audioSession.defaultStatus
     statusButton.text = "${labels.statusLabel}: ${labels.statusLabels.getValue(captureStatus)}"
 
@@ -355,6 +385,61 @@ class QuickCaptureActivity : AppCompatActivity() {
     audio.imageTintList = ColorStateList.valueOf(palette.accent)
     audioStatus.setTextColor(palette.mutedText)
     statusButton.setTextColor(palette.accent)
+    contextsButton.setTextColor(palette.accent)
+    contextFilter.setTextColor(palette.text)
+    contextFilter.setHintTextColor(palette.mutedText)
+    tint(contextFilter, palette.card)
+  }
+
+  private fun currentContextChoices() =
+    contextChoices(contextOptions, input.text?.toString().orEmpty(), contextFilter.text?.toString().orEmpty())
+
+  private fun openContextPanel() {
+    contextFilter.setText("")
+    contextPanel.visibility = View.VISIBLE
+    showContextMatches()
+    // The title box keeps its caret while the filter has focus; the pick lands there.
+    contextFilter.requestFocus()
+  }
+
+  private fun closeContextPanel() {
+    contextPanel.visibility = View.GONE
+    input.requestFocus()
+  }
+
+  private fun showContextMatches() {
+    contextMatches.removeAllViews()
+    val density = resources.displayMetrics.density
+    val textColor = palette?.text ?: getColor(R.color.mindwtr_widget_text)
+    val ripple = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground))
+    val rowBackground = ripple.getResourceId(0, 0)
+    ripple.recycle()
+    for ((name, token) in currentContextChoices()) {
+      contextMatches.addView(TextView(this).apply {
+        text = name
+        setTextColor(textColor)
+        textSize = 15f
+        minHeight = (48 * density).toInt()
+        gravity = android.view.Gravity.CENTER_VERTICAL
+        setPadding((12 * density).toInt(), 0, (12 * density).toInt(), 0)
+        if (rowBackground != 0) setBackgroundResource(rowBackground)
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { insertContext(name to token) }
+      })
+    }
+  }
+
+  private fun insertContext(choice: Pair<String, String>) {
+    val text = input.text?.toString().orEmpty()
+    val start = input.selectionStart.takeIf { it >= 0 } ?: text.length
+    val end = input.selectionEnd.takeIf { it >= 0 } ?: start
+    val (next, caret) = insertToken(text, start, end, choice.second)
+    contextPanel.visibility = View.GONE
+    input.setText(next)
+    input.setSelection(caret.coerceAtMost(input.text?.length ?: 0))
+    input.requestFocus()
+    (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
   }
 
   private fun tint(view: View, color: Int) {
@@ -397,6 +482,40 @@ class QuickCaptureActivity : AppCompatActivity() {
 
   companion object {
     private const val TAG = "Mindwtr"
+    private const val MAX_CONTEXT_MATCHES = 8
+
+    /**
+     * What the Contexts button offers (#1418), as (name, token). Mirrors core getTaskContextMatches
+     * (task-token-usage.ts): exact label, then prefix, then substring; ties keep the payload's order, which core
+     * already sorts the same way (WidgetPayload.contexts). An empty query lists them all, like the in-app picker.
+     * Only names captureText can write back exactly, and never one the text already holds.
+     */
+    internal fun contextChoices(options: List<WidgetPayload.SavedFilterOption>, text: String, query: String): List<Pair<String, String>> {
+      val needle = query.trim().removePrefix("@").lowercase()
+      fun quality(name: String): Int {
+        val label = name.removePrefix("@").lowercase()
+        return if (label == needle) 0 else if (label.startsWith(needle)) 1 else if (label.contains(needle)) 2 else -1
+      }
+      return options
+        .map { Triple(it.name, WidgetListStore.captureText(it.id).trimEnd(), quality(it.name)) }
+        .filter { (name, token, rank) ->
+          name.startsWith("@") && rank >= 0 && token.isNotEmpty() &&
+            !Regex("(^|\\s)${Regex.escape(token)}(?=\\s|$)", RegexOption.IGNORE_CASE).containsMatchIn(text)
+        }
+        .sortedBy { it.third }
+        .take(MAX_CONTEXT_MATCHES)
+        .map { (name, token) -> name to token }
+    }
+
+    /** Puts [token] over the selection with a space on each side the text lacks; returns the text and the caret after it. */
+    internal fun insertToken(text: String, start: Int, end: Int, token: String): Pair<String, Int> {
+      val from = minOf(start, end).coerceIn(0, text.length)
+      val to = maxOf(start, end).coerceIn(0, text.length)
+      val before = if (from > 0 && !text[from - 1].isWhitespace()) " " else ""
+      val spaceFollows = to < text.length && text[to].isWhitespace()
+      val inserted = before + token + if (spaceFollows) "" else " "
+      return text.substring(0, from) + inserted + text.substring(to) to from + inserted.length + if (spaceFollows) 1 else 0
+    }
     private const val STATE_DEFAULT_STATUS = "captureDefaultStatus"
     private const val STATE_CAPTURE_STATUS = "captureStatus"
     private val CAPTURE_IO = Executors.newSingleThreadExecutor { work -> Thread(work, "MindwtrCaptureSave") }

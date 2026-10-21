@@ -41,6 +41,17 @@ describe('Android widget capture token pre-fill', () => {
         expect(parsed.title).toBe('Call back');
     });
 
+    // The dialog's Contexts button (QuickCaptureActivity.insertToken) drops the same forms mid-text, spaced on both sides.
+    it.each([
+        ['Call @person/gary back', '@person/gary'],
+        ['Call @"Two words" back', '@Two words'],
+        ['Call back @garage ', '@garage'],
+    ])('parses the Contexts-button insertion in %s unaided', (text, token) => {
+        const parsed = parseQuickAdd(text, [], new Date('2026-10-21T12:00:00Z'));
+        expect(parsed.props.contexts).toEqual([token]);
+        expect(parsed.title).toBe('Call back');
+    });
+
     it.each([['#"x @y"', '#x @y'], ['@"x /link:https://a.b"', '@x /link:https://a.b']])('does not round-trip %s, so the widget skips a space before a marker or slash', (prefill, token) => {
         const parsed = parseQuickAdd(`${prefill} Call back`, [], new Date('2026-10-21T12:00:00Z'));
         expect([...(parsed.props.contexts ?? []), ...(parsed.props.tags ?? [])]).not.toEqual([token]);
