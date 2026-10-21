@@ -2,6 +2,7 @@
 
 Changes collected since the latest stable release.
 
+- Android: reminders for tasks synced from another device (for example, a task with a due time made on Windows) are now set by the background sync, even when Mindwtr was swiped away. Before, the reminder was set only when the app opened again (#1424).
 - Desktop: a link in a task's collapsed description preview now opens when clicked, without expanding or collapsing the task (#1425).
 - Mobile: taking Undo after a restore, merge or import now brings attachments back with their files, as long as the app stays open and no newer restore, merge or import came after it. Before, a sync that ran in between could delete the files of attachments the restore had removed, and Undo then showed them as available with nothing on the phone. A restore or snapshot restore also marks any attachment whose file is missing on the phone, so the next sync downloads it again.
 - Linux desktop: **Copy Title**, **Copy task link** and **Copy task ID** in the task menu no longer fail now and then with "Could not copy task". The menu could lose the click before the copy ran, and WebKit then refused the clipboard write (#1327).
