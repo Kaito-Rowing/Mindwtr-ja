@@ -10,6 +10,7 @@ import {
 import {
     clearAppSearchWipeOwed,
     isAppSearchSupported,
+    markAppSearchWipeOwed,
     readAppSearchIndexingEnabled,
     readAppSearchWipeOwed,
 } from './app-search-preference';
@@ -20,6 +21,7 @@ const indexing = createAppSearchIndexing({
     isSupported: () => isAppSearchSupported(),
     readEnabled: () => readAppSearchIndexingEnabled(),
     readWipeOwed: () => readAppSearchWipeOwed(),
+    markWipeOwed: () => markAppSearchWipeOwed(),
     clearWipeOwed: () => clearAppSearchWipeOwed(),
     upsert: (docs) => upsertAppSearchDocuments(docs),
     remove: (ids) => removeAppSearchDocuments(ids),

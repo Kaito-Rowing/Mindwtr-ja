@@ -30,6 +30,8 @@ export type AppSearchIndexingPorts = {
     isSupported(): boolean;
     readEnabled(): Promise<boolean>;
     readWipeOwed(): Promise<boolean>;
+    /** Stores that a wipe is due, before it is sent: a death or failure before it lands leaves it for the next start. */
+    markWipeOwed(): Promise<void>;
     clearWipeOwed(): Promise<void>;
     upsert(docs: AppSearchDoc[]): Promise<unknown>;
     remove(ids: string[]): Promise<unknown>;
@@ -130,9 +132,8 @@ export function createAppSearchIndexing(ports: AppSearchIndexingPorts) {
         const state = ports.store.getState();
         const docs = buildFullAppSearchIndex({ tasks: state.tasks, projects: state.projects, areas: state.areas, scheme: ports.scheme });
         try {
+            // An owed wipe stays owed: a toggle-off can land while this runs, and this upsert lands after its wipe.
             await ports.wipe();
-            // The wipe landed: any wipe a toggle-off still owed is done.
-            await ports.clearWipeOwed();
             await ports.upsert(docs);
         } catch (error) {
             ports.logWarn('AppSearch full reindex failed; local data is unaffected', { error: errorText(error) });
@@ -154,7 +155,9 @@ export function createAppSearchIndexing(ports: AppSearchIndexingPorts) {
             return;
         }
         try {
+            await ports.markWipeOwed();
             await ports.wipe();
+            await ports.clearWipeOwed();
         } catch (error) {
             ports.logWarn('AppSearch post-toggle-off wipe failed', { error: errorText(error) });
         }
@@ -194,8 +197,8 @@ export function createAppSearchIndexing(ports: AppSearchIndexingPorts) {
             return;
         }
         if (isArmed()) return;
-        await runFullReindex();
-        arm();
+        // As turning it on: a toggle-off that lands during this reindex wins.
+        await enable();
     };
 
     return { isArmed, arm, disarm, runFullReindex, enable, wipe, syncWithPreference };

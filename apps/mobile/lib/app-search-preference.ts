@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { MOBILE_APP_SEARCH_WIPE_OWED_STORAGE_KEY } from '@mindwtr/core';
 import { Platform } from 'react-native';
 
 // Device-local preference (#1017): whether this device's task/project/area
@@ -8,7 +9,7 @@ import { Platform } from 'react-native';
 const STORAGE_KEY = 'mindwtr:appSearchIndexingEnabled';
 // A toggle-off's wipe that has not landed yet (the app died first, or the wipe failed): the next start finishes it, so
 // titles never stay in system search with the switch off.
-const WIPE_OWED_KEY = 'mindwtr:appSearchWipeOwed';
+const WIPE_OWED_KEY = MOBILE_APP_SEARCH_WIPE_OWED_STORAGE_KEY;
 
 // PlatformStorage's system-search integration is only available from
 // Android 12 (API 31); below that the setting is hidden entirely, per #1017.
@@ -33,8 +34,9 @@ export async function writeAppSearchIndexingEnabled(enabled: boolean): Promise<v
         if (enabled) {
             await AsyncStorage.setItem(STORAGE_KEY, 'true');
         } else {
-            // Owed first: a death between the two writes still leaves the wipe to finish.
-            await AsyncStorage.setItem(WIPE_OWED_KEY, 'true');
+            // Owed first: a death between the two writes still leaves the wipe to finish. A failed owed write never keeps
+            // the switch on.
+            await markAppSearchWipeOwed();
             await AsyncStorage.removeItem(STORAGE_KEY);
         }
     } catch {
@@ -51,7 +53,17 @@ export async function readAppSearchWipeOwed(): Promise<boolean> {
     }
 }
 
-/** After a wipe (or a full reindex, which wipes first) landed. */
+/** Before a wipe is sent. */
+export async function markAppSearchWipeOwed(): Promise<void> {
+    if (!isAppSearchSupported()) return;
+    try {
+        await AsyncStorage.setItem(WIPE_OWED_KEY, 'true');
+    } catch {
+        // storage unavailable — the wipe still runs now; only its retry at the next start is lost
+    }
+}
+
+/** After a wipe landed. */
 export async function clearAppSearchWipeOwed(): Promise<void> {
     if (!isAppSearchSupported()) return;
     try {

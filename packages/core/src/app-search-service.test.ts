@@ -20,6 +20,7 @@ function setup(scheme?: string) {
         readEnabled: vi.fn(async () => true),
         readWipeOwed: vi.fn(async () => false),
         clearWipeOwed: vi.fn(async () => undefined),
+        markWipeOwed: vi.fn(async () => undefined),
         upsert: vi.fn(async (_docs: unknown[]) => undefined),
         remove: vi.fn(async (_ids: string[]) => undefined),
         wipe: vi.fn(async () => undefined),
@@ -102,19 +103,70 @@ describe('AppSearch indexing (core, shared by React Native and native Android)',
         expect(env.ports.wipe).toHaveBeenCalledTimes(2);
     });
 
-    it('finishes an owed wipe at the next start, keeps it owed until a wipe lands, and a reindex settles it too', async () => {
+    it('finishes an owed wipe at the next start, and keeps it owed until a wipe lands', async () => {
         env.ports.wipe.mockRejectedValueOnce(new Error('boom'));
         await env.indexing.wipe();
         expect(env.ports.clearWipeOwed).not.toHaveBeenCalled();
         env.ports.readEnabled.mockResolvedValue(false);
         env.ports.readWipeOwed.mockResolvedValue(true);
+        env.ports.wipe.mockRejectedValueOnce(new Error('again'));
+        await env.indexing.syncWithPreference();
+        expect(env.ports.clearWipeOwed).not.toHaveBeenCalled();
+        expect(env.ports.logInfo).toHaveBeenLastCalledWith('AppSearch owed wipe finished at start', { releaseCheck: 'v1.3.7/app-search-owed-wipe', outcome: 'failed' });
         await env.indexing.syncWithPreference();
         expect(env.ports.clearWipeOwed).toHaveBeenCalledTimes(1);
-        expect(env.ports.logInfo).toHaveBeenCalledWith('AppSearch owed wipe finished at start', { releaseCheck: 'v1.3.7/app-search-owed-wipe', outcome: 'wiped' });
-        env.ports.readEnabled.mockResolvedValue(true);
-        await env.indexing.syncWithPreference();
-        expect(env.indexing.isArmed()).toBe(true);
-        expect(env.ports.clearWipeOwed).toHaveBeenCalledTimes(2);
+        expect(env.ports.logInfo).toHaveBeenLastCalledWith('AppSearch owed wipe finished at start', { releaseCheck: 'v1.3.7/app-search-owed-wipe', outcome: 'wiped' });
+    });
+
+    // A reindex never clears an owed wipe: a toggle-off can land while it runs, and its upsert lands after that wipe.
+    const midReindexOff = async (start: () => Promise<void>) => {
+        let resolveUpsert!: () => void;
+        env.ports.upsert.mockImplementationOnce(() => new Promise<undefined>((resolve) => { resolveUpsert = () => resolve(undefined); }));
+        const starting = start();
+        await flush();
+        // The user turns the switch off: the owed wipe is stored, the switch goes, and its wipe lands.
+        env.ports.readEnabled.mockResolvedValue(false);
+        await env.indexing.wipe();
+        resolveUpsert();
+        await starting;
+    };
+
+    it('a toggle-off during the start\'s reindex wins: no live indexing, and the last wipe stays owed until it lands', async () => {
+        env.ports.wipe.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('died'));
+        await midReindexOff(() => env.indexing.syncWithPreference());
+        expect(env.indexing.isArmed()).toBe(false);
+        // The reindex's late upsert is wiped again, owed first; that wipe failing leaves it owed for the next start.
+        expect(env.ports.markWipeOwed).toHaveBeenCalledTimes(1);
+        expect(env.ports.markWipeOwed.mock.invocationCallOrder[0]).toBeLessThan(env.ports.wipe.mock.invocationCallOrder[2]);
+        expect(env.ports.clearWipeOwed).toHaveBeenCalledTimes(1);
+        expect(env.ports.clearWipeOwed.mock.invocationCallOrder[0]).toBeLessThan(env.ports.markWipeOwed.mock.invocationCallOrder[0]);
+    });
+
+    it('a toggle-off during the reindex that turning it on started leaves the wipe owed until the last wipe lands', async () => {
+        env.ports.wipe.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('died'));
+        await midReindexOff(() => env.indexing.enable());
+        expect(env.indexing.isArmed()).toBe(false);
+        expect(env.ports.markWipeOwed).toHaveBeenCalledTimes(1);
+        expect(env.ports.clearWipeOwed.mock.invocationCallOrder.every((order) => order < env.ports.markWipeOwed.mock.invocationCallOrder[0])).toBe(true);
+    });
+
+    it('a full reindex wipes, then upserts every active item; wipe disarms; disarm stops later updates', async () => {
+        env.state.tasks = [task(), task({ id: 'gone', deletedAt: now })];
+        env.state.projects = [{ id: 'p1', title: 'P', status: 'active', color: '#000', order: 0, tagIds: [], createdAt: now, updatedAt: now } as Project];
+        await env.indexing.runFullReindex();
+        expect(env.ports.wipe.mock.invocationCallOrder[0]).toBeLessThan(env.ports.upsert.mock.invocationCallOrder[0]);
+        expect(env.ports.upsert).toHaveBeenCalledWith([expect.objectContaining({ id: 'task:t1' }), expect.objectContaining({ id: 'project:p1' })]);
+        env.indexing.arm();
+        await env.indexing.wipe();
+        expect(env.indexing.isArmed()).toBe(false);
+        env.indexing.arm();
+        env.ports.upsert.mockClear();
+        // An edit already debounced, then disarm: the pending update is dropped and the store listener is gone.
+        env.listeners[0]({ ...env.state, tasks: [task({ title: 'later' })] }, { ...env.state });
+        env.indexing.disarm();
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(env.ports.upsert).not.toHaveBeenCalled();
+        expect(env.listeners).toHaveLength(0);
     });
 
     it('seeds with a full reindex in the build\'s scheme', async () => {

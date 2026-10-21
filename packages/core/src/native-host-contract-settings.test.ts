@@ -218,6 +218,9 @@ function generalDriver(host: Host, scenario: Scenario) {
             } else if (write.key === 'mindwtr-language') {
                 log.device.push(['setLanguage', write.value]);
                 value(await host.setLanguage({ storedLanguage: write.value, systemLocale: device.systemLocale ?? 'en-US' }));
+            } else if (write.key === 'mindwtr:appSearchWipeOwed') {
+                // RN's writeAppSearchIndexingEnabled(false) stores it first, inside the same call (pass O2c).
+                expect(write.value).toBe('true');
             } else if (write.key === 'mindwtr:appSearchIndexingEnabled') {
                 const enabled = write.value === 'true';
                 log.device.push(['writeAppSearchIndexingEnabled', enabled]);
@@ -646,6 +649,9 @@ describe('native host contract: Settings', () => {
         expect({ ...after, appearance: before.appearance, syncPreferencesUpdatedAt: before.syncPreferencesUpdatedAt }).toEqual(before);
         expect(value(await host.setGeneralSetting({ requestId: generateUUID(), edit: { type: 'appSearch', value: true } })))
             .toEqual({ changed: false, deviceWrites: [{ key: 'mindwtr:appSearchIndexingEnabled', value: 'true' }] });
+        // Off: the owed wipe is stored before the switch goes, so a start finishes a wipe that never landed (pass O2c).
+        expect(value(await host.setGeneralSetting({ requestId: generateUUID(), edit: { type: 'appSearch', value: false } })))
+            .toEqual({ changed: false, deviceWrites: [{ key: 'mindwtr:appSearchWipeOwed', value: 'true' }, { key: 'mindwtr:appSearchIndexingEnabled', value: null }] });
         expect(value(await host.setGeneralSetting({ requestId: generateUUID(), edit: { type: 'theme', value: 'material3-dark' } })).deviceWrites)
             .toEqual([{ key: '@mindwtr_theme', value: 'material3-dark' }, { key: '@mindwtr_theme_style', value: 'material3' }]);
         expect(writes).toHaveLength(2);

@@ -40,11 +40,13 @@ const isAppSearchSupported = vi.hoisted(() => vi.fn(() => true));
 const readAppSearchIndexingEnabled = vi.hoisted(() => vi.fn(async () => true));
 const readAppSearchWipeOwed = vi.hoisted(() => vi.fn(async () => false));
 const clearAppSearchWipeOwed = vi.hoisted(() => vi.fn(async () => undefined));
+const markAppSearchWipeOwed = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('./app-search-preference', () => ({
     isAppSearchSupported,
     readAppSearchIndexingEnabled,
     readAppSearchWipeOwed,
     clearAppSearchWipeOwed,
+    markAppSearchWipeOwed,
 }));
 
 import {
@@ -222,11 +224,13 @@ describe('app-search-service', () => {
         expect(wipeAppSearchIndexNative).not.toHaveBeenCalled();
     });
 
-    it('a full reindex (switch on) settles an owed wipe too', async () => {
+    // A toggle-off can land during a reindex, and the reindex's upsert lands after its wipe: a reindex never settles an
+    // owed wipe (a stale one while the switch is on is harmless; turning it off sets it again).
+    it('a full reindex (switch on) leaves an owed wipe owed', async () => {
         readAppSearchWipeOwed.mockResolvedValue(true);
         await syncAppSearchIndexingWithPreference();
         expect(isAppSearchIndexingArmed()).toBe(true);
-        expect(clearAppSearchWipeOwed).toHaveBeenCalledTimes(1);
+        expect(clearAppSearchWipeOwed).not.toHaveBeenCalled();
     });
 
     it('a native failure is logged and swallowed, never thrown', async () => {

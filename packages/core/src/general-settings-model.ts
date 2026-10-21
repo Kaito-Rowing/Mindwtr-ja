@@ -124,6 +124,8 @@ export const MOBILE_THEME_STORAGE_KEY = '@mindwtr_theme';
 export const MOBILE_THEME_STYLE_STORAGE_KEY = '@mindwtr_theme_style';
 /** lib/app-search-preference.ts: 'true' while on; removed when off. Android 12+ only. */
 export const MOBILE_APP_SEARCH_STORAGE_KEY = 'mindwtr:appSearchIndexingEnabled';
+/** A toggle-off's AppSearch wipe that has not landed yet; a start finishes it (app-search-service.ts). */
+export const MOBILE_APP_SEARCH_WIPE_OWED_STORAGE_KEY = 'mindwtr:appSearchWipeOwed';
 
 /** A device-local write: store `value` under `key`, or remove the key when null. */
 export type SettingsDeviceWrite = { key: string; value: string | null };
@@ -139,7 +141,9 @@ export function getGeneralSettingsDeviceWrites(edit: GeneralSettingsEdit): Setti
         case 'language':
             return [{ key: LANGUAGE_STORAGE_KEY, value: edit.value }];
         case 'appSearch':
-            return [{ key: MOBILE_APP_SEARCH_STORAGE_KEY, value: edit.value ? 'true' : null }];
+            // Off: the owed wipe is stored before the switch goes, so a death between them still leaves the wipe to finish.
+            return edit.value ? [{ key: MOBILE_APP_SEARCH_STORAGE_KEY, value: 'true' }]
+                : [{ key: MOBILE_APP_SEARCH_WIPE_OWED_STORAGE_KEY, value: 'true' }, { key: MOBILE_APP_SEARCH_STORAGE_KEY, value: null }];
         default:
             return [];
     }
