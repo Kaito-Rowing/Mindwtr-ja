@@ -756,7 +756,9 @@ export const registerMindwtrTools = (
   server.registerTool(
     'mindwtr_update_project',
     {
-      description: options.localApi ? 'Update a project through the desktop Local API. Attachment replacement is unavailable.' : 'Update a project in the configured Mindwtr backend.',
+      description: options.localApi
+        ? 'Update a project through the desktop Local API. Attachment replacement is unavailable. Setting isSequential true makes a Per section project Sequential; perSectionFlow and section flow choices are managed by the apps and are read-only here.'
+        : 'Update a project in the configured Mindwtr backend. Setting isSequential true makes a Per section project Sequential; perSectionFlow and section flow choices are managed by the apps and are read-only here.',
       inputSchema: options.localApi ? updateProjectSchema.pick({ id: true, title: true, color: true, colorOverride: true, status: true, areaId: true, isSequential: true }).extend({ color: z.string().trim().min(1).optional() }).strict() : updateProjectSchema,
     },
     withReadonlyMcpErrorHandling('mindwtr_update_project', async (input) => {

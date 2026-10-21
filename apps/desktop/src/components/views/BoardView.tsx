@@ -390,14 +390,16 @@ export function BoardView() {
             // Waiting tasks hold their chain slot too (a waiting first step
             // blocks the later ones), so they join the slot computation even
             // though the board never renders them in the Next column.
-            const chainTasks = filteredTasks.filter((task) => !task.deletedAt && isSequentialChainStatus(task.status));
+            // Sequences come from the area-visible list, before criteria and search: a filter
+            // that hides step 1 must hide the step, not promote step 2 (#1429 review N1).
+            const chainTasks = areaFilteredTasks.filter((task) => !task.deletedAt && isSequentialChainStatus(task.status));
             return getSequentialFirstTaskIds(chainTasks, sequencing.sequentialProjectIds, {
                 sectionScopedProjectIds: sequencing.sectionScopedProjectIds,
                 sequentialSectionKeys: sequencing.sequentialSectionKeys,
                 sections,
             });
         });
-    }, [computeSequential, filteredTasks, sections, sequencing]);
+    }, [areaFilteredTasks, computeSequential, sections, sequencing]);
 
     const sortByProjectOrder = React.useCallback(
         (items: Task[]) => [...items].sort(compareTasksByProjectThenOrder(projectOrderMap)),

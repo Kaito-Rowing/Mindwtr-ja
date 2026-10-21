@@ -8,7 +8,7 @@ import { normalizeTaskForLoad } from './task-status';
 import { normalizeProjectLifecycleFields } from './project-status';
 import type { StorageAdapter } from './storage';
 import type { AppData, AppSettings, Area, SavedFilter, Task, TaskEditorFieldId, TaskEditorSectionId } from './types';
-import type { DerivedCache, SavedSearchWriteScope, TaskStore } from './store-types';
+import type { DerivedCache, DerivedState, SavedSearchWriteScope, TaskStore } from './store-types';
 import type { FocusControlState } from './focus-controls';
 import { buildFocusControlsModel } from './focus-controls';
 import {
@@ -70,6 +70,32 @@ const getFetchDataErrorMessage = (error: unknown): string => {
 const NON_MUTATING_SETTINGS_KEYS = new Set<keyof AppData['settings']>(SYNC_STATUS_BOOKKEEPING_SETTINGS_KEYS);
 
 let derivedCache: DerivedCache | null = null;
+
+const sameStringSet = (left: ReadonlySet<string>, right: ReadonlySet<string>): boolean => (
+    left.size === right.size && [...left].every((value) => right.has(value))
+);
+
+/**
+ * A section edit (rename, collapse, reorder) or project edit rebuilds these sets, but
+ * their contents rarely change. Keep the previous Set objects when they are equal so
+ * subscribers that compare by identity (every desktop TaskItem) do not re-render (#1429).
+ */
+const reuseEqualSequencingSets = <T extends Pick<DerivedState,
+    'sequentialProjectIds' | 'sequentialWithinSectionProjectIds' | 'sequentialSectionKeys'>>(
+    previous: DerivedState | undefined,
+    next: T,
+): T => {
+    if (!previous) return next;
+    const keep = <K extends keyof Pick<DerivedState, 'sequentialProjectIds' | 'sequentialWithinSectionProjectIds' | 'sequentialSectionKeys'>>(key: K) => (
+        previous[key] && sameStringSet(previous[key], next[key]) ? previous[key] : next[key]
+    );
+    return {
+        ...next,
+        sequentialProjectIds: keep('sequentialProjectIds'),
+        sequentialWithinSectionProjectIds: keep('sequentialWithinSectionProjectIds'),
+        sequentialSectionKeys: keep('sequentialSectionKeys'),
+    };
+};
 
 export const clearDerivedCache = () => {
     derivedCache = null;
@@ -1683,7 +1709,8 @@ export const createSettingsActions = ({
                     sequentialSectionKeys: previous.sequentialSectionKeys,
                     focusedProjectCount: previous.focusedProjectCount,
                 }
-                : computeProjectDerivedState(state._allProjects, state._projectsById, state._allSections);
+                : reuseEqualSequencingSets(previous,
+                    computeProjectDerivedState(state._allProjects, state._projectsById, state._allSections));
         const derived = {
             ...projectDerived,
             ...taskDerived,

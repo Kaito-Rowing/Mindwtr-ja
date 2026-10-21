@@ -59,7 +59,7 @@ const TOOL_NAMES: &[(&str, &str)] = &[
     ("mindwtr_get_task", "Get a task by ID."),
     ("mindwtr_restore_task", "Restore a soft-deleted task."),
     ("mindwtr_add_project", "Add a project with title, color, status, areaId and isSequential."),
-    ("mindwtr_update_project", "Update a project with title, color, status, areaId and isSequential."),
+    ("mindwtr_update_project", "Update a project with title, color, status, areaId and isSequential. Setting isSequential true makes a Per section project Sequential; perSectionFlow and section flow choices are managed by the apps and are read-only here."),
     ("mindwtr_delete_project", "Soft-delete a project."),
 ];
 

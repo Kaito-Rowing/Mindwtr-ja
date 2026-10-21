@@ -92,9 +92,10 @@ export type ProjectFlowModeChange = {
  * - Sequential keeps the stored within/across sections choice.
  * - Leaving Per section writes perSectionFlow false (never absent), so the
  *   old-client keep rule in sync cannot bring it back.
- * - Entering Per section from "Sequential, within sections" gives every live
- *   section without a stored choice Sequential, so nothing changes for the user.
- *   From any other mode those sections stay unset, which reads as Parallel.
+ * - Entering Per section gives every live section without a stored choice an
+ *   explicit one: Sequential from "Sequential, within sections", Parallel from any
+ *   other mode. Nothing changes for the user, and a later trip through "within
+ *   sections" cannot flip those sections to Sequential.
  * - Stored section choices are never touched; they come back on return.
  */
 export function planProjectFlowModeChange(
@@ -114,11 +115,9 @@ export function planProjectFlowModeChange(
         && normalizeProjectSequentialScope(project.sequentialScope) === 'section';
     return {
         project: { isSequential: false, perSectionFlow: true },
-        sections: fromWithinSections
-            ? sections
-                .filter((section) => section.projectId === project.id && !section.deletedAt && section.isSequential === undefined)
-                .map((section) => ({ id: section.id, isSequential: true }))
-            : [],
+        sections: sections
+            .filter((section) => section.projectId === project.id && !section.deletedAt && section.isSequential === undefined)
+            .map((section) => ({ id: section.id, isSequential: fromWithinSections })),
     };
 }
 

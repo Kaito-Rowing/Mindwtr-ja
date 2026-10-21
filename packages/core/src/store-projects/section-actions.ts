@@ -23,6 +23,7 @@ export const buildNewSection = (input: { id: string; projectId: string; title: s
     description: input.initialProps?.description,
     order: Number.isFinite(input.initialProps?.order) ? input.initialProps!.order! : input.orderMax + 1,
     isCollapsed: input.initialProps?.isCollapsed ?? false,
+    ...(typeof input.initialProps?.isSequential === 'boolean' ? { isSequential: input.initialProps.isSequential } : {}),
     rev: 1,
     revBy: input.deviceId,
     createdAt: input.initialProps?.createdAt ?? input.now,

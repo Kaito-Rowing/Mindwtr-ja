@@ -2133,6 +2133,9 @@ private final class Engine: @unchecked Sendable {
     private var projectFileAddTurn: ProjectAddTurn?
     private static let projectDownloadMethod = "projectFileAvailabilityOwned"
     private static let projectDownloadFailure = HostFailure("Project download could not be confirmed; retry the retained download")
+    /// Core's PROJECT_SQLITE_COLUMNS: 26 cells through v1.3.6, then colorOverride and perSectionFlow (#1422, #1429).
+    /// Same range as core's padProjectSqliteCells; core sends its current list, so a newer core never fails this check.
+    private static let projectColumnCounts = 26...28
     private enum ProjectDownloadPhase: String, Codable, CaseIterable { case intent, stagePrepared, stageFilled, published, domainSaved, settled }
     private struct ProjectDownloadState: Codable {
         let version: Int
@@ -25656,7 +25659,7 @@ private final class Engine: @unchecked Sendable {
               let selected = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any],
               selected["id"] as? String == attachment, selected["kind"] as? String == "file", selected["deletedAt"] == nil,
               let target = preflight["targetURI"] as? String, taskDownloadManagedPath(target, root: try projectManagedURI()),
-              state.columns.count == 26, Set(state.columns).count == 26,
+              Self.projectColumnCounts.contains(state.columns.count), Set(state.columns).count == state.columns.count,
               Set(before.keys) == Set(state.columns).union(["_rowid"]), Self.isInteger(before["_rowid"]), before["id"] as? String == project,
               before["deletedAt"] is NSNull, before["purgedAt"] is NSNull,
               let rawBefore = preflight["rawBefore"] as? [Any], rawBefore.count == state.columns.count,
@@ -25971,7 +25974,7 @@ private final class Engine: @unchecked Sendable {
             guard Set(wrapper.keys) == Set(["preflight", "columns", "initialURL"]), let preflight = wrapper["preflight"] as? [String: Any],
                   let columns = wrapper["columns"] as? [String], let initial = wrapper["initialURL"] as? String,
                   let attachmentJSON = preflight["attachmentJSON"] as? String, let target = preflight["targetURI"] as? String,
-                  let rawBefore = preflight["rawBefore"] as? [Any], columns.count == 26, Set(columns).count == 26,
+                  let rawBefore = preflight["rawBefore"] as? [Any], Self.projectColumnCounts.contains(columns.count), Set(columns).count == columns.count,
                   rawBefore.count == columns.count,
                   Self.ownedEqual(try Self.ownedJSON(columns.map { nativeBefore[$0] ?? NSNull() }), try Self.ownedJSON(rawBefore)),
                   Self.ownedEqual(turn.deviceBeforeJSON, try Self.ownedJSON([preflight["deviceIdBefore"] as Any])),

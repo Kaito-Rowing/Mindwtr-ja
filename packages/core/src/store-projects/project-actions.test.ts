@@ -479,6 +479,35 @@ describe('project actions', () => {
         expect(await setProjectFlowMode('missing', 'parallel')).toEqual({ success: false, error: 'Project not found' });
     });
 
+    it('keeps the sequencing sets stable across section edits that do not change them (#1429)', async () => {
+        const at = '2026-06-01T00:00:00.000Z';
+        const project: Project = { id: 'trip', title: 'Camping Trip', status: 'active', color: '#6B7280', order: 0,
+            tagIds: [], perSectionFlow: true, rev: 1, createdAt: at, updatedAt: at };
+        const sections: Section[] = [
+            { id: 'book', projectId: 'trip', title: 'Book campsite', order: 0, isSequential: true, rev: 1, createdAt: at, updatedAt: at },
+            { id: 'prep', projectId: 'trip', title: 'Prep', order: 1, rev: 1, createdAt: at, updatedAt: at },
+        ];
+        useTaskStore.setState({ _allProjects: [project], _projectsById: new Map([[project.id, project]]),
+            _allSections: sections, _sectionsById: new Map(sections.map((row) => [row.id, row])) });
+        const sets = () => {
+            const derived = useTaskStore.getState().getDerivedState();
+            return [derived.sequentialProjectIds, derived.sequentialWithinSectionProjectIds, derived.sequentialSectionKeys];
+        };
+        const before = sets();
+        expect([...before[2]]).toEqual(['trip:book']);
+        const { updateSection, reorderSections } = useTaskStore.getState();
+        await updateSection('prep', { title: 'Pack' });
+        await updateSection('book', { isCollapsed: true });
+        await reorderSections('trip', ['prep', 'book']);
+        const after = sets();
+        after.forEach((set, index) => expect(set).toBe(before[index]));
+        await updateSection('prep', { isSequential: true });
+        const changed = sets();
+        expect(changed[2]).not.toBe(before[2]);
+        expect([...changed[2]].sort()).toEqual(['trip:book', 'trip:prep']);
+        expect(changed[0]).toBe(before[0]);
+    });
+
     it('does not treat an omitted Area patch or a same-Area selection as a move', async () => {
         const { addArea, addProject, updateProject } = useTaskStore.getState();
         const area = await addArea('Alpha');

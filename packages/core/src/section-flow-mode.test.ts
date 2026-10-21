@@ -210,11 +210,23 @@ describe('planProjectFlowModeChange (#1429)', () => {
         });
     });
 
-    it('leaves unset sections Parallel from Parallel or "Sequential, across sections"', () => {
+    it('stamps unset sections Parallel from Parallel or "Sequential, across sections"', () => {
         const parallel = { ...trip, perSectionFlow: undefined };
-        expect(planProjectFlowModeChange(parallel, [book, later], 'perSection')?.sections).toEqual([]);
+        expect(planProjectFlowModeChange(parallel, [book, later], 'perSection')?.sections).toEqual([{ id: 'later', isSequential: false }]);
         const across = { ...trip, isSequential: true, perSectionFlow: undefined, sequentialScope: 'project' as const };
-        expect(planProjectFlowModeChange(across, [book, later], 'perSection')?.sections).toEqual([]);
+        expect(planProjectFlowModeChange(across, [book, later], 'perSection')?.sections).toEqual([{ id: 'later', isSequential: false }]);
+    });
+
+    it('keeps a Parallel section Parallel after a trip through "Sequential, within sections"', () => {
+        const apply = (rows: Section[], plan: ReturnType<typeof planProjectFlowModeChange>) => rows.map((row) => {
+            const choice = plan?.sections.find((entry) => entry.id === row.id);
+            return choice ? { ...row, isSequential: choice.isSequential } : row;
+        });
+        const parallel = { ...trip, perSectionFlow: undefined };
+        let rows = apply([later], planProjectFlowModeChange(parallel, [later], 'perSection'));
+        const within = { ...trip, isSequential: true, perSectionFlow: false, sequentialScope: 'section' as const };
+        rows = apply(rows, planProjectFlowModeChange(within, rows, 'perSection'));
+        expect(rows[0].isSequential).toBe(false);
     });
 
     it('writes an explicit off when leaving Per section and never touches stored choices', () => {
