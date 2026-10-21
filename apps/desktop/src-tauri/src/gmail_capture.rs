@@ -1227,10 +1227,7 @@ mod tests {
     ) -> (tempfile::TempDir, Arc<Context>, Arc<MemoryVault>) {
         let directory = tempfile::Builder::new()
             .prefix("gmail-test-")
-            .tempdir_in(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../../.orchestrator/tasks/gmail-1326"
-            ))
+            .tempdir_in(env!("CARGO_MANIFEST_DIR"))
             .unwrap();
         let vault = Arc::new(MemoryVault::default());
         let credentials = account();
