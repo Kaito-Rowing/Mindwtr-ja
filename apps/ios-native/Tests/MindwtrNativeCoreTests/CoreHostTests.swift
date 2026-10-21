@@ -4310,7 +4310,9 @@ final class CoreHostTests: XCTestCase {
         let office = try await read(nextInput(chip(none, "@office")))
         XCTAssertEqual(try ids(office), ["contexts-combo", "contexts-office"])
         XCTAssertEqual((office["selection"] as? [String: Any])?["tokens"] as? [String], ["@office"])
-        let andInput = try nextInput(chip(office, "#blue"))
+        // A tap switches to the chip alone; its additive press (long-press) combines (#1427).
+        XCTAssertEqual((try chip(office, "#blue")["next"] as? [String: Any])?["tokens"] as? [String], ["#blue"])
+        let andInput = try nextInput(XCTUnwrap(chip(office, "#blue")["additive"] as? [String: Any]))
         let both = try await read(andInput)
         XCTAssertEqual(try ids(both), ["contexts-combo"])
         let combo = try XCTUnwrap((both["rows"] as? [[String: Any]])?.first)

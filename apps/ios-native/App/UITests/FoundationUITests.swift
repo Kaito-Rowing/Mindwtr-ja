@@ -8725,11 +8725,14 @@ final class FoundationUITests: XCTestCase {
         enabled(app.buttons[title])
         let id = String(app.buttons[title].identifier.dropFirst("task-title-".count))
         searchChips("missing-" + suffix)
-        // Contexts search filters chips only; a selected task is still visible.
+        // Contexts search filters chips only; a selected task is still visible, and so is its selected chip (#1301).
         enabled(app.buttons[title])
-        XCTAssertFalse(app.buttons["contexts-chip-" + first].exists)
+        XCTAssertTrue(app.buttons["contexts-chip-" + first].exists)
+        XCTAssertFalse(app.buttons["contexts-chip-" + second].exists)
         searchChips(second)
-        tap("contexts-chip-" + second)
+        // A long-press adds a token; a tap would switch to it alone (#1427).
+        enabled(app.buttons["contexts-chip-" + second])
+        app.buttons["contexts-chip-" + second].press(forDuration: 1)
         selected("contexts-chip-" + second)
         selected("contexts-match-all")
         tap("contexts-match-any")

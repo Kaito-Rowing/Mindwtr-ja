@@ -214,6 +214,7 @@ import {
     getContextsMatchModeLabels,
     getContextsTokenPicker,
     resolveContextsMatchMode,
+    selectContextsToken,
     toggleContextsNoContext,
     toggleContextsToken,
     type ContextsTokenPicker,
@@ -4121,8 +4122,13 @@ export type NativeContextsChip = {
     accessibilityLabel: string;
     count: number;
     selected: boolean;
-    /** The selection after tapping this chip. */
+    /** The selection after tapping this chip: a token chip switches to itself, or clears when alone (#1427). */
     next: { tokens: string[]; matchMode: ContextOrTagMatchMode };
+    /**
+     * A token chip's additive press (RN's long-press and its accessibility action): the selection
+     * with this token toggled in or out, and the action's label. Absent on All and No context.
+     */
+    additive?: { label: string; next: { tokens: string[]; matchMode: ContextOrTagMatchMode } };
 };
 export type NativeContextsTokenAction = ContextsTokenPicker & { field: BulkTaskTokenField; mode: BulkTaskTokenMode; enabled: boolean };
 export type NativeContextsView = {
@@ -4608,7 +4614,8 @@ function createListViewMethods(deps: ListViewDeps) {
                         // A child chip after its parent shows "/leaf"; id and accessibility label keep the full token (#1428).
                         ...model.tokenChips.map((chip, index) => ({
                             id: chip.token, kind: chip.kind, label: chipLabels[index].label, accessibilityLabel: `${chip.token} (${chip.count})`,
-                            count: chip.count, selected: chip.selected, next: next(toggleContextsToken(tokens, chip.token), matchMode),
+                            count: chip.count, selected: chip.selected, next: next(selectContextsToken(tokens, chip.token), matchMode),
+                            additive: { label: chip.selected ? t('filters.remove') : t('common.add'), next: next(toggleContextsToken(tokens, chip.token), matchMode) },
                         })),
                     ],
                     matchMode: model.showMatchMode ? {

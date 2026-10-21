@@ -351,6 +351,18 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         expect(saved.projects.find(({ id }) => id === 'p-shelved')?.status).toBe('active');
     });
 
+    // RN's chip accessibility action is the additive press, labelled Add or Remove filter (#1427).
+    it('labels a token chip\'s additive press Add or Remove filter, and gives All and No context none', async () => {
+        const { host } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const view = value(host.getContextsView({ tokens: ['@phone'], offset: 0, limit: 100 }));
+        const chip = (id: string) => view.chips.find((entry) => entry.id === id)!;
+        expect(chip('all').additive).toBeUndefined();
+        expect(chip('none').additive).toBeUndefined();
+        expect(chip('@phone').additive).toEqual({ label: 'Remove filter', next: { tokens: [], matchMode: 'all' } });
+        expect(chip('#work').additive).toEqual({ label: 'Add', next: { tokens: ['@phone', '#work'], matchMode: 'all' } });
+        expect(chip('#work').next).toEqual({ tokens: ['#work'], matchMode: 'all' });
+    });
+
     it('forwards saved unused tokens to Contexts Add and keeps Remove selected-only', async () => {
         const { host } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
         const stamp = '2026-10-20T00:00:00.000Z';

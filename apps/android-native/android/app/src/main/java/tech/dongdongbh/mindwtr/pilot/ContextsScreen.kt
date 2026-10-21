@@ -3,7 +3,9 @@ package tech.dongdongbh.mindwtr.pilot
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +46,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -57,6 +60,7 @@ import org.json.JSONObject
  * No context, each context and tag, with core's counts), core's All/Any switch, the bulk bar while rows are selected (core's statuses, token actions and Delete), core's rows, and core's empty
  * state. A row swipes right to core's status action, left to Delete with core's Undo, and a long-press selects it.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ContextsList(model: InboxViewModel) = with(model.menu) {
     val shown = page ?: return
@@ -88,9 +92,13 @@ fun ContextsList(model: InboxViewModel) = with(model.menu) {
                         val on = chip.getBoolean("selected")
                         val count = chip.getInt("count")
                         val shape = RoundedCornerShape(16.dp)
+                        // RN's chip (#1427): a tap switches to core's `next`; a token chip's long-press, also TalkBack's labelled
+                        // long-press action, applies core's `additive` selection. All and No context have no long-press.
+                        val additive = chip.optJSONObject("additive")
                         Row(Modifier.heightIn(min = 44.dp).clip(shape).background(if (on) c.tint else c.filterBg).border(1.dp, c.border, shape)
-                            .selectable(selected = on, enabled = idle, role = Role.Button) { contextsChip(chip.getJSONObject("next")) }
-                            .semantics { contentDescription = chip.getString("accessibilityLabel") }.padding(horizontal = 12.dp, vertical = 6.dp),
+                            .combinedClickable(enabled = idle, role = Role.Button, onLongClickLabel = additive?.optString("label"),
+                                onLongClick = additive?.let { { contextsChip(it.getJSONObject("next")) } }) { contextsChip(chip.getJSONObject("next")) }
+                            .semantics { contentDescription = chip.getString("accessibilityLabel"); this.selected = on }.padding(horizontal = 12.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(chip.getString("label"), style = rnText(13, 500), color = if (on) c.onTint else c.text)
                             Box(Modifier.widthIn(min = 18.dp).clip(RoundedCornerShape(8.dp)).background(if (on) c.cardBg else theme.chipBadge)
@@ -188,7 +196,7 @@ fun ListSearchField(value: String, placeholder: String, modifier: Modifier, onCh
         })
 }
 
-/** Contexts' chip: the selection core put on it (its `next`), read at once. */
+/** Contexts' chip: the selection core put on it (its `next`, or its additive press's), read at once. */
 internal fun MenuModel.contextsChip(next: JSONObject) {
     editOwn("contexts") { put("tokens", next.getJSONArray("tokens")).put("matchMode", next.getString("matchMode")) }
     reload()

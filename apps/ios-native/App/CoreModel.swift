@@ -19450,9 +19450,10 @@ final class CoreModel: ObservableObject {
         requestContextsRead()
     }
 
-    func selectContextsChip(_ id: String) {
+    /// A chip tap, or with `additive` a token chip's long-press (#1427).
+    func selectContextsChip(_ id: String, additive: Bool = false) {
         guard contextsControlsEnabled, contexts.objects("chips").contains(where: { $0.text("id") == id }) else { return }
-        contextsIntents.append(["kind": "chip", "value": id])
+        contextsIntents.append(["kind": "chip", "value": id, "additive": additive])
         contextsLoadedDepth = pageSize
         requestContextsRead(delay: 0)
     }
@@ -19549,7 +19550,8 @@ final class CoreModel: ObservableObject {
                     selection = controls.object("selection")
                     if intent.text("kind") == "chip" {
                         if let chip = controls.objects("chips").first(where: { $0.text("id") == intent.text("value") }) {
-                            selection = chip.object("next")
+                            let additive = chip.object("additive")
+                            selection = intent.flag("additive") && !additive.isEmpty ? additive.object("next") : chip.object("next")
                         }
                     } else if let option = controls.object("matchMode").objects("options").first(where: { $0.text("mode") == intent.text("value") }) {
                         selection["matchMode"] = option.text("mode")

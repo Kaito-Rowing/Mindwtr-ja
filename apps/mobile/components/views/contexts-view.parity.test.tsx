@@ -136,6 +136,7 @@ const settingsVariants: Record<string, AppSettings> = {
 type Action =
   | ['search', string]
   | ['chip', string]
+  | ['chipTap', string]
   | ['matchMode', 'all' | 'any']
   | ['row', string, 'edit' | 'remove' | 'toggleSelect']
   | ['row', string, 'changeStatus', string]
@@ -173,6 +174,24 @@ export const scenarios: Scenario[] = [
       ['chip', 'No context'],
       ['chip', '#focus'],
       ['chip', 'All Contexts'],
+    ],
+  },
+  {
+    name: 'a tap switches to one token, long-press combines',
+    settings: 'base',
+    actions: [
+      ['chipTap', '@phone'],
+      ['chipTap', '#work'],
+      ['chip', '@phone'],
+      ['matchMode', 'any'],
+      ['chipTap', '@phone'],
+      ['chipTap', '@phone'],
+      ['chipTap', 'No context'],
+      ['chipTap', '@computer/deep'],
+      ['chip', '@computer/deep'],
+      ['chipTap', 'No context'],
+      ['chip', '#home'],
+      ['chipTap', 'All Contexts'],
     ],
   },
   {
@@ -398,13 +417,13 @@ async function perform(root: ReactTestInstance, action: Action) {
     await act(async () => { hostsOf(root, 'TextInput')[0].props.onChangeText(action[1]); });
     return;
   }
-  if (kind === 'chip') {
+  if (kind === 'chip' || kind === 'chipTap') {
     const chip = root.findAll((node) => String(node.type) === 'Pressable' && (
       node.props.accessibilityLabel === action[1] || String(node.props.accessibilityLabel).startsWith(`${action[1]} (`)
     ))[0];
     if (!chip) throw new Error(`No chip ${action[1]}`);
-    // The fixture's chip presses toggle (the native host's `next`): on RN that is the long-press (#1427).
-    await act(async () => { (chip.props.onLongPress ?? chip.props.onPress)(); });
+    // 'chip' is the additive press, RN's long-press (the host's `additive`); 'chipTap' the tap (`next`) (#1427).
+    await act(async () => { ((kind === 'chip' && chip.props.onLongPress) || chip.props.onPress)(); });
     return;
   }
   if (kind === 'matchMode') {
