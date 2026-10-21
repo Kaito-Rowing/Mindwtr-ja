@@ -87,6 +87,17 @@ function collectCodeSlugs({ file, source }) {
         if (typeof context?.releaseCheck === "string") sites.push({ file, slug: context.releaseCheck });
       } catch { /* Invalid JSON cannot supply a Diagnostics context. */ }
     }
+    // Paired inline branches use the same simple condition for message and raw context.
+    for (const call of source.matchAll(
+      /\bcall\(\s*"logLine"\s*,\s*argumentsJSON:\s*(?:self\.)?json\(\s*\[\s*([A-Za-z_]\w*)\s*\?\s*"(?:\\[\s\S]|[^"\\])*"\s*:\s*"(?:\\[\s\S]|[^"\\])*"\s*,\s*\1\s*\?\s*(#+)"([\s\S]*?)"\2\s*:\s*(#+)"([\s\S]*?)"\4\s*,?\s*\]\s*\)\s*\)/g,
+    )) {
+      for (const raw of [call[3], call[5]]) {
+        try {
+          const context = JSON.parse(raw);
+          if (typeof context?.releaseCheck === "string") sites.push({ file, slug: context.releaseCheck });
+        } catch { /* Invalid JSON cannot supply a Diagnostics context. */ }
+      }
+    }
     // Dynamic scalar fields use a flat Swift dictionary encoded at the call site.
     for (const call of source.matchAll(
       /\bcall\(\s*"logLine"\s*,\s*argumentsJSON:\s*(?:self\.)?json\(\s*\[\s*"(?:\\[\s\S]|[^"\\])*"\s*,\s*try\s+(?:self\.)?json\(\s*\[((?:"(?:\\[\s\S]|[^"\\])*"|[^"[\]])*)\]\s*\)\s*,?\s*\]\s*\)\s*\)/g,
@@ -275,6 +286,33 @@ describe("release diagnostics ledger", () => {
         "Wrong field type", #"{"releaseCheck":123}"#,
       ]))
     ` })).toEqual([]);
+  });
+
+  it("resolves both actual Board inline Swift message/context branches", () => {
+    const file = "apps/ios-native/App/CoreModel.swift";
+    const source = sources.find((entry) => entry.file === file).source;
+    const start = source.indexOf('let fromDone = capture.status == "done"');
+    const end = source.indexOf("await runBoardAction(request)", start);
+    expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+    expect(collectCodeSlugs({ file, source: source.slice(start, end) })).toEqual([
+      { file, slug: "v1.3.7/ios-board-done-cross-drop" },
+      { file, slug: "v1.3.7/ios-board-cross-column-drag" },
+    ]);
+  });
+
+  it("rejects unused, non-logLine, mismatched and malformed conditional Swift contexts", () => {
+    const file = "apps/ios-native/App/Example.swift";
+    const branches = `fromDone ? "Done" : "Move",
+      fromDone ? #"{"releaseCheck":"v1.3.7/conditional-done"}"# : #"{"releaseCheck":"v1.3.7/conditional-move"}"#`;
+    for (const source of [
+      `let unused = json([${branches}])`,
+      `host.call("other", argumentsJSON: json([${branches}]))`,
+      `host.call("logLine", argumentsJSON: json([${branches.replace('fromDone ? #', 'other ? #')}]))`,
+      `host.call("logLine", argumentsJSON: json([${branches.replaceAll('"}', '",}')}]))`,
+      'host.call("logLine", argumentsJSON: json([fromDone ? "Done" : "Move", fromDone ? #"{"releaseCheck":1}"# : #"{"releaseCheck":null}"#]))',
+    ]) expect(collectCodeSlugs({ file, source })).toEqual([]);
+    expect(collectCodeSlugs({ file: "apps/Example.ts",
+      source: `host.call("logLine", argumentsJSON: json([${branches}]))` })).toEqual([]);
   });
 
   it("resolves Swift dictionary contexts only when immediately encoded into logLine", () => {

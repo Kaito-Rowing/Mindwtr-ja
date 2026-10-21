@@ -46,9 +46,9 @@ describe('Board Done reactivation through the existing prepared Move', () => {
     it.each((['inbox', 'next', 'waiting', 'someday'] as const).flatMap(status => [
         { status, inferred: false }, { status, inferred: true }]))('matches actual persisted RN Done → $status (Section-only=$inferred)', async ({ status, inferred }) => {
         vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(NOW));
-        const data = seed(task({ ...(inferred ? { projectId: undefined } : {}) })); const rn = await open(data); let expected: unknown;
+        const data = seed(task({ ...(inferred ? { projectId: undefined } : {}) })); const rn = await open(data); let expected: Awaited<ReturnType<typeof raw>>;
         try { await useTaskStore.getState().updateTask(ID, { status }); await flushPendingSave();
-            expected = (await raw(rn)).tasks;
+            expected = await raw(rn);
         } finally { await rn.close(); }
         const native = await open(data);
         try {
@@ -57,9 +57,10 @@ describe('Board Done reactivation through the existing prepared Move', () => {
             const envelope = prepare(native, status); const before = await raw(native);
             expect(value(native.host.validatePreparedBoardAction(envelope))).toEqual({ changed: true, open: null });
             expect(value(await native.host.commitPreparedBoardAction(envelope))).toEqual({ changed: true, open: null });
-            const after = await raw(native); expect(after.tasks).toEqual(expected);
-            expect(after.projects).toEqual(before.projects); expect(after.sections).toEqual(before.sections); expect(after.settings).toEqual(before.settings);
-            await native.restart(); expect((await raw(native)).tasks).toEqual(expected);
+            const after = await raw(native); expect(after.tasks).toEqual(expected!.tasks);
+            expect(after.projects).toEqual(before.projects); expect(after.sections).toEqual(before.sections); expect(after.settings).toEqual(expected!.settings);
+            await native.restart(); const reopened = await raw(native);
+            expect(reopened.tasks).toEqual(expected!.tasks); expect(reopened.settings).toEqual(expected!.settings);
         } finally { await native.close(); }
     });
 

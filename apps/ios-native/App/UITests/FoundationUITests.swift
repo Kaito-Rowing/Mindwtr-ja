@@ -5485,7 +5485,7 @@ final class FoundationUITests: XCTestCase {
         }
         boardTap(app, "inbox-process-primary")
         boardTap(app, "process-inbox-mode")
-        let title = app.textFields["process-inbox-title"]
+        let title = app.textViews["process-inbox-title"]
         let scroll = app.scrollViews["process-inbox-scroll"]
         for (index, choice) in ["reference", "done", "trash"].enumerated() {
             boardEnabled(title)
@@ -5546,13 +5546,13 @@ final class FoundationUITests: XCTestCase {
         }
         boardTap(app, "inbox-process-primary")
         let scroll = app.scrollViews["process-inbox-scroll"]
-        let title = app.textFields["process-inbox-title"]
+        let title = app.textViews["process-inbox-title"]
         func processTap(_ id: String) {
             revealPagedElement(app, app.buttons[id], in: scroll)
             boardTap(app, id)
         }
         func processText(_ id: String, _ value: String) {
-            let field = app.textFields[id]
+            let field = ["process-inbox-title", "process-inbox-notes"].contains(id) ? app.textViews[id] : app.textFields[id]
             revealPagedElement(app, field, in: scroll)
             replaceTextView(field, with: value)
         }
@@ -5592,7 +5592,7 @@ final class FoundationUITests: XCTestCase {
         XCTAssertEqual(title.value as? String, "Process edited final")
         XCTAssertEqual(app.staticTexts["process-inbox-progress"].label, "0/4 tasks")
         processTap("process-inbox-notes-toggle")
-        XCTAssertEqual(app.textFields["process-inbox-notes"].value as? String, "Saved notes final")
+        XCTAssertEqual(app.textViews["process-inbox-notes"].value as? String, "Saved notes final")
         processText("process-inbox-title", "Unsaved close draft")
         boardTap(app, "process-inbox-close")
         boardEnabled(app.buttons["inbox-process-primary"])
@@ -5906,6 +5906,154 @@ final class FoundationUITests: XCTestCase {
         XCTAssertTrue(original.exists)
         XCTAssertFalse(app.buttons[copyID].exists)
         XCTAssertEqual(cards.count, 1)
+    }
+
+    func testBoardCrossColumnDragNormalAndColdRead() throws {
+        try boardCrossColumnRoundTrip("NORMAL")
+    }
+
+    func testBoardCrossColumnDragLargestTextAndColdRead() throws {
+        try boardCrossColumnRoundTrip("LARGEST", largest: true)
+    }
+
+    private let boardCrossSource = "board-cross-source"
+    private let boardCrossPeer = "board-cross-peer"
+
+    private func boardCrossBody(_ app: XCUIApplication, _ status: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "board-drop-" + status).firstMatch
+    }
+
+    private func boardCrossAssert(_ app: XCUIApplication, status: String, completionOffer: Bool = false) {
+        boardEnabled(app.buttons["board-filter-open"])
+        if completionOffer { boardEnabled(app.buttons["task-completion-undo"], timeout: 5) }
+        for column in ["inbox", "next", "waiting", "someday", "done"] {
+            let expected = (column == status ? 1 : 0) + (column == "waiting" ? 1 : 0)
+            XCTAssertEqual(app.staticTexts["board-count-" + column].label, String(expected))
+            XCTAssertEqual(boardCrossBody(app, column).buttons["board-task-" + boardCrossSource].exists, column == status)
+        }
+        XCTAssertTrue(boardCrossBody(app, "waiting").buttons["board-task-" + boardCrossPeer].exists)
+        XCTAssertFalse(app.buttons["task-view-close"].exists)
+        XCTAssertEqual(app.buttons["task-completion-undo"].exists, completionOffer)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+    }
+
+    private func boardCrossDrag(_ app: XCUIApplication, from source: String, to destination: String, completionOffer: Bool = false) throws {
+        let handle = app.images["board-drag-" + boardCrossSource]
+        let body = boardCrossBody(app, destination)
+        let scroll = app.scrollViews["board-scroll"]
+        boardEnabled(handle); boardEnabled(body)
+        func finite(_ frame: CGRect) -> Bool {
+            [frame.minX, frame.minY, frame.width, frame.height, frame.maxX, frame.maxY].allSatisfy { $0.isFinite }
+                && frame.width > 0 && frame.height > 0
+        }
+        func targetPoint(_ sourceFrame: CGRect, _ target: CGRect) -> CGPoint {
+            let inset = min(CGFloat(24), target.height / 2)
+            return CGPoint(x: target.midX, y: sourceFrame.midY < target.midY ? target.minY + inset : target.maxY - inset)
+        }
+        // Scroll before admission only. Changing the viewport during a drag cancels it.
+        for _ in 0..<8 {
+            let viewport = app.frame.intersection(scroll.frame), sourceFrame = handle.frame, target = body.frame
+            guard finite(viewport), finite(sourceFrame), finite(target) else {
+                XCTFail("Cross-column drag requires finite measured source, body and viewport")
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let point = targetPoint(sourceFrame, target)
+            let required = sourceFrame.union(CGRect(x: point.x - 1, y: point.y - 1, width: 2, height: 2))
+            guard required.height < viewport.height, required.minX >= viewport.minX, required.maxX <= viewport.maxX else {
+                XCTFail("The externally seeded adjacent source and destination must fit at this text size")
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if viewport.contains(sourceFrame), viewport.contains(point) { break }
+            let shift = viewport.midY - required.midY, distance = min(abs(shift), viewport.height * 0.4)
+            let start = CGPoint(x: viewport.minX + 4, y: viewport.minY + viewport.height * (shift > 0 ? 0.3 : 0.7))
+            let end = CGPoint(x: start.x, y: start.y + (shift > 0 ? distance : -distance))
+            try task735Coordinate(app, start).press(forDuration: 0.05, thenDragTo: task735Coordinate(app, end),
+                withVelocity: .slow, thenHoldForDuration: 0.2)
+        }
+        var prior: [CGRect] = []
+        let stable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let viewport = app.frame.intersection(scroll.frame), frames = [handle.frame, body.frame, viewport]
+            let settled = prior == frames; prior = frames
+            return settled && frames.allSatisfy(finite) && viewport.contains(handle.frame)
+                && viewport.contains(targetPoint(handle.frame, body.frame)) && handle.isHittable
+        }, object: nil)
+        guard XCTWaiter.wait(for: [stable], timeout: 10) == .completed else {
+            XCTFail("Cross-column source and destination must settle before admission")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let origin = try task735Coordinate(app, CGPoint(x: handle.frame.midX, y: handle.frame.midY))
+        let target = try task735Coordinate(app, targetPoint(handle.frame, body.frame))
+        origin.press(forDuration: 0.8, thenDragTo: target, withVelocity: .slow, thenHoldForDuration: 0.2)
+        let moved = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !self.boardCrossBody(app, source).buttons["board-task-" + self.boardCrossSource].exists
+                && self.boardCrossBody(app, destination).buttons["board-task-" + self.boardCrossSource].exists
+                && app.buttons["board-filter-open"].isEnabled
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 20), .completed)
+        boardCrossAssert(app, status: destination, completionOffer: completionOffer)
+    }
+
+    func testBoardDoneCrossDropPublicUndoNormalAndColdRead() throws {
+        try boardDoneCrossDropRoundTrip("NORMAL")
+    }
+
+    func testBoardDoneCrossDropPublicUndoLargestTextAndColdRead() throws {
+        try boardDoneCrossDropRoundTrip("LARGEST", largest: true)
+    }
+
+    private func boardDoneCrossDropRoundTrip(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_BOARD_DONE_UI_" + role + "_LIBRARY"] else {
+            throw XCTSkip("An externally staged isolated Board Done drag library is required")
+        }
+        guard UUID(uuidString: library)?.uuidString.lowercased() == library else {
+            XCTFail("The isolated library must be a canonical lowercase UUID")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let app = XCUIApplication(); defer { app.terminate() }
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US",
+            "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardSelectAllAreas(app); boardOpen(app); boardCrossAssert(app, status: "someday")
+        try boardCrossDrag(app, from: "someday", to: "done", completionOffer: true)
+        boardTap(app, "task-completion-undo")
+        boardCrossAssert(app, status: "someday")
+        try boardCrossDrag(app, from: "someday", to: "done", completionOffer: true)
+        let expired = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+            object: app.buttons["task-completion-undo"])
+        XCTAssertEqual(XCTWaiter.wait(for: [expired], timeout: 8), .completed)
+        boardCrossAssert(app, status: "done")
+        try boardCrossDrag(app, from: "done", to: "someday")
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); boardCrossAssert(app, status: "someday")
+        XCTAssertFalse(app.staticTexts["task-completion-notice"].exists)
+    }
+
+    private func boardCrossColumnRoundTrip(_ role: String, largest: Bool = false) throws {
+        continueAfterFailure = false
+        guard let library = ProcessInfo.processInfo.environment["MINDWTR_BOARD_CROSS_COLUMN_UI_" + role + "_LIBRARY"] else {
+            throw XCTSkip("An externally staged isolated Board cross-column library is required")
+        }
+        guard UUID(uuidString: library)?.uuidString.lowercased() == library else {
+            XCTFail("The isolated library must be a canonical lowercase UUID")
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let app = XCUIApplication(); defer { app.terminate() }
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", "(en-US)", "-AppleLocale", "en_US",
+            "-AppleInterfaceStyle", "Light"]
+        if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardSelectAllAreas(app); boardOpen(app); boardCrossAssert(app, status: "next")
+        // Next starts with one card; Waiting has a protected peer; Inbox/Someday are empty.
+        var source = "next"
+        for destination in ["waiting", "someday", "waiting", "next", "inbox", "next"] {
+            try boardCrossDrag(app, from: source, to: destination); source = destination
+        }
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 40)
+        boardOpen(app); boardCrossAssert(app, status: "next")
     }
 
     func testBoardDragNormalRoundTripAndColdRead() throws {
@@ -30219,13 +30367,33 @@ extension FoundationUITests {
                     boardEnabled(search); search.tap()
                     let previous = search.value as? String ?? ""
                     search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previous.count) + parent + "\n")
-                    let token = app.buttons[prefix + "-filter-token-" + parent]
-                    if !token.isHittable { revealPagedElement(app, token, in: app.scrollViews[prefix + "-filter-picker-scroll"]) }
+                    let identifier = prefix + "-filter-token-" + parent
+                    let token = app.buttons[identifier]
+                    if state == 2 {
+                        task739FilterModalAXState(app, role: role, phase: prefix + "-reopened-selected",
+                            tokenIdentifier: identifier, prefix: prefix)
+                        let hitPointDeadline = ProcessInfo.processInfo.systemUptime + 10
+                        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                            let matches = app.buttons.matching(identifier: identifier), selected = matches.firstMatch
+                            return matches.count == 1 && selected.exists && selected.isEnabled && selected.isSelected
+                                && (selected.value as? String ?? "").isEmpty && selected.isHittable
+                        }, object: nil)
+                        guard XCTWaiter.wait(for: [ready], timeout: max(0, hitPointDeadline - ProcessInfo.processInfo.systemUptime)) == .completed else {
+                            task739FilterModalAXState(app, role: role, phase: prefix + "-reopened-selected-timeout",
+                                tokenIdentifier: identifier, prefix: prefix)
+                            XCTFail("The reopened selected token must have a native accessibility hit point before its second tap")
+                            return
+                        }
+                    } else if !token.isHittable {
+                        revealPagedElement(app, token, in: app.scrollViews[prefix + "-filter-picker-scroll"])
+                    }
                     boardEnabled(token)
                     XCTAssertEqual(app.buttons.matching(identifier: token.identifier).count, 1)
                     XCTAssertEqual(app.buttons.matching(identifier: prefix + "-filter-token-" + child).count, 1)
                     XCTAssertFalse(app.buttons[prefix + "-filter-token-" + bare].exists)
                     task738TokenState(token, selected: state == 2, value: state == 3 ? "Excluded" : "")
+                    XCTAssertTrue(token.isHittable)
+                    XCTAssertGreaterThanOrEqual(token.frame.height, 44 - 1e-6)
                     token.tap()
                     task738TokenState(token, selected: state == 1, value: state == 2 ? "Excluded" : "")
                     boardTap(app, prefix + "-filters-close")
@@ -30311,21 +30479,22 @@ extension FoundationUITests {
         XCTAssertTrue(app.descendants(matching: .any)["inbox-scroll"].firstMatch.exists)
     }
 
-    private func task739FilterModalAXState(_ app: XCUIApplication, role: String, phase: String) {
+    private func task739FilterModalAXState(_ app: XCUIApplication, role: String, phase: String,
+        tokenIdentifier: String = "inbox-filter-token-@alpha", prefix: String = "inbox") {
         // Start from an unfiltered native AX query. Export only fixed-category counts,
         // state booleans and geometry; never labels, identifiers, values or hierarchy.
         let sampleStarted = ProcessInfo.processInfo.systemUptime
         let all = app.descendants(matching: .any).allElementsBoundByIndex
         let identifiers = all.map { $0.identifier }
         func count(_ predicate: (String) -> Bool) -> Int { identifiers.filter(predicate).count }
-        let matches = app.buttons.matching(identifier: "inbox-filter-token-@alpha"), token = matches.firstMatch
-        let exists = token.exists, picker = app.scrollViews["inbox-filter-picker-scroll"]
-        let keyboard = app.keyboards.firstMatch, primary = app.buttons["inbox-process-primary"]
+        let matches = app.buttons.matching(identifier: tokenIdentifier), token = matches.firstMatch
+        let exists = token.exists, picker = app.scrollViews[prefix + "-filter-picker-scroll"]
+        let keyboard = app.keyboards.firstMatch, primary = app.buttons[prefix + "-process-primary"]
         let state = "role=\(role), phase=\(phase), axElements=\(all.count), "
             + "taskTitles=\(count { $0.hasPrefix("task-title-") }), taskStatuses=\(count { $0.hasPrefix("task-status-") }), "
-            + "header=\(count { ["inbox-title", "area-open", "search-open"].contains($0) }), "
-            + "toolbar=\(count { ["inbox-sort-open", "inbox-group-open", "inbox-filters-open"].contains($0) }), "
-            + "primary=\(count { $0 == "inbox-process-primary" }), tabs=\(count { $0.hasPrefix("tab-") || $0 == "capture-open" }), "
+            + "header=\(count { [prefix + "-title", "area-open", "search-open"].contains($0) }), "
+            + "toolbar=\(count { [prefix + "-sort-open", prefix + "-group-open", prefix + "-filters-open"].contains($0) }), "
+            + "primary=\(count { $0 == prefix + "-process-primary" }), tabs=\(count { $0.hasPrefix("tab-") || $0 == "capture-open" }), "
             + "matches=\(matches.count), exists=\(exists), enabled=\(exists && token.isEnabled), selected=\(exists && token.isSelected), "
             + "hittable=\(exists && token.isHittable), valueEmpty=\(exists && (token.value as? String ?? "").isEmpty), "
             + "valueExcluded=\(exists && (token.value as? String) == "Excluded"), "
