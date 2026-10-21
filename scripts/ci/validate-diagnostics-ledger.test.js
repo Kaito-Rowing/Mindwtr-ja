@@ -96,6 +96,15 @@ function collectCodeSlugs({ file, source }) {
         catch { /* Interpolated or unsupported Swift strings are not resolved literals. */ }
       }
     }
+    // An if-let binds an ownedJSON dictionary that its body forwards to logLine.
+    for (const call of source.matchAll(
+      /\blet\s+(\w+)\s*=\s*try\?\s*(?:Self|self)\.ownedJSON\(\s*\[((?:"(?:\\[\s\S]|[^"\\])*"|[^"[\]])*)\]\s*\)\s*\{[^{}]*?\binvoke\(\s*"logLine"\s*,\s*arguments:\s*\[[^[\]]*,\s*\1\s*\]\s*\)/g,
+    )) {
+      for (const field of call[2].matchAll(/"releaseCheck"\s*:\s*("(?:\\[\s\S]|[^"\\])*")/g)) {
+        try { sites.push({ file, slug: JSON.parse(field[1]) }); }
+        catch { /* Interpolated or unsupported Swift strings are not resolved literals. */ }
+      }
+    }
   }
   return sites;
 }
@@ -290,6 +299,34 @@ describe("release diagnostics ledger", () => {
     ` })).toEqual([
       { file, slug: "v1.3.5/native-response" },
       { file, slug: "v1.3.5/native-presentation" },
+    ]);
+  });
+
+  it("resolves Swift ownedJSON contexts only when their if-let body forwards them to logLine", () => {
+    const file = "apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift";
+    expect(collectCodeSlugs({ file, source: `
+      let unused = try? Self.ownedJSON(["releaseCheck": "v1.3.7/unused-owned"])
+      if let context = try? Self.ownedJSON(["releaseCheck": "v1.3.7/other-bridge"]) {
+          _ = try? invoke("other", arguments: ["Not a diagnostic", context])
+      }
+      if let context = try? Self.ownedJSON(["releaseCheck": "v1.3.7/other-name"]) {
+          _ = try? invoke("logLine", arguments: ["Wrong context", diagnostic])
+      }
+      if let context = try? Self.ownedJSON(["releaseCheck": "v1.3.7/outside-block"]) {
+          record(context)
+      }
+      _ = try? invoke("logLine", arguments: ["After the block", context])
+      if let raw = args.first as? String,
+         let context = try? Self.ownedJSON(["releaseCheck": "v1.3.7/owned-undo", "kind": kind, "outcome": "persisted"]) {
+          _ = try? invoke("logLine", arguments: ["Native undo persisted", context])
+      }
+      if let context = try? Self.ownedJSON(["releaseCheck": "v1.3.7/owned-message", "outcome": "confirmed"]) {
+          let message = ready ? "Ready" : "Pending"
+          _ = try? invoke("logLine", arguments: [message, context])
+      }
+    ` })).toEqual([
+      { file, slug: "v1.3.7/owned-undo" },
+      { file, slug: "v1.3.7/owned-message" },
     ]);
   });
 
