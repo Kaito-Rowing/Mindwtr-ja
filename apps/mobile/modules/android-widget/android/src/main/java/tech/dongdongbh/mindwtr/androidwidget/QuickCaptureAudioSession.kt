@@ -12,6 +12,7 @@ internal class QuickCaptureAudioSession(
   private val onTerminal: () -> Unit = {},
   val defaultStatus: String = "inbox",
   initialCaptureStatus: String? = null,
+  initialTitle: String = "",
 ) {
   var captureStatus: String? = PendingCaptureWriter.creationStatus(initialCaptureStatus)
     private set
@@ -43,7 +44,7 @@ internal class QuickCaptureAudioSession(
 
   private var state = State.IDLE
   private var status = Status.RECORD
-  private var title = ""
+  private var title = initialTitle
   private var note = ""
   private var recorder: RecordingControl? = null
   private var draft: QuickCaptureAudioDraft? = null

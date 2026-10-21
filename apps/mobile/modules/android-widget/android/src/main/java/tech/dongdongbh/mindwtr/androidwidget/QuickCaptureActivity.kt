@@ -216,6 +216,7 @@ class QuickCaptureActivity : AppCompatActivity() {
         require(modelClass.isAssignableFrom(AudioSessionModel::class.java))
         val widgetId = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
         val kind = intent.getStringExtra(WidgetRenderer.EXTRA_KIND)
+        val widgetList = if (widgetId >= 0 && kind == WidgetKind.TASKS.name) WidgetListStore.read(appContext, widgetId) else null
         val session = QuickCaptureAudioSessionStore.acquire(captureOwner(intent)) {
           lateinit var retainedSession: QuickCaptureAudioSession
           retainedSession = QuickCaptureAudioSession(
@@ -258,10 +259,12 @@ class QuickCaptureActivity : AppCompatActivity() {
             onTerminal = { QuickCaptureAudioSessionStore.release(retainedSession) },
             defaultStatus = if (savedInstanceState != null) {
               PendingCaptureWriter.creationStatus(savedInstanceState.getString(STATE_DEFAULT_STATUS)) ?: "inbox"
-            } else if (widgetId >= 0 && kind == WidgetKind.TASKS.name) {
-              PendingCaptureWriter.creationStatus(WidgetListStore.read(appContext, widgetId)) ?: "inbox"
-            } else "inbox",
+            } else {
+              PendingCaptureWriter.creationStatus(widgetList) ?: "inbox"
+            },
             initialCaptureStatus = savedInstanceState?.getString(STATE_CAPTURE_STATUS),
+            // A recreated Activity restores the user's own text; only a fresh open pre-fills.
+            initialTitle = if (savedInstanceState == null) widgetList?.let(WidgetListStore::captureText).orEmpty() else "",
           )
           retainedSession
         }

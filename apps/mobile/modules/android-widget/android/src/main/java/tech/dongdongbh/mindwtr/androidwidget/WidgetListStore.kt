@@ -15,6 +15,20 @@ object WidgetListStore {
   fun isTokenList(id: String): Boolean = id.startsWith(CONTEXT_PREFIX) || id.startsWith(TAG_PREFIX)
   const val FILTER_PREFIX = "filter:"
 
+  // Core's SIMPLE_TASK_TOKEN_RE: the only form quick-add parses without known-token help.
+  // ponytail: spaced, dotted or hierarchical tokens get no pre-fill; quick-add's quoted @"a b" form does not round-trip yet.
+  private val SIMPLE_CAPTURE_TOKEN = Regex("[\\p{L}\\p{N}_-]+")
+
+  /** Capture text for a widget showing one context or tag (#1418), e.g. `@Todd `; empty otherwise. */
+  fun captureText(listId: String): String {
+    val token = when {
+      listId.startsWith(CONTEXT_PREFIX) -> listId.removePrefix(CONTEXT_PREFIX).takeIf { it.startsWith("@") }
+      listId.startsWith(TAG_PREFIX) -> listId.removePrefix(TAG_PREFIX).takeIf { it.startsWith("#") }
+      else -> null
+    } ?: return ""
+    return if (SIMPLE_CAPTURE_TOKEN.matches(token.substring(1))) "$token " else ""
+  }
+
   fun read(context: Context, appWidgetId: Int): String {
     val stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(appWidgetId.toString(), null)
     return stored ?: DEFAULT_LIST
