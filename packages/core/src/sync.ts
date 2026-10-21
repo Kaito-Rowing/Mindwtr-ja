@@ -361,6 +361,25 @@ const preserveProjectCancellationFromStrippedPeer = (
     return winner.cancelledAt === cancelledAt ? winner : { ...winner, cancelledAt };
 };
 
+/**
+ * Both copies are archived tasks with valid archive clocks and match on every compared
+ * field except archivedAt. Equal rev and equal delete state are checked by the caller.
+ */
+const isArchiveClockTwin = <T,>(
+    local: T,
+    incoming: T,
+    entityType: string,
+    normalizeForComparison?: ComparisonNormalizer<T>,
+): boolean => {
+    if (entityType !== 'task') return false;
+    const localTask = local as unknown as Task;
+    const incomingTask = incoming as unknown as Task;
+    if (localTask.status !== 'archived' || incomingTask.status !== 'archived') return false;
+    if (!hasValidArchiveClock(localTask.archivedAt) || !hasValidArchiveClock(incomingTask.archivedAt)) return false;
+    return getMergeComparableSignature({ ...local, archivedAt: undefined }, normalizeForComparison)
+        === getMergeComparableSignature({ ...incoming, archivedAt: undefined }, normalizeForComparison);
+};
+
 function mergeEntitiesWithStats<T extends MergeableEntity>(
     local: T[],
     incoming: T[],
@@ -392,6 +411,7 @@ function* mergeEntitiesPass<T extends MergeableEntity>(
     let discardedLiveConflictWarnings = 0;
     let taskStatusResolutionWarnings = 0;
     let futureTimestampClampWarnings = 0;
+    let archiveTwinMerges = 0;
     const nowTime = nowIso ? new Date(nowIso).getTime() : NaN;
     const maxAllowedMergeTime = Number.isFinite(nowTime) ? nowTime : Date.now();
     const getStringField = (item: T, field: string): string | undefined => {
@@ -506,7 +526,10 @@ function* mergeEntitiesPass<T extends MergeableEntity>(
         const shouldCheckContentDiff = hasRevision
             ? revDiff === 0 && localDeleted === incomingDeleted
             : localDeleted === incomingDeleted;
-        const contentDiff = shouldCheckContentDiff ? !comparableContentMatches : false;
+        // #1430: two devices archiving the same task (auto-archive) give copies that differ only in archivedAt.
+        const archiveTwin = shouldCheckContentDiff && !comparableContentMatches && !localDeleted
+            && isArchiveClockTwin(normalizedLocalItem, normalizedIncomingItem, entityType, normalizeForComparison);
+        const contentDiff = shouldCheckContentDiff ? !comparableContentMatches && !archiveTwin : false;
         const unresolvedDeleteStateDiff = localDeleted !== incomingDeleted && (!hasRevision || revDiff === 0);
         const conflictReasons: ConflictReason[] = [];
         if (unresolvedDeleteStateDiff) conflictReasons.push('deleteState');
@@ -783,6 +806,18 @@ function* mergeEntitiesPass<T extends MergeableEntity>(
         }
 
         let mergedItem = mergeConflict ? mergeConflict(normalizedLocalItem, normalizedIncomingItem, winner) : winner;
+        if (archiveTwin) {
+            // The later clock on both peers, whatever the merge order: retention purges by
+            // archivedAt age, so the later value never purges before either copy would.
+            archiveTwinMerges += 1;
+            const localArchivedAt = (normalizedLocalItem as unknown as Task).archivedAt as string;
+            const incomingArchivedAt = (normalizedIncomingItem as unknown as Task).archivedAt as string;
+            const timeDiff = Date.parse(incomingArchivedAt) - Date.parse(localArchivedAt);
+            const archivedAt = timeDiff > 0 || (timeDiff === 0 && incomingArchivedAt > localArchivedAt)
+                ? incomingArchivedAt
+                : localArchivedAt;
+            if ((mergedItem as unknown as Task).archivedAt !== archivedAt) mergedItem = { ...mergedItem, archivedAt };
+        }
         if ((entityType === 'task' || entityType === 'project') && !hasValidArchiveClock((mergedItem as unknown as Task | Project).archivedAt)) {
             const other = winner === normalizedLocalItem ? normalizedIncomingItem : normalizedLocalItem;
             const withClock = other as unknown as Task | Project;
@@ -823,6 +858,13 @@ function* mergeEntitiesPass<T extends MergeableEntity>(
                 total: taskStatusResolutionWarnings,
                 elided: taskStatusResolutionWarnings - 10,
             },
+        });
+    }
+
+    if (archiveTwinMerges > 0) {
+        logInfo('Sync merge joined copies archived on two devices', {
+            scope: 'sync',
+            context: { releaseCheck: 'v1.3.7/auto-archive-converge', count: archiveTwinMerges },
         });
     }
 
