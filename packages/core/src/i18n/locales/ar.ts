@@ -922,6 +922,8 @@ export const arOverrides: Record<string, string> = {
         'settings.theme': 'سمة',
         'settings.eink': 'الحبر الإلكتروني',
         'settings.nord': 'نورد',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': 'بني داكن',
         'settings.material3Light': 'المادة 3 (الضوء)',
         'settings.material3Dark': 'المادة 3 (داكنة)',

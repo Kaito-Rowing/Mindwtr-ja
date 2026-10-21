@@ -1274,6 +1274,8 @@ export const daOverrides: Record<string, string> = {
     'settings.nord': 'Nord',
     'settings.catppuccinMacchiato': 'Catppuccin Macchiato',
     'settings.dracula': 'Dracula',
+    'settings.gruvboxLight': 'Gruvbox Light',
+    'settings.gruvboxDark': 'Gruvbox Dark',
     'settings.sepia': 'Sepia',
     'settings.oled': 'OLED / Midnat',
     'settings.material3Light': 'Material 3 (Lys)',

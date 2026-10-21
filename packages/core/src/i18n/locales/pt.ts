@@ -893,6 +893,8 @@ export const ptOverrides: Record<string, string> = {
         'settings.theme': 'Tema',
         'settings.eink': 'Tinta eletrônica',
         'settings.nord': 'Norte',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': 'Sépia',
         'settings.oled': 'OLED/meia-noite',
         'settings.material3Light': 'Material 3 (leve)',

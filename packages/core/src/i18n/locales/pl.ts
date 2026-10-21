@@ -843,6 +843,8 @@ export const plOverrides: Record<string, string> = {
         'settings.darkDesc': 'Tryb ciemny',
         'settings.theme': 'Motyw',
         'settings.oled': 'OLED / Noc',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.material3Light': 'Material 3 (Jasny)',
         'settings.material3Dark': 'Material 3 (Ciemny)',
         'settings.language': 'Język',

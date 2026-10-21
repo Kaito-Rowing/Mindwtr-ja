@@ -1241,6 +1241,8 @@ export const huOverrides: Record<string, string> = {
     'settings.nord': 'Nord',
     'settings.catppuccinMacchiato': 'Catppuccin Macchiato',
     'settings.dracula': 'Dracula',
+    'settings.gruvboxLight': 'Gruvbox Light',
+    'settings.gruvboxDark': 'Gruvbox Dark',
     'settings.sepia': 'Szépia',
     'settings.oled': 'OLED / Éjfekete',
     'settings.material3Light': 'Material 3 (Világos)',

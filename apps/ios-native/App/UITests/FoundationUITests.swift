@@ -12544,7 +12544,7 @@ final class FoundationUITests: XCTestCase {
             XCTAssertTrue(option.isSelected)
         }
         boardTap(app, "general-picker-cancel")
-        let values = allChoices ? ["system", "system-oled", "light", "dark", "material3-light", "material3-dark", "eink", "nord", "catppuccin-macchiato", "dracula", "sepia", "oled"] : ["material3-dark", "oled"]
+        let values = allChoices ? ["system", "system-oled", "light", "dark", "material3-light", "material3-dark", "eink", "nord", "catppuccin-macchiato", "dracula", "gruvbox-light", "gruvbox-dark", "sepia", "oled"] : ["material3-dark", "oled"]
         for value in values {
             task97Picker(app, "theme"); task97Choose(app, value)
             task97Picker(app, "theme")

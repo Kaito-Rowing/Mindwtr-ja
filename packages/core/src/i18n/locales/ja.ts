@@ -1294,6 +1294,8 @@ export const jaOverrides: Record<string, string> = {
         'settings.nord': 'Nord',
         'settings.catppuccinMacchiato': 'Catppuccin Macchiato',
         'settings.dracula': 'Dracula',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': 'セピア',
         'settings.oled': 'OLED / ミッドナイト',
         'settings.material3Light': 'Material 3（ライト）',

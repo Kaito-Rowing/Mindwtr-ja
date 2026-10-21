@@ -1199,6 +1199,8 @@ export const koOverrides: Record<string, string> = {
         'settings.theme': '테마',
         'settings.eink': 'E-Ink',
         'settings.nord': 'Nord',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': '세피아',
         'settings.oled': 'OLED / 미드나잇',
         'settings.material3Light': 'Material 3 (라이트)',

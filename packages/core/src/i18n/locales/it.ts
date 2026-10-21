@@ -934,6 +934,8 @@ export const itOverrides: Record<string, string> = {
         'settings.darkDesc': 'Modalità scura',
         'settings.theme': 'Tema',
         'settings.sepia': 'Seppia',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.oled': 'OLED / Mezzanotte',
         'settings.material3Light': 'Material 3 (chiaro)',
         'settings.material3Dark': 'Material 3 (scuro)',

@@ -303,6 +303,8 @@ export const nlOverrides: Record<string, string> = {
         'settings.darkDesc': 'Donkere modus',
         'settings.theme': 'Thema',
         'settings.oled': 'OLED / Nacht',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.material3Light': 'Material 3 (Licht)',
         'settings.material3Dark': 'Material 3 (Donker)',
         'settings.language': 'Taal',

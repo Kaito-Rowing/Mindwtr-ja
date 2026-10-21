@@ -15391,10 +15391,10 @@ final class CoreHostTests: XCTestCase {
         let model = try XCTUnwrap(options["model"] as? [String: Any])
         let picker = try XCTUnwrap((model["appearance"] as? [String: Any])?["theme"] as? [String: Any])
         let groups = try XCTUnwrap(picker["groups"] as? [[[String: Any]]])
-        XCTAssertEqual(groups.map(\.count), [4, 8])
+        XCTAssertEqual(groups.map(\.count), [4, 10])
         let choices = groups.flatMap { $0 }.compactMap { $0["value"] as? String }
         XCTAssertEqual(choices, ["system", "system-oled", "light", "dark", "material3-light", "material3-dark",
-                                 "eink", "nord", "catppuccin-macchiato", "dracula", "sepia", "oled"])
+                                 "eink", "nord", "catppuccin-macchiato", "dracula", "gruvbox-light", "gruvbox-dark", "sepia", "oled"])
         XCTAssertEqual(groups.flatMap { $0 }.filter { $0["selected"] as? Bool == true }.first?["value"] as? String, "nord")
         let descriptor = try object(await core.call("theme", argumentsJSON: json(["nord"])))
         XCTAssertEqual(descriptor["mode"] as? String, "nord")

@@ -1234,6 +1234,8 @@ export const zhHant: Record<string, string> = {
         'settings.nord': 'Nord',
         'settings.catppuccinMacchiato': 'Catppuccin Macchiato',
         'settings.dracula': 'Dracula',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': '復古米黃',
         'settings.oled': 'OLED / 午夜',
         'settings.material3Light': 'Material 3（淺色）',

@@ -851,6 +851,8 @@ export const hiOverrides: Record<string, string> = {
         'settings.theme': 'विषय',
         'settings.eink': 'ई-इंक',
         'settings.nord': 'नॉर्ड',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': 'एक प्रकार की मछली',
         'settings.oled': 'ओएलईडी/आधी रात',
         'settings.material3Light': 'सामग्री 3 (प्रकाश)',

@@ -1242,6 +1242,8 @@ export const ukOverrides: Record<string, string> = {
     "settings.nord": "Nord",
     "settings.catppuccinMacchiato": "Catppuccin Macchiato",
     "settings.dracula": "Дракула",
+    "settings.gruvboxLight": "Gruvbox Light",
+    "settings.gruvboxDark": "Gruvbox Dark",
     "settings.sepia": "сепія",
     "settings.oled": "OLED / Північ",
     "settings.material3Light": "Матеріал 3 (світло)",

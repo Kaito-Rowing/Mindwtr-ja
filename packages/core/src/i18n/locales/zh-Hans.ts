@@ -1234,6 +1234,8 @@ export const zhHans: Record<string, string> = {
         'settings.nord': 'Nord',
         'settings.catppuccinMacchiato': 'Catppuccin Macchiato',
         'settings.dracula': 'Dracula',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': '复古米黄',
         'settings.oled': 'OLED / 午夜',
         'settings.material3Light': 'Material 3（浅色）',

@@ -1088,6 +1088,8 @@ export const viOverrides: Record<string, string> = {
         'settings.theme': 'Chủ đề',
         'settings.eink': 'Màn hình mực điện tử',
         'settings.nord': 'Nord',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': 'Nâu đỏ',
         'settings.oled': 'OLED / Đêm khuya',
         'settings.material3Light': 'Material 3 (Sáng)',

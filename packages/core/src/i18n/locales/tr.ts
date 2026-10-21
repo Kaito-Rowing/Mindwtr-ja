@@ -861,6 +861,8 @@ export const trOverrides: Record<string, string> = {
         'settings.theme': 'Tema',
         'settings.eink': 'E-Mürekkep',
         'settings.nord': 'Kuzey',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': 'Sepya',
         'settings.oled': 'OLED / Gece Yarısı',
         'settings.material3Light': 'Malzeme 3 (Hafif)',

@@ -1054,6 +1054,8 @@ export const csOverrides: Record<string, string> = {
         'settings.darkDesc': 'Tmavý režim',
         'settings.theme': 'Motiv',
         'settings.nord': 'Nord',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': 'Sépie',
         'settings.oled': 'OLED / Půlnoc',
         'settings.material3Light': 'Material 3 (světlý)',

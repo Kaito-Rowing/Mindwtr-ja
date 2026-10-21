@@ -1041,6 +1041,8 @@ export const frOverrides: Record<string, string> = {
         'settings.theme': 'Thème',
         'settings.eink': 'Encre électronique',
         'settings.nord': 'Nord',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': 'Sépia',
         'settings.oled': 'OLED / Minuit',
         'settings.material3Light': 'Material 3 (clair)',

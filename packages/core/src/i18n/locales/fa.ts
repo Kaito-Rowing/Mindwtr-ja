@@ -1265,6 +1265,8 @@ export const faOverrides: Record<string, string> = {
         'settings.nord': 'Nord',
         'settings.catppuccinMacchiato': 'Catppuccin Macchiato',
         'settings.dracula': 'Dracula',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': 'سپیا',
         'settings.oled': 'OLED / نیمه‌شب',
         'settings.material3Light': 'متریال ۳ (روشن)',

@@ -2276,6 +2276,8 @@ export const deOverrides: Record<string, string> = {
         'settings.deviceCalendars': 'Gerätekalender',
         'settings.deviceCalendarsDesc': 'Liest Ereignisse aus Kalendern, die bereits auf diesem Gerät synchronisiert sind (DAVx5, iCloud, Outlook usw.).',
         'settings.dracula': 'Dracula',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.dropboxCleanupRetry': 'Die Dropbox-Einrichtung wurde gespeichert. Die Bereinigung der Anmeldedaten wird erneut versucht.',
         'settings.dropboxStatus': 'Status',
         'settings.dropboxTestAccessibility': 'Dropbox-Verbindung testen',

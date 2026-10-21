@@ -263,6 +263,8 @@ export function buildGeneralSettingsModel(input: {
         themeOption('nord', t('settings.nord'), 'snow-outline'),
         themeOption('catppuccin-macchiato', t('settings.catppuccinMacchiato'), 'cafe-outline'),
         themeOption('dracula', t('settings.dracula'), 'wine-outline'),
+        themeOption('gruvbox-light', t('settings.gruvboxLight'), 'sunny-outline'),
+        themeOption('gruvbox-dark', t('settings.gruvboxDark'), 'moon-outline'),
         themeOption('sepia', t('settings.sepia'), 'book-outline'),
         themeOption('oled', t('settings.oled'), 'contrast-outline'),
     ];

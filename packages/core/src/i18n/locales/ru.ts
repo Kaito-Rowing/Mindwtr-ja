@@ -849,6 +849,8 @@ export const ruOverrides: Record<string, string> = {
         'settings.theme': 'Тема',
         'settings.eink': 'Электронные чернила',
         'settings.nord': 'Норд',
+        'settings.gruvboxLight': 'Gruvbox Light',
+        'settings.gruvboxDark': 'Gruvbox Dark',
         'settings.sepia': 'Сепия',
         'settings.material3Light': 'Материал 3 (Свет)',
         'settings.material3Dark': 'Материал 3 (Темный)',

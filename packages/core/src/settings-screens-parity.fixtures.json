@@ -2866,6 +2866,16 @@
         "wine-outline"
        ],
        [
+        "Gruvbox Light",
+        false,
+        "sunny-outline"
+       ],
+       [
+        "Gruvbox Dark",
+        false,
+        "moon-outline"
+       ],
+       [
         "Sepia",
         false,
         "book-outline"
@@ -3020,6 +3030,16 @@
         "Dracula",
         true,
         "wine-outline"
+       ],
+       [
+        "Gruvbox Light",
+        false,
+        "sunny-outline"
+       ],
+       [
+        "Gruvbox Dark",
+        false,
+        "moon-outline"
        ],
        [
         "Sepia",
@@ -3178,6 +3198,16 @@
         "wine-outline"
        ],
        [
+        "Gruvbox Light",
+        false,
+        "sunny-outline"
+       ],
+       [
+        "Gruvbox Dark",
+        false,
+        "moon-outline"
+       ],
+       [
         "Sepia",
         false,
         "book-outline"
@@ -3320,6 +3350,16 @@
         "Dracula",
         false,
         "wine-outline"
+       ],
+       [
+        "Gruvbox Light",
+        false,
+        "sunny-outline"
+       ],
+       [
+        "Gruvbox Dark",
+        false,
+        "moon-outline"
        ],
        [
         "Sepia",
@@ -3671,6 +3711,16 @@
         "wine-outline"
        ],
        [
+        "Gruvbox Light",
+        false,
+        "sunny-outline"
+       ],
+       [
+        "Gruvbox Dark",
+        false,
+        "moon-outline"
+       ],
+       [
         "Sepia",
         false,
         "book-outline"
@@ -3815,6 +3865,16 @@
         "Dracula",
         false,
         "wine-outline"
+       ],
+       [
+        "Gruvbox Light",
+        false,
+        "sunny-outline"
+       ],
+       [
+        "Gruvbox Dark",
+        false,
+        "moon-outline"
        ],
        [
         "Sepia",
