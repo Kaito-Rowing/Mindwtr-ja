@@ -224,6 +224,34 @@ describe('ContextsView', () => {
     expect(tree.root.findAll((node) => (node.type as unknown) === 'SwipeableTaskItem')).toHaveLength(2);
   });
 
+  // #1427: a tap switches to the chip; a long-press (or the screen reader's long-press action) adds it.
+  it('switches context on tap and combines on long-press', async () => {
+    storeState.tasks = [
+      { ...makeTask('alice', 'Alice only'), contexts: ['@alice'], tags: [] },
+      { ...makeTask('bob', 'Bob only'), contexts: ['@bob'], tags: [] },
+      { ...makeTask('both', 'Alice and Bob'), contexts: ['@alice', '@bob'], tags: [] },
+    ];
+    let tree!: ReactTestRenderer;
+    await act(async () => { tree = create(<ContextsView />); });
+    const chip = (label: string) => tree.root.find((item) => item.props.accessibilityLabel === label && item.type === Pressable);
+    const titles = () => tree.root.findAll((node) => (node.type as unknown) === 'SwipeableTaskItem')
+      .map((node) => node.props.task.title).sort();
+    await act(async () => { chip('@alice (2)').props.onPress(); });
+    await act(async () => { chip('@bob (2)').props.onPress(); });
+    expect(titles()).toEqual(['Alice and Bob', 'Bob only']);
+    expect(chip('@alice (2)').props.accessibilityState.selected).toBe(false);
+    await act(async () => { chip('@bob (2)').props.onPress(); });
+    expect(titles()).toEqual(['Alice and Bob', 'Alice only', 'Bob only']);
+    await act(async () => { chip('@alice (2)').props.onPress(); });
+    await act(async () => { chip('@bob (2)').props.onLongPress(); });
+    expect(titles()).toEqual(['Alice and Bob']);
+    expect(chip('@alice (2)').props.accessibilityState.selected).toBe(true);
+    expect(chip('@bob (2)').props.accessibilityActions).toEqual([{ name: 'longpress', label: 'filters.remove' }]);
+    await act(async () => { chip('@bob (2)').props.onAccessibilityAction({ nativeEvent: { actionName: 'longpress' } }); });
+    expect(titles()).toEqual(['Alice and Bob', 'Alice only']);
+    expect(chip('@bob (2)').props.accessibilityActions).toEqual([{ name: 'longpress', label: 'common.add' }]);
+  });
+
   it('shows All/Any for two combined tokens and keeps No context exclusive', async () => {
     storeState.tasks = [
       { ...makeTask('alice', 'Alice only'), contexts: ['@alice'], tags: [] },
@@ -234,15 +262,15 @@ describe('ContextsView', () => {
     ];
     let tree!: ReactTestRenderer;
     await act(async () => { tree = create(<ContextsView />); });
-    const pressToken = async (label: string) => {
+    const pressToken = async (label: string, gesture: 'onPress' | 'onLongPress' = 'onPress') => {
       const node = tree.root.find((item) => item.props.accessibilityLabel === label);
-      await act(async () => { node.props.onPress(); });
+      await act(async () => { node.props[gesture](); });
     };
     const titles = () => tree.root.findAll((node) => (node.type as unknown) === 'SwipeableTaskItem')
       .map((node) => node.props.task.title);
     await pressToken('@alice (2)');
     expect(tree.root.findAllByType(Pressable).filter((node) => node.props.accessibilityRole === 'radio')).toHaveLength(0);
-    await pressToken('#bob (2)');
+    await pressToken('#bob (2)', 'onLongPress');
     expect(titles()).toEqual(['Alice and Bob']);
     const modes = tree.root.findAllByType(Pressable).filter((node) => node.props.accessibilityRole === 'radio');
     expect(modes).toHaveLength(2);

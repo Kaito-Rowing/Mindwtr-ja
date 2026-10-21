@@ -76,7 +76,16 @@ export function selectContextsRouteTokens(requested: string[]): string[] {
         : Array.from(new Set(requested));
 }
 
-/** A token chip press: it replaces No context, otherwise toggles itself. */
+/**
+ * A plain chip press (token or No context): the chip alone, or nothing when it
+ * already was alone. Adding to the selection is the additive gesture's
+ * job (long-press on mobile, Ctrl/Cmd-click on desktop): toggleContextsToken.
+ */
+export function selectContextsToken(selected: string[], token: string): string[] {
+    return selected.length === 1 && selected[0] === token ? [] : [token];
+}
+
+/** The additive token chip press: it replaces No context, otherwise toggles itself. */
 export function toggleContextsToken(selected: string[], token: string): string[] {
     if (selected.includes(CONTEXTS_NO_CONTEXT_TOKEN)) return [token];
     return selected.includes(token) ? selected.filter((item) => item !== token) : [...selected, token];

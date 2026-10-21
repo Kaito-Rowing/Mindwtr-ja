@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, type DragEvent } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, type DragEvent, type KeyboardEvent } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
     useTaskStore,
@@ -16,6 +16,8 @@ import {
     formatI18nTemplate,
     tFallback,
     updateTaskFromLatest,
+    selectContextsToken,
+    toggleContextsToken,
     type Task,
     type ContextOrTagMatchMode,
 } from '@mindwtr/core';
@@ -137,12 +139,27 @@ export function ContextsView() {
     }, [setPersistedViewState]);
     const toggleSelectedContext = useCallback((value: string) => {
         setPersistedViewState((current) => {
-            const next = current.selectedContexts.includes(value)
-                ? current.selectedContexts.filter((token) => token !== value)
-                : [...current.selectedContexts.filter((token) => token !== NO_CONTEXT_TOKEN), value];
+            const next = toggleContextsToken(current.selectedContexts, value);
             return { ...current, selectedContexts: next, matchMode: next.length === 0 ? 'all' : current.matchMode };
         });
     }, [setPersistedViewState]);
+    // A plain click switches to the token; Ctrl/Cmd-click (or Ctrl/Cmd+Enter) adds it (#1427).
+    const pressContextToken = useCallback((value: string, additive: boolean) => {
+        if (additive) {
+            toggleSelectedContext(value);
+            return;
+        }
+        setPersistedViewState((current) => ({
+            ...current,
+            selectedContexts: selectContextsToken(current.selectedContexts, value),
+            matchMode: 'all',
+        }));
+    }, [setPersistedViewState, toggleSelectedContext]);
+    const onContextTokenKeyDown = (value: string) => (event: KeyboardEvent<HTMLButtonElement>) => {
+        if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey)) return;
+        event.preventDefault();
+        pressContextToken(value, true);
+    };
     const setMatchMode = useCallback((value: ContextOrTagMatchMode) => {
         setPersistedViewState((current) => ({ ...current, matchMode: value }));
     }, [setPersistedViewState]);
@@ -479,7 +496,8 @@ export function ContextsView() {
             <button
                 key={token}
                 type="button"
-                onClick={() => toggleSelectedContext(token)}
+                onClick={(event) => pressContextToken(token, event.ctrlKey || event.metaKey)}
+                onKeyDown={onContextTokenKeyDown(token)}
                 onDragOver={marker === '@' ? (event) => {
                     if (!acceptsContextDrop(event, context)) {
                         setHoveredContext(null);
@@ -592,7 +610,7 @@ export function ContextsView() {
 
                             <button
                                 type="button"
-                                onClick={() => setSelectedContext(NO_CONTEXT_TOKEN)}
+                                onClick={() => pressContextToken(NO_CONTEXT_TOKEN, false)}
                                 aria-label={`${t('contexts.none')} (${scopedTasks.filter((t) => !hasContext(t)).length})`}
                                 className={cn(
                                     "flex w-full items-center gap-2 rounded-lg p-2 text-left text-sm transition-colors",

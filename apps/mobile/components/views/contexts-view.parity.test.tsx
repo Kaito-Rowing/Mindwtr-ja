@@ -403,7 +403,8 @@ async function perform(root: ReactTestInstance, action: Action) {
       node.props.accessibilityLabel === action[1] || String(node.props.accessibilityLabel).startsWith(`${action[1]} (`)
     ))[0];
     if (!chip) throw new Error(`No chip ${action[1]}`);
-    await act(async () => { chip.props.onPress(); });
+    // The fixture's chip presses toggle (the native host's `next`): on RN that is the long-press (#1427).
+    await act(async () => { (chip.props.onLongPress ?? chip.props.onPress)(); });
     return;
   }
   if (kind === 'matchMode') {

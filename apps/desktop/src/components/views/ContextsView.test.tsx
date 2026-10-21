@@ -338,6 +338,50 @@ describe('ContextsView', () => {
         expect(view.queryByText('Office task')).not.toBeInTheDocument();
     });
 
+    // #1427: a plain click switches to the token; Ctrl/Cmd-click or Ctrl/Cmd+Enter adds it.
+    it('switches token on click and combines on Ctrl/Cmd-click or Ctrl/Cmd+Enter', () => {
+        const tasks = [
+            makeTask('alice', { title: 'Alice only', contexts: ['@alice'] }),
+            makeTask('bob', { title: 'Bob only', contexts: ['@bob'] }),
+            makeTask('both', { title: 'Alice and Bob', contexts: ['@alice', '@bob'] }),
+            makeTask('none', { title: 'Untagged' }),
+        ];
+        useTaskStore.setState({ tasks, _allTasks: tasks });
+        const view = renderContextsView();
+        const alice = () => view.getByRole('button', { name: '@alice (2)' });
+        const bob = () => view.getByRole('button', { name: '@bob (2)' });
+        const none = () => view.getByRole('button', { name: /No context/ });
+        fireEvent.click(alice());
+        fireEvent.click(bob());
+        expect(alice()).toHaveAttribute('aria-pressed', 'false');
+        expect(view.getByRole('heading', { name: '@bob' })).toBeInTheDocument();
+        expect(view.getByText('Bob only')).toBeInTheDocument();
+        expect(view.queryByText('Alice only')).not.toBeInTheDocument();
+        fireEvent.click(bob());
+        expect(view.getByText('Alice only')).toBeInTheDocument();
+        expect(view.getByText('Bob only')).toBeInTheDocument();
+
+        fireEvent.click(alice());
+        fireEvent.click(bob(), { metaKey: true });
+        expect(view.getByRole('heading', { name: '@alice + @bob' })).toBeInTheDocument();
+        fireEvent.click(bob(), { ctrlKey: true });
+        expect(view.getByRole('heading', { name: '@alice' })).toBeInTheDocument();
+        fireEvent.keyDown(bob(), { key: 'Enter', ctrlKey: true });
+        expect(view.getByRole('heading', { name: '@alice + @bob' })).toBeInTheDocument();
+        fireEvent.click(alice());
+        expect(view.getByRole('heading', { name: '@alice' })).toBeInTheDocument();
+
+        fireEvent.click(none());
+        expect(view.getByText('Untagged')).toBeInTheDocument();
+        expect(view.queryByText('Alice only')).not.toBeInTheDocument();
+        fireEvent.click(alice());
+        expect(view.getByRole('heading', { name: '@alice' })).toBeInTheDocument();
+        fireEvent.click(none());
+        fireEvent.click(none());
+        expect(view.getByText('Alice only')).toBeInTheDocument();
+        expect(view.getByText('Bob only')).toBeInTheDocument();
+    });
+
     it('combines context and tag tokens with All or Any without duplicate rows', () => {
         const tasks = [
             makeTask('alice', { title: 'Alice only', contexts: ['@alice'] }),
@@ -350,7 +394,7 @@ describe('ContextsView', () => {
         const view = renderContextsView();
         fireEvent.click(view.getByRole('button', { name: '@alice (2)' }));
         expect(view.queryByRole('button', { name: 'Any' })).not.toBeInTheDocument();
-        fireEvent.click(view.getByRole('button', { name: '#bob (2)' }));
+        fireEvent.click(view.getByRole('button', { name: '#bob (2)' }), { ctrlKey: true });
 
         expect(view.getByRole('button', { name: '@alice (2)' })).toHaveAttribute('aria-pressed', 'true');
         expect(view.getByRole('button', { name: '#bob (2)' })).toHaveAttribute('aria-pressed', 'true');

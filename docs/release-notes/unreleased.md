@@ -2,6 +2,7 @@
 
 Changes collected since the latest stable release.
 
+- Contexts view: tapping a context or tag now switches to it instead of adding it to the selection. To combine several, long-press a chip on mobile, or Ctrl-click (Cmd-click on macOS) on desktop (#1427).
 - Android: a task widget that shows one context or tag now opens quick capture with that context or tag already typed in, so the new task gets it. You can edit or delete it before saving (#1418).
 - Android: reminders for tasks synced from another device (for example, a task with a due time made on Windows) are now set by the background sync, even when Mindwtr was swiped away. Before, the reminder was set only when the app opened again (#1424).
 - Desktop: a link in a task's collapsed description preview now opens when clicked, without expanding or collapsing the task (#1425).

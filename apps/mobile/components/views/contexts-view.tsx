@@ -28,6 +28,7 @@ import {
   resolveContextsMatchMode,
   runStoreCommand,
   selectContextsRouteTokens,
+  selectContextsToken,
   toggleContextsNoContext,
   toggleContextsToken,
   TASK_LIST_SORT_OPTIONS,
@@ -364,10 +365,15 @@ export function ContextsView() {
                     styles.contextButton,
                     { backgroundColor: isActive ? tc.tint : tc.filterBg, borderColor: tc.border },
                   ]}
-                  onPress={() => setSelectedContexts((prev) => toggleContextsToken(prev, context))}
+                  onPress={() => setSelectedContexts((prev) => selectContextsToken(prev, context))}
+                  onLongPress={() => setSelectedContexts((prev) => toggleContextsToken(prev, context))}
                   accessibilityRole="button"
                   accessibilityLabel={`${context} (${count})`}
                   accessibilityState={{ selected: isActive }}
+                  accessibilityActions={[{ name: 'longpress', label: isActive ? t('filters.remove') : t('common.add') }]}
+                  onAccessibilityAction={(event) => {
+                    if (event.nativeEvent.actionName === 'longpress') setSelectedContexts((prev) => toggleContextsToken(prev, context));
+                  }}
                 >
                   <Text
                     style={[
