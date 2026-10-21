@@ -38,9 +38,13 @@ vi.mock('@/modules/app-search', () => ({
 
 const isAppSearchSupported = vi.hoisted(() => vi.fn(() => true));
 const readAppSearchIndexingEnabled = vi.hoisted(() => vi.fn(async () => true));
+const readAppSearchWipeOwed = vi.hoisted(() => vi.fn(async () => false));
+const clearAppSearchWipeOwed = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('./app-search-preference', () => ({
     isAppSearchSupported,
     readAppSearchIndexingEnabled,
+    readAppSearchWipeOwed,
+    clearAppSearchWipeOwed,
 }));
 
 import {
@@ -73,6 +77,7 @@ describe('app-search-service', () => {
         storeState.areas = [];
         isAppSearchSupported.mockReturnValue(true);
         readAppSearchIndexingEnabled.mockResolvedValue(true);
+        readAppSearchWipeOwed.mockResolvedValue(false);
         disarmAppSearchIndexing();
     });
 
@@ -193,6 +198,35 @@ describe('app-search-service', () => {
         // Once from runFullAppSearchReindex's own wipe, once more from the
         // post-reindex re-check that undoes the upserts it just sent.
         expect(wipeAppSearchIndexNative).toHaveBeenCalledTimes(2);
+    });
+
+    // A toggle-off whose wipe failed (or never ran: the app died) left titles in Android search for good, since the next
+    // start saw the switch off and did nothing. The owed wipe now runs then, and is cleared only once it lands.
+    it('finishes an owed wipe at the next start, and keeps it owed until a wipe lands', async () => {
+        wipeAppSearchIndexNative.mockRejectedValueOnce(new Error('boom'));
+        await wipeAppSearchIndex();
+        expect(clearAppSearchWipeOwed).not.toHaveBeenCalled();
+
+        readAppSearchIndexingEnabled.mockResolvedValue(false);
+        readAppSearchWipeOwed.mockResolvedValue(true);
+        wipeAppSearchIndexNative.mockClear();
+        await syncAppSearchIndexingWithPreference();
+        expect(wipeAppSearchIndexNative).toHaveBeenCalledTimes(1);
+        expect(clearAppSearchWipeOwed).toHaveBeenCalledTimes(1);
+        expect(isAppSearchIndexingArmed()).toBe(false);
+
+        // Nothing owed, switch off: a start does no native work at all.
+        readAppSearchWipeOwed.mockResolvedValue(false);
+        wipeAppSearchIndexNative.mockClear();
+        await syncAppSearchIndexingWithPreference();
+        expect(wipeAppSearchIndexNative).not.toHaveBeenCalled();
+    });
+
+    it('a full reindex (switch on) settles an owed wipe too', async () => {
+        readAppSearchWipeOwed.mockResolvedValue(true);
+        await syncAppSearchIndexingWithPreference();
+        expect(isAppSearchIndexingArmed()).toBe(true);
+        expect(clearAppSearchWipeOwed).toHaveBeenCalledTimes(1);
     });
 
     it('a native failure is logged and swallowed, never thrown', async () => {

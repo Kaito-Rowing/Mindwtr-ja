@@ -1,6 +1,6 @@
 import { nameNotifyListener, useTaskStore } from '@mindwtr/core';
 
-import { logWarn } from '@/lib/app-log';
+import { logInfo, logWarn } from '@/lib/app-log';
 import {
     removeAppSearchDocuments,
     upsertAppSearchDocuments,
@@ -8,7 +8,12 @@ import {
 } from '@/modules/app-search';
 
 import { buildAppSearchDelta, buildFullAppSearchIndex } from './app-search-projection';
-import { isAppSearchSupported, readAppSearchIndexingEnabled } from './app-search-preference';
+import {
+    clearAppSearchWipeOwed,
+    isAppSearchSupported,
+    readAppSearchIndexingEnabled,
+    readAppSearchWipeOwed,
+} from './app-search-preference';
 
 /**
  * Orchestrates the Android AppSearch secondary index (#1017): arms a debounced
@@ -123,6 +128,8 @@ export async function runFullAppSearchReindex(): Promise<void> {
     const docs = buildFullAppSearchIndex({ tasks: state.tasks, projects: state.projects, areas: state.areas });
     try {
         await wipeAppSearchIndexNative();
+        // The wipe landed: any wipe a toggle-off still owed is done.
+        await clearAppSearchWipeOwed();
         await upsertAppSearchDocuments(docs);
     } catch (error) {
         void logWarn('AppSearch full reindex failed; local data is unaffected', {
@@ -162,6 +169,7 @@ export async function wipeAppSearchIndex(): Promise<void> {
     if (!isAppSearchSupported()) return;
     try {
         await wipeAppSearchIndexNative();
+        await clearAppSearchWipeOwed();
     } catch (error) {
         void logWarn('AppSearch wipe failed', {
             scope: 'app-search',
@@ -178,7 +186,22 @@ export async function wipeAppSearchIndex(): Promise<void> {
 export async function syncAppSearchIndexingWithPreference(): Promise<void> {
     if (!isAppSearchSupported()) return;
     const enabled = await readAppSearchIndexingEnabled();
-    if (!enabled) return;
+    if (!enabled) {
+        // A toggle-off whose wipe never landed: finish it now, so titles do not stay in system search.
+        if (!(await readAppSearchWipeOwed())) return;
+        let outcome = 'wiped';
+        try {
+            await wipeAppSearchIndexNative();
+            await clearAppSearchWipeOwed();
+        } catch {
+            outcome = 'failed';
+        }
+        void logInfo('AppSearch owed wipe finished at start', {
+            scope: 'app-search',
+            extra: { releaseCheck: 'v1.3.7/app-search-owed-wipe', outcome },
+        });
+        return;
+    }
     if (isAppSearchIndexingArmed()) return;
     await runFullAppSearchReindex();
     armAppSearchIndexing();

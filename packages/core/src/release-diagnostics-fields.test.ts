@@ -22,6 +22,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // android-widget-capture-status: bounded creation status and picker origin; kind/outcome below.
     'destination', 'selection',
     // quick-capture-description reuses releaseCheck, kind and outcome; no captured text.
+    // app-search-owed-wipe reuses releaseCheck and outcome below.
     // restore-attachment-presence reuses releaseCheck and count below; no names or paths.
     // leftover-undo-hold reuses releaseCheck and outcome below.
     // large-library-no-undo reuses releaseCheck, operation and outcome below; no names or paths.
